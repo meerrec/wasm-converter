@@ -10,6 +10,7 @@ use std::fmt;
 
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW};
 use crate::error::{Result, XlsxError};
+use crate::strings::SharedStrings;
 
 /// Значение ячейки, как оно записано в файле.
 ///
@@ -385,14 +386,26 @@ pub struct CellFormat {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Workbook {
     sheets: Vec<WorksheetMeta>,
+    shared_strings: SharedStrings,
     styles: StyleTable,
+    date1904: bool,
 }
 
 impl Workbook {
-    /// Собрать книгу из метаданных листов и таблицы форматов.
+    /// Собрать книгу из каталога листов и общих таблиц.
     #[must_use]
-    pub fn new(sheets: Vec<WorksheetMeta>, styles: StyleTable) -> Self {
-        Self { sheets, styles }
+    pub fn new(
+        sheets: Vec<WorksheetMeta>,
+        shared_strings: SharedStrings,
+        styles: StyleTable,
+        date1904: bool,
+    ) -> Self {
+        Self {
+            sheets,
+            shared_strings,
+            styles,
+            date1904,
+        }
     }
 
     /// Метаданные листов в порядке из `workbook.xml`.
@@ -417,6 +430,18 @@ impl Workbook {
     #[must_use]
     pub fn styles(&self) -> &StyleTable {
         &self.styles
+    }
+
+    /// Общая таблица строк: ячейки хранят индексы в ней.
+    #[must_use]
+    pub fn shared_strings(&self) -> &SharedStrings {
+        &self.shared_strings
+    }
+
+    /// Даты книги отсчитываются от 1904-01-01, а не от 1899-12-30.
+    #[must_use]
+    pub fn date1904(&self) -> bool {
+        self.date1904
     }
 }
 
@@ -578,10 +603,14 @@ mod tests {
                     state: SheetState::VeryHidden,
                 },
             ],
+            SharedStrings::default(),
             StyleTable::default(),
+            true,
         );
 
         assert_eq!(wb.sheet_count(), 2);
+        assert!(wb.date1904());
+        assert!(wb.shared_strings().is_empty());
         assert_eq!(wb.sheet("Данные").unwrap().part, "xl/worksheets/sheet1.xml");
         assert_eq!(wb.sheet("Скрытый").unwrap().state, SheetState::VeryHidden);
         assert_eq!(wb.sheet("нет такого"), None);
