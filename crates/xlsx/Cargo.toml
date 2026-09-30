@@ -11,3 +11,8 @@ doc-converter-render = { workspace = true }
 serde                = { workspace = true }
 quick-xml            = { workspace = true }
 thiserror            = { workspace = true }
+
+# proptest тянет rand → getrandom, который не собирается под wasm32 без
+# `getrandom_backend="wasm_js"`; эти dev-зависимости нужны только нативным тестам.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+proptest = { workspace = true }

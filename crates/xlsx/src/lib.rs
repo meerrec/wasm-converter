@@ -3,6 +3,8 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::pedantic)]
 
+pub mod cellref;
+
 use doc_converter_core::{Archive, Result};
 
 /// Открыть XLSX из сырых байт.
