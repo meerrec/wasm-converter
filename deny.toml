@@ -1,0 +1,21 @@
+[graph]
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "wasm32-unknown-unknown" },
+]
+
+[licenses]
+allow = ["Apache-2.0", "MIT", "BSD-3-Clause", "BSD-2-Clause", "ISC", "Unicode-DFS-2016", "Zlib"]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = [
+    { name = "openssl" },
+]
+
+[advisories]
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "deny"
