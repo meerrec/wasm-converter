@@ -1,0 +1,620 @@
+//! Модель книги: листы, ячейки, форматы.
+//!
+//! Ячейки листа лежат в CSR-раскладке: `row_ids` хранит номера непустых строк
+//! по возрастанию, `row_starts` — начало каждой строки в общем массиве `cells`
+//! (конец строки — начало следующей, у последней — конец массива). Пустые
+//! строки не занимают памяти вовсе, а ячейки внутри строки отсортированы по
+//! столбцу, поэтому поиск идёт двоичным поиском.
+
+use std::fmt;
+
+use crate::cellref::{CellRef, MAX_COL, MAX_ROW};
+use crate::error::{Result, XlsxError};
+
+/// Значение ячейки, как оно записано в файле.
+///
+/// Строки из `sharedStrings.xml` остаются индексами: общая таблица строк — это
+/// ресурс книги, а не ячейки.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CellValue {
+    /// Значения нет — в файле был только формат.
+    Empty,
+    /// Число. Даты, время и деньги — тоже числа: их смысл задаёт формат.
+    Number(f64),
+    /// Логическое значение.
+    Bool(bool),
+    /// Ошибка листа: `#DIV/0!`, `#N/A` и родственные.
+    Error(CellError),
+    /// Индекс в `sharedStrings.xml` (ячейка `t="s"`).
+    SharedString(u32),
+    /// Строка записана прямо в ячейке (`t="str"`, `t="inlineStr"`).
+    InlineString(String),
+}
+
+/// Ошибка вычисления, записанная в ячейке (`ST_Error`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellError {
+    /// `#NULL!` — пересечение областей не существует.
+    Null,
+    /// `#DIV/0!` — деление на ноль.
+    Div0,
+    /// `#VALUE!` — несовместимый тип аргумента.
+    Value,
+    /// `#REF!` — ссылка на удалённую ячейку.
+    Ref,
+    /// `#NAME?` — неизвестное имя.
+    Name,
+    /// `#NUM!` — недопустимое число.
+    Num,
+    /// `#N/A` — значение недоступно.
+    Na,
+}
+
+impl CellError {
+    /// Разобрать текст ошибки из `<v>`; `None` — не ошибка.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "#NULL!" => Self::Null,
+            "#DIV/0!" => Self::Div0,
+            "#VALUE!" => Self::Value,
+            "#REF!" => Self::Ref,
+            "#NAME?" => Self::Name,
+            "#NUM!" => Self::Num,
+            "#N/A" => Self::Na,
+            _ => return None,
+        })
+    }
+
+    /// Текст, как он записан в файле.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Null => "#NULL!",
+            Self::Div0 => "#DIV/0!",
+            Self::Value => "#VALUE!",
+            Self::Ref => "#REF!",
+            Self::Name => "#NAME?",
+            Self::Num => "#NUM!",
+            Self::Na => "#N/A",
+        }
+    }
+}
+
+impl fmt::Display for CellError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Ячейка внутри строки.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cell {
+    /// 0-based индекс столбца; внутри строки столбцы идут по возрастанию.
+    pub col: u32,
+    /// Индекс формата в [`StyleTable`]; 0 — формат по умолчанию.
+    pub style: u32,
+    /// Значение.
+    pub value: CellValue,
+    /// Текст формулы без ведущего `=`, если ячейка вычисляется формулой.
+    pub formula: Option<String>,
+}
+
+impl Cell {
+    /// Ячейка со значением и форматом.
+    #[must_use]
+    pub const fn new(col: u32, style: u32, value: CellValue) -> Self {
+        Self {
+            col,
+            style,
+            value,
+            formula: None,
+        }
+    }
+
+    /// Приписать текст формулы (без ведущего `=`) и вернуть ячейку.
+    #[must_use]
+    pub fn with_formula(mut self, formula: impl Into<String>) -> Self {
+        self.formula = Some(formula.into());
+        self
+    }
+
+    /// Адрес ячейки в строке `row`.
+    #[must_use]
+    pub const fn at(&self, row: u32) -> CellRef {
+        CellRef::new(row, self.col)
+    }
+}
+
+/// Лист книги.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Worksheet {
+    /// Имя листа из `workbook.xml`.
+    name: String,
+    /// Начало каждой строки в `cells`; длина совпадает с `row_ids`.
+    row_starts: Vec<u32>,
+    /// Номера непустых строк по возрастанию.
+    row_ids: Vec<u32>,
+    /// Ячейки всех строк подряд, внутри строки — по возрастанию столбца.
+    cells: Vec<Cell>,
+}
+
+impl Worksheet {
+    /// Имя листа.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Число ячеек на листе.
+    #[must_use]
+    pub fn cell_count(&self) -> usize {
+        self.cells.len()
+    }
+
+    /// Число непустых строк.
+    #[must_use]
+    pub fn row_count(&self) -> usize {
+        self.row_ids.len()
+    }
+
+    /// Номер последней непустой строки, 0-based; `None` — лист пуст.
+    #[must_use]
+    pub fn last_row(&self) -> Option<u32> {
+        self.row_ids.last().copied()
+    }
+
+    /// Ячейки строки; для отсутствующей строки — пустой срез.
+    #[must_use]
+    pub fn cells_of_row(&self, row: u32) -> &[Cell] {
+        let Ok(i) = self.row_ids.binary_search(&row) else {
+            return &[];
+        };
+        let start = self.row_starts[i] as usize;
+        let end = self
+            .row_starts
+            .get(i + 1)
+            .map_or(self.cells.len(), |&next| next as usize);
+        &self.cells[start..end]
+    }
+
+    /// Ячейка по адресу.
+    #[must_use]
+    pub fn cell(&self, at: CellRef) -> Option<&Cell> {
+        let row = self.cells_of_row(at.row);
+        let i = row.binary_search_by_key(&at.col, |cell| cell.col).ok()?;
+        row.get(i)
+    }
+
+    /// Обход непустых строк по возрастанию номера.
+    pub fn rows(&self) -> impl Iterator<Item = (u32, &[Cell])> + '_ {
+        (0..self.row_ids.len()).map(|i| (self.row_ids[i], self.cells_of_row(self.row_ids[i])))
+    }
+}
+
+/// Сборщик листа.
+///
+/// Ячейки принимаются в порядке возрастания: сначала строки, внутри строки —
+/// столбцы. Именно в таком порядке их отдаёт потоковый парсер `worksheet.xml`,
+/// а CSR хранит ячейки подряд, поэтому «шаг назад» — это ошибка, а не повод
+/// отсортировать молча.
+#[derive(Debug)]
+pub struct WorksheetBuilder {
+    /// Часть пакета, из которой читается лист, — попадает в текст ошибок.
+    part: String,
+    worksheet: Worksheet,
+    current_row: Option<u32>,
+    last_col: Option<u32>,
+}
+
+impl WorksheetBuilder {
+    /// Начать лист `name` из части пакета `part`.
+    #[must_use]
+    pub fn new(part: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            part: part.into(),
+            worksheet: Worksheet {
+                name: name.into(),
+                row_starts: Vec::new(),
+                row_ids: Vec::new(),
+                cells: Vec::new(),
+            },
+            current_row: None,
+            last_col: None,
+        }
+    }
+
+    /// Добавить ячейку в строку `row`.
+    ///
+    /// # Errors
+    ///
+    /// [`XlsxError::Malformed`], если строка или столбец идут назад, выходят за
+    /// лимиты Excel (`XFD1048576`), либо ячеек стало больше, чем адресует
+    /// 32-битный индекс CSR.
+    pub fn push(&mut self, row: u32, cell: Cell) -> Result<()> {
+        if row > MAX_ROW {
+            return Err(self.malformed(format!(
+                "row number {} is beyond the 1048576 limit",
+                u64::from(row) + 1
+            )));
+        }
+        if cell.col > MAX_COL {
+            return Err(self.malformed(format!(
+                "column number {} is beyond the XFD limit",
+                u64::from(cell.col) + 1
+            )));
+        }
+
+        match self.current_row {
+            None => self.start_row(row)?,
+            Some(current) if row == current => {
+                if let Some(prev) = self.last_col {
+                    if cell.col <= prev {
+                        return Err(self.malformed(format!(
+                            "cells of a row must go in ascending column order, but column {} \
+                             follows column {}",
+                            u64::from(cell.col) + 1,
+                            u64::from(prev) + 1
+                        )));
+                    }
+                }
+            }
+            Some(current) if row > current => self.start_row(row)?,
+            Some(current) => {
+                return Err(self.malformed(format!(
+                    "rows must go in ascending order, but row {} follows row {}",
+                    u64::from(row) + 1,
+                    u64::from(current) + 1
+                )));
+            }
+        }
+
+        self.last_col = Some(cell.col);
+        self.worksheet.cells.push(cell);
+        Ok(())
+    }
+
+    /// Закончить лист.
+    #[must_use]
+    pub fn finish(self) -> Worksheet {
+        self.worksheet
+    }
+
+    /// Открыть новую строку: запомнить её номер и начало в `cells`.
+    fn start_row(&mut self, row: u32) -> Result<()> {
+        let start = u32::try_from(self.worksheet.cells.len()).map_err(|_| {
+            self.malformed("worksheet holds more cells than the 32-bit CSR index can address")
+        })?;
+        self.worksheet.row_ids.push(row);
+        self.worksheet.row_starts.push(start);
+        self.current_row = Some(row);
+        self.last_col = None;
+        Ok(())
+    }
+
+    /// Ошибка с указанием части пакета.
+    fn malformed(&self, reason: impl Into<String>) -> XlsxError {
+        XlsxError::malformed(self.part.clone(), reason)
+    }
+}
+
+/// Метаданные листа из `xl/workbook.xml`; содержимое листа — отдельная часть.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorksheetMeta {
+    /// Имя листа, как его показывает Excel.
+    pub name: String,
+    /// Часть пакета с содержимым листа (`xl/worksheets/sheet1.xml`).
+    pub part: String,
+    /// Видимость листа.
+    pub state: SheetState,
+}
+
+/// Видимость листа (атрибут `state` в `workbook.xml`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SheetState {
+    /// Обычный видимый лист.
+    #[default]
+    Visible,
+    /// Скрытый лист.
+    Hidden,
+    /// Скрытый лист, который нельзя показать через меню Excel.
+    VeryHidden,
+}
+
+/// Таблица форматов ячеек — `cellXfs` из `styles.xml`.
+///
+/// Ячейка хранит только индекс формата; индекс 0 — формат по умолчанию,
+/// как и в OOXML.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StyleTable {
+    formats: Vec<CellFormat>,
+}
+
+impl StyleTable {
+    /// Собрать таблицу из записей `cellXfs` по порядку.
+    #[must_use]
+    pub fn new(formats: Vec<CellFormat>) -> Self {
+        Self { formats }
+    }
+
+    /// Число разобранных форматов.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.formats.len()
+    }
+
+    /// Таблица пуста — ни одного `xf` не разобрано.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.formats.is_empty()
+    }
+
+    /// Формат по индексу, если он объявлен.
+    #[must_use]
+    pub fn get(&self, index: u32) -> Option<&CellFormat> {
+        self.formats.get(index as usize)
+    }
+
+    /// Формат по индексу; неизвестный индекс даёт формат по умолчанию.
+    ///
+    /// Excel так же терпим к битым файлам: ссылка за пределы `cellXfs` не должна
+    /// ронять открытие книги.
+    #[must_use]
+    pub fn resolve(&self, index: u32) -> CellFormat {
+        self.formats
+            .get(index as usize)
+            .copied()
+            .unwrap_or_default()
+    }
+}
+
+/// Формат ячейки: ссылки на записи соответствующих таблиц `styles.xml`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CellFormat {
+    /// Индекс в `fonts`.
+    pub font: u32,
+    /// Индекс в `fills`.
+    pub fill: u32,
+    /// Индекс в `borders`.
+    pub border: u32,
+    /// `numFmtId` — код встроенного формата или индекс пользовательского.
+    pub num_fmt: u32,
+}
+
+/// Книга: листы и общие для них таблицы.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Workbook {
+    sheets: Vec<WorksheetMeta>,
+    styles: StyleTable,
+}
+
+impl Workbook {
+    /// Собрать книгу из метаданных листов и таблицы форматов.
+    #[must_use]
+    pub fn new(sheets: Vec<WorksheetMeta>, styles: StyleTable) -> Self {
+        Self { sheets, styles }
+    }
+
+    /// Метаданные листов в порядке из `workbook.xml`.
+    #[must_use]
+    pub fn sheets(&self) -> &[WorksheetMeta] {
+        &self.sheets
+    }
+
+    /// Число листов.
+    #[must_use]
+    pub fn sheet_count(&self) -> usize {
+        self.sheets.len()
+    }
+
+    /// Метаданные листа по имени.
+    #[must_use]
+    pub fn sheet(&self, name: &str) -> Option<&WorksheetMeta> {
+        self.sheets.iter().find(|sheet| sheet.name == name)
+    }
+
+    /// Таблица форматов ячеек.
+    #[must_use]
+    pub fn styles(&self) -> &StyleTable {
+        &self.styles
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn number(col: u32, value: f64) -> Cell {
+        Cell::new(col, 0, CellValue::Number(value))
+    }
+
+    #[test]
+    fn empty_worksheet_has_nothing() {
+        let ws = Worksheet::default();
+
+        assert_eq!(ws.cell_count(), 0);
+        assert_eq!(ws.row_count(), 0);
+        assert_eq!(ws.last_row(), None);
+        assert!(ws.cells_of_row(0).is_empty());
+        assert_eq!(ws.cell(CellRef::new(0, 0)), None);
+        assert_eq!(ws.rows().count(), 0);
+    }
+
+    #[test]
+    fn empty_rows_cost_nothing() {
+        let mut b = WorksheetBuilder::new("sheet1.xml", "Sheet1");
+        b.push(0, number(0, 1.0)).unwrap();
+        b.push(5, number(2, 2.0)).unwrap();
+        b.push(5, number(3, 3.0)).unwrap();
+        let ws = b.finish();
+
+        assert_eq!(ws.name(), "Sheet1");
+        assert_eq!(ws.cell_count(), 3);
+        assert_eq!(ws.row_count(), 2);
+        assert_eq!(ws.last_row(), Some(5));
+
+        assert_eq!(ws.cells_of_row(0).len(), 1);
+        assert!(ws.cells_of_row(1).is_empty());
+        assert_eq!(ws.cells_of_row(5).len(), 2);
+        // Строка 5 — последняя: её конец берётся из длины массива ячеек.
+        assert_eq!(ws.cells_of_row(5)[1].value, CellValue::Number(3.0));
+    }
+
+    #[test]
+    fn lookup_by_address() {
+        let mut b = WorksheetBuilder::new("sheet1.xml", "Sheet1");
+        for (row, col) in [(0, 0), (0, 3), (2, 1), (7, 9)] {
+            b.push(row, number(col, f64::from(col))).unwrap();
+        }
+        let ws = b.finish();
+
+        assert_eq!(ws.cell(CellRef::new(0, 3)).unwrap().col, 3);
+        assert_eq!(ws.cell(CellRef::new(7, 9)).unwrap().col, 9);
+        assert_eq!(ws.cell(CellRef::new(0, 1)), None);
+        assert_eq!(ws.cell(CellRef::new(3, 0)), None);
+        assert_eq!(ws.cell(CellRef::new(8, 9)), None);
+    }
+
+    #[test]
+    fn rows_walk_in_order() {
+        let mut b = WorksheetBuilder::new("sheet1.xml", "Sheet1");
+        b.push(2, number(0, 1.0)).unwrap();
+        b.push(9, number(1, 2.0)).unwrap();
+        let ws = b.finish();
+
+        let seen: Vec<(u32, usize)> = ws.rows().map(|(row, cells)| (row, cells.len())).collect();
+        assert_eq!(seen, vec![(2, 1), (9, 1)]);
+    }
+
+    #[test]
+    fn builder_rejects_wrong_order() {
+        let mut b = WorksheetBuilder::new("sheet1.xml", "Sheet1");
+        b.push(3, number(1, 1.0)).unwrap();
+        b.push(3, number(2, 2.0)).unwrap();
+
+        let backwards_row = b.push(2, number(0, 3.0)).unwrap_err();
+        assert!(matches!(backwards_row, XlsxError::Malformed { .. }));
+        assert!(backwards_row.to_string().contains("ascending order"));
+
+        let backwards_col = b.push(3, number(2, 4.0)).unwrap_err();
+        assert!(backwards_col.to_string().contains("column order"));
+
+        let same_col = b.push(3, number(1, 5.0)).unwrap_err();
+        assert!(same_col.to_string().contains("column order"));
+    }
+
+    #[test]
+    fn builder_rejects_out_of_range() {
+        let mut b = WorksheetBuilder::new("sheet1.xml", "Sheet1");
+
+        let bad_row = b.push(MAX_ROW + 1, number(0, 1.0)).unwrap_err();
+        assert!(bad_row.to_string().contains("1048576 limit"));
+
+        let bad_col = b.push(0, number(MAX_COL + 1, 1.0)).unwrap_err();
+        assert!(bad_col.to_string().contains("XFD limit"));
+    }
+
+    #[test]
+    fn formula_is_kept_next_to_value() {
+        let cell = number(0, 3.0).with_formula("SUM(B1:B2)");
+
+        assert_eq!(cell.formula.as_deref(), Some("SUM(B1:B2)"));
+        assert_eq!(cell.at(4), CellRef::new(4, 0));
+    }
+
+    #[test]
+    fn cell_error_round_trip() {
+        let all = [
+            CellError::Null,
+            CellError::Div0,
+            CellError::Value,
+            CellError::Ref,
+            CellError::Name,
+            CellError::Num,
+            CellError::Na,
+        ];
+        for err in all {
+            assert_eq!(CellError::parse(err.as_str()), Some(err));
+            assert_eq!(err.to_string(), err.as_str());
+        }
+        assert_eq!(CellError::parse("42"), None);
+        assert_eq!(CellError::parse("#div/0!"), None);
+    }
+
+    #[test]
+    fn style_table_resolves_and_falls_back() {
+        let table = StyleTable::new(vec![
+            CellFormat::default(),
+            CellFormat {
+                font: 1,
+                fill: 2,
+                border: 3,
+                num_fmt: 14,
+            },
+        ]);
+
+        assert_eq!(table.len(), 2);
+        assert!(!table.is_empty());
+        assert_eq!(table.get(1).unwrap().num_fmt, 14);
+        assert_eq!(table.resolve(1).font, 1);
+        // Битая ссылка не роняет разбор: отдаём формат по умолчанию.
+        assert_eq!(table.resolve(99), CellFormat::default());
+        assert_eq!(table.get(99), None);
+        assert!(StyleTable::default().is_empty());
+    }
+
+    #[test]
+    fn workbook_finds_sheet_by_name() {
+        let wb = Workbook::new(
+            vec![
+                WorksheetMeta {
+                    name: "Данные".into(),
+                    part: "xl/worksheets/sheet1.xml".into(),
+                    state: SheetState::Visible,
+                },
+                WorksheetMeta {
+                    name: "Скрытый".into(),
+                    part: "xl/worksheets/sheet2.xml".into(),
+                    state: SheetState::VeryHidden,
+                },
+            ],
+            StyleTable::default(),
+        );
+
+        assert_eq!(wb.sheet_count(), 2);
+        assert_eq!(wb.sheet("Данные").unwrap().part, "xl/worksheets/sheet1.xml");
+        assert_eq!(wb.sheet("Скрытый").unwrap().state, SheetState::VeryHidden);
+        assert_eq!(wb.sheet("нет такого"), None);
+        assert_eq!(wb.sheets().len(), 2);
+        assert!(wb.styles().is_empty());
+        assert_eq!(SheetState::default(), SheetState::Visible);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// CSR-поиск должен согласовываться с множеством поданных адресов.
+        #[test]
+        fn builder_matches_address_set(
+            addresses in proptest::collection::btree_set((0u32..40, 0u32..12), 0..60),
+        ) {
+            let mut builder = WorksheetBuilder::new("sheet1.xml", "Sheet1");
+            for &(row, col) in &addresses {
+                builder.push(row, Cell::new(col, 0, CellValue::Number(f64::from(col)))).unwrap();
+            }
+            let sheet = builder.finish();
+
+            prop_assert_eq!(sheet.cell_count(), addresses.len());
+            for row in 0..40u32 {
+                for col in 0..12u32 {
+                    let found = sheet.cell(CellRef::new(row, col)).is_some();
+                    prop_assert_eq!(found, addresses.contains(&(row, col)));
+                }
+            }
+        }
+    }
+}

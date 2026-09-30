@@ -612,6 +612,7 @@ version = "0.1.0"
 dependencies = [
  "doc-converter-core",
  "doc-converter-render",
+ "miette",
  "proptest",
  "quick-xml",
  "serde",

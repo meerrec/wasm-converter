@@ -4,8 +4,16 @@
 #![deny(clippy::pedantic)]
 
 pub mod cellref;
+pub mod error;
+pub mod model;
 
-use doc_converter_core::{Archive, Result};
+pub use error::{Result, XlsxError};
+pub use model::{
+    Cell, CellError, CellFormat, CellValue, SheetState, StyleTable, Workbook, Worksheet,
+    WorksheetBuilder, WorksheetMeta,
+};
+
+use doc_converter_core::Archive;
 
 /// Открыть XLSX из сырых байт.
 ///
@@ -14,23 +22,9 @@ use doc_converter_core::{Archive, Result};
 pub fn open(bytes: Vec<u8>) -> Result<Workbook> {
     let mut archive = Archive::new(bytes)?;
     archive.validate_ooxml()?;
-    let wb_xml = archive.read_string("xl/workbook.xml")?;
-    // TODO (Фаза 3): потоковый разбор workbook.xml, каталог листов.
-    Ok(Workbook {
-        _private: (),
-        _wb_xml: wb_xml,
-    })
-}
-
-pub struct Workbook {
-    _private: (),
-    _wb_xml: String,
-}
-
-impl Workbook {
-    #[must_use]
-    pub fn sheet_names(&self) -> Vec<String> {
-        // TODO (Фаза 3): извлечь <sheet name="…"/> из workbook.xml.
-        vec!["Sheet1".to_string()]
-    }
+    archive.read_string("xl/workbook.xml")?;
+    // TODO (Фаза 3): потоковый разбор `workbook.xml` → `WorksheetMeta`,
+    // разрешение частей листов через `_rels/workbook.xml.rels` и наполнение
+    // листов через `WorksheetBuilder`.
+    Ok(Workbook::default())
 }

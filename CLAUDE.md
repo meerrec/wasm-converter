@@ -90,7 +90,7 @@ SAB требует COOP/COEP (`Cross-Origin-Opener-Policy: same-origin`, `Cross-
 
 ## Соглашения
 
-- Комментарии, доккомментарии и сообщения об ошибках — по-русски; секции `# Errors` у публичных fallible-функций обязательны (на них настроен clippy pedantic).
+- Комментарии и доккомментарии — по-русски; сообщения об ошибках (`#[error(...)]`) — по-английски, это часть публичного API библиотеки. Секции `# Errors` у публичных fallible-функций обязательны (на них настроен clippy pedantic).
 - `#![forbid(unsafe_code)]` + `#![deny(clippy::pedantic)]` во всех крейтах, кроме `crates/wasm`.
 - TS: `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`; импорты с явным `.js`; JSDoc на экспортируемых функциях; без `any`.
 - Conventional Commits, trunk-based (работа в `main`); feature-flags для незавершённого; 2 approver'а на изменения публичного API.

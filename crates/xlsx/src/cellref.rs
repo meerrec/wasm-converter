@@ -170,38 +170,38 @@ impl fmt::Display for Range {
 }
 
 /// Ошибка разбора A1-ссылки.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, Diagnostic, PartialEq, Eq)]
 pub enum ParseError {
     /// Строка пуста.
-    #[error("пустая ссылка на ячейку")]
+    #[error("empty cell reference")]
     Empty,
 
     /// На месте столбца нет заглавных латинских букв.
-    #[error("ожидалась буква столбца в позиции {0}")]
+    #[error("expected a column letter at position {0}")]
     ExpectedColumn(usize),
 
     /// На месте строки нет цифр.
-    #[error("ожидалась цифра строки в позиции {0}")]
+    #[error("expected a row digit at position {0}")]
     ExpectedRow(usize),
 
     /// Столбец за пределами `XFD`.
-    #[error("столбец `{0}` выходит за границу XFD")]
+    #[error("column `{0}` is beyond the XFD limit")]
     ColumnOverflow(String),
 
     /// Строка за пределами `1048576`.
-    #[error("строка `{0}` выходит за границу 1048576")]
+    #[error("row `{0}` is beyond the 1048576 limit")]
     RowOverflow(String),
 
     /// Строка `0` — строки в Excel нумеруются с единицы.
-    #[error("строка нумеруется с 1, поэтому 0 недопустим")]
+    #[error("rows are numbered from 1, so 0 is not a valid row")]
     RowZero,
 
     /// В записи диапазона нет `:`.
-    #[error("в диапазоне нет разделителя `:`")]
+    #[error("range is missing the `:` separator")]
     RangeMissingColon,
 
     /// Лишний символ после корректной ссылки.
-    #[error("неожиданный символ `{ch}` в позиции {pos}")]
+    #[error("unexpected character `{ch}` at position {pos}")]
     Unexpected {
         /// Встреченный символ.
         ch: char,
