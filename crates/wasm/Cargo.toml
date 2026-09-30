@@ -1,0 +1,31 @@
+[package]
+name = "doc-converter-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+doc-converter-core   = { workspace = true }
+doc-converter-render = { workspace = true }
+doc-converter-docx   = { workspace = true }
+doc-converter-xlsx   = { workspace = true }
+doc-converter-pdf    = { workspace = true }
+
+wasm-bindgen             = { workspace = true }
+js-sys                   = { workspace = true }
+web-sys                  = { workspace = true }
+serde                    = { workspace = true }
+serde_json               = { workspace = true }
+serde-wasm-bindgen       = "0.6"
+console_error_panic_hook = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
+[features]
+default = []
+tracing = ["dep:tracing-wasm"]

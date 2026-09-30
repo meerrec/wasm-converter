@@ -1,0 +1,17 @@
+[package]
+name = "doc-converter-pdf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+doc-converter-core   = { workspace = true }
+doc-converter-render = { workspace = true }
+doc-converter-docx   = { workspace = true }
+doc-converter-xlsx   = { workspace = true }
+serde                = { workspace = true }
+printpdf             = { workspace = true }
+ttf-parser           = { workspace = true }
+flate2               = { workspace = true }
+thiserror            = { workspace = true }

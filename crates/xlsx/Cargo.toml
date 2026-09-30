@@ -1,0 +1,13 @@
+[package]
+name = "doc-converter-xlsx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+doc-converter-core   = { workspace = true }
+doc-converter-render = { workspace = true }
+serde                = { workspace = true }
+quick-xml            = { workspace = true }
+thiserror            = { workspace = true }

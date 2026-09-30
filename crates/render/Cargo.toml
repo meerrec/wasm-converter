@@ -1,0 +1,12 @@
+[package]
+name = "doc-converter-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+doc-converter-core = { workspace = true }
+serde              = { workspace = true }
+lru                = { workspace = true }
+smallvec           = { workspace = true }
