@@ -6,12 +6,14 @@
 pub mod cellref;
 pub mod error;
 pub mod model;
+pub mod strings;
 
 pub use error::{Result, XlsxError};
 pub use model::{
     Cell, CellError, CellFormat, CellValue, SheetState, StyleTable, Workbook, Worksheet,
     WorksheetBuilder, WorksheetMeta,
 };
+pub use strings::SharedStrings;
 
 use doc_converter_core::Archive;
 
