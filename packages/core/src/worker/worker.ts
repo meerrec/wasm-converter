@@ -1,157 +1,101 @@
 /// <reference lib="webworker" />
 import init, {
-  open_docx,
-  open_xlsx,
-  build_display_list,
-  paint_display_list_to_offscreen,
+  alloc_sab,
+  drop_bitmap,
+  init_painter,
+  paint_display_list_sab,
+  register_bitmap,
   resize_canvas,
-  hit_test,
-  export_docx_to_pdf,
-  export_xlsx_workbook_to_pdf,
+  sab_total_bytes,
 } from '@doc-converter/wasm';
+import type { InMsg, OutMsg } from '../protocol.js';
+import { exportPng } from '../render/export_png.js';
+import { startFrameLoop } from './frame_loop';
 
-import type { WorkerRequest, WorkerResponse, FrameTimings } from '../protocol.js';
+type Ctx = OffscreenCanvasRenderingContext2D;
 
-const ctxSelf = self as unknown as DedicatedWorkerGlobalScope;
+let ctx: Ctx | null = null;
+let sab: SharedArrayBuffer | null = null;
+let slotCapacity = 0;
+let loop: ReturnType<typeof startFrameLoop> | null = null;
 
-let canvas: OffscreenCanvas | null = null;
-let ctx: OffscreenCanvasRenderingContext2D | null = null;
-let format: 'docx' | 'xlsx' | null = null;
-let doc: unknown = null;
-let lastRender: Extract<WorkerRequest, { type: 'render' }>['payload'] | null = null;
-let rafScheduled = false;
-
-ctxSelf.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
-  const msg = ev.data;
-  try {
-    switch (msg.type) {
-      case 'init': {
-        canvas = msg.payload.canvas;
-        const c = canvas.getContext('2d', { alpha: false, desynchronized: true });
-        if (!c) throw new Error('failed to acquire 2d context from OffscreenCanvas');
-        ctx = c;
-        await init();
-        postOk(msg.id);
-        break;
-      }
-
-      case 'resize': {
-        if (!canvas) throw new Error('worker not initialized');
-        const { width, height, dpr } = msg.payload;
-        canvas.width  = Math.max(1, Math.round(width  * dpr));
-        canvas.height = Math.max(1, Math.round(height * dpr));
-        resize_canvas(dpr);
-        scheduleRender();
-        postOk(msg.id);
-        break;
-      }
-
-      case 'open': {
-        const { format: f, bytes } = msg.payload;
-        format = f;
-        doc = f === 'docx' ? open_docx(new Uint8Array(bytes)) : open_xlsx(new Uint8Array(bytes));
-        // Поля с undefined не кладём в meta: протокол объявляет их опциональными,
-        // а exactOptionalPropertyTypes запрещает явный undefined.
-        const meta: { pages?: number; sheets?: string[] } = {};
-        const pages = f === 'docx' ? extractNumber(doc, 'pageCount') : undefined;
-        const sheets = f === 'xlsx' ? extractStringArray(doc, 'sheets') : undefined;
-        if (pages !== undefined) meta.pages = pages;
-        if (sheets !== undefined) meta.sheets = sheets;
-        const reply: WorkerResponse = { id: msg.id, type: 'ready', meta };
-        ctxSelf.postMessage(reply);
-        break;
-      }
-
-      case 'render': {
-        lastRender = msg.payload;
-        scheduleRender();
-        postOk(msg.id);
-        break;
-      }
-
-      case 'hitTest': {
-        const ref = hit_test(msg.payload.x, msg.payload.y);
-        const reply: WorkerResponse = { id: msg.id, type: 'hit', ref: (ref ?? null) as never };
-        ctxSelf.postMessage(reply);
-        break;
-      }
-
-      case 'exportPdf': {
-        const bytes = format === 'docx'
-          ? export_docx_to_pdf(JSON.stringify(msg.payload))
-          : export_xlsx_workbook_to_pdf(JSON.stringify(msg.payload));
-        const u8 = toU8(bytes);
-        const reply: WorkerResponse = { id: msg.id, type: 'pdf', bytes: u8 };
-        ctxSelf.postMessage(reply, [u8.buffer as ArrayBuffer]);
-        break;
-      }
-
-      case 'exportPng': {
-        // TODO (Фаза 2): растровый экспорт через OffscreenCanvas.convertToBlob.
-        throw new Error('exportPng: not yet implemented');
-      }
-
-      case 'dispose':
-        ctxSelf.close();
-        break;
-
-      default:
-        throw new Error(`unknown request type: ${(msg as { type: string }).type}`);
-    }
-  } catch (e) {
-    const err = e as Error;
-    const reply: WorkerResponse = { id: msg.id, type: 'error', message: String(err.message ?? err) };
-    if (err.stack) reply.stack = err.stack;
-    ctxSelf.postMessage(reply);
-  }
+const post = (msg: OutMsg, transfer: Transferable[] = []) => {
+  (self as unknown as Worker).postMessage(msg, transfer);
 };
 
-function scheduleRender(): void {
-  if (rafScheduled) return;
-  rafScheduled = true;
-  if (typeof ctxSelf.requestAnimationFrame === 'function') {
-    ctxSelf.requestAnimationFrame(runFrame);
-  } else {
-    setTimeout(runFrame, 16);
+self.onmessage = async (ev: MessageEvent<InMsg>) => {
+  const msg = ev.data;
+  switch (msg.type) {
+    case 'init': {
+      if (ctx) {
+        post({ type: 'error', message: 'worker already initialised' });
+        return;
+      }
+      try {
+        await init(msg.wasmUrl);
+        ctx = msg.canvas.getContext('2d', {
+          alpha: true,
+          desynchronized: true,
+        }) as Ctx;
+        if (!ctx) throw new Error('getContext("2d") returned null');
+
+        slotCapacity = msg.slotCapacity;
+        // SAB — не transferable, шарится через structured clone.
+        sab = alloc_sab(slotCapacity) as unknown as SharedArrayBuffer;
+        post({
+          type: 'ready',
+          sab,
+          slotCapacity,
+          totalBytes: sab_total_bytes(slotCapacity),
+        });
+
+        init_painter(ctx);
+        loop = startFrameLoop({
+          build: () => true, // Phase 3/6 заменит на реальный builder
+          paint: () => {
+            const stats = paint_display_list_sab(sab!, slotCapacity) as {
+              cmds: number;
+              dropped: boolean;
+              paintMs: number;
+            };
+            return stats;
+          },
+          onTick: (s) => post({ type: 'tick', stats: s }),
+        });
+      } catch (e) {
+        post({ type: 'error', message: String(e) });
+      }
+      break;
+    }
+    case 'resize': {
+      if (!ctx) return;
+      resize_canvas(ctx, msg.cssW, msg.cssH, msg.dpr);
+      break;
+    }
+    case 'bitmap': {
+      register_bitmap(msg.id, msg.bitmap);
+      break;
+    }
+    case 'drop-bitmap': {
+      drop_bitmap(msg.id);
+      break;
+    }
+    case 'render': {
+      loop?.request();
+      break;
+    }
+    case 'export-png': {
+      if (!ctx) {
+        post({ type: 'error', message: 'export-png before init' });
+        break;
+      }
+      try {
+        const bytes = await exportPng(ctx.canvas);
+        post({ type: 'png', id: msg.id, bytes }, [bytes.buffer]);
+      } catch (e) {
+        post({ type: 'error', message: String(e) });
+      }
+      break;
+    }
   }
-}
-
-function runFrame(): void {
-  rafScheduled = false;
-  if (!ctx || !doc || !lastRender) return;
-  const t0 = performance.now();
-  const dlJson = build_display_list(JSON.stringify(lastRender));
-  const t1 = performance.now();
-  paint_display_list_to_offscreen(ctx, dlJson);
-  const t2 = performance.now();
-  const timings: FrameTimings = { buildMs: t1 - t0, paintMs: t2 - t1 };
-  const reply: WorkerResponse = { id: 0, type: 'tick', frameId: performance.now(), timings };
-  ctxSelf.postMessage(reply);
-}
-
-function postOk(id: number, result?: unknown): void {
-  const reply: WorkerResponse = { id, type: 'ok', result };
-  ctxSelf.postMessage(reply);
-}
-
-function toU8(v: unknown): Uint8Array {
-  if (v instanceof Uint8Array) return v;
-  if (v instanceof ArrayBuffer) return new Uint8Array(v);
-  throw new Error('expected Uint8Array from WASM');
-}
-
-function extractNumber(o: unknown, key: string): number | undefined {
-  if (o && typeof o === 'object' && key in o) {
-    const v = (o as Record<string, unknown>)[key];
-    if (typeof v === 'number') return v;
-  }
-  return undefined;
-}
-
-function extractStringArray(o: unknown, key: string): string[] | undefined {
-  if (o && typeof o === 'object' && key in o) {
-    const v = (o as Record<string, unknown>)[key];
-    if (Array.isArray(v) && v.every((x) => typeof x === 'string')) return v as string[];
-  }
-  return undefined;
-}
+};

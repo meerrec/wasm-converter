@@ -19,7 +19,7 @@ rust-version = "1.82"
 [workspace.dependencies]
 # ── internal ────────────────────────────────────────────────
 doc-converter-core   = { path = "crates/core",   version = "0.1.0" }
-doc-converter-render = { path = "crates/render", version = "0.1.0" }
+doc-converter-render = { path = "crates/render", version = "0.2.0" }
 doc-converter-docx   = { path = "crates/docx",   version = "0.1.0" }
 doc-converter-xlsx   = { path = "crates/xlsx",   version = "0.1.0" }
 doc-converter-pdf    = { path = "crates/pdf",    version = "0.1.0" }
@@ -40,7 +40,9 @@ serde_json           = "1"
 thiserror            = "2"
 miette               = { version = "7", features = ["fancy"] }
 chrono               = { version = "0.4", default-features = false, features = ["clock", "std"] }
-printpdf             = "0.7"
+# default-фича `html` тянет azul-*/cssparser/selectors (MPL-2.0, не проходит
+# cargo-deny) и resvg/svg2pdf. XLSX→PDF в Фазе 4 этого не требует.
+printpdf             = { version = "0.8.2", default-features = false }
 ttf-parser           = "0.24"
 rustybuzz            = "0.18"
 unicode-linebreak    = "0.1"
@@ -53,7 +55,11 @@ tracing              = "0.1"
 tracing-wasm         = "0.2"
 
 # ── dev / test ──────────────────────────────────────────────
-criterion            = { version = "0.5", default-features = false }
+# `rayon` (в default-фичах criterion) не собирается под wasm32,
+# поэтому default-фичи выключены, а нужные включены явно.
+criterion            = { version = "0.5", default-features = false, features = [
+    "cargo_bench_support", "html_reports",
+] }
 insta                = { version = "1", features = ["json"] }
 proptest             = "1"
 wasm-bindgen-test    = "0.3"

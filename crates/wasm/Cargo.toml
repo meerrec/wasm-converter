@@ -1,43 +1,29 @@
 [package]
 name = "doc-converter-wasm"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+version = "0.2.0"
+edition = "2021"
+license = "Apache-2.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-doc-converter-core   = { workspace = true }
 doc-converter-render = { workspace = true }
-doc-converter-docx   = { workspace = true }
-doc-converter-xlsx   = { workspace = true }
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+web-sys = { version = "0.3", features = [
+  "OffscreenCanvas",
+  "OffscreenCanvasRenderingContext2d",
+  "ImageBitmap",
+  "console",
+] }
 
-wasm-bindgen             = { workspace = true }
-js-sys                   = { workspace = true }
-web-sys                  = { workspace = true }
-serde                    = { workspace = true }
-serde_json               = { workspace = true }
-serde-wasm-bindgen       = "0.6"
-console_error_panic_hook = { workspace = true }
-tracing-wasm             = { workspace = true, optional = true }
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.2", features = ["js"] }
-
-# printpdf 0.7.0 не компилируется под wasm32: и `js_sys_date`, и
-# `unix_epoch_stub_date` из printpdf/src/date.rs не имеют метода `offset()`,
-# который безусловно вызывает printpdf/src/document_info.rs. Поэтому PDF-крейт
-# подключается только для native-целей — до фикса upstream (Фаза 4).
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-doc-converter-pdf = { workspace = true }
-
-[features]
-default = []
-tracing = ["dep:tracing-wasm"]
-
-# Бандленный в wasm-pack wasm-opt не включает bulk-memory по умолчанию,
-# а rustc генерирует memory.copy/memory.fill — без флага валидация падает.
+# rustc эмитит bulk-memory, а bundled wasm-opt в wasm-pack его не понимает.
+# Оптимизацию делает scripts/build-wasm.sh системным wasm-opt, если он есть.
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-O4", "--enable-bulk-memory"]
+wasm-opt = false

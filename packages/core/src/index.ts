@@ -12,11 +12,10 @@ export type {
 
 export { createRpc, type RpcHandle } from './rpc.js';
 export {
-  createViewer,
   supportsOffscreen,
   assertFallbackAvailable,
   type ViewerHandle,
   type ViewerOptions,
-} from './render/offscreen.js';
+} from './render/offscreen';
 
 export const VERSION = '0.1.0';
