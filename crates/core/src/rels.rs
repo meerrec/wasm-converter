@@ -71,6 +71,55 @@ impl RelMap {
     }
 }
 
+impl Relationship {
+    /// Путь части внутри пакета, на которую указывает связь.
+    ///
+    /// `Target` записан относительно каталога части-источника
+    /// (`worksheets/sheet1.xml` для `xl/workbook.xml`), но встречаются и
+    /// абсолютные цели (`/xl/worksheets/sheet1.xml`), и выходы наверх (`../`).
+    /// `None` — цель внешняя: это ссылка, а не часть пакета.
+    ///
+    /// TODO (Фаза 6): percent-декодирование цели — в DOCX имена картинок
+    /// приходят как `media/image%201.png`.
+    #[must_use]
+    pub fn part(&self, source_part: &str) -> Option<String> {
+        if self.target_mode.as_deref() == Some("External") {
+            return None;
+        }
+        Some(resolve_target(source_part, &self.target))
+    }
+}
+
+/// Имя части с relationships для части-источника:
+/// `xl/workbook.xml` → `xl/_rels/workbook.xml.rels`.
+#[must_use]
+pub fn rels_part(source_part: &str) -> String {
+    match source_part.rsplit_once('/') {
+        Some((dir, file)) => format!("{dir}/_rels/{file}.rels"),
+        None => format!("_rels/{source_part}.rels"),
+    }
+}
+
+/// Привести `Target` к пути части внутри пакета.
+fn resolve_target(source_part: &str, target: &str) -> String {
+    if let Some(absolute) = target.strip_prefix('/') {
+        return absolute.to_string();
+    }
+
+    let base = source_part.rsplit_once('/').map_or("", |(dir, _)| dir);
+    let mut segments: Vec<&str> = base.split('/').filter(|s| !s.is_empty()).collect();
+    for segment in target.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            name => segments.push(name),
+        }
+    }
+    segments.join("/")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +132,55 @@ mod tests {
             </Relationships>"#;
         let m = RelMap::parse(xml).unwrap();
         assert_eq!(m.get("rId1").unwrap().target, "word/document.xml");
+    }
+
+    fn rel(target: &str, mode: Option<&str>) -> Relationship {
+        Relationship {
+            id: "rId1".into(),
+            rel_type: "http://x/worksheet".into(),
+            target: target.into(),
+            target_mode: mode.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn resolves_target_against_the_source_part() {
+        assert_eq!(
+            rel("worksheets/sheet1.xml", None).part("xl/workbook.xml"),
+            Some("xl/worksheets/sheet1.xml".into())
+        );
+    }
+
+    #[test]
+    fn resolves_absolute_and_parent_targets() {
+        assert_eq!(
+            rel("/xl/worksheets/sheet2.xml", None).part("xl/workbook.xml"),
+            Some("xl/worksheets/sheet2.xml".into())
+        );
+        assert_eq!(
+            rel("../media/image1.png", None).part("xl/drawings/drawing1.xml"),
+            Some("xl/media/image1.png".into())
+        );
+        assert_eq!(
+            rel("./sheet1.xml", None).part("xl/workbook.xml"),
+            Some("xl/sheet1.xml".into())
+        );
+    }
+
+    #[test]
+    fn external_targets_are_not_parts() {
+        assert_eq!(
+            rel("https://example.com/", Some("External")).part("xl/workbook.xml"),
+            None
+        );
+    }
+
+    #[test]
+    fn rels_part_is_derived_from_the_source_part() {
+        assert_eq!(rels_part("xl/workbook.xml"), "xl/_rels/workbook.xml.rels");
+        assert_eq!(
+            rels_part("word/document.xml"),
+            "word/_rels/document.xml.rels"
+        );
     }
 }
