@@ -616,6 +616,7 @@ dependencies = [
  "proptest",
  "quick-xml",
  "serde",
+ "smallvec",
  "thiserror 2.0.21",
  "zip",
 ]

@@ -6,10 +6,11 @@
 
 use doc_converter_core::rels::RelMap;
 use doc_converter_core::xml::XmlReader;
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::Event;
 
 use crate::error::{Result, XlsxError};
 use crate::model::{SheetState, WorksheetMeta};
+use crate::xml::{attributes, find, is_true, Attr};
 
 /// Окончание `Type` связи, ведущей на обычный лист.
 const WORKSHEET_REL: &str = "/worksheet";
@@ -66,7 +67,7 @@ impl WorkbookMeta {
 /// Собрать [`WorksheetMeta`] из атрибутов `<sheet>`.
 ///
 /// `Ok(None)` — лист пропущен: связь ведёт не на лист (например, на диаграмму).
-fn sheet(attrs: &[(String, String)], rels: &RelMap, part: &str) -> Result<Option<WorksheetMeta>> {
+fn sheet(attrs: &[Attr<'_>], rels: &RelMap, part: &str) -> Result<Option<WorksheetMeta>> {
     let name = find(attrs, "name")
         .ok_or_else(|| XlsxError::malformed(part, "<sheet> without a name"))?
         .to_owned();
@@ -103,41 +104,6 @@ fn state_of(value: &str) -> SheetState {
         "veryHidden" => SheetState::VeryHidden,
         _ => SheetState::Visible,
     }
-}
-
-/// `xsd:boolean`: истина — `1` или `true`.
-fn is_true(value: &str) -> bool {
-    matches!(value, "1" | "true")
-}
-
-/// Атрибуты элемента: имена без префикса (`r:id` → `id`), значения развёрнуты
-/// из XML-сущностей.
-fn attributes(element: &BytesStart<'_>, part: &str) -> Result<Vec<(String, String)>> {
-    let mut attrs = Vec::new();
-    for attr in element.attributes() {
-        let attr = attr.map_err(|e| XlsxError::malformed(part, format!("bad attribute: {e}")))?;
-        let value = attr
-            .unescape_value()
-            .map_err(|e| XlsxError::malformed(part, format!("bad attribute value: {e}")))?;
-        let key = attr.key.as_ref();
-        let name = key
-            .iter()
-            .position(|&b| b == b':')
-            .map_or(key, |colon| &key[colon + 1..]);
-        attrs.push((
-            String::from_utf8_lossy(name).into_owned(),
-            value.into_owned(),
-        ));
-    }
-    Ok(attrs)
-}
-
-/// Значение атрибута по локальному имени.
-fn find<'a>(attrs: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    attrs
-        .iter()
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value.as_str())
 }
 
 #[cfg(test)]

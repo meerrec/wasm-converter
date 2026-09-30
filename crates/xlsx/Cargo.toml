@@ -12,6 +12,7 @@ serde                = { workspace = true }
 quick-xml            = { workspace = true }
 thiserror            = { workspace = true }
 miette               = { workspace = true }
+smallvec             = { workspace = true }
 
 [dev-dependencies]
 # Сквозные тесты собирают пакет в памяти, как это делает настоящий Excel.

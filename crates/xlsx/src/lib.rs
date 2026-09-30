@@ -8,6 +8,10 @@ pub mod error;
 pub mod model;
 pub mod strings;
 pub mod workbook;
+pub mod worksheet;
+
+/// Помощники чтения XML — деталь реализации, наружу не выходят.
+mod xml;
 
 pub use error::{Result, XlsxError};
 pub use model::{

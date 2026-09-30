@@ -27,80 +27,23 @@ impl SharedStrings {
     /// # Errors
     ///
     /// [`XlsxError::Core`] — XML не разбирается; [`XlsxError::Malformed`] —
-    /// структура нарушает ECMA-376 (вложенные `<si>`).
+    /// файл оборвался внутри `<si>`.
     pub fn parse(bytes: &[u8], part: impl Into<String>) -> Result<Self> {
         let part = part.into();
         let mut reader = XmlReader::preserving(bytes, part.clone());
         let mut items = Vec::new();
-        // `Some` — мы внутри `<si>` и копим его текст.
-        let mut current: Option<String> = None;
-        let mut in_text = false;
-        let mut in_phonetic = false;
 
         while let Some(event) = reader.next_significant()? {
             match event {
-                Event::Start(start) => match start.local_name().as_ref() {
-                    b"si" => {
-                        if current.is_some() {
-                            return Err(XlsxError::malformed(&part, "nested <si> elements"));
-                        }
-                        current = Some(String::new());
-                    }
-                    b"rPh" => in_phonetic = true,
-                    b"t" if current.is_some() && !in_phonetic => in_text = true,
-                    _ => {}
-                },
-                // Пустой элемент: `<si/>` — это пустая строка, тоже занимающая
-                // индекс. `<t/>` и `<rPh/>` не добавляют ничего.
-                Event::Empty(empty) => {
-                    if empty.local_name().as_ref() == b"si" {
-                        if current.is_some() {
-                            return Err(XlsxError::malformed(&part, "nested <si> elements"));
-                        }
-                        items.push(String::new());
-                    }
+                // `<si/>` — пустая строка, но индекс она занимает.
+                Event::Start(start) if start.local_name().as_ref() == b"si" => {
+                    items.push(read_item_text(&mut reader, &part, "si")?);
                 }
-                Event::Text(text) if in_text => {
-                    if let Some(item) = current.as_mut() {
-                        let decoded = text
-                            .unescape()
-                            .map_err(|e| XlsxError::malformed(&part, format!("bad text: {e}")))?;
-                        item.push_str(&decoded);
-                    }
+                Event::Empty(empty) if empty.local_name().as_ref() == b"si" => {
+                    items.push(String::new());
                 }
-                Event::CData(data) if in_text => {
-                    if let Some(item) = current.as_mut() {
-                        // В CDATA подстановки не действуют: содержимое и так
-                        // буквальное, разворачивать нечего.
-                        let raw = data.into_inner();
-                        let decoded = std::str::from_utf8(&raw)
-                            .map_err(|e| XlsxError::malformed(&part, format!("bad CDATA: {e}")))?;
-                        item.push_str(decoded);
-                    }
-                }
-                Event::End(end) => match end.local_name().as_ref() {
-                    b"t" => in_text = false,
-                    b"rPh" => in_phonetic = false,
-                    b"si" => {
-                        in_text = false;
-                        in_phonetic = false;
-                        if let Some(item) = current.take() {
-                            items.push(item);
-                        }
-                    }
-                    _ => {}
-                },
                 _ => {}
             }
-        }
-
-        // Файл оборвался внутри `<si>`: молча потерять строку нельзя — индексы
-        // сдвинулись бы и ячейки показали бы чужие значения.
-        if current.is_some() {
-            return Err(XlsxError::malformed(
-                &part,
-                "unexpected end of file inside <si>",
-            ));
         }
 
         Ok(Self { items })
@@ -128,6 +71,68 @@ impl SharedStrings {
     pub fn iter(&self) -> impl Iterator<Item = &str> {
         self.items.iter().map(String::as_str)
     }
+}
+
+/// Дочитать текст элемента `<si>` или `<is>` до парного закрывающего тега.
+///
+/// Вызывается, когда читатель стоит сразу за открывающим тегом `<si>`/`<is>`.
+/// Текст всех `<t>` склеивается в одну строку, фонетические подсказки (`<rPh>`)
+/// пропускаются: это не содержимое ячейки. Общая для `sharedStrings.xml` и для
+/// `inlineStr` внутри листа — структура у них одна и та же.
+///
+/// # Errors
+///
+/// [`XlsxError::Core`] — XML не разбирается; [`XlsxError::Malformed`] — файл
+/// оборвался внутри элемента.
+pub(crate) fn read_item_text(reader: &mut XmlReader<'_>, part: &str, tag: &str) -> Result<String> {
+    let mut text = String::new();
+    // Глубина вложенности внутри элемента: на нуле закрывающий тег наш.
+    let mut depth = 0usize;
+    let mut in_text = false;
+    let mut in_phonetic = false;
+
+    while let Some(event) = reader.next_significant()? {
+        match event {
+            Event::Start(start) => {
+                match start.local_name().as_ref() {
+                    b"rPh" => in_phonetic = true,
+                    b"t" if !in_phonetic => in_text = true,
+                    _ => {}
+                }
+                depth += 1;
+            }
+            Event::Text(chunk) if in_text => {
+                let decoded = chunk
+                    .unescape()
+                    .map_err(|e| XlsxError::malformed(part, format!("bad text: {e}")))?;
+                text.push_str(&decoded);
+            }
+            Event::CData(chunk) if in_text => {
+                // В CDATA подстановки не действуют: содержимое и так буквальное.
+                let raw = chunk.into_inner();
+                let decoded = std::str::from_utf8(&raw)
+                    .map_err(|e| XlsxError::malformed(part, format!("bad CDATA: {e}")))?;
+                text.push_str(decoded);
+            }
+            Event::End(end) => {
+                if depth == 0 {
+                    return Ok(text);
+                }
+                depth -= 1;
+                match end.local_name().as_ref() {
+                    b"t" => in_text = false,
+                    b"rPh" => in_phonetic = false,
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Err(XlsxError::malformed(
+        part,
+        format!("unexpected end of file inside <{tag}>"),
+    ))
 }
 
 #[cfg(test)]
@@ -243,11 +248,13 @@ mod tests {
     }
 
     #[test]
-    fn nested_si_is_malformed() {
-        let err =
-            SharedStrings::parse(b"<sst><si><si/></si></sst>", "xl/sharedStrings.xml").unwrap_err();
+    fn nested_items_are_read_as_one_string() {
+        // Схема вложенных `<si>` не допускает; если такие всё же встретятся,
+        // текст склеивается, а не теряется.
+        let table = parse("<sst><si><t>a</t><si><t>b</t></si></si></sst>");
 
-        assert!(matches!(err, XlsxError::Malformed { .. }));
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.get(0), Some("ab"));
     }
 }
 
