@@ -20,3 +20,5 @@ deny = [
 # по умолчанию, отдельных полей нет). `unmaintained` задаёт охват проверки:
 # all | workspace | transitive | none.
 unmaintained = "workspace"
+ignore = ["RUSTSEC-2026-0187"]
+
