@@ -6,6 +6,7 @@
 //! строки не занимают памяти вовсе, а ячейки внутри строки отсортированы по
 //! столбцу, поэтому поиск идёт двоичным поиском.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::cellref::{CellRef, MAX_COL, MAX_ROW};
@@ -30,6 +31,22 @@ pub enum CellValue {
     SharedString(u32),
     /// Строка записана прямо в ячейке (`t="str"`, `t="inlineStr"`).
     InlineString(String),
+}
+
+impl CellValue {
+    /// Текст ячейки, если он у неё есть: строка из общей таблицы или записанная
+    /// прямо в ячейке. У кода ошибки текстом служит он сам — так его и
+    /// показывает Excel. У чисел и логических значений текста нет: их вид
+    /// задаёт формат.
+    #[must_use]
+    pub fn text<'a>(&'a self, strings: &'a SharedStrings) -> Option<&'a str> {
+        match self {
+            Self::SharedString(index) => strings.get(*index),
+            Self::InlineString(text) => Some(text),
+            Self::Error(error) => Some(error.as_str()),
+            Self::Empty | Self::Number(_) | Self::Bool(_) => None,
+        }
+    }
 }
 
 /// Ошибка вычисления, записанная в ячейке (`ST_Error`).
@@ -127,11 +144,12 @@ impl Cell {
     }
 }
 
-/// Лист книги.
+/// Ячейки листа в CSR-раскладке.
+///
+/// Имени и видимости тут нет: это свойства книги, они лежат в
+/// [`WorksheetMeta`], а вместе их сводит [`Sheet`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Worksheet {
-    /// Имя листа из `workbook.xml`.
-    name: String,
     /// Начало каждой строки в `cells`; длина совпадает с `row_ids`.
     row_starts: Vec<u32>,
     /// Номера непустых строк по возрастанию.
@@ -141,12 +159,6 @@ pub struct Worksheet {
 }
 
 impl Worksheet {
-    /// Имя листа.
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
     /// Число ячеек на листе.
     #[must_use]
     pub fn cell_count(&self) -> usize {
@@ -209,17 +221,12 @@ pub struct WorksheetBuilder {
 }
 
 impl WorksheetBuilder {
-    /// Начать лист `name` из части пакета `part`.
+    /// Начать лист из части пакета `part`; она нужна только для текстов ошибок.
     #[must_use]
-    pub fn new(part: impl Into<String>, name: impl Into<String>) -> Self {
+    pub fn new(part: impl Into<String>) -> Self {
         Self {
             part: part.into(),
-            worksheet: Worksheet {
-                name: name.into(),
-                row_starts: Vec::new(),
-                row_ids: Vec::new(),
-                cells: Vec::new(),
-            },
+            worksheet: Worksheet::default(),
             current_row: None,
             last_col: None,
         }
@@ -322,20 +329,234 @@ pub enum SheetState {
     VeryHidden,
 }
 
-/// Таблица форматов ячеек — `cellXfs` из `styles.xml`.
+/// Цвет в том виде, в каком он записан в файле.
 ///
-/// Ячейка хранит только индекс формата; индекс 0 — формат по умолчанию,
-/// как и в OOXML.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// Разрешение `theme` и `indexed` в конкретный RGB требует палитры темы
+/// (`xl/theme/theme1.xml`) и устаревшей палитры — это дело рендера (Фаза 5),
+/// поэтому здесь цвет хранится как есть, без потери информации.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Color {
+    /// Цвет не задан — действует унаследованный.
+    #[default]
+    None,
+    /// `rgb="AARRGGBB"`.
+    Rgb(u32),
+    /// `theme="n"` — индекс в палитре темы.
+    Theme(u32),
+    /// `indexed="n"` — индекс в устаревшей палитре.
+    Indexed(u32),
+}
+
+/// Гарнитура и начертание (`<font>` из `styles.xml`).
+///
+/// Четыре независимых флага — это ровно то, что записано в файле: здесь булев
+/// набор не состояние объекта, а данные.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct Font {
+    /// Имя шрифта (`<name val="Calibri"/>`).
+    pub name: String,
+    /// Кегль в пунктах (`<sz val="11"/>`).
+    pub size: f32,
+    /// Полужирный.
+    pub bold: bool,
+    /// Курсив.
+    pub italic: bool,
+    /// Подчёркивание; `<u val="none"/>` его выключает.
+    pub underline: bool,
+    /// Зачёркивание.
+    pub strike: bool,
+    /// Цвет текста.
+    pub color: Color,
+}
+
+impl Default for Font {
+    /// Кегль по умолчанию — 11 pt: столько ставит Excel, когда `<sz/>` нет.
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            size: 11.0,
+            bold: false,
+            italic: false,
+            underline: false,
+            strike: false,
+            color: Color::None,
+        }
+    }
+}
+
+/// Узор заливки (`ST_PatternType`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FillPattern {
+    /// Заливки нет.
+    #[default]
+    None,
+    /// Сплошная заливка цветом узора.
+    Solid,
+    /// Серые узоры.
+    Gray125,
+    Gray0625,
+    LightGray,
+    MediumGray,
+    DarkGray,
+    /// Штриховки и сетки.
+    LightHorizontal,
+    LightVertical,
+    LightDown,
+    LightUp,
+    LightGrid,
+    LightTrellis,
+    DarkHorizontal,
+    DarkVertical,
+    DarkDown,
+    DarkUp,
+    DarkGrid,
+    DarkTrellis,
+}
+
+impl FillPattern {
+    /// Узор по значению `patternType`; незнакомый считается отсутствием заливки.
+    #[must_use]
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "solid" => Self::Solid,
+            "gray125" => Self::Gray125,
+            "gray0625" => Self::Gray0625,
+            "lightGray" => Self::LightGray,
+            "mediumGray" => Self::MediumGray,
+            "darkGray" => Self::DarkGray,
+            "lightHorizontal" => Self::LightHorizontal,
+            "lightVertical" => Self::LightVertical,
+            "lightDown" => Self::LightDown,
+            "lightUp" => Self::LightUp,
+            "lightGrid" => Self::LightGrid,
+            "lightTrellis" => Self::LightTrellis,
+            "darkHorizontal" => Self::DarkHorizontal,
+            "darkVertical" => Self::DarkVertical,
+            "darkDown" => Self::DarkDown,
+            "darkUp" => Self::DarkUp,
+            "darkGrid" => Self::DarkGrid,
+            "darkTrellis" => Self::DarkTrellis,
+            _ => Self::None,
+        }
+    }
+}
+
+/// Заливка (`<fill>`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Fill {
+    /// Узор.
+    pub pattern: FillPattern,
+    /// Цвет узора (`fgColor`); у сплошной заливки это и есть цвет ячейки.
+    pub foreground: Color,
+    /// Цвет фона (`bgColor`).
+    pub background: Color,
+}
+
+/// Стиль линии рамки (`ST_BorderStyle`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BorderStyle {
+    /// Линии нет.
+    #[default]
+    None,
+    Thin,
+    Medium,
+    Dashed,
+    Dotted,
+    Thick,
+    Double,
+    Hair,
+    MediumDashed,
+    DashDot,
+    MediumDashDot,
+    DashDotDot,
+    MediumDashDotDot,
+    SlantDashDot,
+}
+
+impl BorderStyle {
+    /// Стиль по значению `style`; незнакомый считается отсутствием линии.
+    #[must_use]
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "thin" => Self::Thin,
+            "medium" => Self::Medium,
+            "dashed" => Self::Dashed,
+            "dotted" => Self::Dotted,
+            "thick" => Self::Thick,
+            "double" => Self::Double,
+            "hair" => Self::Hair,
+            "mediumDashed" => Self::MediumDashed,
+            "dashDot" => Self::DashDot,
+            "mediumDashDot" => Self::MediumDashDot,
+            "dashDotDot" => Self::DashDotDot,
+            "mediumDashDotDot" => Self::MediumDashDotDot,
+            "slantDashDot" => Self::SlantDashDot,
+            _ => Self::None,
+        }
+    }
+}
+
+/// Одна сторона рамки.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BorderSide {
+    /// Стиль линии.
+    pub style: BorderStyle,
+    /// Цвет линии.
+    pub color: Color,
+}
+
+/// Рамка ячейки (`<border>`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Border {
+    /// Левая сторона.
+    pub left: BorderSide,
+    /// Правая сторона.
+    pub right: BorderSide,
+    /// Верхняя сторона.
+    pub top: BorderSide,
+    /// Нижняя сторона.
+    pub bottom: BorderSide,
+    /// Диагональ.
+    pub diagonal: BorderSide,
+    /// Диагональ идёт снизу вверх (`diagonalUp`).
+    pub diagonal_up: bool,
+    /// Диагональ идёт сверху вниз (`diagonalDown`).
+    pub diagonal_down: bool,
+}
+
+/// Таблица стилей — `styles.xml`.
+///
+/// Ячейка хранит только индекс формата; индекс 0 — формат по умолчанию, как и
+/// в OOXML. Формат ссылается на записи таблиц шрифтов, заливок и рамок.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct StyleTable {
     formats: Vec<CellFormat>,
+    fonts: Vec<Font>,
+    fills: Vec<Fill>,
+    borders: Vec<Border>,
+    /// Пользовательские форматы чисел: `numFmtId` → код формата.
+    number_formats: BTreeMap<u32, String>,
 }
 
 impl StyleTable {
-    /// Собрать таблицу из записей `cellXfs` по порядку.
+    /// Собрать таблицу из разобранных частей `styles.xml` в порядке:
+    /// форматы, шрифты, заливки, рамки, пользовательские форматы чисел.
     #[must_use]
-    pub fn new(formats: Vec<CellFormat>) -> Self {
-        Self { formats }
+    pub fn new(
+        formats: Vec<CellFormat>,
+        fonts: Vec<Font>,
+        fills: Vec<Fill>,
+        borders: Vec<Border>,
+        number_formats: BTreeMap<u32, String>,
+    ) -> Self {
+        Self {
+            formats,
+            fonts,
+            fills,
+            borders,
+            number_formats,
+        }
     }
 
     /// Число разобранных форматов.
@@ -367,6 +588,53 @@ impl StyleTable {
             .copied()
             .unwrap_or_default()
     }
+
+    /// Шрифт по индексу из [`CellFormat::font`].
+    #[must_use]
+    pub fn font(&self, index: u32) -> Option<&Font> {
+        self.fonts.get(index as usize)
+    }
+
+    /// Заливка по индексу из [`CellFormat::fill`].
+    #[must_use]
+    pub fn fill(&self, index: u32) -> Option<&Fill> {
+        self.fills.get(index as usize)
+    }
+
+    /// Рамка по индексу из [`CellFormat::border`].
+    #[must_use]
+    pub fn border(&self, index: u32) -> Option<&Border> {
+        self.borders.get(index as usize)
+    }
+
+    /// Код пользовательского формата числа. Встроенные коды (`numFmtId < 164`)
+    /// тут не хранятся — их знает `numfmt` (шаг 8).
+    #[must_use]
+    pub fn number_format(&self, id: u32) -> Option<&str> {
+        self.number_formats.get(&id).map(String::as_str)
+    }
+
+    /// Все шрифты в порядке индексов.
+    pub fn fonts(&self) -> impl Iterator<Item = &Font> {
+        self.fonts.iter()
+    }
+
+    /// Все заливки в порядке индексов.
+    pub fn fills(&self) -> impl Iterator<Item = &Fill> {
+        self.fills.iter()
+    }
+
+    /// Все рамки в порядке индексов.
+    pub fn borders(&self) -> impl Iterator<Item = &Border> {
+        self.borders.iter()
+    }
+
+    /// Все пользовательские форматы чисел.
+    pub fn number_formats(&self) -> impl Iterator<Item = (u32, &str)> {
+        self.number_formats
+            .iter()
+            .map(|(&id, code)| (id, code.as_str()))
+    }
 }
 
 /// Формат ячейки: ссылки на записи соответствующих таблиц `styles.xml`.
@@ -382,20 +650,29 @@ pub struct CellFormat {
     pub num_fmt: u32,
 }
 
+/// Лист книги: метаданные из каталога и разобранное содержимое.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sheet {
+    /// Имя, видимость и часть пакета.
+    pub meta: WorksheetMeta,
+    /// Ячейки листа.
+    pub data: Worksheet,
+}
+
 /// Книга: листы и общие для них таблицы.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Workbook {
-    sheets: Vec<WorksheetMeta>,
+    sheets: Vec<Sheet>,
     shared_strings: SharedStrings,
     styles: StyleTable,
     date1904: bool,
 }
 
 impl Workbook {
-    /// Собрать книгу из каталога листов и общих таблиц.
+    /// Собрать книгу из листов и общих таблиц.
     #[must_use]
     pub fn new(
-        sheets: Vec<WorksheetMeta>,
+        sheets: Vec<Sheet>,
         shared_strings: SharedStrings,
         styles: StyleTable,
         date1904: bool,
@@ -408,9 +685,9 @@ impl Workbook {
         }
     }
 
-    /// Метаданные листов в порядке из `workbook.xml`.
+    /// Листы в порядке из `workbook.xml`.
     #[must_use]
-    pub fn sheets(&self) -> &[WorksheetMeta] {
+    pub fn sheets(&self) -> &[Sheet] {
         &self.sheets
     }
 
@@ -420,10 +697,10 @@ impl Workbook {
         self.sheets.len()
     }
 
-    /// Метаданные листа по имени.
+    /// Лист по имени.
     #[must_use]
-    pub fn sheet(&self, name: &str) -> Option<&WorksheetMeta> {
-        self.sheets.iter().find(|sheet| sheet.name == name)
+    pub fn sheet(&self, name: &str) -> Option<&Sheet> {
+        self.sheets.iter().find(|sheet| sheet.meta.name == name)
     }
 
     /// Таблица форматов ячеек.
@@ -453,6 +730,15 @@ mod tests {
         Cell::new(col, 0, CellValue::Number(value))
     }
 
+    fn bold_arial() -> Font {
+        Font {
+            name: "Arial".into(),
+            size: 12.0,
+            bold: true,
+            ..Font::default()
+        }
+    }
+
     #[test]
     fn empty_worksheet_has_nothing() {
         let ws = Worksheet::default();
@@ -467,13 +753,12 @@ mod tests {
 
     #[test]
     fn empty_rows_cost_nothing() {
-        let mut b = WorksheetBuilder::new("sheet1.xml", "Sheet1");
+        let mut b = WorksheetBuilder::new("sheet1.xml");
         b.push(0, number(0, 1.0)).unwrap();
         b.push(5, number(2, 2.0)).unwrap();
         b.push(5, number(3, 3.0)).unwrap();
         let ws = b.finish();
 
-        assert_eq!(ws.name(), "Sheet1");
         assert_eq!(ws.cell_count(), 3);
         assert_eq!(ws.row_count(), 2);
         assert_eq!(ws.last_row(), Some(5));
@@ -487,7 +772,7 @@ mod tests {
 
     #[test]
     fn lookup_by_address() {
-        let mut b = WorksheetBuilder::new("sheet1.xml", "Sheet1");
+        let mut b = WorksheetBuilder::new("sheet1.xml");
         for (row, col) in [(0, 0), (0, 3), (2, 1), (7, 9)] {
             b.push(row, number(col, f64::from(col))).unwrap();
         }
@@ -502,7 +787,7 @@ mod tests {
 
     #[test]
     fn rows_walk_in_order() {
-        let mut b = WorksheetBuilder::new("sheet1.xml", "Sheet1");
+        let mut b = WorksheetBuilder::new("sheet1.xml");
         b.push(2, number(0, 1.0)).unwrap();
         b.push(9, number(1, 2.0)).unwrap();
         let ws = b.finish();
@@ -513,7 +798,7 @@ mod tests {
 
     #[test]
     fn builder_rejects_wrong_order() {
-        let mut b = WorksheetBuilder::new("sheet1.xml", "Sheet1");
+        let mut b = WorksheetBuilder::new("sheet1.xml");
         b.push(3, number(1, 1.0)).unwrap();
         b.push(3, number(2, 2.0)).unwrap();
 
@@ -530,7 +815,7 @@ mod tests {
 
     #[test]
     fn builder_rejects_out_of_range() {
-        let mut b = WorksheetBuilder::new("sheet1.xml", "Sheet1");
+        let mut b = WorksheetBuilder::new("sheet1.xml");
 
         let bad_row = b.push(MAX_ROW + 1, number(0, 1.0)).unwrap_err();
         assert!(bad_row.to_string().contains("1048576 limit"));
@@ -568,15 +853,21 @@ mod tests {
 
     #[test]
     fn style_table_resolves_and_falls_back() {
-        let table = StyleTable::new(vec![
-            CellFormat::default(),
-            CellFormat {
-                font: 1,
-                fill: 2,
-                border: 3,
-                num_fmt: 14,
-            },
-        ]);
+        let table = StyleTable::new(
+            vec![
+                CellFormat::default(),
+                CellFormat {
+                    font: 1,
+                    fill: 2,
+                    border: 3,
+                    num_fmt: 14,
+                },
+            ],
+            vec![Font::default(), bold_arial()],
+            vec![Fill::default()],
+            vec![Border::default()],
+            BTreeMap::from([(164, "0.00%".to_owned())]),
+        );
 
         assert_eq!(table.len(), 2);
         assert!(!table.is_empty());
@@ -585,22 +876,39 @@ mod tests {
         // Битая ссылка не роняет разбор: отдаём формат по умолчанию.
         assert_eq!(table.resolve(99), CellFormat::default());
         assert_eq!(table.get(99), None);
+
+        assert_eq!(table.font(1).unwrap(), &bold_arial());
+        assert_eq!(table.font(2), None);
+        assert_eq!(table.fill(0).unwrap().pattern, FillPattern::None);
+        assert_eq!(table.fill(1), None);
+        assert_eq!(table.border(0), Some(&Border::default()));
+        assert_eq!(table.number_format(164), Some("0.00%"));
+        assert_eq!(table.number_format(0), None);
+        assert_eq!(table.fonts().count(), 2);
+        assert_eq!(table.number_formats().count(), 1);
         assert!(StyleTable::default().is_empty());
     }
 
     #[test]
     fn workbook_finds_sheet_by_name() {
+        let meta = |name: &str, part: &str, state: SheetState| WorksheetMeta {
+            name: name.into(),
+            part: part.into(),
+            state,
+        };
         let wb = Workbook::new(
             vec![
-                WorksheetMeta {
-                    name: "Данные".into(),
-                    part: "xl/worksheets/sheet1.xml".into(),
-                    state: SheetState::Visible,
+                Sheet {
+                    meta: meta("Данные", "xl/worksheets/sheet1.xml", SheetState::Visible),
+                    data: Worksheet::default(),
                 },
-                WorksheetMeta {
-                    name: "Скрытый".into(),
-                    part: "xl/worksheets/sheet2.xml".into(),
-                    state: SheetState::VeryHidden,
+                Sheet {
+                    meta: meta(
+                        "Скрытый",
+                        "xl/worksheets/sheet2.xml",
+                        SheetState::VeryHidden,
+                    ),
+                    data: Worksheet::default(),
                 },
             ],
             SharedStrings::default(),
@@ -611,12 +919,39 @@ mod tests {
         assert_eq!(wb.sheet_count(), 2);
         assert!(wb.date1904());
         assert!(wb.shared_strings().is_empty());
-        assert_eq!(wb.sheet("Данные").unwrap().part, "xl/worksheets/sheet1.xml");
-        assert_eq!(wb.sheet("Скрытый").unwrap().state, SheetState::VeryHidden);
+        assert_eq!(
+            wb.sheet("Данные").unwrap().meta.part,
+            "xl/worksheets/sheet1.xml"
+        );
+        assert_eq!(
+            wb.sheet("Скрытый").unwrap().meta.state,
+            SheetState::VeryHidden
+        );
         assert_eq!(wb.sheet("нет такого"), None);
         assert_eq!(wb.sheets().len(), 2);
         assert!(wb.styles().is_empty());
         assert_eq!(SheetState::default(), SheetState::Visible);
+    }
+
+    #[test]
+    fn cell_text_resolves_shared_strings() {
+        let xml = "<sst><si><t>Привет</t></si></sst>";
+        let strings = SharedStrings::parse(xml.as_bytes(), "xl/sharedStrings.xml").unwrap();
+
+        assert_eq!(CellValue::SharedString(0).text(&strings), Some("Привет"));
+        // Индекс за пределами таблицы текста не даёт.
+        assert_eq!(CellValue::SharedString(7).text(&strings), None);
+        assert_eq!(
+            CellValue::InlineString("строка".into()).text(&strings),
+            Some("строка")
+        );
+        // Код ошибки показывается как есть — так его рисует и Excel.
+        assert_eq!(
+            CellValue::Error(CellError::Div0).text(&strings),
+            Some("#DIV/0!")
+        );
+        assert_eq!(CellValue::Number(1.0).text(&strings), None);
+        assert_eq!(CellValue::Empty.text(&strings), None);
     }
 }
 
@@ -631,7 +966,7 @@ mod proptests {
         fn builder_matches_address_set(
             addresses in proptest::collection::btree_set((0u32..40, 0u32..12), 0..60),
         ) {
-            let mut builder = WorksheetBuilder::new("sheet1.xml", "Sheet1");
+            let mut builder = WorksheetBuilder::new("sheet1.xml");
             for &(row, col) in &addresses {
                 builder.push(row, Cell::new(col, 0, CellValue::Number(f64::from(col)))).unwrap();
             }

@@ -94,8 +94,8 @@ impl CellState {
 /// ячейки не разбирается или выходит за лимиты Excel; [`XlsxError::Malformed`] —
 /// структура нарушает ECMA-376: ячейка вне строки, адрес ячейки противоречит
 /// объемлющей строке, номер строки вне `1..=1048576`, файл оборван внутри `<c>`.
-pub fn parse(bytes: &[u8], part: impl Into<String>, name: &str) -> Result<Worksheet> {
-    let mut parser = SheetParser::new(part.into(), name);
+pub fn parse(bytes: &[u8], part: impl Into<String>) -> Result<Worksheet> {
+    let mut parser = SheetParser::new(part.into());
     // Пробелы значимы: внутри `<is>` лежит текст ячейки.
     let mut reader = XmlReader::preserving(bytes, parser.part.clone());
 
@@ -128,9 +128,9 @@ struct SheetParser {
 }
 
 impl SheetParser {
-    fn new(part: String, name: &str) -> Self {
+    fn new(part: String) -> Self {
         Self {
-            builder: WorksheetBuilder::new(part.clone(), name),
+            builder: WorksheetBuilder::new(part.clone()),
             part,
             in_sheet_data: false,
             row: None,
@@ -387,17 +387,17 @@ mod tests {
             r#"<?xml version="1.0" encoding="UTF-8"?>
                <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">{body}</worksheet>"#
         );
-        parse(xml.as_bytes(), PART, "Лист1").unwrap()
+        parse(xml.as_bytes(), PART).unwrap()
     }
 
     fn fails(body: &str) -> XlsxError {
         let xml = format!(r"<worksheet>{body}</worksheet>");
-        parse(xml.as_bytes(), PART, "Лист1").unwrap_err()
+        parse(xml.as_bytes(), PART).unwrap_err()
     }
 
     /// Разбор заведомо обрезанного документа: закрывающие теги не достраиваются.
     fn fails_raw(xml: &str) -> XlsxError {
-        parse(xml.as_bytes(), PART, "Лист1").unwrap_err()
+        parse(xml.as_bytes(), PART).unwrap_err()
     }
 
     fn value(sheet: &Worksheet, row: u32, col: u32) -> CellValue {
@@ -413,7 +413,6 @@ mod tests {
                </sheetData>"#,
         );
 
-        assert_eq!(ws.name(), "Лист1");
         assert_eq!(ws.cell_count(), 3);
         assert_eq!(ws.row_count(), 2);
         assert_eq!(ws.last_row(), Some(2));
