@@ -160,17 +160,17 @@ Cross-Origin-Embedder-Policy: require-corp
 |---|---|---|
 | `wasm-bindgen` | 0.2 | WASM-биндинги |
 | `js-sys`, `web-sys` | 0.3 | JS/DOM API |
-| `quick-xml` | 0.36 | Streaming XML |
+| `quick-xml` | 0.41 | Streaming XML |
 | `zip` | 2.x | Распаковка OOXML |
 | `serde`, `serde_json` | 1 | Сериализация |
-| `thiserror`, `miette` | — | Ошибки |
+| `thiserror`, `miette` | 2 / 7 | Ошибки |
 | `chrono` | 0.4 | Даты |
-| `printpdf` | 0.7 | Генерация PDF |
-| `ttf-parser` | 0.24 | Метрики глифов |
-| `rustybuzz` | 0.18 | Shaping, kerning |
+| `printpdf` | 0.8 | Генерация PDF |
+| `rustybuzz` | 0.20 | Shaping, kerning |
 | `unicode-linebreak` | 0.1 | Точки переноса |
 | `unicode-bidi` | 0.3 | RTL |
 | `image` | 0.25 | Растровые изображения |
+| `bytemuck` | 1 | Разбор байтов DisplayList |
 | `flate2` | 1 | Сжатие |
 | `smallvec`, `lru` | — | Оптимизации |
 | `tracing`, `tracing-wasm` | — | Логи |
@@ -178,6 +178,16 @@ Cross-Origin-Embedder-Policy: require-corp
 | `wasm-bindgen-test` | 0.3 | WASM-тесты |
 
 `#![forbid(unsafe_code)]` во всех крейтах, кроме `wasm`.
+
+**Отклонения от первоначального плана:**
+
+- `quick-xml` 0.36 → 0.41: в 0.36 две уязвимости отказа в обслуживании
+  (RUSTSEC-2026-0194, -0195) — срабатывают на файле, который пользователь просто
+  открыл, а это и есть модель угроз просмотрщика чужих документов.
+- `ttf-parser` снят: в коде не использовался, а с 2026 года помечен
+  `unmaintained` (RUSTSEC-2026-0192). Возвращать его (с исключением в аудите) или
+  брать рекомендованный `skrifa` — решение Фазы 4, см. `docs/adr/0002-font-parsing.md`.
+- `printpdf` 0.7 → 0.8: версия из манифеста, 0.7 в дереве не было.
 
 ### Frontend
 
@@ -213,7 +223,8 @@ Cross-Origin-Embedder-Policy: require-corp
 - Cell refs (`A1`, `$A$1`, `A1:B10`), merged cells, frozen panes.
 - Форматы чисел Excel (`numFmt`), serial dates.
 - Canvas 2D API: `fillRect`, `fillText`, `measureText`, `save/restore`, `clip`.
-- `ttf-parser`, `rustybuzz`, `unicode-bidi`, `unicode-linebreak`.
+- `rustybuzz`, `unicode-bidi`, `unicode-linebreak`; разбор шрифтов — `skrifa` или
+  `ttf-parser` (`docs/adr/0002-font-parsing.md`).
 - Conditional formatting rules.
 - Диаграммы: `c:barChart`, `c:lineChart`, etc.
 
@@ -239,6 +250,13 @@ Cross-Origin-Embedder-Policy: require-corp
 ---
 
 ## 6. Roadmap по спринтам
+
+> **Состояние на 30.09.2026.** Фаза 1 (workspace, CI, core-крейты) и Фаза 2
+> (RPC Main↔Worker, OffscreenCanvas, SAB ring) закрыты. В Спринте 3 сделаны
+> модель, `cellref`, `workbook`, `worksheet`, `sharedStrings` и `styles`;
+> остались `numfmt`, `dims`, `sheet_meta`, фикстуры и дифф-тест против SheetJS.
+> Отставание от плана не в коде, а в обвязке: `test-fixtures/` и `examples/`
+> пока пусты.
 
 ### Неделя 0: Подготовка
 

@@ -45,11 +45,15 @@ chrono               = { version = "0.4", default-features = false, features = [
 # default-фича `html` тянет azul-*/cssparser/selectors (MPL-2.0, не проходит
 # cargo-deny) и resvg/svg2pdf. XLSX→PDF в Фазе 4 этого не требует.
 printpdf             = { version = "0.8.2", default-features = false }
-ttf-parser           = "0.24"
-rustybuzz            = "0.18"
+# ttf-parser намеренно не объявлен: он unmaintained (RUSTSEC-2026-0192), и Фаза 4
+# выберет между ним и `skrifa` — docs/adr/0002-font-parsing.md.
+# 0.20, а не 0.18: столько приходит с printpdf, и своя запись должна совпадать,
+# иначе в дереве окажутся две версии rustybuzz.
+rustybuzz            = "0.20"
 unicode-linebreak    = "0.1"
 unicode-bidi         = "0.3"
 image                = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+bytemuck             = { version = "1", features = ["derive"] }
 flate2               = "1"
 smallvec             = { version = "1.13", features = ["union", "const_generics"] }
 lru                  = "0.12"
