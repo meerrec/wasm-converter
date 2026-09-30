@@ -14,10 +14,17 @@ impl<'a> XmlReader<'a> {
     pub fn new(bytes: &'a [u8], part: impl Into<String>) -> Self {
         let mut inner = Reader::from_reader(bytes);
         inner.config_mut().trim_text(true);
-        Self { inner, buf: Vec::new(), part: part.into() }
+        Self {
+            inner,
+            buf: Vec::new(),
+            part: part.into(),
+        }
     }
 
     /// Читает следующий значимый event, пропуская `Decl`/`Comment`/`PI`.
+    ///
+    /// # Errors
+    /// Если XML не разбирается.
     pub fn next_significant(&mut self) -> Result<Option<Event<'static>>> {
         loop {
             self.buf.clear();
@@ -30,7 +37,7 @@ impl<'a> XmlReader<'a> {
                     message: e.to_string(),
                 })?;
             match ev {
-                Event::Decl(_) | Event::Comment(_) | Event::PI(_) | Event::DocType(_) => continue,
+                Event::Decl(_) | Event::Comment(_) | Event::PI(_) | Event::DocType(_) => {}
                 Event::Eof => return Ok(None),
                 other => return Ok(Some(other.into_owned())),
             }

@@ -13,7 +13,6 @@ doc-converter-core   = { workspace = true }
 doc-converter-render = { workspace = true }
 doc-converter-docx   = { workspace = true }
 doc-converter-xlsx   = { workspace = true }
-doc-converter-pdf    = { workspace = true }
 
 wasm-bindgen             = { workspace = true }
 js-sys                   = { workspace = true }
@@ -22,10 +21,23 @@ serde                    = { workspace = true }
 serde_json               = { workspace = true }
 serde-wasm-bindgen       = "0.6"
 console_error_panic_hook = { workspace = true }
+tracing-wasm             = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
 
+# printpdf 0.7.0 не компилируется под wasm32: и `js_sys_date`, и
+# `unix_epoch_stub_date` из printpdf/src/date.rs не имеют метода `offset()`,
+# который безусловно вызывает printpdf/src/document_info.rs. Поэтому PDF-крейт
+# подключается только для native-целей — до фикса upstream (Фаза 4).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+doc-converter-pdf = { workspace = true }
+
 [features]
 default = []
 tracing = ["dep:tracing-wasm"]
+
+# Бандленный в wasm-pack wasm-opt не включает bulk-memory по умолчанию,
+# а rustc генерирует memory.copy/memory.fill — без флага валидация падает.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O4", "--enable-bulk-memory"]

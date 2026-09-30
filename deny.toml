@@ -5,17 +5,18 @@ targets = [
 ]
 
 [licenses]
-allow = ["Apache-2.0", "MIT", "BSD-3-Clause", "BSD-2-Clause", "ISC", "Unicode-DFS-2016", "Zlib"]
+allow = ["Apache-2.0", "MIT", "BSD-3-Clause", "BSD-2-Clause", "ISC", "Unicode-3.0", "Zlib"]
 confidence-threshold = 0.9
 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
 deny = [
-    { name = "openssl" },
+    { crate = "openssl" },
 ]
 
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "deny"
+# Уязвимости и yanked-версии отклоняются безусловно (в схеме v2 это поведение
+# по умолчанию, отдельных полей нет). `unmaintained` задаёт охват проверки:
+# all | workspace | transitive | none.
+unmaintained = "workspace"

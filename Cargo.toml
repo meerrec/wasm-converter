@@ -29,7 +29,7 @@ wasm-bindgen         = "0.2"
 js-sys               = "0.3"
 web-sys              = { version = "0.3", features = [
     "console", "Window", "WorkerGlobalScope",
-    "OffscreenCanvas", "OffscreenCanvasRenderingContext2D",
+    "OffscreenCanvas", "OffscreenCanvasRenderingContext2d",
     "ImageBitmap", "Performance", "DedicatedWorkerGlobalScope",
 ] }
 console_error_panic_hook = "0.1"

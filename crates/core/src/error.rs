@@ -7,7 +7,11 @@ pub enum Error {
     Zip(#[from] zip::result::ZipError),
 
     #[error("XML parse error in `{part}` at byte {position}: {message}")]
-    Xml { part: String, position: u64, message: String },
+    Xml {
+        part: String,
+        position: u64,
+        message: String,
+    },
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

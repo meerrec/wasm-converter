@@ -1,16 +1,37 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum PageSize { A4, A3, Letter, Legal, Custom { w_mm: f32, h_mm: f32 } }
+pub enum PageSize {
+    A4,
+    A3,
+    Letter,
+    Legal,
+    Custom { w_mm: f32, h_mm: f32 },
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum PageOrientation { Portrait, Landscape }
+pub enum PageOrientation {
+    Portrait,
+    Landscape,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct Margins { pub top_mm: f32, pub right_mm: f32, pub bottom_mm: f32, pub left_mm: f32 }
+pub struct Margins {
+    pub top_mm: f32,
+    pub right_mm: f32,
+    pub bottom_mm: f32,
+    pub left_mm: f32,
+}
 
 impl Default for Margins {
-    fn default() -> Self { Self { top_mm: 20.0, right_mm: 15.0, bottom_mm: 20.0, left_mm: 15.0 } }
+    fn default() -> Self {
+        Self {
+            top_mm: 20.0,
+            right_mm: 15.0,
+            bottom_mm: 20.0,
+            left_mm: 15.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

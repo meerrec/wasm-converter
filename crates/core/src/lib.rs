@@ -12,6 +12,7 @@ pub mod error;
 pub mod rels;
 pub mod xml;
 
+pub use archive::Archive;
 pub use error::{Error, Result};
 
 /// Версия OOXML (ECMA-376 5-е издание), которую поддерживает движок.

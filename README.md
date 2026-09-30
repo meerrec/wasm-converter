@@ -12,8 +12,9 @@ High-performance OOXML (DOCX/XLSX) viewer & PDF exporter — Rust/WASM + Offscre
 # Rust
 cargo test --workspace
 
-# TS
+# TS (сначала биндинги: их .d.ts нужны typecheck'у пакета core)
 pnpm install
+pnpm build:wasm
 pnpm turbo run typecheck test build
 ```
 

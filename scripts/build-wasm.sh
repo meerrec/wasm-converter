@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
 
 if ! command -v wasm-pack >/dev/null 2>&1; then
   echo "wasm-pack not found. Install: cargo install wasm-pack" >&2
   exit 1
 fi
 
+# --out-dir резолвится относительно каталога крейта, а не CWD, поэтому путь абсолютный.
 wasm-pack build crates/wasm \
   --target web \
-  --out-dir packages/wasm/pkg \
+  --out-dir "$ROOT/packages/wasm/pkg" \
   --out-name doc_converter_wasm \
   --release
 

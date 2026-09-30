@@ -20,6 +20,10 @@ pub struct RelMap {
 }
 
 impl RelMap {
+    /// Разбирает `_rels/*.rels`.
+    ///
+    /// # Errors
+    /// Если XML некорректен или `<Relationship/>` неполный.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let mut r = XmlReader::new(bytes, "_rels");
         let mut items = HashMap::new();
@@ -43,7 +47,15 @@ impl RelMap {
                     }
                     match (id, rel_type, target) {
                         (Some(id), Some(rel_type), Some(target)) => {
-                            items.insert(id.clone(), Relationship { id, rel_type, target, target_mode });
+                            items.insert(
+                                id.clone(),
+                                Relationship {
+                                    id,
+                                    rel_type,
+                                    target,
+                                    target_mode,
+                                },
+                            );
                         }
                         _ => return Err(Error::Malformed("incomplete <Relationship/>".into())),
                     }
@@ -53,7 +65,10 @@ impl RelMap {
         Ok(Self { items })
     }
 
-    pub fn get(&self, id: &str) -> Option<&Relationship> { self.items.get(id) }
+    #[must_use]
+    pub fn get(&self, id: &str) -> Option<&Relationship> {
+        self.items.get(id)
+    }
 }
 
 #[cfg(test)]

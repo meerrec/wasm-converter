@@ -8,15 +8,26 @@ pub use options::*;
 
 use doc_converter_core::Result;
 
-pub struct PdfExporter { opts: PdfOptions }
+pub struct PdfExporter {
+    // TODO (Фаза 4): читать opts при реальном экспорте.
+    #[allow(dead_code)]
+    opts: PdfOptions,
+}
 
 impl PdfExporter {
-    pub fn new(opts: PdfOptions) -> Self { Self { opts } }
+    #[must_use]
+    pub fn new(opts: PdfOptions) -> Self {
+        Self { opts }
+    }
 
+    /// # Errors
+    /// TODO (Фаза 4): ошибки раскладки и записи PDF.
     pub fn export_docx(&mut self, _doc: &doc_converter_docx::Document) -> Result<Vec<u8>> {
         todo!("PDF export for DOCX (Фаза 4)")
     }
 
+    /// # Errors
+    /// TODO (Фаза 4): ошибки раскладки и записи PDF.
     pub fn export_xlsx_sheet(
         &mut self,
         _wb: &doc_converter_xlsx::Workbook,

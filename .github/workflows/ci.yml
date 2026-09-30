@@ -20,12 +20,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2024-12-01
+          toolchain: 1.98.0
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2
-        with: { shared-key: rust-${{ matrix.target }} }
+        with:
+          shared-key: rust-${{ matrix.target }}
 
       - name: fmt
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -43,8 +44,32 @@ jobs:
         if: matrix.target == 'wasm32-unknown-unknown'
         run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm --release
 
+  wasm:
+    name: Wasm bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-wasm-pack
+
+      - run: cargo install wasm-pack --locked
+      - run: bash scripts/build-wasm.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: packages/wasm/pkg
+
   js:
     name: JS (node ${{ matrix.node }})
+    needs: wasm
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -60,6 +85,13 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
 
+      # @doc-converter/core типизируется против сгенерированных wasm-bindgen
+      # деклараций, поэтому pkg/ приезжает артефактом из джобы wasm.
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: packages/wasm/pkg
+
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
       - run: pnpm turbo run typecheck test build
       - if: matrix.node == 20
@@ -71,7 +103,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
-        with: { toolchain: nightly-2024-12-01 }
+        with: { toolchain: 1.98.0 }
       - run: cargo install cargo-deny --locked && cargo deny check
       - uses: pnpm/action-setup@v4
         with: { version: 9 }

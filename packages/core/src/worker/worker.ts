@@ -50,9 +50,13 @@ ctxSelf.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         const { format: f, bytes } = msg.payload;
         format = f;
         doc = f === 'docx' ? open_docx(new Uint8Array(bytes)) : open_xlsx(new Uint8Array(bytes));
-        const meta = f === 'docx'
-          ? { pages: extractNumber(doc, 'pageCount') }
-          : { sheets: extractStringArray(doc, 'sheets') };
+        // Поля с undefined не кладём в meta: протокол объявляет их опциональными,
+        // а exactOptionalPropertyTypes запрещает явный undefined.
+        const meta: { pages?: number; sheets?: string[] } = {};
+        const pages = f === 'docx' ? extractNumber(doc, 'pageCount') : undefined;
+        const sheets = f === 'xlsx' ? extractStringArray(doc, 'sheets') : undefined;
+        if (pages !== undefined) meta.pages = pages;
+        if (sheets !== undefined) meta.sheets = sheets;
         const reply: WorkerResponse = { id: msg.id, type: 'ready', meta };
         ctxSelf.postMessage(reply);
         break;

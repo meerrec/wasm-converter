@@ -8,38 +8,64 @@ pub struct Archive {
 }
 
 impl Archive {
+    /// Открывает OOXML-пакет из байтов ZIP.
+    ///
+    /// # Errors
+    /// Если байты не являются корректным ZIP-архивом.
     pub fn new(bytes: Vec<u8>) -> Result<Self> {
         let inner = zip::ZipArchive::new(Cursor::new(bytes))?;
         Ok(Self { inner })
     }
 
-    pub fn len(&self) -> usize { self.inner.len() }
-    pub fn is_empty(&self) -> bool { self.inner.is_empty() }
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
 
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.inner.file_names()
     }
 
+    #[must_use]
     pub fn contains(&self, name: &str) -> bool {
         self.inner.file_names().any(|n| n == name)
     }
 
+    /// Читает part целиком.
+    ///
+    /// # Errors
+    /// Если part отсутствует или не читается из архива.
     pub fn read(&mut self, name: &str) -> Result<Vec<u8>> {
         let mut file = self
             .inner
             .by_name(name)
             .map_err(|_| Error::MissingPart(name.to_string()))?;
-        let mut buf = Vec::with_capacity(file.size() as usize);
+        // На 32-битных целях (wasm32) размер не всегда влезает в usize:
+        // тогда не резервируем заранее — `read_to_end` дорастит буфер сам.
+        let size = usize::try_from(file.size()).unwrap_or_default();
+        let mut buf = Vec::with_capacity(size);
         file.read_to_end(&mut buf)?;
         Ok(buf)
     }
 
+    /// Читает part как UTF-8 строку.
+    ///
+    /// # Errors
+    /// Если part отсутствует или содержит невалидный UTF-8.
     pub fn read_string(&mut self, name: &str) -> Result<String> {
         let bytes = self.read(name)?;
         String::from_utf8(bytes).map_err(|e| Error::Malformed(e.to_string()))
     }
 
-    /// Validate presence of `[Content_Types].xml` and `_rels/.rels`.
+    /// Проверяет наличие `[Content_Types].xml` и `_rels/.rels`.
+    ///
+    /// # Errors
+    /// Если обязательный part отсутствует в пакете.
     pub fn validate_ooxml(&self) -> Result<()> {
         if !self.contains(crate::CONTENT_TYPES) {
             return Err(Error::MissingPart(crate::CONTENT_TYPES.into()));
@@ -61,7 +87,8 @@ mod tests {
         {
             let mut w = zip::ZipWriter::new(Cursor::new(&mut buf));
             for (name, data) in entries {
-                w.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+                w.start_file(*name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
                 w.write_all(data).unwrap();
             }
             w.finish().unwrap();

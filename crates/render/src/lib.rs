@@ -1,5 +1,5 @@
 //! Общий `DisplayList` и painter — единый контракт между всеми форматами
-//! и всеми бэкендами (OffscreenCanvas в WASM, PDF в native).
+//! и всеми бэкендами (`OffscreenCanvas` в WASM, PDF в native).
 #![forbid(unsafe_code)]
 #![deny(clippy::pedantic)]
 
