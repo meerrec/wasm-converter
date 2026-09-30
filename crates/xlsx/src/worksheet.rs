@@ -16,7 +16,7 @@ use crate::cellref::{CellRef, MAX_ROW};
 use crate::error::{Result, XlsxError};
 use crate::model::{Cell, CellError, CellValue, Worksheet, WorksheetBuilder};
 use crate::strings::read_item_text;
-use crate::xml::{attributes, find, is_true, Attr};
+use crate::xml::{attributes, find, is_true, resolve_reference, Attr};
 
 /// Последняя допустимая строка в 1-based нумерации файла.
 const MAX_ROW_ONE_BASED: u32 = MAX_ROW + 1;
@@ -150,16 +150,22 @@ impl SheetParser {
             Event::Empty(element) => self.on_empty(&element),
             Event::Text(chunk) if self.in_value || self.in_formula => {
                 let decoded = chunk
-                    .unescape()
+                    .xml10_content()
                     .map_err(|e| XlsxError::malformed(&self.part, format!("bad text: {e}")))?;
                 self.text.push_str(&decoded);
                 Ok(())
             }
+            // Ссылки на сущности quick-xml отдаёт отдельным событием.
+            Event::GeneralRef(reference) if self.in_value || self.in_formula => {
+                let decoded = resolve_reference(&reference, &self.part)?;
+                self.text.push_str(&decoded);
+                Ok(())
+            }
             Event::CData(chunk) if self.in_value || self.in_formula => {
-                let raw = chunk.into_inner();
-                let decoded = std::str::from_utf8(&raw)
+                let decoded = chunk
+                    .xml10_content()
                     .map_err(|e| XlsxError::malformed(&self.part, format!("bad CDATA: {e}")))?;
-                self.text.push_str(decoded);
+                self.text.push_str(&decoded);
                 Ok(())
             }
             Event::End(element) => self.on_end(&element),

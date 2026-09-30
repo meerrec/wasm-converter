@@ -9,6 +9,7 @@ use doc_converter_core::xml::XmlReader;
 use quick_xml::events::Event;
 
 use crate::error::{Result, XlsxError};
+use crate::xml::resolve_reference;
 
 /// Общая таблица строк книги.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -102,17 +103,23 @@ pub(crate) fn read_item_text(reader: &mut XmlReader<'_>, part: &str, tag: &str) 
                 depth += 1;
             }
             Event::Text(chunk) if in_text => {
+                // `xml10_content` разворачивает сущности и нормализует концы строк.
                 let decoded = chunk
-                    .unescape()
+                    .xml10_content()
                     .map_err(|e| XlsxError::malformed(part, format!("bad text: {e}")))?;
                 text.push_str(&decoded);
             }
+            // Ссылки на сущности quick-xml отдаёт отдельным событием.
+            Event::GeneralRef(reference) if in_text => {
+                text.push_str(&resolve_reference(&reference, part)?);
+            }
             Event::CData(chunk) if in_text => {
-                // В CDATA подстановки не действуют: содержимое и так буквальное.
-                let raw = chunk.into_inner();
-                let decoded = std::str::from_utf8(&raw)
+                // В CDATA подстановки не действуют: `xml10_content` только
+                // декодирует содержимое, сущности не разворачивает.
+                let decoded = chunk
+                    .xml10_content()
                     .map_err(|e| XlsxError::malformed(part, format!("bad CDATA: {e}")))?;
-                text.push_str(decoded);
+                text.push_str(&decoded);
             }
             Event::End(end) => {
                 if depth == 0 {

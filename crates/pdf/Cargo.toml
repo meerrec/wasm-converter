@@ -12,6 +12,9 @@ doc-converter-docx   = { workspace = true }
 doc-converter-xlsx   = { workspace = true }
 serde                = { workspace = true }
 printpdf             = { workspace = true }
-ttf-parser           = { workspace = true }
+# ttf-parser объявлен в стеке ROADMAP §4, но в коде не используется, а с
+# 2026 года помечен unmaintained (RUSTSEC-2026-0192). Вернуть его или взять
+# рекомендованный `skrifa` — решение Фазы 4, когда метрики глифов понадобятся
+# на самом деле. См. docs/adr/0002-font-parsing.md.
 flate2               = { workspace = true }
 thiserror            = { workspace = true }

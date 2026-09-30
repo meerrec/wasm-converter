@@ -33,7 +33,9 @@ web-sys              = { version = "0.3", features = [
     "ImageBitmap", "Performance", "DedicatedWorkerGlobalScope",
 ] }
 console_error_panic_hook = "0.1"
-quick-xml            = "0.36"
+# 0.36 несёт RUSTSEC-2026-0194 и -0195 (DoS на разборе чужого файла);
+# безопасные версии — начиная с 0.41.
+quick-xml            = "0.41"
 zip                  = { version = "2", default-features = false, features = ["deflate"] }
 serde                = { version = "1", features = ["derive"] }
 serde_json           = "1"
