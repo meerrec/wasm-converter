@@ -13,10 +13,11 @@ use doc_converter_render::display_list::{
     Color, DisplayList, DrawCommand, LineStyle, TextAlign, TextBaseline,
 };
 
-use crate::cellref::{column_name, row_name};
+use crate::cellref::{column_name, row_name, CellRef, Range};
 use crate::layout::{SheetLayout, PX_PER_POINT};
 use crate::model::{
-    Cell, CellValue, Color as CellColor, HorizontalAlign, Sheet, Theme, VerticalAlign,
+    Border, BorderSide, BorderStyle, Cell, CellValue, Color as CellColor, HorizontalAlign, Sheet,
+    Theme, VerticalAlign,
 };
 use crate::numfmt;
 use crate::Workbook;
@@ -311,7 +312,7 @@ pub fn build(
     }
 }
 
-/// Фон, заливки, сетка и текст одного квадранта.
+/// Фон, заливки, сетка, границы и текст одного квадранта.
 fn draw_region(
     book: &Workbook,
     sheet: &Sheet,
@@ -351,26 +352,27 @@ fn draw_region(
         draw_grid(layout, scale, region, options.grid, out);
     }
 
-    for range in sheet.merges.ranges() {
-        if range.last.row < region.rows.0
-            || range.first.row > region.rows.1
-            || range.last.col < region.cols.0
-            || range.first.col > region.cols.1
-        {
-            continue;
-        }
-        let x = region.screen_x(layout.column_x(range.first.col), scale);
-        let y = region.screen_y(layout.row_y(range.first.row), scale);
-        let w = (layout.column_x(range.last.col + 1) - layout.column_x(range.first.col)) * scale;
-        let h = (layout.row_y(range.last.row + 1) - layout.row_y(range.first.row)) * scale;
-
+    // Объединённые ячейки: заливка закрывает сетку изнутри диапазона.
+    for range in visible_merges(sheet, region) {
+        let (x, y, w, h) = range_rect(layout, scale, region, range);
         let anchor = sheet.cells.cell(range.first);
         let format = anchor.map(|cell| book.styles().resolve(cell.style));
         let color = format
             .and_then(|format| fill_color(book, format.fill))
             .unwrap_or(options.background);
         fill_rect(out, x, y, w, h, color);
+    }
 
+    // Границы — поверх сетки и заливок: в Excel рамка замещает сетку на своём
+    // ребре.
+    draw_borders(book, sheet, layout, scale, region, out);
+
+    // Текст — поверх рамок: он выпускается в пустых соседей и перечёркивался бы
+    // их границами.
+    for range in visible_merges(sheet, region) {
+        let (x, y, w, h) = range_rect(layout, scale, region, range);
+        let anchor = sheet.cells.cell(range.first);
+        let format = anchor.map(|cell| book.styles().resolve(cell.style));
         if let (Some(cell), Some(format)) = (anchor, format) {
             draw_text(book, cell, format, x, y, w, h, scale, &TextClip::Rect, out);
         }
@@ -442,6 +444,345 @@ fn draw_grid(
             style: LineStyle::Solid,
         });
     }
+}
+
+/// Видимые в квадранте объединения.
+fn visible_merges<'a>(sheet: &'a Sheet, region: &'a Region) -> impl Iterator<Item = Range> + 'a {
+    sheet.merges.ranges().filter(move |range| {
+        range.last.row >= region.rows.0
+            && range.first.row <= region.rows.1
+            && range.last.col >= region.cols.0
+            && range.first.col <= region.cols.1
+    })
+}
+
+/// Границы квадранта: у каждой видимой ячейки и по контуру объединений.
+///
+/// Скрытые строки и столбцы рамок не получают вовсе, а объединённая ячейка —
+/// рамку по контуру диапазона: её стороны хранит якорь.
+fn draw_borders(
+    book: &Workbook,
+    sheet: &Sheet,
+    layout: &SheetLayout,
+    scale: f32,
+    region: &Region,
+    out: &mut DisplayList,
+) {
+    for row in region.rows.0..=region.rows.1 {
+        for (col, cell) in visible_cells(sheet, row, region.cols) {
+            if sheet.merges.covering(cell.at(row)).is_some()
+                || layout.column_width(col) <= 0.0
+                || layout.row_height(row) <= 0.0
+            {
+                continue;
+            }
+            let format = book.styles().resolve(cell.style);
+            let border = book
+                .styles()
+                .border(format.border)
+                .copied()
+                .unwrap_or_default();
+            draw_border(
+                book,
+                sheet,
+                layout,
+                scale,
+                region,
+                (row, row),
+                (col, col),
+                &border,
+                out,
+            );
+        }
+    }
+    for range in visible_merges(sheet, region) {
+        let Some(cell) = sheet.cells.cell(range.first) else {
+            continue;
+        };
+        let format = book.styles().resolve(cell.style);
+        let border = book
+            .styles()
+            .border(format.border)
+            .copied()
+            .unwrap_or_default();
+        draw_border(
+            book,
+            sheet,
+            layout,
+            scale,
+            region,
+            (range.first.row, range.last.row),
+            (range.first.col, range.last.col),
+            &border,
+            out,
+        );
+    }
+}
+
+/// Экранная геометрия диапазона: левый верхний угол, ширина и высота.
+fn range_rect(
+    layout: &SheetLayout,
+    scale: f32,
+    region: &Region,
+    range: Range,
+) -> (f32, f32, f32, f32) {
+    let x = region.screen_x(layout.column_x(range.first.col), scale);
+    let y = region.screen_y(layout.row_y(range.first.row), scale);
+    let w = (layout.column_x(range.last.col + 1) - layout.column_x(range.first.col)) * scale;
+    let h = (layout.row_y(range.last.row + 1) - layout.row_y(range.first.row)) * scale;
+    (x, y, w, h)
+}
+
+/// Линия рамки: рисунок, толщина в пикселях раскладки и вес в конфликте.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BorderLine {
+    style: LineStyle,
+    /// Толщина в пикселях раскладки — как и координаты, её умножает масштаб.
+    width: f32,
+    /// Кто тяжелее, тот и рисуется на общем ребре соседей.
+    weight: u8,
+}
+
+/// Перевод `ST_BorderStyle` в линию кадра.
+///
+/// Толщины повторяют ширины Excel 2013 в пунктах — 0,75 pt у тонких, 1,75 pt у
+/// средних, 2,5 pt у толстых и двойных (таблица соответствия Excel и
+/// `LibreOffice`: `sc/qa/unit/data/README.cellborders`), — переведённые по 96 dpi
+/// и округлённые до целых пикселей раскладки. Волосяная линия тоньше пикселя и
+/// по определению остаётся полупрозрачной на экране с DPR 1.
+///
+/// `LineStyle` знает штрих и точки, поэтому пунктирные варианты `ST_BorderStyle`
+/// сводятся к ним, а `Double` получает полную толщину — painter сам делит её на
+/// две линии и зазор.
+///
+/// Порядок весов — приоритет линий Excel 5.0/7.0 (KB 98152): Double > Thick >
+/// Medium > Thin > Dashed > Dotted > Hair. Современный Excel решает конфликт по
+/// «свежести» последней применённой границы, но в файле она не сохраняется —
+/// брать нечего, кроме старого правила.
+fn border_line(style: BorderStyle) -> Option<BorderLine> {
+    let line = |style, width, weight| {
+        Some(BorderLine {
+            style,
+            width,
+            weight,
+        })
+    };
+    match style {
+        BorderStyle::None => None,
+        BorderStyle::Hair => line(LineStyle::Solid, 0.5, 1),
+        BorderStyle::Dotted => line(LineStyle::Dotted, 1.0, 2),
+        BorderStyle::Dashed
+        | BorderStyle::DashDot
+        | BorderStyle::DashDotDot
+        | BorderStyle::SlantDashDot => line(LineStyle::Dashed, 1.0, 3),
+        BorderStyle::Thin => line(LineStyle::Solid, 1.0, 4),
+        BorderStyle::MediumDashed | BorderStyle::MediumDashDot | BorderStyle::MediumDashDotDot => {
+            line(LineStyle::Dashed, 2.0, 5)
+        }
+        BorderStyle::Medium => line(LineStyle::Solid, 2.0, 6),
+        BorderStyle::Thick => line(LineStyle::Solid, 3.0, 7),
+        BorderStyle::Double => line(LineStyle::Double, 3.0, 8),
+    }
+}
+
+/// Сторона-победитель на общем ребре: своя или соседа.
+///
+/// Сначала решает вес, при полном равенстве — положение: выигрывает ячейка,
+/// которая левее (для вертикального ребра) или выше (для горизонтального).
+/// Так же разрешает конфликт CSS 2.1 §17.6.2.1 (`border-collapse`); это
+/// единственный симметричный вариант — у обоих соседей ребро получает одного и
+/// того же победителя. `LibreOffice` на полном равенстве отдаёт ребро соседу
+/// только потому, что сравнивает по очереди, и сам помечает это
+/// (`ScHasPriority`, `sc/source/core/data/attrib.cxx`, `// FIXME: What is this?`).
+fn resolve_side(own: BorderSide, other: BorderSide, own_left_or_top: bool) -> BorderSide {
+    let weight = |side: BorderSide| border_line(side.style).map_or(0, |line| line.weight);
+    let (own_w, other_w) = (weight(own), weight(other));
+    if own_w > other_w {
+        own
+    } else if other_w > own_w {
+        other
+    } else if own_left_or_top {
+        own
+    } else {
+        other
+    }
+}
+
+/// Сторона прямоугольника: какую из его ячеек делить с соседом.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Edge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+impl Edge {
+    /// Сторона соседа, обращённая к нам.
+    const fn facing(self) -> Self {
+        match self {
+            Self::Top => Self::Bottom,
+            Self::Bottom => Self::Top,
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
+}
+
+/// Сторона ячейки `at`; несуществующая ячейка даёт пустую сторону.
+///
+/// Ячейка внутри объединения своей рамки не имеет — её показывает якорь, он же
+/// рисуется по контуру диапазона.
+fn side_at(book: &Workbook, sheet: &Sheet, at: CellRef, side: Edge) -> BorderSide {
+    let at = sheet.merges.covering(at).map_or(at, |range| range.first);
+    let Some(cell) = sheet.cells.cell(at) else {
+        return BorderSide::default();
+    };
+    let format = book.styles().resolve(cell.style);
+    let Some(border) = book.styles().border(format.border) else {
+        return BorderSide::default();
+    };
+    match side {
+        Edge::Top => border.top,
+        Edge::Bottom => border.bottom,
+        Edge::Left => border.left,
+        Edge::Right => border.right,
+    }
+}
+
+/// Сторона соседа за ребром ячейки `(row, col)`.
+///
+/// Скрытые строки и столбцы пропускаются: их рамки в кадр не попадают вовсе, и
+/// ребро с ними делят следующие видимые ячейки. За пределами раскладки соседа
+/// нет — сторона пустая.
+fn neighbor_side(
+    book: &Workbook,
+    sheet: &Sheet,
+    layout: &SheetLayout,
+    row: u32,
+    col: u32,
+    edge: Edge,
+) -> BorderSide {
+    let (mut row, mut col) = (row, col);
+    match edge {
+        Edge::Top => loop {
+            let Some(up) = row.checked_sub(1) else {
+                return BorderSide::default();
+            };
+            row = up;
+            if layout.row_height(row) > 0.0 {
+                break;
+            }
+        },
+        Edge::Bottom => loop {
+            row += 1;
+            if row >= layout.rows() {
+                return BorderSide::default();
+            }
+            if layout.row_height(row) > 0.0 {
+                break;
+            }
+        },
+        Edge::Left => loop {
+            let Some(left) = col.checked_sub(1) else {
+                return BorderSide::default();
+            };
+            col = left;
+            if layout.column_width(col) > 0.0 {
+                break;
+            }
+        },
+        Edge::Right => loop {
+            col += 1;
+            if col >= layout.cols() {
+                return BorderSide::default();
+            }
+            if layout.column_width(col) > 0.0 {
+                break;
+            }
+        },
+    }
+    side_at(book, sheet, CellRef::new(row, col), edge.facing())
+}
+
+/// Нарисовать рамку прямоугольника: четыре стороны, каждая — с соседом за
+/// ребром.
+#[allow(clippy::too_many_arguments)]
+fn draw_border(
+    book: &Workbook,
+    sheet: &Sheet,
+    layout: &SheetLayout,
+    scale: f32,
+    region: &Region,
+    rows: (u32, u32),
+    cols: (u32, u32),
+    border: &Border,
+    out: &mut DisplayList,
+) {
+    let x0 = region.screen_x(layout.column_x(cols.0), scale);
+    let x1 = region.screen_x(layout.column_x(cols.1 + 1), scale);
+    let y0 = region.screen_y(layout.row_y(rows.0), scale);
+    let y1 = region.screen_y(layout.row_y(rows.1 + 1), scale);
+    // Полностью скрытый прямоугольник (например, объединение из одних скрытых
+    // столбцов) не виден ни одной точкой.
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+
+    // На общем ребре сторону выбирает `resolve_side`; при равенстве выигрывает
+    // левая или верхняя ячейка — за неё и отвечает последний аргумент.
+    let top = resolve_side(
+        border.top,
+        neighbor_side(book, sheet, layout, rows.0, cols.0, Edge::Top),
+        false,
+    );
+    let bottom = resolve_side(
+        border.bottom,
+        neighbor_side(book, sheet, layout, rows.1, cols.0, Edge::Bottom),
+        true,
+    );
+    let left = resolve_side(
+        border.left,
+        neighbor_side(book, sheet, layout, rows.0, cols.0, Edge::Left),
+        false,
+    );
+    let right = resolve_side(
+        border.right,
+        neighbor_side(book, sheet, layout, rows.0, cols.1, Edge::Right),
+        true,
+    );
+
+    let theme = book.theme();
+    push_border_line(out, (x0, y0), (x1, y0), top, theme, scale);
+    push_border_line(out, (x0, y1), (x1, y1), bottom, theme, scale);
+    push_border_line(out, (x0, y0), (x0, y1), left, theme, scale);
+    push_border_line(out, (x1, y0), (x1, y1), right, theme, scale);
+}
+
+/// Одна сторона рамки в кадр; сторона без стиля пропускается.
+fn push_border_line(
+    out: &mut DisplayList,
+    from: (f32, f32),
+    to: (f32, f32),
+    side: BorderSide,
+    theme: &Theme,
+    scale: f32,
+) {
+    let Some(line) = border_line(side.style) else {
+        return;
+    };
+    // Цвет не задан или не разрешился — чёрный: Excel рисует рамку автоцветом,
+    // и текст по умолчанию рисует так же.
+    let stroke = resolve_color(theme, side.color).unwrap_or(Color::BLACK);
+    out.push(DrawCommand::Line {
+        x1: from.0,
+        y1: from.1,
+        x2: to.0,
+        y2: to.1,
+        stroke,
+        stroke_w: line.width * scale,
+        style: line.style,
+    });
 }
 
 /// Геометрия полос заголовков: окно, закрепления и границы прокрутки.
@@ -869,6 +1210,7 @@ fn fill_rect(out: &mut DisplayList, x: f32, y: f32, w: f32, h: f32, fill: Color)
 #[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
+    use crate::dims::{ColWidth, RowHeight};
     use crate::model::{Border, CellFormat, Fill, FillPattern, Font, StyleTable, WorksheetMeta};
     use crate::model::{SheetContent, Theme, WorksheetBuilder};
     use crate::SharedStrings;
@@ -1530,5 +1872,436 @@ mod tests {
             |cmd| matches!(cmd, DrawCommand::Rect { fill, .. } if *fill == Color(0x4F81_BDFF)),
         );
         assert_eq!(filled, 1);
+    }
+
+    /// Цвет в раскладке `DisplayList` (`RRGGBBAA`).
+    const RED: Color = Color(0xFF00_00FF);
+    const BLUE: Color = Color(0x0000_FFFF);
+
+    /// Сторона рамки.
+    fn side(style: BorderStyle, color: CellColor) -> BorderSide {
+        BorderSide { style, color }
+    }
+
+    /// Линии кадра: `(x1, y1, x2, y2, цвет, толщина, рисунок)`.
+    fn lines(dl: &DisplayList) -> Vec<(f32, f32, f32, f32, Color, f32, LineStyle)> {
+        (0..dl.len())
+            .filter_map(|i| dl.cmd(i))
+            .filter_map(|cmd| match cmd {
+                DrawCommand::Line {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    stroke,
+                    stroke_w,
+                    style,
+                } => Some((*x1, *y1, *x2, *y2, *stroke, *stroke_w, *style)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Без сетки и заголовков: в кадре остаются только рамки.
+    fn borders_only() -> PaintOptions {
+        PaintOptions {
+            show_grid: false,
+            show_headers: false,
+            ..PaintOptions::default()
+        }
+    }
+
+    /// Таблица стилей с рамками `borders`: формат 1 — рамка 1, формат 2 — рамка 2.
+    fn border_styles(borders: Vec<Border>) -> StyleTable {
+        StyleTable::new(
+            vec![
+                CellFormat::default(),
+                CellFormat {
+                    border: 1,
+                    ..CellFormat::default()
+                },
+                CellFormat {
+                    border: 2,
+                    ..CellFormat::default()
+                },
+            ],
+            vec![Font::default()],
+            vec![Fill::default()],
+            borders,
+            BTreeMap::new(),
+        )
+    }
+
+    #[test]
+    fn border_styles_map_to_lines() {
+        let cases = [
+            (BorderStyle::None, None),
+            (BorderStyle::Hair, Some((LineStyle::Solid, 0.5))),
+            (BorderStyle::Dotted, Some((LineStyle::Dotted, 1.0))),
+            (BorderStyle::Dashed, Some((LineStyle::Dashed, 1.0))),
+            (BorderStyle::DashDot, Some((LineStyle::Dashed, 1.0))),
+            (BorderStyle::DashDotDot, Some((LineStyle::Dashed, 1.0))),
+            (BorderStyle::SlantDashDot, Some((LineStyle::Dashed, 1.0))),
+            (BorderStyle::Thin, Some((LineStyle::Solid, 1.0))),
+            (BorderStyle::MediumDashed, Some((LineStyle::Dashed, 2.0))),
+            (BorderStyle::MediumDashDot, Some((LineStyle::Dashed, 2.0))),
+            (
+                BorderStyle::MediumDashDotDot,
+                Some((LineStyle::Dashed, 2.0)),
+            ),
+            (BorderStyle::Medium, Some((LineStyle::Solid, 2.0))),
+            (BorderStyle::Thick, Some((LineStyle::Solid, 3.0))),
+            (BorderStyle::Double, Some((LineStyle::Double, 3.0))),
+        ];
+        for (style, want) in cases {
+            let got = border_line(style).map(|line| (line.style, line.width));
+            assert_eq!(got, want, "{style:?}");
+        }
+    }
+
+    #[test]
+    fn border_weights_follow_excel_precedence() {
+        // Порядок Excel 5.0/7.0: чем позже в списке, тем тяжелее сторона.
+        let order = [
+            BorderStyle::None,
+            BorderStyle::Hair,
+            BorderStyle::Dotted,
+            BorderStyle::Dashed,
+            BorderStyle::DashDot,
+            BorderStyle::DashDotDot,
+            BorderStyle::SlantDashDot,
+            BorderStyle::Thin,
+            BorderStyle::MediumDashed,
+            BorderStyle::MediumDashDot,
+            BorderStyle::MediumDashDotDot,
+            BorderStyle::Medium,
+            BorderStyle::Thick,
+            BorderStyle::Double,
+        ];
+        let weights: Vec<u8> = order
+            .iter()
+            .map(|style| border_line(*style).map_or(0, |line| line.weight))
+            .collect();
+        assert!(
+            weights.windows(2).all(|pair| pair[0] <= pair[1]),
+            "веса не по возрастанию: {weights:?}"
+        );
+        // Вес не совпадает с толщиной: штрих тонкой линии проигрывает сплошной
+        // той же толщины, а средний пунктир — тонкой сплошной не проигрывает.
+        assert!(weights[3] < weights[7], "штрих легче сплошной");
+        assert!(weights[7] < weights[8], "средний пунктир тяжелее тонкой");
+        assert!(weights[12] < weights[13], "двойная тяжелее толстой");
+    }
+
+    #[test]
+    fn heavier_side_wins_the_shared_edge() {
+        let thin_red = Border {
+            right: side(BorderStyle::Thin, CellColor::Rgb(0xFFFF_0000)),
+            ..Border::default()
+        };
+        let medium_blue = Border {
+            left: side(BorderStyle::Medium, CellColor::Rgb(0xFF00_00FF)),
+            ..Border::default()
+        };
+
+        let borders = vec![Border::default(), thin_red, medium_blue];
+        let book = two_cells(border_styles(borders), PART);
+        let dl = painted(&book, Viewport::default(), &borders_only());
+        assert_edge(&dl, (BLUE, 2.0));
+
+        // Побеждает не «правая» сторона, а тяжёлая: поменяем местами стили —
+        // победитель тот же.
+        let borders = vec![
+            Border::default(),
+            Border {
+                right: side(BorderStyle::Medium, CellColor::Rgb(0xFF00_00FF)),
+                ..Border::default()
+            },
+            Border {
+                left: side(BorderStyle::Thin, CellColor::Rgb(0xFFFF_0000)),
+                ..Border::default()
+            },
+        ];
+        let book = two_cells(border_styles(borders), PART);
+        let dl = painted(&book, Viewport::default(), &borders_only());
+        assert_edge(&dl, (BLUE, 2.0));
+    }
+
+    #[test]
+    fn equal_weight_borders_are_won_by_the_left_cell() {
+        // Обе стороны тонкие, но разных цветов: по CSS 2.1 ребро берёт левая
+        // ячейка. Оба соседа обязаны нарисовать одного победителя — иначе
+        // цвет ребра зависел бы от порядка обхода.
+        let borders = vec![
+            Border::default(),
+            Border {
+                right: side(BorderStyle::Thin, CellColor::Rgb(0xFFFF_0000)),
+                ..Border::default()
+            },
+            Border {
+                left: side(BorderStyle::Thin, CellColor::Rgb(0xFF00_00FF)),
+                ..Border::default()
+            },
+        ];
+        let book = two_cells(border_styles(borders), PART);
+        let dl = painted(&book, Viewport::default(), &borders_only());
+        assert_edge(&dl, (RED, 1.0));
+    }
+
+    /// Две ячейки одной строки: A1 — формат 1, B1 — формат 2.
+    fn two_cells(styles: StyleTable, part: &str) -> Workbook {
+        let mut builder = WorksheetBuilder::new(part);
+        builder
+            .push(0, Cell::new(0, 1, CellValue::Number(1.0)))
+            .unwrap();
+        builder
+            .push(0, Cell::new(1, 2, CellValue::Number(2.0)))
+            .unwrap();
+        book_with(
+            SheetContent {
+                cells: builder.finish(),
+                ..SheetContent::default()
+            },
+            styles,
+        )
+    }
+
+    /// Все линии на ребре между A1 и B1: цвет и толщина.
+    fn assert_edge(dl: &DisplayList, want: (Color, f32)) {
+        let edge: Vec<(Color, f32)> = lines(dl)
+            .into_iter()
+            .filter(|line| line.0 == 64.0 && line.2 == 64.0)
+            .map(|line| (line.4, line.5))
+            .collect();
+        assert!(!edge.is_empty(), "ребро между A1 и B1 не нарисовано");
+        assert!(
+            edge.iter().all(|got| *got == want),
+            "на ребре {edge:?}, ожидалось {want:?}"
+        );
+    }
+
+    #[test]
+    fn hidden_tracks_do_not_paint_borders() {
+        // A1 — тонкая красная справа; B1 лежит в скрытом столбце и закрыт
+        // толстой синей слева; строка 1 тоже скрыта и держит толстую рамку.
+        let borders = vec![
+            Border::default(),
+            Border {
+                top: side(BorderStyle::Thin, CellColor::Rgb(0xFFFF_0000)),
+                right: side(BorderStyle::Thin, CellColor::Rgb(0xFFFF_0000)),
+                ..Border::default()
+            },
+            Border {
+                top: side(BorderStyle::Thick, CellColor::Rgb(0xFF00_00FF)),
+                bottom: side(BorderStyle::Thick, CellColor::Rgb(0xFF00_00FF)),
+                left: side(BorderStyle::Thick, CellColor::Rgb(0xFF00_00FF)),
+                right: side(BorderStyle::Thick, CellColor::Rgb(0xFF00_00FF)),
+                ..Border::default()
+            },
+        ];
+        let mut builder = WorksheetBuilder::new(PART);
+        builder
+            .push(0, Cell::new(0, 1, CellValue::Number(1.0)))
+            .unwrap();
+        builder
+            .push(0, Cell::new(1, 2, CellValue::Number(2.0)))
+            .unwrap();
+        builder
+            .push(1, Cell::new(0, 2, CellValue::Number(3.0)))
+            .unwrap();
+
+        let mut content = SheetContent {
+            cells: builder.finish(),
+            ..SheetContent::default()
+        };
+        content.dims.cols.push(ColWidth {
+            first: 1,
+            last: 1,
+            width: 8.43,
+            custom: true,
+            hidden: true,
+            best_fit: false,
+        });
+        content.dims.rows.push(RowHeight {
+            row: 1,
+            height: 15.0,
+            custom: true,
+            hidden: true,
+            outline_level: 0,
+        });
+        content.dims.rows.sort();
+
+        let book = book_with(content, border_styles(borders));
+        let dl = painted(&book, Viewport::default(), &borders_only());
+
+        // Скрытые ячейки не рисуют ничего и не участвуют в конфликте: ребро
+        // остаётся за тонкой красной A1, а не за толстой синей B1.
+        let lines = lines(&dl);
+        assert_eq!(
+            lines.len(),
+            2,
+            "скрытые строки и столбцы дали линии: {lines:?}"
+        );
+        assert!(lines.iter().all(|line| line.4 == RED && line.5 == 1.0));
+    }
+
+    #[test]
+    fn merged_cell_border_follows_the_range_outline() {
+        let thick = side(BorderStyle::Thick, CellColor::Rgb(0xFFFF_0000));
+        let borders = vec![
+            Border::default(),
+            Border {
+                top: thick,
+                bottom: thick,
+                left: thick,
+                right: thick,
+                ..Border::default()
+            },
+        ];
+        let styles = StyleTable::new(
+            vec![
+                CellFormat::default(),
+                CellFormat {
+                    border: 1,
+                    ..CellFormat::default()
+                },
+            ],
+            vec![Font::default()],
+            vec![Fill::default()],
+            borders,
+            BTreeMap::new(),
+        );
+        let mut builder = WorksheetBuilder::new(PART);
+        // Обе ячейки объединения несут одну и ту же рамку: рисуется контур
+        // диапазона, а не рамка каждой клетки.
+        builder
+            .push(0, Cell::new(0, 1, CellValue::Number(1.0)))
+            .unwrap();
+        builder
+            .push(0, Cell::new(1, 1, CellValue::Number(2.0)))
+            .unwrap();
+        let mut content = SheetContent {
+            cells: builder.finish(),
+            ..SheetContent::default()
+        };
+        content.merges.push(crate::Range::parse("A1:B2").unwrap());
+        let book = book_with(content, styles);
+
+        let dl = painted(&book, Viewport::default(), &borders_only());
+        let lines = lines(&dl);
+        assert_eq!(lines.len(), 4, "контур объединения: {lines:?}");
+        assert!(lines.iter().all(|line| line.4 == RED && line.5 == 3.0));
+        // Внутренние рёбра диапазона (x = 64 и y = 20) не нарисованы.
+        assert!(lines
+            .iter()
+            .all(|line| line.0 != 64.0 && line.2 != 64.0 && line.1 != 20.0 && line.3 != 20.0));
+    }
+
+    /// Книга из общего каталога фикстур (`test-fixtures/xlsx`).
+    fn open_fixture(name: &str) -> Workbook {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-fixtures/xlsx")
+            .join(name);
+        let bytes =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("{} не читается: {e}", path.display()));
+        crate::open(bytes).unwrap_or_else(|e| panic!("{name}: {e}"))
+    }
+
+    #[test]
+    fn border_styles_fixture_paints_every_style() {
+        let book = open_fixture("styles-border-styles.xlsx");
+        let dl = painted(&book, Viewport::default(), &borders_only());
+        let lines = lines(&dl);
+        assert!(
+            lines.iter().all(|line| line.1 == line.3),
+            "у клеток нет боковых рамок, а в кадре вертикаль: {lines:?}"
+        );
+
+        // exceljs кладёт стили по строкам сверху вниз: thin, medium, thick,
+        // dashed, dotted, double, hair. Верхняя линия каждой клетки чёрная,
+        // нижняя синяя, а общее ребро соседей берёт более тяжёлая сторона.
+        // Отсюда линии кадра: (y, сколько раз, цвет, рисунок, толщина).
+        let expected: [(f32, usize, Color, LineStyle, f32); 8] = [
+            (0.0, 1, Color::BLACK, LineStyle::Solid, 1.0), // thin, верх A1
+            (20.0, 2, Color::BLACK, LineStyle::Solid, 2.0), // medium побеждает thin
+            (40.0, 2, Color::BLACK, LineStyle::Solid, 3.0), // thick побеждает medium
+            (60.0, 2, BLUE, LineStyle::Solid, 3.0),        // thick побеждает dashed
+            (80.0, 2, BLUE, LineStyle::Dashed, 1.0),       // dashed побеждает dotted
+            (100.0, 2, Color::BLACK, LineStyle::Double, 3.0), // double побеждает dotted
+            (120.0, 2, BLUE, LineStyle::Double, 3.0),      // double побеждает hair
+            (140.0, 1, BLUE, LineStyle::Solid, 0.5),       // hair, низ A7
+        ];
+        let mut total = 0;
+        for (y, count, color, style, width) in expected {
+            let at_y: Vec<_> = lines.iter().filter(|line| line.1 == y).collect();
+            assert_eq!(at_y.len(), count, "линий на y = {y}: {lines:?}");
+            assert!(
+                at_y.iter()
+                    .all(|line| line.4 == color && line.6 == style && line.5 == width),
+                "на y = {y} ожидались {color:?} {style:?} {width}, а не {at_y:?}"
+            );
+            total += count;
+        }
+        assert_eq!(lines.len(), total, "лишние линии: {lines:?}");
+    }
+
+    #[test]
+    fn border_box_fixture_paints_the_cell_grid() {
+        let book = open_fixture("styles-border-box.xlsx");
+        let dl = painted(&book, Viewport::default(), &borders_only());
+        let lines = lines(&dl);
+        assert!(!lines.is_empty());
+
+        // A1:E5 — тонкая чёрная рамка у каждой из 25 ячеек, поэтому рёбра
+        // ложатся сеткой: сторона клетки — отрезок в одну клетку (64 px в
+        // ширину, 20 px в высоту).
+        let columns = [
+            (0.0, 64.0),
+            (64.0, 128.0),
+            (128.0, 192.0),
+            (192.0, 256.0),
+            (256.0, 320.0),
+        ];
+        let rows = [
+            (0.0, 20.0),
+            (20.0, 40.0),
+            (40.0, 60.0),
+            (60.0, 80.0),
+            (80.0, 100.0),
+        ];
+        let (mut horizontal_ys, mut vertical_xs) = (Vec::new(), Vec::new());
+        let (mut horizontal, mut vertical) = (0usize, 0usize);
+        for line in &lines {
+            assert_eq!(
+                (line.4, line.5, line.6),
+                (Color::BLACK, 1.0, LineStyle::Solid),
+                "ребро не тонкое чёрное: {line:?}"
+            );
+            if line.1 == line.3 {
+                assert!(
+                    columns.contains(&(line.0, line.2)),
+                    "горизонталь не в клетку: {line:?}"
+                );
+                horizontal_ys.push(line.1);
+                horizontal += 1;
+            } else {
+                assert_eq!(line.0, line.2, "линия не по осям: {line:?}");
+                assert!(
+                    rows.contains(&(line.1, line.3)),
+                    "вертикаль не в клетку: {line:?}"
+                );
+                vertical_xs.push(line.0);
+                vertical += 1;
+            }
+        }
+        // Каждая из 25 клеток рисует свои четыре стороны — по 50 линий на
+        // направление; внутренние рёбра попадают в кадр дважды.
+        assert_eq!((horizontal, vertical), (50, 50));
+        horizontal_ys.sort_by(f32::total_cmp);
+        horizontal_ys.dedup();
+        vertical_xs.sort_by(f32::total_cmp);
+        vertical_xs.dedup();
+        assert_eq!(horizontal_ys, [0.0, 20.0, 40.0, 60.0, 80.0, 100.0]);
+        assert_eq!(vertical_xs, [0.0, 64.0, 128.0, 192.0, 256.0, 320.0]);
     }
 }
