@@ -1,7 +1,8 @@
 # ADR 0002: Парсинг шрифтов — `skrifa`
 
-**Статус:** пересмотрено 05.10.2026: шрифты парсит `skrifa` (до Спринта 5.5).
-Ранее — принято (Фаза 3): `ttf-parser` снят.
+**Статус:** реализовано в Спринте 5.5: `FontRegistry` разбирает TTF/OTF через
+`skrifa`. Ранее — пересмотрено 05.10.2026 (решение), принято (Фаза 3):
+`ttf-parser` снят.
 **Контекст:** [`Cargo.toml`](../../Cargo.toml), [`crates/pdf/Cargo.toml`](../../crates/pdf/Cargo.toml),
 [`crates/render/src/font.rs`](../../crates/render/src/font.rs), [`deny.toml`](../../deny.toml)
 
