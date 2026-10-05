@@ -15,7 +15,19 @@ export default defineConfig({
     baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+      // DPR-сценарию нужен свой `deviceScaleFactor`: он идёт вторым проектом.
+      testIgnore: /dpr\.spec\.ts/,
+    },
+    {
+      name: 'chromium-dpr2',
+      use: { ...devices['Desktop Chrome'], deviceScaleFactor: 2 },
+      testMatch: /dpr\.spec\.ts/,
+    },
+  ],
   webServer: {
     command: `pnpm dev --port ${PORT} --strictPort`,
     url: `http://localhost:${PORT}`,

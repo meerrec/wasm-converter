@@ -20,7 +20,6 @@
   "devDependencies": {
     "@changesets/cli": "^2.27.9",
     "@size-limit/preset-small-lib": "^11.1.6",
-    "archiver": "^8.0.0",
     "docx": "^9.0.0",
     "exceljs": "^4.4.0",
     "officegen": "^0.6.5",

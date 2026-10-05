@@ -80,7 +80,7 @@ Painter (`crates/render/src/painter/painter_2d.rs`, только wasm32) жив�
 - `crates/render/src/sab/ring.rs` — `SabRing` (Atomics через `js-sys`) для wasm и чистый `RingState` для нативных тестов;
 - `packages/core/src/sab/protocol.ts` + `reader.ts` — `HEADER_INTS = 4`, `SLOT_COUNT = 2` (`seq_writer`, `seq_reader`, `slot_len[0..2]`, дальше два слота).
 
-Раскладка: `[0..4)` seq_writer, `[4..8)` seq_reader, `[8..16)` длины слотов, `[16..)` payload. Backpressure — нет свободного слота → кадр дропается (`dropped: true` в статистике).
+Backpressure — нет свободного слота → кадр дропается (`dropped: true` в статистике).
 
 ### Просмотр XLSX
 
@@ -149,7 +149,5 @@ SAB требует COOP/COEP (`Cross-Origin-Opener-Policy: same-origin`, `Cross-
 - Покрытие: Rust ≥ 85%, TS ≥ 80%; бюджеты размера и производительности — `ROADMAP.md` §9.
 
 ## CI и зависимости
-
-`.github/workflows/ci.yml`: джоба `rust` (матрица native + `wasm32-unknown-unknown`; fmt/clippy/test только на native, wasm-джоба собирает `crates/wasm`) → `wasm` (wasm-pack, артефакт `wasm-pkg`) → `js` (node 20/22, `pnpm turbo run typecheck test build`, size-limit на 20) → `audit` (`cargo deny check`, `pnpm audit`).
 
 Тулчейн закреплён: `rust-toolchain.toml` — 1.98.0 (совпадает с CI), при этом workspace объявляет MSRV `rust-version = "1.82"`. `.cargo/config.toml` включает `incompatible-rust-versions = "fallback"`, чтобы резолвинг зависимостей не вылезал за MSRV. `deny.toml` разрешает только Apache-2.0/MIT/BSD/ISC/Unicode-3.0/Zlib — из-за этого `printpdf` подключён с `default-features = false` (фича `html` тянет MPL-2.0 и resvg).
