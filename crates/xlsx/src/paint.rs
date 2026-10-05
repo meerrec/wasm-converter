@@ -61,23 +61,37 @@ impl Default for Viewport {
 }
 
 /// Что рисовать поверх содержимого.
+///
+/// Цвета — `Option`: `None` означает «взять у оформления» (светлого или тёмного,
+/// см. [`PaintOptions::dark`]), явный цвет его перекрывает.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PaintOptions {
     /// Показывать сетку.
     pub show_grid: bool,
     /// Показывать заголовки строк и столбцов.
     pub show_headers: bool,
-    /// Фон листа.
-    pub background: Color,
-    /// Цвет сетки.
-    pub grid: Color,
-    /// Фон заголовков.
-    pub header_background: Color,
-    /// Цвет текста заголовков.
-    pub header_foreground: Color,
+    /// Тёмное оформление: фон окна, сетка и заголовки темнеют, палитра темы
+    /// инвертируется (`lt1`↔`dk1`, `lt2`↔`dk2`), а текст, неразличимый на своём
+    /// фоне, поднимается до читаемого контраста.
+    ///
+    /// Явные RGB-цвета ячеек не инвертируются: инверсия меняла бы оттенок и
+    /// ломала осмысленные пары «текст на заливке» (чёрный текст на светлой
+    /// заливке стал бы белым на тёмной). Допущение: Excel тёмного оформления
+    /// листа не документирует; правило задаёт просмотрщик.
+    pub dark: bool,
+    /// Фон листа; `None` — фон оформления.
+    pub background: Option<Color>,
+    /// Цвет сетки; `None` — цвет оформления.
+    pub grid: Option<Color>,
+    /// Фон заголовков; `None` — фон оформления.
+    pub header_background: Option<Color>,
+    /// Цвет текста заголовков; `None` — цвет оформления.
+    pub header_foreground: Option<Color>,
+    /// Линия между заголовками и листом; `None` — цвет оформления.
+    pub header_line: Option<Color>,
 }
 
-/// Цвета по умолчанию: те же, что у Excel в светлой теме.
+/// Цвета оформления: светлые — как у Excel, тёмные — просмотрщика.
 mod dl_color {
     use super::Color;
 
@@ -85,6 +99,72 @@ mod dl_color {
     pub const GRID: Color = Color(0xD9_D9_D9_FF);
     pub const HEADER_BG: Color = Color(0xF5_F5_F5_FF);
     pub const HEADER_FG: Color = Color(0x44_44_44_FF);
+    pub const HEADER_LINE: Color = Color(0xC0_C0_C0_FF);
+
+    pub const DARK_BACKGROUND: Color = Color(0x1E_1E_1E_FF);
+    pub const DARK_GRID: Color = Color(0x3A_3A_3A_FF);
+    pub const DARK_HEADER_BG: Color = Color(0x2A_2A_2A_FF);
+    pub const DARK_HEADER_FG: Color = Color(0xC8_C8_C8_FF);
+    pub const DARK_HEADER_LINE: Color = Color(0x50_50_50_FF);
+    /// Текст, которому цвет не задан в файле: соответствует `lt1` палитры.
+    pub const DARK_TEXT: Color = Color(0xE8_E8_E8_FF);
+}
+
+impl PaintOptions {
+    /// Фон листа: заданный цвет или фон оформления.
+    fn effective_background(&self) -> Color {
+        self.background.unwrap_or(if self.dark {
+            dl_color::DARK_BACKGROUND
+        } else {
+            dl_color::WHITE
+        })
+    }
+
+    /// Цвет сетки: заданный или из оформления.
+    fn effective_grid(&self) -> Color {
+        self.grid.unwrap_or(if self.dark {
+            dl_color::DARK_GRID
+        } else {
+            dl_color::GRID
+        })
+    }
+
+    /// Фон заголовков: заданный или из оформления.
+    fn effective_header_background(&self) -> Color {
+        self.header_background.unwrap_or(if self.dark {
+            dl_color::DARK_HEADER_BG
+        } else {
+            dl_color::HEADER_BG
+        })
+    }
+
+    /// Цвет текста заголовков: заданный или из оформления.
+    fn effective_header_foreground(&self) -> Color {
+        self.header_foreground.unwrap_or(if self.dark {
+            dl_color::DARK_HEADER_FG
+        } else {
+            dl_color::HEADER_FG
+        })
+    }
+
+    /// Линия между заголовками и листом: заданная или из оформления.
+    fn effective_header_line(&self) -> Color {
+        self.header_line.unwrap_or(if self.dark {
+            dl_color::DARK_HEADER_LINE
+        } else {
+            dl_color::HEADER_LINE
+        })
+    }
+
+    /// Цвет текста, которому цвет не задан в файле: чёрный в светлом
+    /// оформлении, почти белый — в тёмном.
+    fn default_text(&self) -> Color {
+        if self.dark {
+            dl_color::DARK_TEXT
+        } else {
+            Color::BLACK
+        }
+    }
 }
 
 impl Default for PaintOptions {
@@ -92,10 +172,12 @@ impl Default for PaintOptions {
         Self {
             show_grid: true,
             show_headers: true,
-            background: dl_color::WHITE,
-            grid: dl_color::GRID,
-            header_background: dl_color::HEADER_BG,
-            header_foreground: dl_color::HEADER_FG,
+            dark: false,
+            background: None,
+            grid: None,
+            header_background: None,
+            header_foreground: None,
+            header_line: None,
         }
     }
 }
@@ -247,7 +329,7 @@ pub fn build(
         0.0,
         viewport.width,
         viewport.height,
-        options.background,
+        options.effective_background(),
     );
 
     let scroll_w = (viewport.width - header_w - frozen_w).max(0.0) / scale;
@@ -347,7 +429,7 @@ fn draw_region(
                 continue;
             }
             let style = rules.style_at(book, cell.at(row));
-            let Some(color) = fill_color(book, &style) else {
+            let Some(color) = fill_color(book, &style, options) else {
                 continue;
             };
             let x = region.screen_x(layout.column_x(col), scale);
@@ -359,7 +441,7 @@ fn draw_region(
     }
 
     if options.show_grid {
-        draw_grid(layout, scale, region, options.grid, out);
+        draw_grid(layout, scale, region, options.effective_grid(), out);
     }
 
     // Объединённые ячейки: заливка закрывает сетку изнутри диапазона.
@@ -369,8 +451,8 @@ fn draw_region(
         let style = anchor.map(|_| rules.style_at(book, range.first));
         let color = style
             .as_ref()
-            .and_then(|style| fill_color(book, style))
-            .unwrap_or(options.background);
+            .and_then(|style| fill_color(book, style, options))
+            .unwrap_or(options.effective_background());
         fill_rect(out, x, y, w, h, color);
     }
 
@@ -383,7 +465,7 @@ fn draw_region(
 
     // Границы — поверх сетки и заливок: в Excel рамка замещает сетку на своём
     // ребре.
-    draw_borders(book, sheet, rules, layout, scale, region, out);
+    draw_borders(book, sheet, rules, layout, scale, region, options, out);
 
     // Текст — поверх рамок: он выпускается в пустых соседей и перечёркивался бы
     // их границами.
@@ -407,6 +489,7 @@ fn draw_region(
                 scale,
                 &TextClip::Rect,
                 is_link,
+                options,
                 out,
             );
         }
@@ -439,7 +522,9 @@ fn draw_region(
                 TextClip::None
             };
             let is_link = sheet.hyperlink_at(cell.at(row)).is_some();
-            draw_text(book, cell, &style, x, y, w, h, scale, &clip, is_link, out);
+            draw_text(
+                book, cell, &style, x, y, w, h, scale, &clip, is_link, options, out,
+            );
         }
     }
 
@@ -605,6 +690,7 @@ fn visible_merges<'a>(sheet: &'a Sheet, region: &'a Region) -> impl Iterator<Ite
 ///
 /// Скрытые строки и столбцы рамок не получают вовсе, а объединённая ячейка —
 /// рамку по контуру диапазона: её стороны хранит якорь.
+#[allow(clippy::too_many_arguments)]
 fn draw_borders(
     book: &Workbook,
     sheet: &Sheet,
@@ -612,6 +698,7 @@ fn draw_borders(
     layout: &SheetLayout,
     scale: f32,
     region: &Region,
+    options: &PaintOptions,
     out: &mut DisplayList,
 ) {
     for row in region.rows.0..=region.rows.1 {
@@ -633,6 +720,7 @@ fn draw_borders(
                 (row, row),
                 (col, col),
                 &border,
+                options,
                 out,
             );
         }
@@ -654,6 +742,7 @@ fn draw_borders(
             (range.first.row, range.last.row),
             (range.first.col, range.last.col),
             &border,
+            options,
             out,
         );
     }
@@ -860,6 +949,7 @@ fn draw_border(
     rows: (u32, u32),
     cols: (u32, u32),
     border: &Border,
+    options: &PaintOptions,
     out: &mut DisplayList,
 ) {
     let x0 = region.screen_x(layout.column_x(cols.0), scale);
@@ -896,10 +986,10 @@ fn draw_border(
     );
 
     let theme = book.theme();
-    push_border_line(out, (x0, y0), (x1, y0), top, theme, scale);
-    push_border_line(out, (x0, y1), (x1, y1), bottom, theme, scale);
-    push_border_line(out, (x0, y0), (x0, y1), left, theme, scale);
-    push_border_line(out, (x1, y0), (x1, y1), right, theme, scale);
+    push_border_line(out, (x0, y0), (x1, y0), top, theme, options, scale);
+    push_border_line(out, (x0, y1), (x1, y1), bottom, theme, options, scale);
+    push_border_line(out, (x0, y0), (x0, y1), left, theme, options, scale);
+    push_border_line(out, (x1, y0), (x1, y1), right, theme, options, scale);
 }
 
 /// Одна сторона рамки в кадр; сторона без стиля пропускается.
@@ -909,14 +999,18 @@ fn push_border_line(
     to: (f32, f32),
     side: BorderSide,
     theme: &Theme,
+    options: &PaintOptions,
     scale: f32,
 ) {
     let Some(line) = border_line(side.style) else {
         return;
     };
-    // Цвет не задан или не разрешился — чёрный: Excel рисует рамку автоцветом,
-    // и текст по умолчанию рисует так же.
-    let stroke = resolve_color(theme, side.color).unwrap_or(Color::BLACK);
+    // Цвет не задан или не разрешился — автоцвет: чёрный в светлом оформлении
+    // (как текст по умолчанию), светлый в тёмном. Явный цвет автор оставил
+    // себе, и тёмное оформление его не перекрашивает — рамка может оказаться
+    // мало заметной на тёмном фоне, как и явный цвет текста.
+    let stroke =
+        resolve_themed(theme, side.color, options.dark).unwrap_or_else(|| options.default_text());
     out.push(DrawCommand::Line {
         x1: from.0,
         y1: from.1,
@@ -950,7 +1044,7 @@ fn draw_headers(headers: &Headers<'_>, out: &mut DisplayList) {
         0.0,
         headers.viewport.width,
         headers.header_h,
-        headers.options.header_background,
+        headers.options.effective_header_background(),
     );
     fill_rect(
         out,
@@ -958,13 +1052,13 @@ fn draw_headers(headers: &Headers<'_>, out: &mut DisplayList) {
         0.0,
         headers.header_w,
         headers.viewport.height,
-        headers.options.header_background,
+        headers.options.effective_header_background(),
     );
 
     draw_column_headers(headers, out);
     draw_row_headers(headers, out);
 
-    let line = Color(0xC0_C0_C0_FF);
+    let line = headers.options.effective_header_line();
     out.push(DrawCommand::Line {
         x1: 0.0,
         y1: headers.header_h,
@@ -1037,7 +1131,7 @@ fn draw_column_headers(headers: &Headers<'_>, out: &mut DisplayList) {
                 text,
                 font,
                 size,
-                color: options.header_foreground,
+                color: options.effective_header_foreground(),
                 align: TextAlign::Center,
                 baseline: TextBaseline::Middle,
                 bold: false,
@@ -1088,7 +1182,7 @@ fn draw_row_headers(headers: &Headers<'_>, out: &mut DisplayList) {
                 text,
                 font,
                 size,
-                color: options.header_foreground,
+                color: options.effective_header_foreground(),
                 align: TextAlign::Right,
                 baseline: TextBaseline::Middle,
                 bold: false,
@@ -1120,6 +1214,7 @@ fn draw_text(
     scale: f32,
     clip: &TextClip,
     is_link: bool,
+    options: &PaintOptions,
     out: &mut DisplayList,
 ) {
     let code = style.format_code(book.styles());
@@ -1132,7 +1227,8 @@ fn draw_text(
 
     let mut font = style.font(book.styles());
     let size = font.size * PX_PER_POINT * scale;
-    let mut color = resolve_color(book.theme(), font.color).unwrap_or(Color::BLACK);
+    let mut color = resolve_themed(book.theme(), font.color, options.dark)
+        .unwrap_or_else(|| options.default_text());
     let padding = TEXT_PADDING * scale;
 
     // Ссылка получает оформление по умолчанию — подчёркивание и цвет `hlink`
@@ -1152,9 +1248,23 @@ fn draw_text(
         font.underline = true;
         // Пустой слот `hlink` в теме — не повод потерять цвет: остаётся цвет
         // шрифта.
-        if let Some(link) = resolve_color(book.theme(), CellColor::Theme(HLINK_THEME_INDEX)) {
+        if let Some(link) = resolve_themed(
+            book.theme(),
+            CellColor::Theme(HLINK_THEME_INDEX),
+            options.dark,
+        ) {
             color = link;
         }
+    }
+
+    // В тёмном оформлении цвет текста проверяется на читаемость у своего фона:
+    // явный тёмный текст на тёмном фоне (или светлый на светлой заливке)
+    // поднимается до контраста. Явные цвета при этом не инвертируются — только
+    // сдвигаются по яркости.
+    if options.dark {
+        let background =
+            fill_color(book, style, options).unwrap_or_else(|| options.effective_background());
+        color = ensure_contrast(color, background);
     }
 
     // Числа Excel не выпускает за ячейку и не обрезает: не помещается —
@@ -1270,19 +1380,25 @@ fn horizontal(align: HorizontalAlign, value: &CellValue) -> HorizontalAlign {
 /// Цвет заливки ячейки; `None` — заливки нет.
 ///
 /// Заливку берёт из эффективного стиля: сработавшее правило могло задать свою.
-fn fill_color(book: &Workbook, style: &EffectiveStyle<'_>) -> Option<Color> {
+fn fill_color(
+    book: &Workbook,
+    style: &EffectiveStyle<'_>,
+    options: &PaintOptions,
+) -> Option<Color> {
     // Цветовая шкала задаёт фон сама и перекрывает заливку формата.
     if let Some(background) = style.background() {
         return Some(background);
     }
     let fill = style.fill(book.styles())?;
     match fill.pattern {
-        crate::model::FillPattern::Solid => resolve_color(book.theme(), fill.foreground),
+        crate::model::FillPattern::Solid => {
+            resolve_themed(book.theme(), fill.foreground, options.dark)
+        }
         crate::model::FillPattern::None => None,
         // Узоры Excel рисует растром; в DisplayList растра нет, поэтому узор
         // показывается своим цветом. TODO (Фаза 5): растр узора.
-        _ => resolve_color(book.theme(), fill.foreground)
-            .or_else(|| resolve_color(book.theme(), fill.background)),
+        _ => resolve_themed(book.theme(), fill.foreground, options.dark)
+            .or_else(|| resolve_themed(book.theme(), fill.background, options.dark)),
     }
 }
 
@@ -1309,6 +1425,96 @@ fn theme_color(theme: &Theme, index: u32) -> Option<Color> {
         // Палитра хранит только RGB — прочие варианты означают пустой слот.
         CellColor::None | CellColor::Theme(_) | CellColor::Indexed(_) => None,
     }
+}
+
+/// Цвет из модели с учётом тёмного оформления.
+///
+/// В тёмном оформлении индексы темы идут через [`dark_theme_index`], остальное
+/// разрешается как есть ([`resolve_color`]): явные RGB-цвета не инвертируются.
+fn resolve_themed(theme: &Theme, color: CellColor, dark: bool) -> Option<Color> {
+    if dark {
+        if let CellColor::Theme(index) = color {
+            return theme_color(theme, dark_theme_index(index));
+        }
+    }
+    resolve_color(theme, color)
+}
+
+/// Индекс цвета темы в тёмном оформлении: светлые и тёмные слоты меняются
+/// местами (`lt1`↔`dk1`, `lt2`↔`dk2`).
+///
+/// Акценты (4–9) и цвета ссылок (10, 11) остаются: парных светлых и тёмных
+/// вариантов у них нет, а сами они — средние тона, различимые на обоих фонах.
+/// Ссылку при необходимости дотягивает [`ensure_contrast`]. Допущение: Excel
+/// тёмного оформления листа не документирует; правило задаёт просмотрщик.
+fn dark_theme_index(index: u32) -> u32 {
+    match index {
+        0 => 1,
+        1 => 0,
+        2 => 3,
+        3 => 2,
+        other => other,
+    }
+}
+
+/// Минимальный контраст обычного текста с фоном по WCAG 2.1 (уровень AA).
+const MIN_TEXT_CONTRAST: f32 = 4.5;
+
+/// Относительная яркость sRGB по WCAG 2.1.
+fn luminance(color: Color) -> f32 {
+    fn linear(channel: u32) -> f32 {
+        let value = f32::from(u8::try_from(channel).unwrap_or_default()) / 255.0;
+        if value <= 0.040_45 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    // Цвет в `DisplayList` — `RRGGBBAA`.
+    0.2126 * linear((color.0 >> 24) & 0xFF)
+        + 0.7152 * linear((color.0 >> 16) & 0xFF)
+        + 0.0722 * linear((color.0 >> 8) & 0xFF)
+}
+
+/// Контраст двух цветов по WCAG 2.1: от 1 (неразличимы) до 21.
+fn contrast_ratio(a: Color, b: Color) -> f32 {
+    let (one, two) = (luminance(a), luminance(b));
+    let (hi, lo) = if one >= two { (one, two) } else { (two, one) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+/// Подмешать `to` к `from` на `step/10`; целочисленно, чтобы результат не
+/// зависел от округления `f32`.
+fn mix(from: Color, to: Color, step: u32) -> Color {
+    let channel = |shift: u32| -> u32 {
+        let from = i64::from((from.0 >> shift) & 0xFF);
+        let to = i64::from((to.0 >> shift) & 0xFF);
+        let value = from + (to - from) * i64::from(step) / 10;
+        u32::try_from(value.clamp(0, 255)).unwrap_or_default()
+    };
+    Color((channel(24) << 24) | (channel(16) << 16) | (channel(8) << 8) | channel(0))
+}
+
+/// Поднять контраст текста с фоном до [`MIN_TEXT_CONTRAST`].
+///
+/// Цвет подмешивается к белому или чёрному — смотря какой полюс дальше от
+/// фона, — поэтому оттенок сохраняется: тёмно-синий текст на тёмном фоне
+/// становится светло-синим, а не белым. Неразличимый цвет на среднем фоне
+/// (контраста не даёт ни один полюс) остаётся ближайшим к читаемому.
+fn ensure_contrast(foreground: Color, background: Color) -> Color {
+    if contrast_ratio(foreground, background) >= MIN_TEXT_CONTRAST {
+        return foreground;
+    }
+    let target =
+        if contrast_ratio(Color::WHITE, background) >= contrast_ratio(Color::BLACK, background) {
+            Color::WHITE
+        } else {
+            Color::BLACK
+        };
+    (1..=10)
+        .map(|step| mix(foreground, target, step))
+        .find(|candidate| contrast_ratio(*candidate, background) >= MIN_TEXT_CONTRAST)
+        .unwrap_or(target)
 }
 
 /// Переставить каналы: в файле цвет записан как `AARRGGBB`, а `DisplayList`
@@ -2202,6 +2408,324 @@ mod tests {
             |cmd| matches!(cmd, DrawCommand::Rect { fill, .. } if *fill == Color(0x4F81_BDFF)),
         );
         assert_eq!(filled, 1);
+    }
+
+    /// Тёмное оформление того же кадра.
+    fn dark_options(options: &PaintOptions) -> PaintOptions {
+        PaintOptions {
+            dark: true,
+            ..*options
+        }
+    }
+
+    /// Заливка первой прямоугольной команды — фон окна.
+    fn window_background(dl: &DisplayList) -> Color {
+        (0..dl.len())
+            .filter_map(|i| dl.cmd(i))
+            .find_map(|cmd| match cmd {
+                DrawCommand::Rect { fill, .. } => Some(*fill),
+                _ => None,
+            })
+            .expect("фон окна в кадре")
+    }
+
+    /// Цвет первой текстовой команды.
+    fn first_text_color(dl: &DisplayList) -> Color {
+        text_commands(dl)
+            .first()
+            .map(|(_, _, color)| *color)
+            .expect("текст в кадре")
+    }
+
+    /// Кадр содержит прямоугольник такой заливки.
+    fn has_rect(dl: &DisplayList, fill: Color) -> bool {
+        (0..dl.len())
+            .filter_map(|i| dl.cmd(i))
+            .any(|cmd| matches!(cmd, DrawCommand::Rect { fill: f, .. } if *f == fill))
+    }
+
+    /// Книга из одной ячейки в стиле 1: шрифт и заливка заданы вызывающим.
+    fn styled_book(font: Font, fill: Fill) -> Workbook {
+        let styles = StyleTable::new(
+            vec![
+                CellFormat::default(),
+                CellFormat {
+                    font: 1,
+                    fill: 1,
+                    ..CellFormat::default()
+                },
+            ],
+            vec![Font::default(), font],
+            vec![Fill::default(), fill],
+            vec![Border::default()],
+            BTreeMap::new(),
+        );
+        let mut builder = WorksheetBuilder::new(PART);
+        builder
+            .push(0, Cell::new(1, 1, CellValue::InlineString("текст".into())))
+            .unwrap();
+        book_with_theme(
+            SheetContent {
+                cells: builder.finish(),
+                ..SheetContent::default()
+            },
+            styles,
+            theme(),
+        )
+    }
+
+    #[test]
+    fn dark_option_repaints_chrome_and_theme_text() {
+        // `theme="1"` — dk1: в светлом оформлении чёрный текст.
+        let book = styled_book(
+            Font {
+                color: CellColor::Theme(1),
+                ..Font::default()
+            },
+            Fill::default(),
+        );
+        let viewport = Viewport::default();
+        let light = painted(&book, viewport, &content_only());
+        let dark = painted(&book, viewport, &dark_options(&content_only()));
+
+        assert_eq!(window_background(&light), Color::WHITE);
+        assert_eq!(window_background(&dark), dl_color::DARK_BACKGROUND);
+        assert_eq!(first_text_color(&light), Color::BLACK, "dk1 — чёрный");
+        assert_eq!(
+            first_text_color(&dark),
+            Color::WHITE,
+            "в тёмном оформлении dk1 и lt1 меняются местами"
+        );
+        assert!(
+            contrast_ratio(first_text_color(&dark), window_background(&dark)) >= MIN_TEXT_CONTRAST,
+            "текст темы обязан читаться на тёмном фоне"
+        );
+    }
+
+    #[test]
+    fn dark_off_paints_the_light_frame() {
+        let book = styled_book(Font::default(), Fill::default());
+        let viewport = Viewport::default();
+        let default = painted(&book, viewport, &PaintOptions::default());
+        let off = painted(
+            &book,
+            viewport,
+            &PaintOptions {
+                dark: false,
+                ..PaintOptions::default()
+            },
+        );
+
+        assert_eq!(
+            default.to_bytes(),
+            off.to_bytes(),
+            "выключенная опция не меняет ни одной команды"
+        );
+        assert_eq!(window_background(&default), Color::WHITE);
+    }
+
+    #[test]
+    fn dark_option_repaints_grid_and_headers() {
+        let book = book_with(numbers(), StyleTable::default());
+        let viewport = Viewport::default();
+        let light = painted(&book, viewport, &PaintOptions::default());
+        let dark = painted(&book, viewport, &dark_options(&PaintOptions::default()));
+        let strokes =
+            |dl: &DisplayList| -> Vec<Color> { lines(dl).into_iter().map(|line| line.4).collect() };
+        let texts = |dl: &DisplayList| -> Vec<Color> {
+            text_commands(dl)
+                .into_iter()
+                .map(|(_, _, color)| color)
+                .collect()
+        };
+
+        assert!(strokes(&light).contains(&dl_color::GRID));
+        assert!(strokes(&light).contains(&dl_color::HEADER_LINE));
+        assert!(has_rect(&light, dl_color::HEADER_BG));
+        assert!(texts(&light).contains(&dl_color::HEADER_FG));
+
+        assert!(strokes(&dark).contains(&dl_color::DARK_GRID));
+        assert!(strokes(&dark).contains(&dl_color::DARK_HEADER_LINE));
+        assert!(has_rect(&dark, dl_color::DARK_HEADER_BG));
+        assert!(texts(&dark).contains(&dl_color::DARK_HEADER_FG));
+        assert!(
+            contrast_ratio(dl_color::DARK_HEADER_FG, dl_color::DARK_HEADER_BG) >= MIN_TEXT_CONTRAST
+        );
+    }
+
+    #[test]
+    fn explicit_dark_text_on_light_fill_stays_dark_in_dark_theme() {
+        let yellow = Color(0xFFFF_00FF);
+        let book = styled_book(
+            Font {
+                color: CellColor::Rgb(0xFF_00_00_00),
+                ..Font::default()
+            },
+            Fill {
+                pattern: FillPattern::Solid,
+                foreground: CellColor::Rgb(0xFF_FF_FF_00),
+                background: CellColor::None,
+            },
+        );
+
+        let dark = painted(&book, Viewport::default(), &dark_options(&content_only()));
+        assert!(has_rect(&dark, yellow), "заливка автора остаётся светлой");
+        assert_eq!(
+            first_text_color(&dark),
+            Color::BLACK,
+            "цвет автора на своей заливке не перекрашивается"
+        );
+        assert!(contrast_ratio(Color::BLACK, yellow) >= MIN_TEXT_CONTRAST);
+    }
+
+    #[test]
+    fn explicit_dark_text_without_fill_is_lifted_in_dark_theme() {
+        let book = styled_book(
+            Font {
+                color: CellColor::Rgb(0xFF_00_00_00),
+                ..Font::default()
+            },
+            Fill::default(),
+        );
+        let viewport = Viewport::default();
+        let light = painted(&book, viewport, &content_only());
+        let dark = painted(&book, viewport, &dark_options(&content_only()));
+
+        assert_eq!(
+            first_text_color(&light),
+            Color::BLACK,
+            "светлое оформление цвет автора не трогает"
+        );
+        let lifted = first_text_color(&dark);
+        assert_ne!(lifted, Color::BLACK, "на тёмном фоне чёрный не виден");
+        assert!(
+            contrast_ratio(lifted, dl_color::DARK_BACKGROUND) >= MIN_TEXT_CONTRAST,
+            "поднятый цвет обязан читаться"
+        );
+    }
+
+    #[test]
+    fn dark_theme_swaps_light_and_dark_fill_slots() {
+        // Заливка `theme="2"` — lt2, текст `theme="1"` — dk1.
+        let book = styled_book(
+            Font {
+                color: CellColor::Theme(1),
+                ..Font::default()
+            },
+            Fill {
+                pattern: FillPattern::Solid,
+                foreground: CellColor::Theme(2),
+                background: CellColor::None,
+            },
+        );
+        let viewport = Viewport::default();
+        let light = painted(&book, viewport, &content_only());
+        let dark = painted(&book, viewport, &dark_options(&content_only()));
+
+        let lt2 = Color(0xEEEC_E1FF);
+        let dk2 = Color(0x1F49_7DFF);
+        assert!(has_rect(&light, lt2), "в светлом lt2 остаётся собой");
+        assert!(has_rect(&dark, dk2), "в тёмном lt2 меняется на dk2");
+        assert_eq!(first_text_color(&dark), Color::WHITE);
+        assert!(contrast_ratio(Color::WHITE, dk2) >= MIN_TEXT_CONTRAST);
+    }
+
+    #[test]
+    fn automatic_border_follows_dark_theme_but_explicit_color_does_not() {
+        // Рамка 1 — без цвета (автоцвет), рамка 2 — явный красный.
+        let styles = StyleTable::new(
+            vec![
+                CellFormat::default(),
+                CellFormat {
+                    border: 1,
+                    ..CellFormat::default()
+                },
+                CellFormat {
+                    border: 2,
+                    ..CellFormat::default()
+                },
+            ],
+            vec![Font::default()],
+            vec![Fill::default()],
+            vec![
+                Border::default(),
+                Border {
+                    top: side(BorderStyle::Thin, CellColor::None),
+                    ..Border::default()
+                },
+                Border {
+                    top: side(BorderStyle::Thin, CellColor::Rgb(0xFFFF_0000)),
+                    ..Border::default()
+                },
+            ],
+            BTreeMap::new(),
+        );
+        let mut builder = WorksheetBuilder::new(PART);
+        builder
+            .push(0, Cell::new(0, 1, CellValue::Number(1.0)))
+            .unwrap();
+        builder
+            .push(0, Cell::new(1, 2, CellValue::Number(2.0)))
+            .unwrap();
+        let book = book_with_theme(
+            SheetContent {
+                cells: builder.finish(),
+                ..SheetContent::default()
+            },
+            styles,
+            theme(),
+        );
+
+        let strokes =
+            |dl: &DisplayList| -> Vec<Color> { lines(dl).into_iter().map(|line| line.4).collect() };
+        let light = painted(&book, Viewport::default(), &borders_only());
+        let dark = painted(&book, Viewport::default(), &dark_options(&borders_only()));
+
+        assert!(
+            strokes(&light).contains(&Color::BLACK),
+            "автоцвет в светлом — чёрный, как текст по умолчанию"
+        );
+        assert!(
+            strokes(&dark).contains(&dl_color::DARK_TEXT),
+            "автоцвет в тёмном — светлый"
+        );
+        assert!(
+            strokes(&dark).contains(&RED),
+            "явный цвет рамки тёмное оформление не перекрашивает"
+        );
+    }
+
+    #[test]
+    fn dark_frame_text_stays_readable() {
+        // Гиперссылка без своего шрифта: `hlink` темы (0000FF) на тёмном фоне
+        // неразличим сам по себе — цвет обязан поднять `ensure_contrast`.
+        let book = book_with_theme(
+            content_with(&[(0, 0, 0, "ссылка")], &["A1"]),
+            StyleTable::default(),
+            theme(),
+        );
+        let viewport = Viewport::default();
+        let dark = painted(&book, viewport, &dark_options(&content_only()));
+        let (_, underline, link) = text_commands(&dark)
+            .first()
+            .cloned()
+            .expect("ссылка в кадре");
+        assert!(underline);
+        assert!(
+            contrast_ratio(link, dl_color::DARK_BACKGROUND) >= MIN_TEXT_CONTRAST,
+            "ссылка не читается: {link:?}"
+        );
+
+        // Весь текст листа с числами — без явных цветов — тоже читается.
+        let numbers = book_with(numbers(), StyleTable::default());
+        let dark = painted(&numbers, viewport, &dark_options(&content_only()));
+        let background = window_background(&dark);
+        for (text, _, color) in text_commands(&dark) {
+            assert!(
+                contrast_ratio(color, background) >= MIN_TEXT_CONTRAST,
+                "«{text}» не читается: {color:?} на {background:?}"
+            );
+        }
     }
 
     /// Цвет в раскладке `DisplayList` (`RRGGBBAA`).
