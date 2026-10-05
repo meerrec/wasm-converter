@@ -10,7 +10,8 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["vite/client"]
+    // `node` нужен конфигу Vite: он читает файлы фикстур с диска.
+    "types": ["vite/client", "node"]
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "e2e", "vite.config.ts", "playwright.config.ts"]
 }

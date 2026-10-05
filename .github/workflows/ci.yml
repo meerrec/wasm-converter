@@ -94,9 +94,9 @@ jobs:
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 
       # Сквозные тесты примера идут в настоящем браузере: без него они падают
-      # не от ошибки в коде, а от отсутствия браузера.
-      - if: matrix.node == 20
-        run: npx playwright install --with-deps chromium
+      # не от ошибки в коде, а от отсутствия браузера. Ставится на обе ноги
+      # матрицы — `turbo run test` запускает их при любой версии Node.
+      - run: npx playwright install --with-deps chromium
 
       - run: pnpm turbo run typecheck test build
       - if: matrix.node == 20
@@ -110,8 +110,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: 1.98.0 }
       - run: cargo install cargo-deny --locked && cargo deny check
+      # Версию pnpm action берёт из `packageManager` в package.json; ключ
+      # `version` рядом с ним — ошибка «Multiple versions of pnpm specified».
       - uses: pnpm/action-setup@v4
-        with: { version: 9 }
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile

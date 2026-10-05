@@ -26,7 +26,9 @@ declare global {
 async function canvasStats(page: Page): Promise<CanvasStats> {
   return page.evaluate(async () => {
     const bytes = await window.docConverter!.viewer.exportPng();
-    const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    // Копия: `Blob` не принимает вид над `SharedArrayBuffer`, а воркер волен
+    // отдать любой.
+    const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }));
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const ctx = canvas.getContext('2d')!;
     ctx.drawImage(bitmap, 0, 0);
@@ -53,7 +55,9 @@ async function pixelAt(page: Page, x: number, y: number): Promise<[number, numbe
   return page.evaluate(
     async ([px, py]) => {
       const bytes = await window.docConverter!.viewer.exportPng();
-      const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+      // Копия: `Blob` не принимает вид над `SharedArrayBuffer`, а воркер волен
+    // отдать любой.
+    const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }));
       const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
       const ctx = canvas.getContext('2d')!;
       ctx.drawImage(bitmap, 0, 0);
