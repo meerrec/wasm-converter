@@ -2,8 +2,10 @@
 //!
 //! Координаты `DisplayList` — физические пиксели canvas: масштаб (зум, умноженный
 //! на DPR) применяется здесь, а раскладка считается без него. Порядок слоёв
-//! повторяет Excel: заливки, поверх них сетка, поверх всего текст. Объединённые
-//! ячейки рисуются после сетки — иначе она просвечивала бы сквозь них.
+//! повторяет Excel: заливки, поверх них сетка, поверх всего текст, а над текстом —
+//! картинки: изображения в Excel — отдельный слой объектов, плавающий над
+//! ячейками. Объединённые ячейки рисуются после сетки — иначе она просвечивала бы
+//! сквозь них.
 //!
 //! Закреплённые области разбивают окно на четыре квадранта: закреплённые строки
 //! и столбцы не прокручиваются, остальное — да. Каждый квадрант рисуется под
@@ -15,6 +17,7 @@ use doc_converter_render::display_list::{
 
 use crate::cellref::{column_name, row_name, CellRef, Range};
 use crate::conditional::{EffectiveStyle, RuleIndex, Visual};
+use crate::drawing::ImageAnchor;
 use crate::layout::{SheetLayout, PX_PER_POINT};
 use crate::model::{
     Border, BorderSide, BorderStyle, Cell, CellValue, Color as CellColor, HorizontalAlign, Sheet,
@@ -277,6 +280,11 @@ struct Region {
     /// Координата раскладки, попадающая в левый верхний угол квадранта.
     layout_x: f32,
     layout_y: f32,
+    /// Правый и нижний края видимой части квадранта в координатах раскладки:
+    /// у закреплённой части — граница закрепления, у прокручиваемой — край окна.
+    /// Закреплённый квадрант не должен рисовать то, что лежит под прокручиваемым.
+    pane_right: f32,
+    pane_bottom: f32,
     /// Прямоугольник отсечения в физических пикселях.
     clip: (f32, f32, f32, f32),
 }
@@ -366,6 +374,19 @@ pub fn build(
             (view_top, header_h + frozen_h)
         };
 
+        // Закреплённая часть кончается на границе закрепления, прокручиваемая —
+        // на краю окна; у не закреплённых осей обе границы совпадают.
+        let pane_right = if cols.0 < frozen_cols {
+            layout.column_x(frozen_cols)
+        } else {
+            view_left + scroll_w
+        };
+        let pane_bottom = if rows.0 < frozen_rows {
+            layout.row_y(frozen_rows)
+        } else {
+            view_top + scroll_h
+        };
+
         let region = Region {
             rows,
             cols,
@@ -373,6 +394,8 @@ pub fn build(
             screen_y,
             layout_x,
             layout_y,
+            pane_right,
+            pane_bottom,
             clip: (
                 screen_x,
                 screen_y,
@@ -528,7 +551,72 @@ fn draw_region(
         }
     }
 
+    // Картинки — над текстом: в Excel объект лежит на отдельном слое поверх
+    // ячеек и закрывает их содержимое. Выше текста, но ниже `PopClip`: клип
+    // квадранта обрезает картинку так же, как остальное содержимое.
+    draw_images(sheet, layout, scale, region, out);
+
     out.push(DrawCommand::PopClip);
+}
+
+/// Прямоугольник картинки в координатах раскладки: `(x, y, w, h)`.
+///
+/// `from` — верхний левый угол, `to` — нижний правый (в OOXML он исключающий,
+/// то есть задаёт границу, а не последний пиксель). Повреждённый якорь может
+/// дать отрицательный размер — рисование такие пропускает.
+fn anchor_rect(layout: &SheetLayout, anchor: ImageAnchor) -> (f32, f32, f32, f32) {
+    let (from, to) = match anchor {
+        ImageAnchor::OneCell { from, ext } => {
+            let x = layout.column_x(from.col) + from.col_off;
+            let y = layout.row_y(from.row) + from.row_off;
+            return (x, y, ext.cx, ext.cy);
+        }
+        ImageAnchor::TwoCell { from, to } => (from, to),
+    };
+    let x = layout.column_x(from.col) + from.col_off;
+    let y = layout.row_y(from.row) + from.row_off;
+    let x1 = layout.column_x(to.col) + to.col_off;
+    let y1 = layout.row_y(to.row) + to.row_off;
+    (x, y, x1 - x, y1 - y)
+}
+
+/// Картинки одного квадранта — в порядке наложения.
+///
+/// Порядок `sheet.images` — порядок документа: первые лежат ниже, и painter
+/// закрашивает их следующими командами. Картинка без `image_id` не рисуется:
+/// media не разрешилась, регистрировать нечего.
+///
+/// Видимая часть — пересечение прямоугольника с квадрантом. Это отсекает и
+/// картинки за окном, и картинку, пересекающую границу закрепления: в каждом
+/// квадранте рисуется только его часть — закреплённая остаётся на месте,
+/// прокручиваемая уезжает.
+fn draw_images(
+    sheet: &Sheet,
+    layout: &SheetLayout,
+    scale: f32,
+    region: &Region,
+    out: &mut DisplayList,
+) {
+    for image in &sheet.images {
+        let Some(bitmap_id) = image.image_id else {
+            continue;
+        };
+        let (x, y, w, h) = anchor_rect(layout, image.anchor);
+        let x0 = x.max(region.layout_x);
+        let y0 = y.max(region.layout_y);
+        let x1 = (x + w).min(region.pane_right);
+        let y1 = (y + h).min(region.pane_bottom);
+        if x1 <= x0 || y1 <= y0 {
+            continue;
+        }
+        out.push(DrawCommand::Image {
+            x: region.screen_x(x0, scale),
+            y: region.screen_y(y0, scale),
+            w: (x1 - x0) * scale,
+            h: (y1 - y0) * scale,
+            bitmap_id,
+        });
+    }
 }
 
 /// Высота полосы данных от высоты строки; поля сверху и снизу.
@@ -1596,6 +1684,7 @@ fn fill_rect(out: &mut DisplayList, x: f32, y: f32, w: f32, h: f32, fill: Color)
 mod tests {
     use super::*;
     use crate::dims::{ColWidth, RowHeight};
+    use crate::drawing::{ImageExtent, ImageMarker, SheetImage};
     use crate::model::{Border, CellFormat, Fill, FillPattern, Font, StyleTable, WorksheetMeta};
     use crate::model::{SheetContent, Theme, WorksheetBuilder};
     use crate::sheet_meta::{Hyperlink, HyperlinkTarget};
@@ -3157,5 +3246,253 @@ mod tests {
         vertical_xs.dedup();
         assert_eq!(horizontal_ys, [0.0, 20.0, 40.0, 60.0, 80.0, 100.0]);
         assert_eq!(vertical_xs, [0.0, 64.0, 128.0, 192.0, 256.0, 320.0]);
+    }
+
+    /// Команды картинок кадра: `(x, y, w, h, bitmap_id)`.
+    fn image_commands(dl: &DisplayList) -> Vec<(f32, f32, f32, f32, u32)> {
+        (0..dl.len())
+            .filter_map(|i| dl.cmd(i))
+            .filter_map(|cmd| match cmd {
+                DrawCommand::Image {
+                    x,
+                    y,
+                    w,
+                    h,
+                    bitmap_id,
+                } => Some((*x, *y, *w, *h, *bitmap_id)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Близость координат: EMU переводится в пиксели с дробным остатком.
+    fn near(actual: f32, expected: f32) -> bool {
+        (actual - expected).abs() < 0.01
+    }
+
+    /// Лист с ячейкой A1 и заданными картинками.
+    fn images_content(images: Vec<SheetImage>) -> SheetContent {
+        let mut builder = WorksheetBuilder::new(PART);
+        builder
+            .push(0, Cell::new(0, 0, CellValue::Number(1.0)))
+            .unwrap();
+        SheetContent {
+            cells: builder.finish(),
+            images,
+            ..SheetContent::default()
+        }
+    }
+
+    /// Картинка без media: в кадре важны только id и якорь.
+    fn sheet_image(anchor: ImageAnchor, image_id: Option<u32>) -> SheetImage {
+        SheetImage {
+            name: None,
+            media: None,
+            image_id,
+            edit_as: None,
+            anchor,
+        }
+    }
+
+    /// One-cell якорь с нулевыми смещениями.
+    fn one_cell(col: u32, row: u32, cx: f32, cy: f32) -> ImageAnchor {
+        ImageAnchor::OneCell {
+            from: ImageMarker {
+                col,
+                row,
+                col_off: 0.0,
+                row_off: 0.0,
+            },
+            ext: ImageExtent { cx, cy },
+        }
+    }
+
+    #[test]
+    fn png_fixture_paints_both_anchor_kinds() {
+        let book = open_fixture("images-png.xlsx");
+        let dl = painted(&book, Viewport::default(), &content_only());
+
+        let images = image_commands(&dl);
+        assert_eq!(images.len(), 2, "кадр: {images:?}");
+        // One-cell B2: столбец 1 (64) и строка 1 (20) плюс 96×72 пикселя.
+        assert_eq!(images[0], (64.0, 20.0, 96.0, 72.0, 0));
+        // Two-cell E3:H8 — 4 столбца по 64 и 6 строк по 20; обе картинки
+        // ссылаются на одну media, поэтому id у них общий.
+        assert_eq!(images[1], (256.0, 40.0, 256.0, 120.0, 0));
+
+        // С заголовками картинка сдвигается вместе с листом: 44 пикселя
+        // полосы строк и 20 — столбцов.
+        let with_headers = painted(&book, Viewport::default(), &PaintOptions::default());
+        assert_eq!(
+            image_commands(&with_headers)[0],
+            (108.0, 40.0, 96.0, 72.0, 0)
+        );
+    }
+
+    #[test]
+    fn jpeg_fixture_paints_offsets_inside_cells() {
+        let book = open_fixture("images-jpeg.xlsx");
+        let dl = painted(&book, Viewport::default(), &content_only());
+
+        let images = image_commands(&dl);
+        assert_eq!(images.len(), 2, "кадр: {images:?}");
+        // One-cell C4: 2 столбца и 3 строки плюс 320000 и 90000 EMU смещения.
+        let (x, y, w, h, id) = images[0];
+        assert!(near(x, 2.0 * 64.0 + 320_000.0 / 9525.0), "x = {x}");
+        assert!(near(y, 3.0 * 20.0 + 90_000.0 / 9525.0), "y = {y}");
+        assert_eq!((w, h, id), (120.0, 80.0, 0));
+        // Two-cell A1:D5 — правый нижний угол тоже со смещением 320000 EMU.
+        let (x, y, w, h, id) = images[1];
+        assert_eq!((x, y, id), (0.0, 0.0, 0));
+        assert!(near(w, 3.0 * 64.0 + 320_000.0 / 9525.0), "w = {w}");
+        assert!(near(h, 4.0 * 20.0), "h = {h}");
+    }
+
+    #[test]
+    fn over_data_fixture_keeps_overlay_order_and_skips_the_far_image() {
+        let book = open_fixture("images-over-data.xlsx");
+        let dl = painted(&book, Viewport::default(), &content_only());
+
+        // Третья картинка приколота к столбцу 16382 — это далеко за окном.
+        let images = image_commands(&dl);
+        assert_eq!(images.len(), 2, "кадр: {images:?}");
+        // Two-cell B2:E6 лежит поверх данных: 3 столбца по 64, 4 строки по 20.
+        assert_eq!(images[0], (64.0, 20.0, 192.0, 80.0, 0));
+        // One-cell F2 с размером 140×100 накрывает первую: команды идут в
+        // порядке документа, то есть в порядке наложения.
+        assert_eq!(images[1], (320.0, 20.0, 140.0, 100.0, 1));
+    }
+
+    #[test]
+    fn images_without_media_or_size_are_skipped() {
+        let content = images_content(vec![
+            // media не разрешилась: рисовать нечем.
+            sheet_image(one_cell(0, 0, 40.0, 30.0), None),
+            // Нулевые и отрицательные размеры не дают видимой части.
+            sheet_image(one_cell(0, 0, 0.0, 30.0), Some(0)),
+            sheet_image(one_cell(0, 0, 40.0, 0.0), Some(0)),
+            sheet_image(one_cell(0, 0, -40.0, -30.0), Some(0)),
+            sheet_image(one_cell(0, 0, 40.0, 30.0), Some(3)),
+        ]);
+        let book = book_with(content, StyleTable::default());
+        let dl = painted(&book, Viewport::default(), &content_only());
+
+        assert_eq!(image_commands(&dl), [(0.0, 0.0, 40.0, 30.0, 3)]);
+    }
+
+    #[test]
+    fn images_outside_the_window_are_not_painted_and_scrolling_clips_them() {
+        let content = images_content(vec![sheet_image(one_cell(0, 0, 40.0, 30.0), Some(0))]);
+        let book = book_with(content, StyleTable::default());
+
+        // Прокрутка на ширину картинки уводит её из окна целиком.
+        let viewport = Viewport {
+            scroll_x: 40.0,
+            ..Viewport::default()
+        };
+        let dl = painted(&book, viewport, &content_only());
+        assert!(
+            image_commands(&dl).is_empty(),
+            "кадр: {:?}",
+            image_commands(&dl)
+        );
+
+        // На половине ширины в кадре остаётся только видимая часть.
+        let viewport = Viewport {
+            scroll_x: 20.0,
+            ..Viewport::default()
+        };
+        let dl = painted(&book, viewport, &content_only());
+        assert_eq!(image_commands(&dl), [(0.0, 0.0, 20.0, 30.0, 0)]);
+    }
+
+    #[test]
+    fn frozen_column_splits_the_image_between_quadrants() {
+        // Закреплён столбец A, а картинка лежит на A1:B1 — ровно на границе.
+        let mut content = images_content(vec![sheet_image(
+            ImageAnchor::TwoCell {
+                from: ImageMarker {
+                    col: 0,
+                    row: 0,
+                    col_off: 0.0,
+                    row_off: 0.0,
+                },
+                to: ImageMarker {
+                    col: 2,
+                    row: 1,
+                    col_off: 0.0,
+                    row_off: 0.0,
+                },
+            },
+            Some(0),
+        )]);
+        content.view.pane = Some(crate::Pane {
+            cols: 1,
+            rows: 0,
+            state: crate::PaneState::Frozen,
+            active: crate::PaneKind::BottomRight,
+            top_left: None,
+        });
+        let book = book_with(content, StyleTable::default());
+
+        // Каждый квадрант рисует свою половину: закреплённая часть кончается на
+        // 64 пикселях, прокручиваемая начинается там же — картинка не двоится.
+        let dl = painted(&book, Viewport::default(), &content_only());
+        assert_eq!(
+            image_commands(&dl),
+            [(0.0, 0.0, 64.0, 20.0, 0), (64.0, 0.0, 64.0, 20.0, 0)]
+        );
+    }
+
+    #[test]
+    fn zoom_scales_image_rectangles_and_positions() {
+        let book = open_fixture("images-png.xlsx");
+        let viewport = Viewport {
+            width: 1600.0,
+            height: 1200.0,
+            scale: 2.0,
+            ..Viewport::default()
+        };
+        let dl = painted(&book, viewport, &content_only());
+
+        let images = image_commands(&dl);
+        assert_eq!(images.len(), 2, "кадр: {images:?}");
+        assert_eq!(images[0], (128.0, 40.0, 192.0, 144.0, 0));
+        assert_eq!(images[1], (512.0, 80.0, 512.0, 240.0, 0));
+    }
+
+    #[test]
+    fn images_are_painted_above_text() {
+        let book = open_fixture("images-over-data.xlsx");
+        let dl = painted(&book, Viewport::default(), &content_only());
+
+        let last_text = (0..dl.len())
+            .rfind(|i| matches!(dl.cmd(*i), Some(DrawCommand::Text { .. })))
+            .expect("текст в кадре");
+        let first_image = (0..dl.len())
+            .find(|i| matches!(dl.cmd(*i), Some(DrawCommand::Image { .. })))
+            .expect("картинки в кадре");
+        assert!(
+            first_image > last_text,
+            "картинка {first_image} не перекрывает текст {last_text}"
+        );
+    }
+
+    #[test]
+    fn overlapping_images_follow_the_document_order() {
+        let content = images_content(vec![
+            sheet_image(one_cell(0, 0, 40.0, 30.0), Some(2)),
+            sheet_image(one_cell(0, 0, 40.0, 30.0), Some(0)),
+            sheet_image(one_cell(0, 0, 40.0, 30.0), Some(1)),
+        ]);
+        let book = book_with(content, StyleTable::default());
+        let dl = painted(&book, Viewport::default(), &content_only());
+
+        // Команды идут в порядке списка: последняя ложится поверх остальных.
+        let ids: Vec<_> = image_commands(&dl)
+            .into_iter()
+            .map(|(_, _, _, _, id)| id)
+            .collect();
+        assert_eq!(ids, [2, 0, 1]);
     }
 }
