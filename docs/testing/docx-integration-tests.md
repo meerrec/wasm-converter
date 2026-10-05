@@ -556,4 +556,4 @@ if __name__ == "__main__":
 - [LibreOffice (конвертация в PDF)](https://www.libreoffice.org/)
 - [qpdf (валидация PDF)](https://qpdf.sourceforge.io/)
 - [ROADMAP: doc-converter](../../ROADMAP.md)
-- [ADR 0003: Алгоритмы раскладки DOCX](../adr/0003-docx-layout-and-text-wrapping.md)
+- [ADR 0006: Алгоритмы раскладки DOCX](../adr/0006-docx-layout-and-text-wrapping.md)
