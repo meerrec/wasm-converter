@@ -1,0 +1,45 @@
+---
+source: crates/xlsx/tests/snapshots.rs
+expression: dump
+---
+Clear
+Rect x=0 y=0 w=800 h=600 fill=Color(4294967295) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+PushClip x=44 y=20 w=756 h=580
+Line x1=44 y1=20 x2=172 y2=20 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=40 x2=172 y2=40 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=60 x2=172 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=80 x2=172 y2=80 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=100 x2=172 y2=100 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=120 x2=172 y2=120 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=140 x2=172 y2=140 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=160 x2=172 y2=160 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=180 x2=172 y2=180 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=20 x2=44 y2=180 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=108 y1=20 x2=108 y2=180 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=20 x2=172 y2=180 stroke=Color(3654932991) sw=1 style=Solid
+Text x=47 y=37 text="日本語のテキスト" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=47 y=57 text="한국어 텍스트" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=47 y=77 text="العربية" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=47 y=97 text="עברית" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=47 y=117 text="😀 эмодзи 🎉" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=47 y=137 text="Ĉiuj homoj estas denaske liberaj" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=47 y=157 text="Тире — и дефис - разные" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+Rect x=0 y=0 w=800 h=20 fill=Color(4126537215) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=0 y=0 w=44 h=600 fill=Color(4126537215) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+PushClip x=44 y=0 w=64 h=20
+Text x=76 y=10 text="A" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=0 w=64 h=20
+Text x=140 y=10 text="B" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+Text x=41 y=30 text="1" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=50 text="2" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=70 text="3" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=90 text="4" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=110 text="5" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=130 text="6" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=150 text="7" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=170 text="8" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Line x1=0 y1=20 x2=800 y2=20 stroke=Color(3233857791) sw=1 style=Solid
+Line x1=44 y1=0 x2=44 y2=600 stroke=Color(3233857791) sw=1 style=Solid

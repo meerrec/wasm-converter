@@ -1,0 +1,146 @@
+---
+source: crates/xlsx/tests/snapshots.rs
+expression: dump
+---
+Clear
+Rect x=0 y=0 w=800 h=600 fill=Color(4294967295) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+PushClip x=44 y=20 w=756 h=580
+Line x1=44 y1=20 x2=236 y2=20 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=40 x2=236 y2=40 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=60 x2=236 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=80 x2=236 y2=80 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=100 x2=236 y2=100 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=120 x2=236 y2=120 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=140 x2=236 y2=140 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=160 x2=236 y2=160 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=180 x2=236 y2=180 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=200 x2=236 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=220 x2=236 y2=220 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=240 x2=236 y2=240 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=260 x2=236 y2=260 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=280 x2=236 y2=280 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=20 x2=44 y2=280 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=108 y1=20 x2=108 y2=280 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=20 x2=172 y2=280 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=236 y1=20 x2=236 y2=280 stroke=Color(3654932991) sw=1 style=Solid
+Rect x=114.166664 y=23 w=20.666666 h=14 fill=Color(1673427967) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=45 y=43 w=5.636364 h=14 fill=Color(1670301439) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=119.333336 y=43 w=15.499999 h=14 fill=Color(1673427967) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=45 y=63 w=11.272728 h=14 fill=Color(1670301439) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=124.5 y=63 w=10.333333 h=14 fill=Color(1673427967) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=45 y=83 w=16.909092 h=14 fill=Color(1670301439) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=129.66667 y=83 w=5.1666656 h=14 fill=Color(1673427967) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=45 y=103 w=22.545456 h=14 fill=Color(1670301439) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=45 y=123 w=28.18182 h=14 fill=Color(1670301439) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=134.83333 y=123 w=5.1666675 h=14 fill=Color(1673427967) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=45 y=143 w=33.818184 h=14 fill=Color(1670301439) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=134.83333 y=143 w=10.333333 h=14 fill=Color(1673427967) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=45 y=163 w=39.454544 h=14 fill=Color(1670301439) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=134.83333 y=163 w=15.500002 h=14 fill=Color(1673427967) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=45 y=183 w=45.09091 h=14 fill=Color(1670301439) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=134.83333 y=183 w=20.666668 h=14 fill=Color(1673427967) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=45 y=203 w=50.727272 h=14 fill=Color(1670301439) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=134.83333 y=203 w=25.833332 h=14 fill=Color(1673427967) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=45 y=223 w=56.36364 h=14 fill=Color(1670301439) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=134.83333 y=223 w=31 h=14 fill=Color(1673427967) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=45 y=243 w=62 h=14 fill=Color(1670301439) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=134.83333 y=243 w=36.166668 h=14 fill=Color(1673427967) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+PushClip x=44 y=20 w=64 h=20
+Text x=105 y=37 text="10" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=20 w=64 h=20
+Text x=169 y=37 text="-40" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=40 w=64 h=20
+Text x=105 y=57 text="15" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=40 w=64 h=20
+Text x=169 y=57 text="-30" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=60 w=64 h=20
+Text x=105 y=77 text="20" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=60 w=64 h=20
+Text x=169 y=77 text="-20" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=80 w=64 h=20
+Text x=105 y=97 text="25" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=80 w=64 h=20
+Text x=169 y=97 text="-10" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=100 w=64 h=20
+Text x=105 y=117 text="30" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=100 w=64 h=20
+Text x=169 y=117 text="0" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=120 w=64 h=20
+Text x=105 y=137 text="35" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=120 w=64 h=20
+Text x=169 y=137 text="10" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=140 w=64 h=20
+Text x=105 y=157 text="40" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=140 w=64 h=20
+Text x=169 y=157 text="20" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=160 w=64 h=20
+Text x=105 y=177 text="45" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=160 w=64 h=20
+Text x=169 y=177 text="30" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=180 w=64 h=20
+Text x=105 y=197 text="50" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=180 w=64 h=20
+Text x=169 y=197 text="40" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=200 w=64 h=20
+Text x=105 y=217 text="55" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=200 w=64 h=20
+Text x=169 y=217 text="50" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=220 w=64 h=20
+Text x=105 y=237 text="60" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=220 w=64 h=20
+Text x=169 y=237 text="60" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=240 w=64 h=20
+Text x=105 y=257 text="65" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=240 w=64 h=20
+Text x=169 y=257 text="70" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+PopClip
+PopClip
+Rect x=0 y=0 w=800 h=20 fill=Color(4126537215) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=0 y=0 w=44 h=600 fill=Color(4126537215) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+PushClip x=44 y=0 w=64 h=20
+Text x=76 y=10 text="A" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=0 w=64 h=20
+Text x=140 y=10 text="B" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+PushClip x=172 y=0 w=64 h=20
+Text x=204 y=10 text="C" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+Text x=41 y=30 text="1" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=50 text="2" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=70 text="3" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=90 text="4" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=110 text="5" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=130 text="6" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=150 text="7" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=170 text="8" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=190 text="9" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=210 text="10" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=230 text="11" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=250 text="12" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=270 text="13" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Line x1=0 y1=20 x2=800 y2=20 stroke=Color(3233857791) sw=1 style=Solid
+Line x1=44 y1=0 x2=44 y2=600 stroke=Color(3233857791) sw=1 style=Solid

@@ -1,0 +1,274 @@
+---
+source: crates/xlsx/tests/snapshots.rs
+expression: dump
+---
+Clear
+Rect x=0 y=0 w=800 h=600 fill=Color(4294967295) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+PushClip x=44 y=20 w=756 h=580
+Line x1=44 y1=20 x2=172 y2=20 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=40 x2=172 y2=40 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=60 x2=172 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=20 x2=44 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=108 y1=20 x2=108 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=20 x2=172 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+PushClip x=44 y=20 w=64 h=20
+Text x=47 y=37 text="A1" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=20 w=64 h=20
+Text x=111 y=37 text="B1" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=40 w=64 h=20
+Text x=47 y=57 text="A2" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=40 w=64 h=20
+Text x=111 y=57 text="B2" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PopClip
+PushClip x=172 y=20 w=628 h=580
+Line x1=172 y1=20 x2=620 y2=20 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=40 x2=620 y2=40 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=60 x2=620 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=20 x2=172 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=236 y1=20 x2=236 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=300 y1=20 x2=300 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=364 y1=20 x2=364 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=428 y1=20 x2=428 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=492 y1=20 x2=492 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=556 y1=20 x2=556 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=620 y1=20 x2=620 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+PushClip x=172 y=20 w=64 h=20
+Text x=175 y=37 text="C1" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=236 y=20 w=64 h=20
+Text x=239 y=37 text="D1" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=300 y=20 w=64 h=20
+Text x=303 y=37 text="E1" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=364 y=20 w=64 h=20
+Text x=367 y=37 text="F1" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=428 y=20 w=64 h=20
+Text x=431 y=37 text="G1" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+Text x=495 y=37 text="H1" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PushClip x=172 y=40 w=64 h=20
+Text x=175 y=57 text="C2" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=236 y=40 w=64 h=20
+Text x=239 y=57 text="D2" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=300 y=40 w=64 h=20
+Text x=303 y=57 text="E2" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=364 y=40 w=64 h=20
+Text x=367 y=57 text="F2" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=428 y=40 w=64 h=20
+Text x=431 y=57 text="G2" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+Text x=495 y=57 text="H2" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=60 w=756 h=540
+Line x1=44 y1=60 x2=172 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=80 x2=172 y2=80 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=100 x2=172 y2=100 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=120 x2=172 y2=120 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=140 x2=172 y2=140 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=160 x2=172 y2=160 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=180 x2=172 y2=180 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=200 x2=172 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=44 y1=60 x2=44 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=108 y1=60 x2=108 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=60 x2=172 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+PushClip x=44 y=60 w=64 h=20
+Text x=47 y=77 text="A3" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=60 w=64 h=20
+Text x=111 y=77 text="B3" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=80 w=64 h=20
+Text x=47 y=97 text="A4" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=80 w=64 h=20
+Text x=111 y=97 text="B4" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=100 w=64 h=20
+Text x=47 y=117 text="A5" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=100 w=64 h=20
+Text x=111 y=117 text="B5" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=120 w=64 h=20
+Text x=47 y=137 text="A6" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=120 w=64 h=20
+Text x=111 y=137 text="B6" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=140 w=64 h=20
+Text x=47 y=157 text="A7" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=140 w=64 h=20
+Text x=111 y=157 text="B7" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=44 y=160 w=64 h=20
+Text x=47 y=177 text="A8" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=160 w=64 h=20
+Text x=111 y=177 text="B8" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PopClip
+PushClip x=172 y=60 w=628 h=540
+Line x1=172 y1=60 x2=620 y2=60 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=80 x2=620 y2=80 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=100 x2=620 y2=100 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=120 x2=620 y2=120 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=140 x2=620 y2=140 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=160 x2=620 y2=160 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=180 x2=620 y2=180 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=200 x2=620 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=172 y1=60 x2=172 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=236 y1=60 x2=236 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=300 y1=60 x2=300 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=364 y1=60 x2=364 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=428 y1=60 x2=428 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=492 y1=60 x2=492 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=556 y1=60 x2=556 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+Line x1=620 y1=60 x2=620 y2=200 stroke=Color(3654932991) sw=1 style=Solid
+PushClip x=172 y=60 w=64 h=20
+Text x=175 y=77 text="C3" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=236 y=60 w=64 h=20
+Text x=239 y=77 text="D3" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=300 y=60 w=64 h=20
+Text x=303 y=77 text="E3" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=364 y=60 w=64 h=20
+Text x=367 y=77 text="F3" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=428 y=60 w=64 h=20
+Text x=431 y=77 text="G3" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+Text x=495 y=77 text="H3" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PushClip x=172 y=80 w=64 h=20
+Text x=175 y=97 text="C4" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=236 y=80 w=64 h=20
+Text x=239 y=97 text="D4" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=300 y=80 w=64 h=20
+Text x=303 y=97 text="E4" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=364 y=80 w=64 h=20
+Text x=367 y=97 text="F4" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=428 y=80 w=64 h=20
+Text x=431 y=97 text="G4" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+Text x=495 y=97 text="H4" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PushClip x=172 y=100 w=64 h=20
+Text x=175 y=117 text="C5" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=236 y=100 w=64 h=20
+Text x=239 y=117 text="D5" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=300 y=100 w=64 h=20
+Text x=303 y=117 text="E5" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=364 y=100 w=64 h=20
+Text x=367 y=117 text="F5" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=428 y=100 w=64 h=20
+Text x=431 y=117 text="G5" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+Text x=495 y=117 text="H5" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PushClip x=172 y=120 w=64 h=20
+Text x=175 y=137 text="C6" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=236 y=120 w=64 h=20
+Text x=239 y=137 text="D6" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=300 y=120 w=64 h=20
+Text x=303 y=137 text="E6" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=364 y=120 w=64 h=20
+Text x=367 y=137 text="F6" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=428 y=120 w=64 h=20
+Text x=431 y=137 text="G6" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+Text x=495 y=137 text="H6" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PushClip x=172 y=140 w=64 h=20
+Text x=175 y=157 text="C7" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=236 y=140 w=64 h=20
+Text x=239 y=157 text="D7" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=300 y=140 w=64 h=20
+Text x=303 y=157 text="E7" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=364 y=140 w=64 h=20
+Text x=367 y=157 text="F7" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=428 y=140 w=64 h=20
+Text x=431 y=157 text="G7" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+Text x=495 y=157 text="H7" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PushClip x=172 y=160 w=64 h=20
+Text x=175 y=177 text="C8" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=236 y=160 w=64 h=20
+Text x=239 y=177 text="D8" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=300 y=160 w=64 h=20
+Text x=303 y=177 text="E8" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=364 y=160 w=64 h=20
+Text x=367 y=177 text="F8" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+PushClip x=428 y=160 w=64 h=20
+Text x=431 y=177 text="G8" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+Text x=495 y=177 text="H8" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+PopClip
+Rect x=0 y=0 w=800 h=20 fill=Color(4126537215) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+Rect x=0 y=0 w=44 h=600 fill=Color(4126537215) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
+PushClip x=44 y=0 w=64 h=20
+Text x=76 y=10 text="A" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+PushClip x=108 y=0 w=64 h=20
+Text x=140 y=10 text="B" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+PushClip x=172 y=0 w=64 h=20
+Text x=204 y=10 text="C" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+PushClip x=236 y=0 w=64 h=20
+Text x=268 y=10 text="D" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+PushClip x=300 y=0 w=64 h=20
+Text x=332 y=10 text="E" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+PushClip x=364 y=0 w=64 h=20
+Text x=396 y=10 text="F" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+PushClip x=428 y=0 w=64 h=20
+Text x=460 y=10 text="G" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+PushClip x=492 y=0 w=64 h=20
+Text x=524 y=10 text="H" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+PushClip x=556 y=0 w=64 h=20
+Text x=588 y=10 text="I" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
+PopClip
+Text x=41 y=30 text="1" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=50 text="2" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=70 text="3" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=90 text="4" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=110 text="5" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=130 text="6" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=150 text="7" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=170 text="8" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=41 y=190 text="9" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Line x1=0 y1=20 x2=800 y2=20 stroke=Color(3233857791) sw=1 style=Solid
+Line x1=44 y1=0 x2=44 y2=600 stroke=Color(3233857791) sw=1 style=Solid
