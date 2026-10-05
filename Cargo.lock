@@ -622,6 +622,7 @@ dependencies = [
  "criterion",
  "doc-converter-core",
  "doc-converter-render",
+ "insta",
  "miette",
  "proptest",
  "quick-xml",

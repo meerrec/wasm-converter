@@ -34,3 +34,4 @@ harness = false
 proptest = { workspace = true }
 # Эталон дифференциального теста — JSON от exceljs.
 serde_json = { workspace = true }
+insta = { workspace = true }
