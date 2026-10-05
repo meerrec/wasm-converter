@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Что это
 
-Монорепозиторий **doc-converter**: просмотрщик OOXML (DOCX/XLSX) и экспортёр в PDF — Rust/WASM, рендер на `OffscreenCanvas` внутри Web Worker. Cargo workspace (`crates/*`) + pnpm workspaces (`packages/*`) + Turborepo. Разработка идёт фазами по `ROADMAP.md` (12 спринтов): сделаны Фаза 1 (workspace, CI, core-крейты, RPC Main↔Worker) и Фаза 2 (painter, DisplayList, SAB ring). Незаконченное помечено `TODO (Фаза N)` / `todo!("… (Фаза N)")` — при работе над фазой ищите эти маркеры, а не только ROADMAP.
+Монорепозиторий **doc-converter**: просмотрщик OOXML (DOCX/XLSX) и экспортёр в PDF — Rust/WASM, рендер на `OffscreenCanvas` внутри Web Worker. Cargo workspace (`crates/*`) + pnpm workspaces (`packages/*`) + Turborepo. Разработка идёт фазами по `ROADMAP.md` (13 спринтов): сделаны Фаза 1 (workspace, CI, core-крейты, RPC Main↔Worker) и Фаза 2 (painter, DisplayList, SAB ring). Незаконченное помечено `TODO (Фаза N)` / `todo!("… (Фаза N)")` — при работе над фазой ищите эти маркеры, а не только ROADMAP.
 
 ## Команды
 
@@ -105,6 +105,20 @@ canvas, `scale` — зум, умноженный на DPR.
 Поток: main вызывает `canvas.transferControlToOffscreen()` и **один раз** отдаёт canvas воркеру (`render/offscreen.ts:initOffscreen`) → воркер инициализирует wasm, делает `alloc_sab`, отвечает `ready` с SAB → `ResizeObserver` (debounce 100 мс, DPR клампится по лимиту 16M пикселей в `render/resize_observer.ts:computeDpr`) шлёт `resize` + `render` → воркер собирает DisplayList в слот ring → painter рисует → `tick`. Кадры коалесцируются через `requestAnimationFrame` в `worker/frame_loop.ts`; ошибки кадра логируются, loop не роняется.
 
 SAB требует COOP/COEP (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp`); без них — fallback на `ArrayBuffer` + transferables (`docs/workers.md`).
+
+## Работа через субагентов
+
+Работу выполняют субагенты, основной агент — оркестратор: разведка,
+декомпозиция, постановка задач, приёмка результата, диалог с пользователем.
+Правки кода, тестов, документации и роадмапа идут через `Agent`, а не делаются
+в основном контексте.
+
+**Почему:** независимые задачи выполняются параллельно, а основной контекст не
+забивается содержимым файлов, которое после правки уже не нужно.
+
+Исключение — правка в одну-две строки внутри задачи, которая и так ведётся
+основным агентом: постановка такой задачи дороже выполнения. Если строк
+больше или правок несколько — это уже задача для субагента.
 
 ## Соглашения
 
