@@ -94,6 +94,7 @@ pub fn hit_test(dl: &DisplayList, px: f32, py: f32) -> Option<HitTarget> {
                 }
             }
             DrawCommand::Clear
+            | DrawCommand::Chart { .. }
             | DrawCommand::Line { .. }
             | DrawCommand::PushClip { .. }
             | DrawCommand::PopClip
