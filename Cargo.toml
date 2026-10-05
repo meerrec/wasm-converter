@@ -59,7 +59,9 @@ image                = { version = "0.25", default-features = false, features = 
 bytemuck             = { version = "1", features = ["derive"] }
 flate2               = "1"
 smallvec             = { version = "1.13", features = ["union", "const_generics"] }
-lru                  = "0.12"
+# 0.12 несёт RUSTSEC-2026-0002 и RUSTSEC-2026-0253 (unsound в `IterMut`/`pop`),
+# оба закрыты только в 0.18.2.
+lru                  = "0.18"
 tracing              = "0.1"
 tracing-wasm         = "0.2"
 
