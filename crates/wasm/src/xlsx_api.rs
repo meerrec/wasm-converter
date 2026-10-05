@@ -44,6 +44,9 @@ pub struct OptionsJs {
     show_grid: bool,
     #[serde(default = "yes")]
     show_headers: bool,
+    /// Тёмное оформление; `false` — светлое, как в Excel.
+    #[serde(default)]
+    dark: bool,
 }
 
 fn one() -> f32 {
@@ -206,6 +209,7 @@ fn options_of(value: JsValue) -> Result<PaintOptions, JsValue> {
     Ok(PaintOptions {
         show_grid: js.show_grid,
         show_headers: js.show_headers,
+        dark: js.dark,
         ..PaintOptions::default()
     })
 }

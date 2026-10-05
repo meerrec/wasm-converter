@@ -26,8 +26,12 @@ export interface XlsxViewerHandle {
   setZoom(zoom: number): void;
   /** Прокрутить так, чтобы ячейка оказалась в левом верхнем углу. */
   scrollTo(x: number, y: number): void;
-  /** Показать или скрыть сетку и заголовки. */
-  setView(options: { showGrid?: boolean; showHeaders?: boolean }): void;
+  /** Показать или скрыть сетку, заголовки и тёмное оформление. */
+  setView(options: {
+    showGrid?: boolean;
+    showHeaders?: boolean;
+    theme?: 'light' | 'dark';
+  }): void;
   /** Ячейка под точкой события мыши, в координатах страницы. */
   hitTest(clientX: number, clientY: number): Promise<[number, number] | null>;
   /** Гиперссылка под точкой события мыши, в координатах страницы. */
@@ -51,6 +55,11 @@ export interface XlsxViewerOptions {
   zoom?: number;
   showGrid?: boolean;
   showHeaders?: boolean;
+  /**
+   * Тёмное оформление листа: цвета темы книги и контраст текста считаются
+   * под тёмный фон. По умолчанию светлое — как в Excel.
+   */
+  theme?: 'light' | 'dark';
   /**
    * Клик по ячейке с гиперссылкой. Получает саму ссылку; клик по ячейке без
    * ссылки колбэк не трогает.
@@ -95,6 +104,7 @@ export async function createXlsxViewer(
   let dpr = computeDpr(scroller.clientWidth, scroller.clientHeight, devicePixelRatio);
   let showGrid = options.showGrid ?? true;
   let showHeaders = options.showHeaders ?? true;
+  let theme: 'light' | 'dark' = options.theme ?? 'light';
   let destroyed = false;
   let frameScheduled = false;
   const pendingOpen = new Map<number, { resolve: (s: SheetInfo[]) => void; reject: (e: Error) => void }>();
@@ -193,7 +203,7 @@ export async function createXlsxViewer(
 
   /** Настройки рисования, общие для кадра и запросов по точке. */
   function renderConfig(): RenderConfig {
-    return { showGrid, showHeaders, theme: 'light', dpr };
+    return { showGrid, showHeaders, theme, dpr };
   }
 
   /** Точка события мыши в физических пикселях холста. */
@@ -330,6 +340,7 @@ export async function createXlsxViewer(
     setView(next): void {
       if (next.showGrid !== undefined) showGrid = next.showGrid;
       if (next.showHeaders !== undefined) showHeaders = next.showHeaders;
+      if (next.theme !== undefined) theme = next.theme;
       schedule();
     },
 

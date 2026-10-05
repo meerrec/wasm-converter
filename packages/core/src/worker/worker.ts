@@ -112,6 +112,7 @@ const renderArgs = (req: RenderRequest) => ({
   options: {
     showGrid: req.config.showGrid,
     showHeaders: req.config.showHeaders,
+    dark: req.config.theme === 'dark',
   },
 });
 
