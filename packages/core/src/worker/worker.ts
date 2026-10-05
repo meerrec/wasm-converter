@@ -10,10 +10,13 @@ import init, {
   xlsx_build_display_list_sab,
   xlsx_hit_test,
   xlsx_hyperlink_at,
+  xlsx_image_bytes,
+  xlsx_images,
   xlsx_open,
 } from '@doc-converter/wasm';
 import type {
   HyperlinkInfo,
+  ImageInfo,
   InMsg,
   OutMsg,
   PaintStats,
@@ -37,6 +40,65 @@ let buildMs = 0;
 const post = (msg: OutMsg, transfer: Transferable[] = []) => {
   (self as unknown as Worker).postMessage(msg, transfer);
 };
+
+/** Битмапы, зарегистрированные в painter'е: их возвращают после ресайза и снимают при закрытии. */
+const bitmaps = new Map<number, ImageBitmap>();
+/**
+ * Поколение набора картинок. Открытие и закрытие книги его увеличивают:
+ * декодирование асинхронно, и результат отставшей загрузки не должен попасть
+ * в уже сменившийся набор.
+ */
+let bitmapsGen = 0;
+
+/** Снять с painter'а все зарегистрированные картинки. */
+function dropBookBitmaps(): void {
+  bitmapsGen++;
+  for (const id of bitmaps.keys()) drop_bitmap(id);
+  bitmaps.clear();
+}
+
+/**
+ * Декодировать картинки открытой книги и отдать их painter'у. Ошибка одной
+ * картинки не мешает остальным и не роняет открытие книги.
+ */
+async function loadBookBitmaps(gen: number): Promise<void> {
+  let images: ImageInfo[];
+  try {
+    images = xlsx_images() as ImageInfo[];
+  } catch (e) {
+    console.warn('[xlsx] image list:', String(e));
+    return;
+  }
+  await Promise.all(
+    images.map(async ({ id, mime }) => {
+      try {
+        const bytes = xlsx_image_bytes(id) as Uint8Array;
+        // Байты приходят копией из памяти wasm: буфер целиком принадлежит
+        // интерфейсу, и Blob забирает его без ещё одной копии.
+        const bmp = await createImageBitmap(
+          new Blob([bytes.buffer as ArrayBuffer], { type: mime }),
+        );
+        if (gen !== bitmapsGen) {
+          bmp.close();
+          return;
+        }
+        register_bitmap(id, bmp);
+        bitmaps.set(id, bmp);
+      } catch (e) {
+        console.warn(`[xlsx] image ${id} skipped:`, String(e));
+      }
+    }),
+  );
+}
+
+/**
+ * `resize_canvas` сбрасывает состояние painter'а вместе с кэшем `ImageBitmap`
+ * (установка размеров холста сбрасывает и 2D-контекст). Битмапы к размеру
+ * холста не привязаны, поэтому сразу возвращаем их в кэш.
+ */
+function reregisterBitmaps(): void {
+  for (const [id, bmp] of bitmaps) register_bitmap(id, bmp);
+}
 
 /** Окно и настройки в том виде, в каком их ждёт Rust. */
 const renderArgs = (req: RenderRequest) => ({
@@ -112,6 +174,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     case 'resize': {
       if (!ctx) return;
       resize_canvas(ctx, msg.cssW, msg.cssH, msg.dpr);
+      reregisterBitmaps();
       if (pending) loop?.request();
       break;
     }
@@ -128,7 +191,15 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         // wasm-bindgen отдаёт JsValue: разбирает его serde, тип знает только Rust.
         const sheets = xlsx_open(new Uint8Array(msg.bytes)) as SheetInfo[];
         pending = null;
+        // Картинки прежней книги больше не нужны, а id нового файла могут с ними совпасть.
+        dropBookBitmaps();
+        const gen = bitmapsGen;
+        // Ждём картинки до `opened`: к первому кадру они уже в painter'е.
+        await loadBookBitmaps(gen);
+        if (gen !== bitmapsGen) return;
         post({ type: 'opened', sheets });
+        // Пока декодировались картинки, мог прийти кадр — просим показать полный.
+        loop?.request();
       } catch (e) {
         post({ type: 'error', message: String(e) });
       }
@@ -184,6 +255,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     }
     case 'close': {
       pending = null;
+      dropBookBitmaps();
       break;
     }
   }

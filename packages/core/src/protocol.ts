@@ -73,6 +73,17 @@ export interface SheetInfo {
   frozenHeight: number;
 }
 
+/**
+ * Картинка книги: id, MIME-тип и длина байтов. Байты в список не входят —
+ * их забирает `xlsx_image_bytes(id)`, чтобы не копировать разом всю media
+ * книги. Тем же id помечены команды `Image` в кадре.
+ */
+export interface ImageInfo {
+  id: number;
+  mime: string;
+  byteLength: number;
+}
+
 // ── Фаза 2: прямой протокол Main ↔ Worker ───────────────────
 // Отдельно от RPC-конверта выше: paint-путь намеренно без request/response,
 // чтобы кадр не ждал ответа.

@@ -93,6 +93,11 @@ pub fn paint_display_list_sab(
 }
 
 /// Пересчитывает canvas под DPR и сбрасывает состояние painter'а.
+///
+/// Установка `width`/`height` сбрасывает состояние 2D-контекста, поэтому кэш
+/// кисти обязан сброситься вместе с ним. Кэш `ImageBitmap` чистится тем же
+/// вызовом; сами битмапы к размеру холста не привязаны, и воркер регистрирует
+/// их заново сразу после `resize_canvas`.
 #[wasm_bindgen]
 pub fn resize_canvas(
     ctx: OffscreenCanvasRenderingContext2d,
