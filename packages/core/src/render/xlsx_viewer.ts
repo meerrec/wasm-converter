@@ -1,4 +1,12 @@
-import type { InMsg, OutMsg, PaintStats, SheetInfo } from '../protocol.js';
+import type {
+  HyperlinkInfo,
+  InMsg,
+  OutMsg,
+  PaintStats,
+  RenderConfig,
+  SheetInfo,
+  Viewport,
+} from '../protocol.js';
 import { computeDpr } from './resize_observer.js';
 
 /** Что умеет открытая книга. */
@@ -22,6 +30,8 @@ export interface XlsxViewerHandle {
   setView(options: { showGrid?: boolean; showHeaders?: boolean }): void;
   /** Ячейка под точкой события мыши, в координатах страницы. */
   hitTest(clientX: number, clientY: number): Promise<[number, number] | null>;
+  /** Гиперссылка под точкой события мыши, в координатах страницы. */
+  hyperlinkAt(clientX: number, clientY: number): Promise<HyperlinkInfo | null>;
   /** Текущий кадр картинкой PNG — им проверяют, что нарисовалось. */
   exportPng(): Promise<Uint8Array>;
   /** Подписка на метрики кадров. */
@@ -41,6 +51,11 @@ export interface XlsxViewerOptions {
   zoom?: number;
   showGrid?: boolean;
   showHeaders?: boolean;
+  /**
+   * Клик по ячейке с гиперссылкой. Получает саму ссылку; клик по ячейке без
+   * ссылки колбэк не трогает.
+   */
+  onHyperlink?: (link: HyperlinkInfo) => void;
 }
 
 const DEFAULT_SLOT_CAPACITY = 1 << 20;
@@ -84,6 +99,7 @@ export async function createXlsxViewer(
   let frameScheduled = false;
   const pendingOpen = new Map<number, { resolve: (s: SheetInfo[]) => void; reject: (e: Error) => void }>();
   const pendingHit = new Map<number, { resolve: (c: [number, number] | null) => void }>();
+  const pendingHyperlink = new Map<number, { resolve: (link: HyperlinkInfo | null) => void }>();
   const pendingPng = new Map<number, (bytes: Uint8Array) => void>();
   let nextRequestId = 1;
 
@@ -103,6 +119,11 @@ export async function createXlsxViewer(
       case 'hit': {
         pendingHit.get(msg.id)?.resolve(msg.cell);
         pendingHit.delete(msg.id);
+        break;
+      }
+      case 'hyperlink': {
+        pendingHyperlink.get(msg.id)?.resolve(msg.link);
+        pendingHyperlink.delete(msg.id);
         break;
       }
       case 'png': {
@@ -156,24 +177,86 @@ export async function createXlsxViewer(
     worker.postMessage({ type: 'resize', cssW, cssH, dpr } satisfies InMsg);
   }
 
+  /**
+   * Окно в единицах рендера: прокрутка браузера — в пикселях экрана, а
+   * раскладка — до зума, поэтому x/y делятся на зум.
+   */
+  function viewport(): Viewport {
+    return {
+      x: scroller.scrollLeft / zoom,
+      y: scroller.scrollTop / zoom,
+      w: scroller.clientWidth * dpr,
+      h: scroller.clientHeight * dpr,
+      scale: zoom * dpr,
+    };
+  }
+
+  /** Настройки рисования, общие для кадра и запросов по точке. */
+  function renderConfig(): RenderConfig {
+    return { showGrid, showHeaders, theme: 'light', dpr };
+  }
+
+  /** Точка события мыши в физических пикселях холста. */
+  function canvasPoint(clientX: number, clientY: number): [number, number] {
+    const rect = canvas.getBoundingClientRect();
+    return [(clientX - rect.left) * dpr, (clientY - rect.top) * dpr];
+  }
+
   function render(): void {
     if (sheets.length === 0) return;
     worker.postMessage({
       type: 'render',
-      req: {
-        sheet: sheetIndex,
-        viewport: {
-          // Прокрутка браузера — в пикселях экрана, раскладка — до зума.
-          x: scroller.scrollLeft / zoom,
-          y: scroller.scrollTop / zoom,
-          w: scroller.clientWidth * dpr,
-          h: scroller.clientHeight * dpr,
-          scale: zoom * dpr,
-        },
-        config: { showGrid, showHeaders, theme: 'light', dpr },
-      },
+      req: { sheet: sheetIndex, viewport: viewport(), config: renderConfig() },
     } satisfies InMsg);
   }
+
+  function hitTest(clientX: number, clientY: number): Promise<[number, number] | null> {
+    const [x, y] = canvasPoint(clientX, clientY);
+    const id = nextRequestId++;
+    return new Promise<[number, number] | null>((resolve) => {
+      pendingHit.set(id, { resolve });
+      worker.postMessage({
+        type: 'hit-test',
+        id,
+        sheet: sheetIndex,
+        x,
+        y,
+        viewport: viewport(),
+        config: renderConfig(),
+      } satisfies InMsg);
+    });
+  }
+
+  function hyperlinkAt(clientX: number, clientY: number): Promise<HyperlinkInfo | null> {
+    const [x, y] = canvasPoint(clientX, clientY);
+    const id = nextRequestId++;
+    return new Promise<HyperlinkInfo | null>((resolve) => {
+      pendingHyperlink.set(id, { resolve });
+      worker.postMessage({
+        type: 'hyperlink-at',
+        id,
+        sheet: sheetIndex,
+        x,
+        y,
+        viewport: viewport(),
+        config: renderConfig(),
+      } satisfies InMsg);
+    });
+  }
+
+  /**
+   * Клик по холсту: ссылку ищем там же, где ячейку для подсказки адреса.
+   * Книги может не быть вовсе — тогда и спрашивать нечего.
+   */
+  const onCanvasClick = (ev: MouseEvent): void => {
+    const callback = options.onHyperlink;
+    if (!callback || destroyed || sheets.length === 0) return;
+    void hyperlinkAt(ev.clientX, ev.clientY).then((link) => {
+      // Клик по ячейке без ссылки — обычный клик, колбэк молчит.
+      if (link) callback(link);
+    });
+  };
+  canvas.addEventListener('click', onCanvasClick);
 
   function schedule(): void {
     if (frameScheduled || destroyed) return;
@@ -250,30 +333,9 @@ export async function createXlsxViewer(
       schedule();
     },
 
-    hitTest(clientX: number, clientY: number): Promise<[number, number] | null> {
-      const id = nextRequestId++;
-      const rect = canvas.getBoundingClientRect();
-      const x = (clientX - rect.left) * dpr;
-      const y = (clientY - rect.top) * dpr;
-      return new Promise<[number, number] | null>((resolve) => {
-        pendingHit.set(id, { resolve });
-        worker.postMessage({
-          type: 'hit-test',
-          id,
-          sheet: sheetIndex,
-          x,
-          y,
-          viewport: {
-            x: scroller.scrollLeft / zoom,
-            y: scroller.scrollTop / zoom,
-            w: scroller.clientWidth * dpr,
-            h: scroller.clientHeight * dpr,
-            scale: zoom * dpr,
-          },
-          config: { showGrid, showHeaders, theme: 'light', dpr },
-        } satisfies InMsg);
-      });
-    },
+    hitTest,
+
+    hyperlinkAt,
 
     exportPng(): Promise<Uint8Array> {
       const id = nextRequestId++;
@@ -292,6 +354,7 @@ export async function createXlsxViewer(
       destroyed = true;
       observer.disconnect();
       scroller.removeEventListener('scroll', onScroll);
+      canvas.removeEventListener('click', onCanvasClick);
       worker.postMessage({ type: 'close' } satisfies InMsg);
       worker.terminate();
       scroller.remove();

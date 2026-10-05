@@ -248,6 +248,63 @@ pub fn xlsx_hit_test(sheet: usize, viewport: JsValue, x: f32, y: f32) -> Result<
     })
 }
 
+/// Гиперссылка в том виде, в каком её видит интерфейс.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HyperlinkInfo {
+    /// Адрес перехода: URL, почта, путь к файлу или ссылка внутри книги.
+    target: String,
+    /// Подпись, которую показывает Excel (`display`).
+    display: Option<String>,
+    /// Всплывающая подсказка (`tooltip`).
+    tooltip: Option<String>,
+}
+
+impl HyperlinkInfo {
+    /// Описание ссылки для интерфейса; `None` — цель не разрешилась
+    /// (`HyperlinkTarget::Broken`), переходить некуда.
+    fn of(link: &doc_converter_xlsx::Hyperlink) -> Option<Self> {
+        Some(Self {
+            target: link.target.address()?.to_owned(),
+            display: link.display.clone(),
+            tooltip: link.tooltip.clone(),
+        })
+    }
+}
+
+/// Гиперссылка под точкой окна: `target`, `display`, `tooltip` или `null`.
+///
+/// Отдельный экспорт, а не расширение [`xlsx_hit_test`]: у того уже есть
+/// потребители, которым нужна пара координат ячейки, и смена формы ответа
+/// сломала бы их. Геометрия общая — [`paint::hit_test`], — так что попадание
+/// здесь ровно то же, что и у `xlsx_hit_test`.
+///
+/// # Errors
+/// Если книга не открыта, листа нет или точка описана неверно.
+#[wasm_bindgen]
+pub fn xlsx_hyperlink_at(
+    sheet: usize,
+    viewport: JsValue,
+    x: f32,
+    y: f32,
+) -> Result<JsValue, JsValue> {
+    let viewport = viewport_of(viewport)?;
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
+        let sheet = book
+            .sheets()
+            .get(sheet)
+            .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
+        let link = sheet
+            .hyperlink_at(paint::hit_test(sheet, viewport, x, y))
+            .and_then(HyperlinkInfo::of);
+        // `None` уезжает в JS как `null`: отсутствие ссылки — не ошибка.
+        let serializer = serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true);
+        link.serialize(&serializer).map_err(to_js)
+    })
+}
+
 /// Открыть книгу из байтов, отдав их без копирования.
 ///
 /// # Errors

@@ -10,6 +10,7 @@ export type {
   FrameTimings,
   PaintStats,
   SheetInfo,
+  HyperlinkInfo,
 } from './protocol.js';
 
 export { createRpc, type RpcHandle } from './rpc.js';

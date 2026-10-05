@@ -9,9 +9,17 @@ import init, {
   sab_total_bytes,
   xlsx_build_display_list_sab,
   xlsx_hit_test,
+  xlsx_hyperlink_at,
   xlsx_open,
 } from '@doc-converter/wasm';
-import type { InMsg, OutMsg, PaintStats, RenderRequest, SheetInfo } from '../protocol.js';
+import type {
+  HyperlinkInfo,
+  InMsg,
+  OutMsg,
+  PaintStats,
+  RenderRequest,
+  SheetInfo,
+} from '../protocol.js';
 import { exportPng } from '../render/export_png.js';
 import { startFrameLoop } from './frame_loop';
 
@@ -143,6 +151,21 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       } catch {
         // Точка вне книги — не ошибка, а отсутствие ответа.
         post({ type: 'hit', id: msg.id, cell: null });
+      }
+      break;
+    }
+    case 'hyperlink-at': {
+      try {
+        const { viewport, options } = renderArgs({
+          sheet: msg.sheet,
+          viewport: msg.viewport,
+          config: msg.config,
+        });
+        const link = xlsx_hyperlink_at(msg.sheet, viewport, msg.x, msg.y) as HyperlinkInfo | null;
+        post({ type: 'hyperlink', id: msg.id, link: link ?? null });
+      } catch {
+        // Книги нет или точка описана неверно — ответ пустой, а не ошибка.
+        post({ type: 'hyperlink', id: msg.id, link: null });
       }
       break;
     }

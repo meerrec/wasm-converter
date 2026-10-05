@@ -14,6 +14,18 @@ export type CellRef = { kind: 'cell'; sheet: number; row: number; col: number };
 export type TextPos = { kind: 'text'; page: number; offset: number };
 export type HitResult = CellRef | TextPos;
 
+/**
+ * Гиперссылка под точкой. Источник — Rust `HyperlinkInfo`.
+ *
+ * `target` — адрес перехода; `display` и `tooltip` — подпись и подсказка, как
+ * их объявил файл, либо `null`, если их нет.
+ */
+export interface HyperlinkInfo {
+  target: string;
+  display: string | null;
+  tooltip: string | null;
+}
+
 export interface PdfOptions {
   pageSize?: 'A4' | 'A3' | 'Letter' | 'Legal';
   orientation?: 'portrait' | 'landscape';
@@ -108,6 +120,17 @@ export interface HitTestMsg {
 }
 export interface ExportPngMsg { type: 'export-png'; id: number }
 
+/** Гиперссылка под точкой: те же единицы, что у `hit-test`. */
+export interface HyperlinkAtMsg {
+  type: 'hyperlink-at';
+  id: number;
+  sheet: number;
+  x: number;
+  y: number;
+  viewport: Viewport;
+  config: RenderConfig;
+}
+
 export type InMsg =
   | InitMsg
   | ResizeMsg
@@ -117,6 +140,7 @@ export type InMsg =
   | CloseMsg
   | RenderMsg
   | HitTestMsg
+  | HyperlinkAtMsg
   | ExportPngMsg;
 
 export interface ReadyMsg {
@@ -130,10 +154,19 @@ export interface TickMsg { type: 'tick'; stats: PaintStats }
 export interface OpenedMsg { type: 'opened'; sheets: SheetInfo[] }
 /** Ответ на `hit-test`: строка и столбец либо ничего, если точка мимо. */
 export interface HitMsg { type: 'hit'; id: number; cell: [number, number] | null }
+/** Ответ на `hyperlink-at`: ссылка под точкой либо ничего. */
+export interface HyperlinkMsg { type: 'hyperlink'; id: number; link: HyperlinkInfo | null }
 export interface PngMsg { type: 'png'; id: number; bytes: Uint8Array }
 export interface WorkerErrorMsg { type: 'error'; message: string }
 
-export type OutMsg = ReadyMsg | TickMsg | PngMsg | OpenedMsg | HitMsg | WorkerErrorMsg;
+export type OutMsg =
+  | ReadyMsg
+  | TickMsg
+  | PngMsg
+  | OpenedMsg
+  | HitMsg
+  | HyperlinkMsg
+  | WorkerErrorMsg;
 
 export type WorkerResponse =
   | { id: number; type: 'ok';    result?: unknown }
