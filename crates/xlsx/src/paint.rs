@@ -17,7 +17,7 @@ use doc_converter_render::display_list::{
     Color, DisplayList, DrawCommand, LineStyle, TextAlign, TextBaseline,
 };
 use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
-use doc_converter_render::text_measure::measure_text;
+use doc_converter_render::text_measure::{break_lines, measure_text};
 use doc_converter_render::viewport::Viewport;
 
 use crate::cellref::{column_name, row_name, CellRef, Range};
@@ -1393,8 +1393,6 @@ fn draw_text(
     }
 
     // Числа Excel не выпускает за ячейку и не обрезает: не помещается —
-    // показывает решётки. Даты и деньги — тоже числа.
-    // Числа Excel не выпускает за ячейку и не обрезает: не помещается —
     // показывает решётки. Ширина — настоящие метрики шрифта по умолчанию, а
     // не оценочная таблица: `FontRegistry` подключён в путь рисования
     // (ADR-0002, ADR-0005).
@@ -1416,6 +1414,43 @@ fn draw_text(
         HorizontalAlign::Right => (TextAlign::Right, x + w - padding),
         _ => (TextAlign::Left, x + padding),
     };
+    let font_ref = out.intern(&font.name);
+
+    // Перенос внутри ячейки: Excel не выпускает перенесённый текст за границы,
+    // поэтому здесь клип обязателен, даже если однострочный текст мог бы уйти
+    // в пустого соседа. Межстрочный интервал берётся из метрик шрифта — то же
+    // число, которым измеряет `render::text_measure`.
+    if style.base().alignment.wrap_text {
+        let inner_w = (w - padding * 2.0).max(0.0);
+        let vertical = style.base().alignment.vertical;
+        let Some((lines, mut ty, line_height)) =
+            wrap_layout(&text, size, inner_w, (x, y, w, h), padding, vertical)
+        else {
+            return;
+        };
+
+        out.push(DrawCommand::PushClip { x, y, w, h });
+        for range in &lines {
+            let text_ref = out.intern(&text[range.clone()]);
+            out.push(DrawCommand::Text {
+                x: tx,
+                y: ty,
+                text: text_ref,
+                font: font_ref,
+                size,
+                color,
+                align,
+                baseline: TextBaseline::Top,
+                bold: font.bold,
+                italic: font.italic,
+                underline: font.underline,
+            });
+            ty += line_height;
+        }
+        out.push(DrawCommand::PopClip);
+        return;
+    }
+
     let (baseline, ty) = match style.base().alignment.vertical {
         VerticalAlign::Top => (TextBaseline::Top, y + padding),
         VerticalAlign::Center => (TextBaseline::Middle, y + h / 2.0),
@@ -1426,7 +1461,6 @@ fn draw_text(
         out.push(DrawCommand::PushClip { x, y, w, h });
     }
     let text_ref = out.intern(&text);
-    let font_ref = out.intern(&font.name);
     out.push(DrawCommand::Text {
         x: tx,
         y: ty,
@@ -1443,6 +1477,40 @@ fn draw_text(
     if matches!(clip, TextClip::Rect) {
         out.push(DrawCommand::PopClip);
     }
+}
+
+/// Разложить текст по строкам внутри ячейки.
+///
+/// Возвращает строки (байтовые диапазоны), `y` первой строки и межстрочный
+/// интервал из метрик шрифта. `None` — `break_lines` не дал ни строки, рисовать
+/// нечего.
+fn wrap_layout(
+    text: &str,
+    size: f32,
+    inner_w: f32,
+    rect: (f32, f32, f32, f32),
+    padding: f32,
+    vertical: VerticalAlign,
+) -> Option<(Vec<std::ops::Range<usize>>, f32, f32)> {
+    let (lines, line_height) = FONTS.with(|fonts| {
+        let mut fonts = fonts.borrow_mut();
+        let line_height = fonts.measure(DEFAULT_FONT_ID, size, "").line_height;
+        let lines = break_lines(&mut fonts, DEFAULT_FONT_ID, size, text, inner_w);
+        (lines, line_height)
+    });
+    if lines.is_empty() {
+        return None;
+    }
+    // Длина списка строк много меньше 2^23 — точность f32 достаточна.
+    #[allow(clippy::cast_precision_loss)]
+    let block_h = line_height * lines.len() as f32;
+    let (_, y, _, h) = rect;
+    let ty = match vertical {
+        VerticalAlign::Top => y + padding,
+        VerticalAlign::Center => y + (h - block_h) / 2.0,
+        _ => y + h - padding - block_h,
+    };
+    Some((lines, ty, line_height))
 }
 
 /// Что Excel показывает вместо числа, которое не помещается в столбец.
@@ -1707,7 +1775,9 @@ mod tests {
     use super::*;
     use crate::dims::{ColWidth, RowHeight};
     use crate::drawing::{ImageExtent, ImageMarker, SheetImage};
-    use crate::model::{Border, CellFormat, Fill, FillPattern, Font, StyleTable, WorksheetMeta};
+    use crate::model::{
+        Alignment, Border, CellFormat, Fill, FillPattern, Font, StyleTable, WorksheetMeta,
+    };
     use crate::model::{SheetChart, SheetContent, Theme, WorksheetBuilder};
     use crate::sheet_meta::{Hyperlink, HyperlinkTarget};
     use crate::SharedStrings;
@@ -3555,5 +3625,111 @@ mod tests {
             .map(|(_, _, _, _, id)| id)
             .collect();
         assert_eq!(ids, [2, 0, 1]);
+    }
+
+    /// Перенос внутри ячейки: слова раскладываются по строкам, строки идут
+    /// сверху вниз с шагом метрик шрифта, кадр обрезан по ячейке.
+    #[test]
+    fn wrap_text_breaks_lines_inside_the_cell() {
+        let styles = StyleTable::new(
+            vec![
+                CellFormat::default(),
+                CellFormat {
+                    alignment: Alignment {
+                        wrap_text: true,
+                        ..Alignment::default()
+                    },
+                    ..CellFormat::default()
+                },
+            ],
+            vec![Font::default()],
+            vec![Fill::default()],
+            vec![Border::default()],
+            BTreeMap::new(),
+        );
+        let mut builder = WorksheetBuilder::new(PART);
+        builder
+            .push(
+                0,
+                Cell::new(0, 1, CellValue::InlineString("один два три".into())),
+            )
+            .unwrap();
+        let mut content = SheetContent {
+            cells: builder.finish(),
+            ..SheetContent::default()
+        };
+        // Колонка шириной 5 символов: «один два три» не влезает в строку.
+        content.dims.cols.push(ColWidth {
+            first: 0,
+            last: 0,
+            width: 5.0,
+            custom: true,
+            hidden: false,
+            best_fit: false,
+        });
+        let book = book_with(content, styles);
+        let dl = painted(
+            &book,
+            Viewport::default(),
+            &PaintOptions {
+                show_grid: false,
+                show_headers: false,
+                ..PaintOptions::default()
+            },
+        );
+
+        let lines: Vec<(String, f32, TextBaseline)> = (0..dl.len())
+            .filter_map(|i| dl.cmd(i))
+            .filter_map(|cmd| match cmd {
+                DrawCommand::Text {
+                    text, y, baseline, ..
+                } => Some((dl.string(*text).to_owned(), *y, *baseline)),
+                _ => None,
+            })
+            .collect();
+        assert!(lines.len() >= 2, "кадр: {lines:?}");
+        for line in &lines {
+            assert_eq!(line.2, TextBaseline::Top);
+            assert!(!line.0.is_empty());
+        }
+        // Строки идут сверху вниз на положительный шаг.
+        for pair in lines.windows(2) {
+            assert!(pair[1].1 > pair[0].1, "кадр: {lines:?}");
+        }
+        // Клип вокруг ячейки: перенесённый текст не выпускается в соседей.
+        assert!(
+            (0..dl.len()).any(|i| matches!(dl.cmd(i), Some(DrawCommand::PushClip { .. }))),
+            "кадр без клипа"
+        );
+    }
+
+    /// Без `wrapText` текст по-прежнему рисуется одной строкой: старая
+    /// семантика выпуска в пустого соседа не сломана.
+    #[test]
+    fn text_without_wrap_stays_one_line() {
+        let mut builder = WorksheetBuilder::new(PART);
+        builder
+            .push(
+                0,
+                Cell::new(0, 0, CellValue::InlineString("один два три".into())),
+            )
+            .unwrap();
+        let book = book_with(
+            SheetContent {
+                cells: builder.finish(),
+                ..SheetContent::default()
+            },
+            StyleTable::default(),
+        );
+        let dl = painted(
+            &book,
+            Viewport::default(),
+            &PaintOptions {
+                show_grid: false,
+                show_headers: false,
+                ..PaintOptions::default()
+            },
+        );
+        assert_eq!(count(&dl, |cmd| matches!(cmd, DrawCommand::Text { .. })), 1);
     }
 }
