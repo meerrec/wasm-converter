@@ -70,13 +70,7 @@ fn conditional_formatting(c: &mut Criterion) {
         let book = open(package::package_with_sheet(&xml)).unwrap();
         let sheet = &book.sheets()[0];
         // Окно покрывает весь лист: иначе рисовались бы одни видимые ячейки.
-        let viewport = Viewport {
-            scroll_x: 0.0,
-            scroll_y: 0.0,
-            width: 800.0,
-            height: 21_000.0,
-            scale: 1.0,
-        };
+        let viewport = Viewport::new(0.0, 0.0, 800.0, 21_000.0, 1.0);
         let options = PaintOptions {
             show_grid: false,
             show_headers: false,

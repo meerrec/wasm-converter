@@ -49,6 +49,7 @@ mod xml;
 pub use cellref::{CellRef, ParseError, Range};
 pub use conditional::{EffectiveStyle, RuleIndex};
 pub use dims::{ColWidth, ColWidths, RowHeight, RowHeights, SheetDims, SheetFormat};
+pub use doc_converter_render::viewport::Viewport;
 pub use drawing::{EditAs, ImageAnchor, ImageExtent, ImageMarker, SheetImage};
 pub use error::{Result, XlsxError};
 pub use layout::SheetLayout;
@@ -59,7 +60,7 @@ pub use model::{
     Threshold, ThresholdKind, Workbook, WorkbookImage, Worksheet, WorksheetBuilder, WorksheetMeta,
     THEME_COLOR_COUNT,
 };
-pub use paint::{build as paint_sheet, PaintOptions, Viewport};
+pub use paint::{build as paint_sheet, PaintOptions};
 pub use sheet_meta::{Hyperlink, HyperlinkTarget, Merges, Pane, PaneKind, PaneState, SheetView};
 pub use strings::SharedStrings;
 pub use workbook::WorkbookMeta;
