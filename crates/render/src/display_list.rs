@@ -10,7 +10,7 @@
 use bytemuck::{Pod, Zeroable};
 
 pub const DL_MAGIC: u32 = 0x444C_5354; // "DLST"
-pub const DL_VERSION: u16 = 3;
+pub const DL_VERSION: u16 = 4;
 
 /// RGBA8, порядок байт: 0xRRGGBBAA.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Pod, Zeroable)]
@@ -131,6 +131,17 @@ pub enum DrawCommand {
         h: f32,
         bitmap_id: u32,
     },
+    /// Диаграмма: painter рисует её сам по данным из блоба [`crate::chart`].
+    ///
+    /// Блоб лежит в пуле строк как байты — диаграмма самодостаточна, как и
+    /// всё остальное в кадре.
+    Chart {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        data: StringRef,
+    },
     PushClip {
         x: f32,
         y: f32,
@@ -160,6 +171,7 @@ const TAG_PUSH_CLIP: u8 = 0x05;
 const TAG_POP_CLIP: u8 = 0x06;
 const TAG_PUSH_XF: u8 = 0x07;
 const TAG_POP_XF: u8 = 0x08;
+const TAG_CHART: u8 = 0x09;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -219,6 +231,16 @@ impl DisplayList {
         }
     }
 
+    /// Кладёт в pool произвольные байты — для бинарных payload'ов (`Chart`).
+    pub fn intern_bytes(&mut self, bytes: &[u8]) -> StringRef {
+        let off = self.strings.len() as u32;
+        self.strings.extend_from_slice(bytes);
+        StringRef {
+            off,
+            len: bytes.len() as u32,
+        }
+    }
+
     pub fn cmd(&self, i: usize) -> Option<&DrawCommand> {
         self.cmds.get(i)
     }
@@ -228,6 +250,13 @@ impl DisplayList {
         let s = r.off as usize;
         let e = s + r.len as usize;
         std::str::from_utf8(self.strings.get(s..e).unwrap_or(&[])).unwrap_or("")
+    }
+
+    #[inline]
+    pub fn bytes(&self, r: StringRef) -> &[u8] {
+        let s = r.off as usize;
+        let e = s + r.len as usize;
+        self.strings.get(s..e).unwrap_or(&[])
     }
 
     // --- Serialization -----------------------------------------------------
@@ -329,6 +358,17 @@ impl DisplayList {
                     p[8..12].copy_from_slice(&w.to_le_bytes());
                     p[12..16].copy_from_slice(&h.to_le_bytes());
                     p[16..20].copy_from_slice(&bitmap_id.to_le_bytes());
+                    out.extend_from_slice(&p);
+                }
+                DrawCommand::Chart { x, y, w, h, data } => {
+                    push_tag(out, TAG_CHART, 24);
+                    let mut p = [0u8; 24];
+                    p[0..4].copy_from_slice(&x.to_le_bytes());
+                    p[4..8].copy_from_slice(&y.to_le_bytes());
+                    p[8..12].copy_from_slice(&w.to_le_bytes());
+                    p[12..16].copy_from_slice(&h.to_le_bytes());
+                    p[16..20].copy_from_slice(&data.off.to_le_bytes());
+                    p[20..24].copy_from_slice(&data.len.to_le_bytes());
                     out.extend_from_slice(&p);
                 }
                 DrawCommand::PushClip { x, y, w, h } => {
@@ -440,6 +480,13 @@ impl<'a> DisplayListReader<'a> {
         let s = r.off as usize;
         let e = s + r.len as usize;
         std::str::from_utf8(self.strings.get(s..e).unwrap_or(&[])).unwrap_or("")
+    }
+
+    #[inline]
+    pub fn bytes(&self, r: StringRef) -> &'a [u8] {
+        let s = r.off as usize;
+        let e = s + r.len as usize;
+        self.strings.get(s..e).unwrap_or(&[])
     }
 
     pub fn iter(&self) -> CmdIter<'a> {
@@ -575,6 +622,19 @@ impl<'a> CmdIter<'a> {
                     w: f32_at!(b, 8),
                     h: f32_at!(b, 12),
                     bitmap_id: u32_at!(b, 16),
+                }
+            }
+            TAG_CHART => {
+                let b = take!(24);
+                DrawCommand::Chart {
+                    x: f32_at!(b, 0),
+                    y: f32_at!(b, 4),
+                    w: f32_at!(b, 8),
+                    h: f32_at!(b, 12),
+                    data: StringRef {
+                        off: u32_at!(b, 16),
+                        len: u32_at!(b, 20),
+                    },
                 }
             }
             TAG_PUSH_CLIP => {

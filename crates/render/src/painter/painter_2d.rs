@@ -184,6 +184,12 @@ impl Painter2D {
                     );
                 }
             }
+            DrawCommand::Chart { x, y, w, h, data } => {
+                let blob = reader.bytes(data);
+                if let Some(chart) = crate::chart::ChartData::from_blob(blob) {
+                    super::chart::paint(&self.ctx, x, y, w, h, &chart);
+                }
+            }
             DrawCommand::PushClip { x, y, w, h } => {
                 self.ctx.save();
                 self.state.clip_depth += 1;

@@ -83,3 +83,39 @@ fn native_ring_fifo_cycles() {
         assert_eq!(r.pop(), Some(&b"frame"[..]));
     }
 }
+
+#[test]
+fn chart_command_carries_its_blob() {
+    use doc_converter_render::chart::{ChartData, ChartKind, ChartSeries};
+
+    let chart = ChartData {
+        kind: ChartKind::Bar,
+        title: Some("Итоги".to_owned()),
+        categories: vec!["Q1".to_owned(), "Q2".to_owned()],
+        series: vec![ChartSeries {
+            name: "План".to_owned(),
+            values: vec![1.0, 2.0],
+        }],
+    };
+    let mut dl = DisplayList::new();
+    let blob = dl.intern_bytes(&chart.to_blob());
+    dl.push(DrawCommand::Chart {
+        x: 1.0,
+        y: 2.0,
+        w: 300.0,
+        h: 200.0,
+        data: blob,
+    });
+
+    let bytes = dl.to_bytes();
+    let rdr = DisplayList::from_bytes(&bytes).unwrap();
+    let mut cmds = rdr.iter();
+    match cmds.next().unwrap().unwrap() {
+        DrawCommand::Chart { x, y, w, h, data } => {
+            assert_eq!((x, y, w, h), (1.0, 2.0, 300.0, 200.0));
+            let decoded = ChartData::from_blob(rdr.bytes(data)).expect("блоб разбирается");
+            assert_eq!(decoded, chart);
+        }
+        other => panic!("ожидался Chart, а не {other:?}"),
+    }
+}
