@@ -11,7 +11,7 @@ use std::fmt;
 
 use crate::cellref::{CellRef, Range, MAX_COL, MAX_ROW};
 use crate::dims::SheetDims;
-use crate::drawing::SheetImage;
+use crate::drawing::{ImageAnchor, SheetImage};
 use crate::error::{Result, XlsxError};
 use crate::sheet_meta::{Hyperlink, Merges, SheetView};
 use crate::strings::SharedStrings;
@@ -1147,6 +1147,20 @@ pub struct SheetContent {
     /// Заполняется [`open`](crate::open): часть листа сама картинок не хранит,
     /// а только ссылается на чертёж.
     pub images: Vec<SheetImage>,
+    /// Диаграммы листа.
+    ///
+    /// Заполняется [`open`](crate::open): данные лежат в отдельных частях
+    /// `xl/charts/*.xml`, на которые ссылается чертёж.
+    pub charts: Vec<SheetChart>,
+}
+
+/// Диаграмма листа: разобранные данные и якорь на сетке.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetChart {
+    /// Вид, заголовок, категории и серии.
+    pub chart: doc_converter_render::chart::ChartData,
+    /// Где диаграмма лежит на листе — тот же якорь, что у картинки.
+    pub anchor: ImageAnchor,
 }
 
 /// Лист книги: метаданные из каталога и разобранное содержимое.
@@ -1168,6 +1182,8 @@ pub struct Sheet {
     pub conditional_formatting: Vec<ConditionalFormatting>,
     /// Изображения листа в порядке наложения: первые лежат ниже.
     pub images: Vec<SheetImage>,
+    /// Диаграммы листа.
+    pub charts: Vec<SheetChart>,
 }
 
 impl Sheet {
@@ -1183,6 +1199,7 @@ impl Sheet {
             hyperlinks: content.hyperlinks,
             conditional_formatting: content.conditional_formatting,
             images: content.images,
+            charts: content.charts,
         }
     }
 

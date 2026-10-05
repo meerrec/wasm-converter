@@ -547,6 +547,8 @@ fn draw_region(
     // ячеек и закрывает их содержимое. Выше текста, но ниже `PopClip`: клип
     // квадранта обрезает картинку так же, как остальное содержимое.
     draw_images(sheet, layout, scale, region, out);
+    // Диаграммы — тоже объекты листа; в кадре они выше картинок.
+    draw_charts(sheet, layout, scale, region, out);
 
     out.push(DrawCommand::PopClip);
 }
@@ -608,6 +610,49 @@ fn draw_images(
             h: (y1 - y0) * scale,
             bitmap_id,
         });
+    }
+}
+
+/// Диаграммы одного квадранта.
+///
+/// Картинку можно «порезать» пиксельно, диаграмму — нет: painter раскладывает
+/// её в переданный прямоугольник. Поэтому в кадр идёт полный прямоугольник
+/// якоря, а видимую часть задаёт `PushClip`; иначе при прокрутке диаграмма
+/// сжималась бы в остаток окна.
+fn draw_charts(
+    sheet: &Sheet,
+    layout: &SheetLayout,
+    scale: f32,
+    region: &Region,
+    out: &mut DisplayList,
+) {
+    for chart in &sheet.charts {
+        let (x, y, w, h) = anchor_rect(layout, chart.anchor);
+        if w <= 0.0 || h <= 0.0 {
+            continue;
+        }
+        let x0 = x.max(region.layout_x);
+        let y0 = y.max(region.layout_y);
+        let x1 = (x + w).min(region.pane_right);
+        let y1 = (y + h).min(region.pane_bottom);
+        if x1 <= x0 || y1 <= y0 {
+            continue;
+        }
+        out.push(DrawCommand::PushClip {
+            x: region.screen_x(x0, scale),
+            y: region.screen_y(y0, scale),
+            w: (x1 - x0) * scale,
+            h: (y1 - y0) * scale,
+        });
+        let data = out.intern_bytes(&chart.chart.to_blob());
+        out.push(DrawCommand::Chart {
+            x: region.screen_x(x, scale),
+            y: region.screen_y(y, scale),
+            w: w * scale,
+            h: h * scale,
+            data,
+        });
+        out.push(DrawCommand::PopClip);
     }
 }
 
@@ -1663,10 +1708,12 @@ mod tests {
     use crate::dims::{ColWidth, RowHeight};
     use crate::drawing::{ImageExtent, ImageMarker, SheetImage};
     use crate::model::{Border, CellFormat, Fill, FillPattern, Font, StyleTable, WorksheetMeta};
-    use crate::model::{SheetContent, Theme, WorksheetBuilder};
+    use crate::model::{SheetChart, SheetContent, Theme, WorksheetBuilder};
     use crate::sheet_meta::{Hyperlink, HyperlinkTarget};
     use crate::SharedStrings;
     use crate::SheetState;
+    use doc_converter_render::chart::{ChartData, ChartKind, ChartSeries};
+    use doc_converter_render::display_list::StringRef;
     use std::collections::BTreeMap;
 
     const PART: &str = "xl/worksheets/sheet1.xml";
@@ -3282,6 +3329,43 @@ mod tests {
             },
             ext: ImageExtent { cx, cy },
         }
+    }
+
+    #[test]
+    fn chart_is_painted_at_its_anchor_with_its_data() {
+        let mut content = images_content(Vec::new());
+        content.charts.push(SheetChart {
+            chart: ChartData {
+                kind: ChartKind::Bar,
+                title: Some("Итоги".into()),
+                categories: vec!["Q1".into()],
+                series: vec![ChartSeries {
+                    name: "План".into(),
+                    values: vec![1.0],
+                }],
+            },
+            anchor: one_cell(1, 1, 96.0, 72.0),
+        });
+        let book = book_with(content, StyleTable::default());
+        let dl = painted(&book, Viewport::default(), &content_only());
+
+        let charts: Vec<(f32, f32, f32, f32, StringRef)> = (0..dl.len())
+            .filter_map(|i| dl.cmd(i))
+            .filter_map(|cmd| match cmd {
+                DrawCommand::Chart { x, y, w, h, data } => Some((*x, *y, *w, *h, *data)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(charts.len(), 1, "кадр: {charts:?}");
+        // One-cell B2: столбец 1 (64) и строка 1 (20) плюс 96×72 пикселя.
+        assert_eq!(charts[0].0, 64.0);
+        assert_eq!(charts[0].1, 20.0);
+        assert_eq!(charts[0].2, 96.0);
+        assert_eq!(charts[0].3, 72.0);
+
+        let decoded = ChartData::from_blob(dl.bytes(charts[0].4)).expect("блоб разбирается");
+        assert_eq!(decoded.title.as_deref(), Some("Итоги"));
+        assert_eq!(decoded.series[0].values, vec![1.0]);
     }
 
     #[test]

@@ -110,6 +110,9 @@ fn dump(dl: &DisplayList) -> String {
             } => {
                 let _ = writeln!(out, "Image x={x} y={y} w={w} h={h} id={bitmap_id}");
             }
+            DrawCommand::Chart { x, y, w, h, .. } => {
+                let _ = writeln!(out, "Chart x={x} y={y} w={w} h={h}");
+            }
             DrawCommand::PushClip { x, y, w, h } => {
                 let _ = writeln!(out, "PushClip x={x} y={y} w={w} h={h}");
             }
