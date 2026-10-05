@@ -96,7 +96,7 @@ jobs:
       # Сквозные тесты примера идут в настоящем браузере: без него они падают
       # не от ошибки в коде, а от отсутствия браузера. Ставится на обе ноги
       # матрицы — `turbo run test` запускает их при любой версии Node.
-      - run: npx playwright install --with-deps chromium
+      - run: pnpm --filter @doc-converter/example-viewer-xlsx exec playwright install --with-deps chromium
 
       - run: pnpm turbo run typecheck test build
       - if: matrix.node == 20
