@@ -28,6 +28,7 @@
 #![deny(clippy::pedantic)]
 
 pub mod cellref;
+pub mod chart;
 pub mod conditional;
 pub mod dims;
 pub mod drawing;
@@ -56,9 +57,9 @@ pub use layout::SheetLayout;
 pub use model::{
     Border, BorderSide, BorderStyle, Cell, CellError, CellFormat, CellIsOperator, CellValue, Color,
     ColorScale, ConditionalFormatting, ConditionalRule, DataBar, Dxf, DxfNumberFormat, Fill,
-    FillPattern, Font, IconSet, RuleKind, Sheet, SheetContent, SheetState, StyleTable, Theme,
-    Threshold, ThresholdKind, Workbook, WorkbookImage, Worksheet, WorksheetBuilder, WorksheetMeta,
-    THEME_COLOR_COUNT,
+    FillPattern, Font, IconSet, RuleKind, Sheet, SheetChart, SheetContent, SheetState, StyleTable,
+    Theme, Threshold, ThresholdKind, Workbook, WorkbookImage, Worksheet, WorksheetBuilder,
+    WorksheetMeta, THEME_COLOR_COUNT,
 };
 pub use paint::{build as paint_sheet, PaintOptions};
 pub use sheet_meta::{Hyperlink, HyperlinkTarget, Merges, Pane, PaneKind, PaneState, SheetView};
@@ -223,7 +224,9 @@ pub fn open(bytes: Vec<u8>) -> Result<Workbook> {
         let rels = read_rels(&mut archive, &meta.part)?;
         let mut content = worksheet::parse(&archive.read(&meta.part)?, &meta.part, rels.as_ref())?;
         // Чертёж — отдельная часть: сам лист на него только ссылается.
-        content.images = read_images(&mut archive, &meta.part, rels.as_ref())?;
+        let (images, charts) = read_drawing_objects(&mut archive, &meta.part, rels.as_ref())?;
+        content.images = images;
+        content.charts = charts;
         // Байты media читаются здесь же: дальше архив закрывается.
         for image in &mut content.images {
             let id = media.register(&mut archive, image.media.as_deref())?;
@@ -270,31 +273,35 @@ fn read_rels(archive: &mut Archive, source_part: &str) -> Result<Option<RelMap>>
     Ok(Some(RelMap::parse(&archive.read(&part)?)?))
 }
 
-/// Изображения листа: чертёж ищется по связи листа, как тема — по связи книги.
+/// Объекты чертежа листа: картинки и диаграммы. Чертёж ищется по связи листа,
+/// как тема — по связи книги.
 ///
 /// Отсутствие чертежа, битая связь на media или ссылка на часть, которой нет
-/// в пакете, — не ошибка: лист тогда просто остаётся без картинок.
-fn read_images(
+/// в пакете, — не ошибка: лист тогда просто остаётся без объекта. Битая или
+/// неподдержанная диаграмма пропускается так же, как битая картинка.
+fn read_drawing_objects(
     archive: &mut Archive,
     sheet_part: &str,
     rels: Option<&RelMap>,
-) -> Result<Vec<SheetImage>> {
+) -> Result<(Vec<SheetImage>, Vec<SheetChart>)> {
     let Some(rel) = rels.and_then(|rels| {
         rels.items
             .values()
             .find(|rel| rel.rel_type.ends_with(DRAWING_REL))
     }) else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     };
     let Some(part) = rel.part(sheet_part) else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     };
     if !archive.contains(&part) {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let drawing_rels = read_rels(archive, &part)?;
-    let mut images = drawing::parse(&archive.read(&part)?, &part, drawing_rels.as_ref())?;
+    let drawing = drawing::parse_drawing(&archive.read(&part)?, &part, drawing_rels.as_ref())?;
+
+    let mut images = drawing.images;
     // Ссылка на media без самой части — битая: рисовать по ней нечего.
     for image in &mut images {
         if image
@@ -305,7 +312,30 @@ fn read_images(
             image.media = None;
         }
     }
-    Ok(images)
+
+    let mut charts = Vec::new();
+    for anchor in drawing.charts {
+        let Some(chart_part) = drawing_rels
+            .as_ref()
+            .and_then(|rels| rels.get(&anchor.rel_id))
+            .and_then(|rel| rel.part(&part))
+        else {
+            continue;
+        };
+        if !archive.contains(&chart_part) {
+            continue;
+        }
+        let Ok(bytes) = archive.read(&chart_part) else {
+            continue;
+        };
+        if let Ok(chart) = chart::parse(&bytes, &chart_part) {
+            charts.push(SheetChart {
+                chart,
+                anchor: anchor.anchor,
+            });
+        }
+    }
+    Ok((images, charts))
 }
 
 #[cfg(test)]

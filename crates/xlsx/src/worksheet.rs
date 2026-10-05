@@ -572,6 +572,8 @@ impl<'r> SheetParser<'r> {
             conditional_formatting: self.conditional_formatting,
             // Картинки лежат в отдельной части пакета: их подставляет `open`.
             images: Vec::new(),
+            // Диаграммы — тоже: данные в `xl/charts/*.xml`.
+            charts: Vec::new(),
         })
     }
 }

@@ -120,6 +120,35 @@ pub fn parse(
     part: impl Into<String>,
     rels: Option<&RelMap>,
 ) -> Result<Vec<SheetImage>> {
+    Ok(parse_drawing(bytes, part, rels)?.images)
+}
+
+/// Диаграмма чертежа: якорь и id связи с частью `xl/charts/chart*.xml`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChartAnchor {
+    /// `r:id` элемента `c:chart`; разрешается связями чертежа.
+    pub rel_id: String,
+    /// Где диаграмма лежит на листе — тем же якорем, что и картинка.
+    pub anchor: ImageAnchor,
+}
+
+/// Итог разбора чертежа: объекты листа в порядке документа.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Drawing {
+    pub images: Vec<SheetImage>,
+    pub charts: Vec<ChartAnchor>,
+}
+
+/// Разобрать чертёж целиком: картинки и диаграммы.
+///
+/// # Errors
+///
+/// [`crate::XlsxError::Core`] — XML не разбирается.
+pub fn parse_drawing(
+    bytes: &[u8],
+    part: impl Into<String>,
+    rels: Option<&RelMap>,
+) -> Result<Drawing> {
     let part = part.into();
     let mut parser = DrawingParser::new(part.clone(), rels);
     let mut reader = XmlReader::new(bytes, part);
@@ -128,7 +157,10 @@ pub fn parse(
         parser.handle(event);
     }
 
-    Ok(parser.images)
+    Ok(Drawing {
+        images: parser.images,
+        charts: parser.charts,
+    })
 }
 
 /// Значение атрибута по локальному имени; битые атрибуты — как отсутствие.
@@ -223,6 +255,8 @@ struct AnchorBuilder {
     name: Option<String>,
     /// `r:embed` — id связи с media-частью.
     embed: Option<String>,
+    /// `r:id` связи с частью диаграммы.
+    chart: Option<String>,
     /// Читаемая сторона маркера.
     marker: Option<MarkerSide>,
     /// Состояние `<xdr:pic>`.
@@ -240,6 +274,7 @@ impl AnchorBuilder {
             ext: None,
             name: None,
             embed: None,
+            chart: None,
             marker: None,
             pic: PicState::Absent,
         }
@@ -270,6 +305,7 @@ struct DrawingParser<'a> {
     /// Связи чертежа: по ним находится media-часть.
     rels: Option<&'a RelMap>,
     images: Vec<SheetImage>,
+    charts: Vec<ChartAnchor>,
     anchor: Option<AnchorBuilder>,
     /// Что читается из текста.
     sink: Sink,
@@ -283,6 +319,7 @@ impl<'a> DrawingParser<'a> {
             part,
             rels,
             images: Vec::new(),
+            charts: Vec::new(),
             anchor: None,
             sink: Sink::Idle,
             text: String::new(),
@@ -380,6 +417,14 @@ impl<'a> DrawingParser<'a> {
                     anchor.embed = attr(element, &self.part, "embed");
                 }
             }
+            // `<c:chart r:id="…"/>` внутри `xdr:graphicFrame`: связь с частью
+            // диаграммы. Приходит пустым элементом, поэтому живёт среди
+            // «только атрибуты».
+            b"chart" => {
+                if let Some(anchor) = self.anchor.as_mut() {
+                    anchor.chart = attr(element, &self.part, "id");
+                }
+            }
             _ => {}
         }
     }
@@ -458,7 +503,7 @@ impl<'a> DrawingParser<'a> {
         let Some(anchor) = self.anchor.take() else {
             return;
         };
-        if anchor.bad || anchor.pic == PicState::Absent {
+        if anchor.bad || (anchor.pic == PicState::Absent && anchor.chart.is_none()) {
             return;
         }
         // Ссылка может не разрешиться: битая связь — не повод терять якорь, но
@@ -482,14 +527,21 @@ impl<'a> DrawingParser<'a> {
                 ImageAnchor::TwoCell { from, to }
             }
         };
-        self.images.push(SheetImage {
-            name: anchor.name,
-            media,
-            // id назначает `open()`: чертёж не знает ни архива, ни соседних листов.
-            image_id: None,
-            edit_as: anchor.edit_as,
-            anchor: shape,
-        });
+        if let Some(rel_id) = &anchor.chart {
+            self.charts.push(ChartAnchor {
+                rel_id: rel_id.clone(),
+                anchor: shape,
+            });
+        } else {
+            self.images.push(SheetImage {
+                name: anchor.name,
+                media,
+                // id назначает `open()`: чертёж не знает ни архива, ни соседних листов.
+                image_id: None,
+                edit_as: anchor.edit_as,
+                anchor: shape,
+            });
+        }
     }
 }
 
