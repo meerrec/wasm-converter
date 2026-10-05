@@ -240,7 +240,6 @@ impl SheetLayout {
         let mut left = 0.0_f32;
         let mut col = 0_u32;
         for span in &self.spans {
-            // Промежуток общей ширины перед полосой.
             let gap = to_px(span.first - col) * self.default_col_width;
             if x < left + gap && self.default_col_width > 0.0 {
                 return (col + steps(x - left, self.default_col_width)).min(self.cols);

@@ -239,7 +239,6 @@ pub fn build(
         options.background,
     );
 
-    // Сколько места осталось прокручиваемой части.
     let scroll_w = (viewport.width - header_w - frozen_w).max(0.0) / scale;
     let scroll_h = (viewport.height - header_h - frozen_h).max(0.0) / scale;
     let (first_col, last_col) = layout.columns_in(view_left, view_left + scroll_w);
@@ -350,7 +349,6 @@ fn draw_region(
         draw_grid(layout, scale, region, options.grid, out);
     }
 
-    // Объединённые ячейки — поверх сетки, вместе со своим фоном.
     for range in sheet.merges.ranges() {
         if range.last.row < region.rows.0
             || range.first.row > region.rows.1
@@ -376,7 +374,6 @@ fn draw_region(
         }
     }
 
-    // Текст обычных ячеек.
     for row in region.rows.0..=region.rows.1 {
         for (col, cell) in visible_cells(sheet, row, region.cols) {
             if sheet.merges.covering(cell.at(row)).is_some() {
@@ -479,7 +476,6 @@ fn draw_headers(headers: &Headers<'_>, out: &mut DisplayList) {
     draw_column_headers(headers, out);
     draw_row_headers(headers, out);
 
-    // Тонкая линия под заголовком столбцов и справа от заголовков строк.
     let line = Color(0xC0_C0_C0_FF);
     out.push(DrawCommand::Line {
         x1: 0.0,
