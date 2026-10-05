@@ -7,6 +7,6 @@ pub mod painter;
 pub mod sab;
 
 pub use display_list::{
-    Color, DecodeError, DisplayList, DisplayListReader, DrawCommand, StringRef, TextAlign,
-    TextBaseline,
+    Color, DecodeError, DisplayList, DisplayListReader, DrawCommand, LineStyle, StringRef,
+    TextAlign, TextBaseline,
 };

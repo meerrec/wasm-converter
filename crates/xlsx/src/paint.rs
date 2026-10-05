@@ -10,7 +10,7 @@
 //! своим `PushClip`, поэтому содержимое не выползает за его границы.
 
 use doc_converter_render::display_list::{
-    Color, DisplayList, DrawCommand, TextAlign, TextBaseline,
+    Color, DisplayList, DrawCommand, LineStyle, TextAlign, TextBaseline,
 };
 
 use crate::cellref::{column_name, row_name};
@@ -425,6 +425,7 @@ fn draw_grid(
             y2: y,
             stroke: color,
             stroke_w: 1.0,
+            style: LineStyle::Solid,
         });
     }
     for col in region.cols.0..=region.cols.1 + 1 {
@@ -436,6 +437,7 @@ fn draw_grid(
             y2: bottom,
             stroke: color,
             stroke_w: 1.0,
+            style: LineStyle::Solid,
         });
     }
 }
@@ -484,6 +486,7 @@ fn draw_headers(headers: &Headers<'_>, out: &mut DisplayList) {
         y2: headers.header_h,
         stroke: line,
         stroke_w: 1.0,
+        style: LineStyle::Solid,
     });
     out.push(DrawCommand::Line {
         x1: headers.header_w,
@@ -492,6 +495,7 @@ fn draw_headers(headers: &Headers<'_>, out: &mut DisplayList) {
         y2: headers.viewport.height,
         stroke: line,
         stroke_w: 1.0,
+        style: LineStyle::Solid,
     });
 }
 
@@ -552,6 +556,7 @@ fn draw_column_headers(headers: &Headers<'_>, out: &mut DisplayList) {
                 baseline: TextBaseline::Middle,
                 bold: false,
                 italic: false,
+                underline: false,
             });
             out.push(DrawCommand::PopClip);
         }
@@ -602,6 +607,7 @@ fn draw_row_headers(headers: &Headers<'_>, out: &mut DisplayList) {
                 baseline: TextBaseline::Middle,
                 bold: false,
                 italic: false,
+                underline: false,
             });
         }
     }
@@ -680,6 +686,7 @@ fn draw_text(
         baseline,
         bold: font.bold,
         italic: font.italic,
+        underline: font.underline,
     });
     if matches!(clip, TextClip::Rect) {
         out.push(DrawCommand::PopClip);
@@ -1266,6 +1273,57 @@ mod tests {
         assert_eq!(texts(&book(4.0)), vec!["#####"]);
         // В столбце по умолчанию (64 пикселя) — влезает с запасом.
         assert_eq!(texts(&book(8.43)), vec!["45002.00"]);
+    }
+
+    #[test]
+    fn underline_from_the_font_reaches_the_frame() {
+        let styles = StyleTable::new(
+            vec![
+                CellFormat::default(),
+                CellFormat {
+                    font: 1,
+                    ..CellFormat::default()
+                },
+            ],
+            vec![
+                Font::default(),
+                Font {
+                    underline: true,
+                    ..Font::default()
+                },
+            ],
+            vec![Fill::default()],
+            vec![Border::default()],
+            BTreeMap::new(),
+        );
+        let mut builder = WorksheetBuilder::new(PART);
+        builder
+            .push(0, Cell::new(0, 1, CellValue::InlineString("link".into())))
+            .unwrap();
+        let book = book_with(
+            SheetContent {
+                cells: builder.finish(),
+                ..SheetContent::default()
+            },
+            styles,
+        );
+
+        let dl = painted(
+            &book,
+            Viewport::default(),
+            &PaintOptions {
+                show_grid: false,
+                show_headers: false,
+                ..PaintOptions::default()
+            },
+        );
+        assert_eq!(
+            count(
+                &dl,
+                |cmd| matches!(cmd, DrawCommand::Text { underline, .. } if *underline)
+            ),
+            1
+        );
     }
 
     #[test]

@@ -23,6 +23,58 @@ fn build_serialize_decode_1000_rects() {
 }
 
 #[test]
+fn roundtrip_line_styles_and_underline() {
+    let styles = [
+        LineStyle::Solid,
+        LineStyle::Dashed,
+        LineStyle::Dotted,
+        LineStyle::Double,
+    ];
+    let mut dl = DisplayList::new();
+    for style in styles {
+        dl.push(DrawCommand::Line {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 10.0,
+            y2: 10.0,
+            stroke: Color::BLACK,
+            stroke_w: 2.0,
+            style,
+        });
+    }
+    let text = dl.intern("link");
+    let font = dl.intern("Calibri");
+    dl.push(DrawCommand::Text {
+        x: 0.0,
+        y: 0.0,
+        text,
+        font,
+        size: 12.0,
+        color: Color::BLACK,
+        align: TextAlign::Left,
+        baseline: TextBaseline::Alphabetic,
+        bold: false,
+        italic: false,
+        underline: true,
+    });
+
+    let bytes = dl.to_bytes();
+    let rdr = DisplayList::from_bytes(&bytes).unwrap();
+    let cmds: Vec<_> = rdr.iter().map(Result::unwrap).collect();
+    assert_eq!(cmds.len(), 5);
+    for (cmd, style) in cmds.iter().zip(styles) {
+        match cmd {
+            DrawCommand::Line { style: got, .. } => assert_eq!(*got, style),
+            _ => panic!("expected Line"),
+        }
+    }
+    match &cmds[4] {
+        DrawCommand::Text { underline, .. } => assert!(*underline),
+        _ => panic!("expected Text"),
+    }
+}
+
+#[test]
 fn native_ring_fifo_cycles() {
     use doc_converter_render::sab::reader::NativeRingReader;
     let mut r = NativeRingReader::new();

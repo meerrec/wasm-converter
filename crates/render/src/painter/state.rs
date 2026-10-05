@@ -1,4 +1,4 @@
-use crate::display_list::Color;
+use crate::display_list::{Color, LineStyle};
 use std::collections::HashMap;
 
 /// Стек clip/transform + кэш стилей, чтобы не дёргать `ctx.set*` без нужды.
@@ -8,6 +8,9 @@ pub struct PaintState {
     current_fill: Option<Color>,
     current_stroke: Option<Color>,
     current_line_width: f32,
+    /// `line_dash` живёт в контексте и сам не сбрасывается, поэтому штриховка
+    /// входит в ключ кэша наравне с цветом и толщиной.
+    current_line_style: Option<LineStyle>,
     pub style_cache: HashMap<Color, String>,
     /// Ключ — семейство, кегль в битах, полужирный и курсив.
     pub font_cache: HashMap<(String, u32, bool, bool), String>,
@@ -21,6 +24,7 @@ impl PaintState {
             current_fill: None,
             current_stroke: None,
             current_line_width: 0.0,
+            current_line_style: None,
             style_cache: HashMap::with_capacity(64),
             font_cache: HashMap::with_capacity(16),
         }
@@ -56,12 +60,16 @@ impl PaintState {
     }
 
     #[inline]
-    pub fn needs_stroke(&mut self, c: Color, w: f32) -> bool {
-        if self.current_stroke == Some(c) && (self.current_line_width - w).abs() < f32::EPSILON {
+    pub fn needs_stroke(&mut self, c: Color, w: f32, style: LineStyle) -> bool {
+        if self.current_stroke == Some(c)
+            && (self.current_line_width - w).abs() < f32::EPSILON
+            && self.current_line_style == Some(style)
+        {
             return false;
         }
         self.current_stroke = Some(c);
         self.current_line_width = w;
+        self.current_line_style = Some(style);
         true
     }
 
@@ -71,6 +79,7 @@ impl PaintState {
         self.current_fill = None;
         self.current_stroke = None;
         self.current_line_width = 0.0;
+        self.current_line_style = None;
     }
 }
 
@@ -94,12 +103,17 @@ mod tests {
     }
 
     #[test]
-    fn stroke_dedup_includes_width() {
+    fn stroke_dedup_includes_width_and_style() {
         let mut s = PaintState::new();
         let red = Color::rgba(255, 0, 0, 255);
-        assert!(s.needs_stroke(red, 1.0));
-        assert!(!s.needs_stroke(red, 1.0));
-        assert!(s.needs_stroke(red, 2.0));
+        assert!(s.needs_stroke(red, 1.0, LineStyle::Solid));
+        assert!(!s.needs_stroke(red, 1.0, LineStyle::Solid));
+        assert!(s.needs_stroke(red, 2.0, LineStyle::Solid));
+        // Смена штриховки — тоже повод обновить контекст, иначе пунктир
+        // остался бы на сплошной линии.
+        assert!(s.needs_stroke(red, 2.0, LineStyle::Dashed));
+        assert!(!s.needs_stroke(red, 2.0, LineStyle::Dashed));
+        assert!(s.needs_stroke(red, 2.0, LineStyle::Solid));
     }
 
     #[test]

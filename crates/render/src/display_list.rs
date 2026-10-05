@@ -1,10 +1,16 @@
 //! DisplayList — компактное сериализуемое представление кадра.
-//! Формат фиксирован, painter читает напрямую из SAB без копирований.
+//!
+//! Раскладка потока: заголовок (20 байт) → команды → общий пул строк.
+//! Команда — 4-байтовый тег (байт тега и три нуля) и payload фиксированной
+//! для тега длины, кратной 4: `Rect` 44, `Line` 28, `Text` 40, `Image` 20,
+//! `PushClip` 16, `PushTransform` 24, у `Clear`/`PopClip`/`PopTransform`
+//! payload пуст. Числа — little-endian, перечисления — одним байтом.
+//! Формат фиксирован, painter читает его напрямую из SAB без копирований.
 
 use bytemuck::{Pod, Zeroable};
 
 pub const DL_MAGIC: u32 = 0x444C_5354; // "DLST"
-pub const DL_VERSION: u16 = 2;
+pub const DL_VERSION: u16 = 3;
 
 /// RGBA8, порядок байт: 0xRRGGBBAA.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Pod, Zeroable)]
@@ -55,6 +61,21 @@ pub enum TextBaseline {
     Bottom = 3,
 }
 
+/// Рисунок линии — словарь рисования, а не формат OOXML.
+///
+/// Толщина — это `stroke_w`, а не стиль: тонкая, средняя и толстая линии
+/// различаются толщиной, а не рисунком штриха. Отображение стилей таблицы в
+/// эти значения делает адаптер формата.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum LineStyle {
+    #[default]
+    Solid = 0,
+    Dashed = 1,
+    Dotted = 2,
+    Double = 3,
+}
+
 /// Ссылка в общий string pool DisplayList.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct StringRef {
@@ -82,6 +103,7 @@ pub enum DrawCommand {
         y2: f32,
         stroke: Color,
         stroke_w: f32,
+        style: LineStyle,
     },
     /// Текст в CSS-координатах. Кегль — в CSS-пикселях.
     ///
@@ -100,6 +122,7 @@ pub enum DrawCommand {
         baseline: TextBaseline,
         bold: bool,
         italic: bool,
+        underline: bool,
     },
     Image {
         x: f32,
@@ -249,15 +272,17 @@ impl DisplayList {
                     y2,
                     stroke,
                     stroke_w,
+                    style,
                 } => {
-                    push_tag(out, TAG_LINE, 24);
-                    let mut p = [0u8; 24];
+                    push_tag(out, TAG_LINE, 28);
+                    let mut p = [0u8; 28];
                     p[0..4].copy_from_slice(&x1.to_le_bytes());
                     p[4..8].copy_from_slice(&y1.to_le_bytes());
                     p[8..12].copy_from_slice(&x2.to_le_bytes());
                     p[12..16].copy_from_slice(&y2.to_le_bytes());
                     p[16..20].copy_from_slice(&stroke.0.to_le_bytes());
                     p[20..24].copy_from_slice(&stroke_w.to_le_bytes());
+                    p[24] = *style as u8;
                     out.extend_from_slice(&p);
                 }
                 DrawCommand::Text {
@@ -271,9 +296,10 @@ impl DisplayList {
                     baseline,
                     bold,
                     italic,
+                    underline,
                 } => {
-                    push_tag(out, TAG_TEXT, 36);
-                    let mut p = [0u8; 36];
+                    push_tag(out, TAG_TEXT, 40);
+                    let mut p = [0u8; 40];
                     p[0..4].copy_from_slice(&x.to_le_bytes());
                     p[4..8].copy_from_slice(&y.to_le_bytes());
                     p[8..12].copy_from_slice(&text.off.to_le_bytes());
@@ -286,6 +312,7 @@ impl DisplayList {
                     p[33] = *baseline as u8;
                     p[34] = u8::from(*bold);
                     p[35] = u8::from(*italic);
+                    p[36] = u8::from(*underline);
                     out.extend_from_slice(&p);
                 }
                 DrawCommand::Image {
@@ -492,7 +519,7 @@ impl<'a> CmdIter<'a> {
                 }
             }
             TAG_LINE => {
-                let b = take!(24);
+                let b = take!(28);
                 DrawCommand::Line {
                     x1: f32_at!(b, 0),
                     y1: f32_at!(b, 4),
@@ -500,10 +527,16 @@ impl<'a> CmdIter<'a> {
                     y2: f32_at!(b, 12),
                     stroke: Color(u32_at!(b, 16)),
                     stroke_w: f32_at!(b, 20),
+                    style: match b[24] {
+                        1 => LineStyle::Dashed,
+                        2 => LineStyle::Dotted,
+                        3 => LineStyle::Double,
+                        _ => LineStyle::Solid,
+                    },
                 }
             }
             TAG_TEXT => {
-                let b = take!(36);
+                let b = take!(40);
                 DrawCommand::Text {
                     x: f32_at!(b, 0),
                     y: f32_at!(b, 4),
@@ -531,6 +564,7 @@ impl<'a> CmdIter<'a> {
                     },
                     bold: b[34] != 0,
                     italic: b[35] != 0,
+                    underline: b[36] != 0,
                 }
             }
             TAG_IMAGE => {
@@ -590,6 +624,15 @@ mod tests {
             stroke_w: 0.0,
             radius: [0.0, 0.0, 0.0, 0.0],
         });
+        dl.push(DrawCommand::Line {
+            x1: 0.0,
+            y1: 1.0,
+            x2: 10.0,
+            y2: 11.0,
+            stroke: Color::BLACK,
+            stroke_w: 2.0,
+            style: LineStyle::Dashed,
+        });
         let s = dl.intern("hello");
         let font = dl.intern("Calibri");
         dl.push(DrawCommand::Text {
@@ -603,6 +646,7 @@ mod tests {
             baseline: TextBaseline::Middle,
             bold: true,
             italic: false,
+            underline: true,
         });
         dl.push(DrawCommand::PushClip {
             x: 0.0,
@@ -633,25 +677,69 @@ mod tests {
         assert!(matches!(decoded[0], DrawCommand::Clear));
         assert!(matches!(decoded[1], DrawCommand::Rect { x, .. } if x == 1.0));
         match &decoded[2] {
+            DrawCommand::Line {
+                stroke_w, style, ..
+            } => {
+                assert_eq!(*stroke_w, 2.0);
+                assert_eq!(*style, LineStyle::Dashed);
+            }
+            _ => panic!("expected Line"),
+        }
+        match &decoded[3] {
             DrawCommand::Text {
                 text,
                 font,
                 align,
                 bold,
                 italic,
+                underline,
                 ..
             } => {
                 assert_eq!(rdr.string(*font), "Calibri");
                 assert_eq!(*align, TextAlign::Center);
                 assert!(*bold && !*italic);
+                assert!(*underline);
                 assert_eq!(rdr.string(*text), "hello");
             }
             _ => panic!("expected Text"),
         }
-        assert!(matches!(decoded[3], DrawCommand::PushClip { .. }));
-        assert!(matches!(decoded[4], DrawCommand::PopClip));
-        assert!(matches!(decoded[5], DrawCommand::PushTransform { .. }));
-        assert!(matches!(decoded[6], DrawCommand::PopTransform));
+        assert!(matches!(decoded[4], DrawCommand::PushClip { .. }));
+        assert!(matches!(decoded[5], DrawCommand::PopClip));
+        assert!(matches!(decoded[6], DrawCommand::PushTransform { .. }));
+        assert!(matches!(decoded[7], DrawCommand::PopTransform));
+    }
+
+    /// Каждый вариант `LineStyle` переживает запись и чтение: стиль кодируется
+    /// одним байтом, и незнакомое значение молча стало бы `Solid`.
+    #[test]
+    fn line_styles_roundtrip() {
+        let styles = [
+            LineStyle::Solid,
+            LineStyle::Dashed,
+            LineStyle::Dotted,
+            LineStyle::Double,
+        ];
+        let mut dl = DisplayList::with_capacity(styles.len());
+        for style in styles {
+            dl.push(DrawCommand::Line {
+                x1: 0.0,
+                y1: 0.0,
+                x2: 1.0,
+                y2: 1.0,
+                stroke: Color::BLACK,
+                stroke_w: 1.0,
+                style,
+            });
+        }
+        let bytes = dl.to_bytes();
+        let rdr = DisplayList::from_bytes(&bytes).unwrap();
+        let decoded: Vec<_> = rdr.iter().map(|c| c.unwrap()).collect();
+        for (cmd, style) in decoded.iter().zip(styles) {
+            match cmd {
+                DrawCommand::Line { style: got, .. } => assert_eq!(*got, style),
+                _ => panic!("expected Line"),
+            }
+        }
     }
 
     #[test]

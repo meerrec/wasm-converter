@@ -3,7 +3,9 @@
 use super::bitmap_cache::BitmapCache;
 use super::state::PaintState;
 use super::text;
-use crate::display_list::{DecodeError, DisplayList, DrawCommand, TextBaseline};
+use crate::display_list::{
+    Color, DecodeError, DisplayList, DrawCommand, LineStyle, TextAlign, TextBaseline,
+};
 use wasm_bindgen::prelude::*;
 use web_sys::OffscreenCanvasRenderingContext2d;
 
@@ -108,11 +110,7 @@ impl Painter2D {
                     self.ctx.fill();
                 }
                 if stroke.0 != 0 && stroke_w > 0.0 {
-                    let css = self.state.css_for(stroke).to_owned();
-                    if self.state.needs_stroke(stroke, stroke_w) {
-                        self.ctx.set_stroke_style_str(&css);
-                        self.ctx.set_line_width(stroke_w as f64);
-                    }
+                    self.apply_stroke(stroke, stroke_w, LineStyle::Solid);
                     self.ctx.stroke();
                 }
             }
@@ -123,19 +121,9 @@ impl Painter2D {
                 y2,
                 stroke,
                 stroke_w,
+                style,
             } => {
-                if stroke.0 == 0 || stroke_w <= 0.0 {
-                    return;
-                }
-                let css = self.state.css_for(stroke).to_owned();
-                if self.state.needs_stroke(stroke, stroke_w) {
-                    self.ctx.set_stroke_style_str(&css);
-                    self.ctx.set_line_width(stroke_w as f64);
-                }
-                self.ctx.begin_path();
-                self.ctx.move_to(x1 as f64, y1 as f64);
-                self.ctx.line_to(x2 as f64, y2 as f64);
-                self.ctx.stroke();
+                self.stroke_line(x1, y1, x2, y2, stroke, stroke_w, style);
             }
             DrawCommand::Text {
                 x,
@@ -148,6 +136,7 @@ impl Painter2D {
                 baseline,
                 bold,
                 italic,
+                underline,
             } => {
                 let s = reader.string(text_ref);
                 let family = reader.string(font_ref);
@@ -157,6 +146,19 @@ impl Painter2D {
                 let css = self.state.css_for(color).to_owned();
                 self.ctx.set_fill_style_str(&css);
                 self.ctx.set_text_align(text::text_align_str(align));
+
+                // Canvas подчёркивания не рисует, а его положение берётся из
+                // метрик глифов. `TextMetrics` отсчитываются от текущего
+                // `text_baseline`, поэтому меряем от альфабетической линии:
+                // иначе подчёркивание уехало бы вместе с вертикальным
+                // выравниванием.
+                let metrics = if underline {
+                    self.ctx.set_text_baseline("alphabetic");
+                    self.ctx.measure_text(s).ok()
+                } else {
+                    None
+                };
+
                 self.ctx.set_text_baseline(match baseline {
                     TextBaseline::Alphabetic => "alphabetic",
                     TextBaseline::Top => "top",
@@ -164,6 +166,10 @@ impl Painter2D {
                     TextBaseline::Bottom => "bottom",
                 });
                 let _ = self.ctx.fill_text(s, x as f64, y as f64);
+
+                if let Some(metrics) = metrics {
+                    self.draw_underline(&metrics, x, y, size, color, align, baseline);
+                }
             }
             DrawCommand::Image {
                 x,
@@ -207,6 +213,107 @@ impl Painter2D {
         }
     }
 
+    /// Переносит стиль обводки в контекст, если он разошёлся с кэшем.
+    ///
+    /// Штриховка — часть стиля: `line_dash` живёт в контексте и сам не
+    /// сбрасывается, поэтому сплошная линия после пунктира обязана явно
+    /// снять массив штрихов.
+    fn apply_stroke(&mut self, stroke: Color, width: f32, style: LineStyle) {
+        let css = self.state.css_for(stroke).to_owned();
+        if self.state.needs_stroke(stroke, width, style) {
+            self.ctx.set_stroke_style_str(&css);
+            self.ctx.set_line_width(f64::from(width));
+            apply_dash(&self.ctx, style, width);
+        }
+    }
+
+    // Координаты линии — четыре числа подряд из `DrawCommand::Line`; свернуть
+    // их в структуру можно, но вызывается это из одного места.
+    #[allow(clippy::too_many_arguments)]
+    fn stroke_line(
+        &mut self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        stroke: Color,
+        stroke_w: f32,
+        style: LineStyle,
+    ) {
+        if stroke.0 == 0 || stroke_w <= 0.0 {
+            return;
+        }
+        // `Double` — две линии по трети толщины и такой же зазор между ними:
+        // в сумме ровно `stroke_w`, как рисует Excel.
+        let width = if style == LineStyle::Double {
+            stroke_w / 3.0
+        } else {
+            stroke_w
+        };
+        self.apply_stroke(stroke, width, style);
+
+        let (dx, dy) = (x2 - x1, y2 - y1);
+        let len = dx.hypot(dy);
+        if len <= f32::EPSILON {
+            return;
+        }
+
+        self.ctx.begin_path();
+        if style == LineStyle::Double {
+            let off = stroke_w / 3.0;
+            let (nx, ny) = (-dy / len * off, dx / len * off);
+            self.ctx.move_to(f64::from(x1 + nx), f64::from(y1 + ny));
+            self.ctx.line_to(f64::from(x2 + nx), f64::from(y2 + ny));
+            self.ctx.move_to(f64::from(x1 - nx), f64::from(y1 - ny));
+            self.ctx.line_to(f64::from(x2 - nx), f64::from(y2 - ny));
+        } else {
+            self.ctx.move_to(f64::from(x1), f64::from(y1));
+            self.ctx.line_to(f64::from(x2), f64::from(y2));
+        }
+        self.ctx.stroke();
+    }
+
+    // Аргументы — поля `DrawCommand::Text` без гарнитуры: подчёркивание
+    // считается от уже снятых метрик и якоря текста.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_underline(
+        &mut self,
+        metrics: &web_sys::TextMetrics,
+        x: f32,
+        y: f32,
+        size: f32,
+        color: Color,
+        align: TextAlign,
+        baseline: TextBaseline,
+    ) {
+        let ascent = metrics.font_bounding_box_ascent();
+        let descent = metrics.font_bounding_box_descent();
+        // Метрики сняты от альфабетической линии, а `fill_text` отсчитывает
+        // `y` от выбранного выравнивания — возвращаем якорь в систему
+        // альфабетической базовой линии.
+        let baseline_y = match baseline {
+            TextBaseline::Alphabetic => f64::from(y),
+            TextBaseline::Top => f64::from(y) + ascent,
+            TextBaseline::Middle => f64::from(y) + (ascent - descent) / 2.0,
+            TextBaseline::Bottom => f64::from(y) - descent,
+        };
+        let width = metrics.width();
+        let (from, to) = match align {
+            TextAlign::Center => (f64::from(x) - width / 2.0, f64::from(x) + width / 2.0),
+            TextAlign::Right => (f64::from(x) - width, f64::from(x)),
+            TextAlign::Left | TextAlign::Justify => (f64::from(x), f64::from(x) + width),
+        };
+        // Толщина и отступ — доли кегля: у Calibri подчёркивание проходит
+        // примерно на 0.12 em ниже базовой линии.
+        let thickness = (size * 0.06).max(1.0);
+        let uy = baseline_y + f64::from(size) * 0.12;
+        self.apply_stroke(color, thickness, LineStyle::Solid);
+        self.ctx.begin_path();
+        self.ctx.move_to(from, uy);
+        self.ctx.line_to(to, uy);
+        self.ctx.stroke();
+    }
+
     fn begin_path_rounded(&self, x: f32, y: f32, w: f32, h: f32, r: [f32; 4]) {
         self.ctx.begin_path();
         let uniform = r[0] == r[1] && r[1] == r[2] && r[2] == r[3];
@@ -238,6 +345,28 @@ impl Painter2D {
             self.ctx.rect(x as f64, y as f64, w as f64, h as f64);
         }
     }
+}
+
+/// Штриховка линии; пустой массив — сплошная, так снимается штрих от
+/// предыдущей команды. Длины сегментов — в единицах толщины, чтобы рисунок
+/// не зависел от того, тонкая линия или толстая.
+fn apply_dash(ctx: &OffscreenCanvasRenderingContext2d, style: LineStyle, width: f32) {
+    let segments = js_sys::Array::new();
+    let w = f64::from(width);
+    match style {
+        LineStyle::Dashed => {
+            segments.push(&JsValue::from_f64(w * 3.0));
+            segments.push(&JsValue::from_f64(w * 2.0));
+        }
+        LineStyle::Dotted => {
+            segments.push(&JsValue::from_f64(w));
+            segments.push(&JsValue::from_f64(w * 2.0));
+        }
+        LineStyle::Solid | LineStyle::Double => {}
+    }
+    // Отказ `set_line_dash` оставил бы чужой штрих, но значения массива —
+    // конечные положительные числа, на которых он не срабатывает.
+    let _ = ctx.set_line_dash(&JsValue::from(segments));
 }
 
 // Девять чисел — это прямоугольник и четыре радиуса: свернуть их в структуру

@@ -35,6 +35,7 @@ fn make_dl_text(n: usize) -> Vec<u8> {
             baseline: TextBaseline::Alphabetic,
             bold: false,
             italic: false,
+            underline: false,
         });
     }
     dl.to_bytes()
