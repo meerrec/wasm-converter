@@ -797,6 +797,22 @@ mod tests {
         assert_eq!(table.dxf(0).unwrap(), &Dxf::default());
     }
 
+    /// `wrapText` доходит до формата ячейки: по нему painter переносит строки
+    /// внутри ячейки, а не выпускает текст в пустых соседей.
+    #[test]
+    fn alignment_wrap_text_reaches_the_format() {
+        let table = styles(
+            r#"<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0">
+                 <alignment wrapText="1" horizontal="center" vertical="top"/>
+               </xf></cellXfs>"#,
+        );
+
+        let alignment = table.get(0).unwrap().alignment;
+        assert!(alignment.wrap_text);
+        assert_eq!(alignment.horizontal, HorizontalAlign::Center);
+        assert_eq!(alignment.vertical, VerticalAlign::Top);
+    }
+
     #[test]
     fn dxf_number_format_without_id_stays_in_the_dxf() {
         let table = styles(r#"<dxfs><dxf><numFmt formatCode="0.0"/></dxf></dxfs>"#);
