@@ -45,6 +45,30 @@ const WORKBOOK_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
                 Target="chartsheets/sheet1.xml"/>
 </Relationships>"#;
 
+const THEME: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office Theme">
+  <a:themeElements>
+    <a:clrScheme name="Office">
+      <a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>
+      <a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>
+      <a:dk2><a:srgbClr val="1F497D"/></a:dk2>
+      <a:lt2><a:srgbClr val="EEECE1"/></a:lt2>
+      <a:accent1><a:srgbClr val="4F81BD"/></a:accent1>
+      <a:accent2><a:srgbClr val="C0504D"/></a:accent2>
+      <a:accent3><a:srgbClr val="9BBB59"/></a:accent3>
+      <a:accent4><a:srgbClr val="8064A2"/></a:accent4>
+      <a:accent5><a:srgbClr val="4BACC6"/></a:accent5>
+      <a:accent6><a:srgbClr val="F79646"/></a:accent6>
+      <a:hlink><a:srgbClr val="0000FF"/></a:hlink>
+      <a:folHlink><a:srgbClr val="800080"/></a:folHlink>
+    </a:clrScheme>
+    <a:fontScheme name="Office">
+      <a:majorFont><a:latin typeface="Cambria"/></a:majorFont>
+      <a:minorFont><a:latin typeface="Calibri"/></a:minorFont>
+    </a:fontScheme>
+  </a:themeElements>
+</a:theme>"#;
+
 const SHARED_STRINGS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="2" uniqueCount="2">
   <si><t>Привет</t></si>
@@ -153,6 +177,8 @@ fn opens_sheets_strings_and_date_system() {
     assert_eq!(wb.sheet_count(), 2);
     assert!(wb.sheet("Диаграмма").is_none());
     assert!(wb.date1904());
+    // В этом пакете темы нет — её цвета остаются неразрешёнными.
+    assert!(wb.theme().color(1).is_none());
 
     let first = wb.sheet("Данные").unwrap();
     assert_eq!(first.meta.part, "xl/worksheets/sheet1.xml");
@@ -215,6 +241,41 @@ fn workbook_without_shared_strings_opens() {
         .cell(CellRef::new(0, 0))
         .unwrap();
     assert_eq!(shared.value.text(wb.shared_strings()), None);
+}
+
+#[test]
+fn theme_is_found_through_workbook_rels() {
+    // Связь на тему дописывается в конец карты связей — так же, как её
+    // размещает Excel.
+    let rels = WORKBOOK_RELS.replace(
+        "</Relationships>",
+        concat!(
+            r#"<Relationship Id="rId4" "#,
+            r#"Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" "#,
+            r#"Target="theme/theme1.xml"/></Relationships>"#,
+        ),
+    );
+    let bytes = package(&[
+        ("[Content_Types].xml", CONTENT_TYPES),
+        ("_rels/.rels", ROOT_RELS),
+        ("xl/workbook.xml", WORKBOOK),
+        ("xl/_rels/workbook.xml.rels", &rels),
+        ("xl/worksheets/sheet1.xml", SHEET1),
+        ("xl/worksheets/sheet2.xml", SHEET2),
+        ("xl/theme/theme1.xml", THEME),
+    ]);
+
+    let wb = open(bytes).unwrap();
+    let theme = wb.theme();
+
+    // Часть нашлась по связи книги (`Target="theme/theme1.xml"`), а индексы
+    // пришли в порядке SpreadsheetML: 0 — `lt1`, 1 — `dk1`.
+    assert_eq!(theme.color(0), Some(Color::Rgb(0xFFFF_FFFF)));
+    assert_eq!(theme.color(1), Some(Color::Rgb(0xFF00_0000)));
+    assert_eq!(theme.color(4), Some(Color::Rgb(0xFF4F_81BD)));
+    assert_eq!(theme.color(11), Some(Color::Rgb(0xFF80_0080)));
+    assert_eq!(theme.major_font(), Some("Cambria"));
+    assert_eq!(theme.minor_font(), Some("Calibri"));
 }
 
 #[test]

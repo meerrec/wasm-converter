@@ -14,7 +14,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use doc_converter_xlsx::cellref::CellRef;
-use doc_converter_xlsx::{open, CellValue, PaneKind, PaneState, SheetState, Workbook, XlsxError};
+use doc_converter_xlsx::{
+    open, CellValue, Color, PaneKind, PaneState, SheetState, Workbook, XlsxError,
+};
 use serde_json::Value;
 
 /// Каталог с фикстурами и эталоном.
@@ -206,6 +208,21 @@ fn every_fixture_parses_like_the_oracle() {
         for sheet in sheets {
             check_sheet(&book, name, sheet);
         }
+    }
+}
+
+/// Тема есть во всех фикстурах, и `theme="1"` — это `dk1` (цвет текста), а не
+/// `lt1`: если индексировать палитру в порядке элементов `<a:clrScheme>`, цвет
+/// текста по умолчанию стал бы белым — текст исчез бы.
+#[test]
+fn every_fixture_resolves_the_default_text_color_to_black() {
+    for name in fixture_names() {
+        let book = open(std::fs::read(fixtures_dir().join(&name)).unwrap()).unwrap();
+        assert_eq!(
+            book.theme().color(1),
+            Some(Color::Rgb(0xFF00_0000)),
+            "{name}: theme=\"1\" должен разрешаться в чёрный"
+        );
     }
 }
 

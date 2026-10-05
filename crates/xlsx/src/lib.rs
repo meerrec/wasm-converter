@@ -1,4 +1,5 @@
-//! XLSX: разбор `workbook.xml`, `sheet*.xml`, `sharedStrings.xml` и `styles.xml`.
+//! XLSX: разбор `workbook.xml`, `sheet*.xml`, `sharedStrings.xml`, `styles.xml`
+//! и `theme1.xml`.
 //!
 //! ```no_run
 //! use doc_converter_xlsx::{open, CellRef};
@@ -36,6 +37,7 @@ pub mod paint;
 pub mod sheet_meta;
 pub mod strings;
 pub mod styles;
+pub mod theme;
 pub mod workbook;
 pub mod worksheet;
 
@@ -48,8 +50,8 @@ pub use error::{Result, XlsxError};
 pub use layout::SheetLayout;
 pub use model::{
     Border, BorderSide, BorderStyle, Cell, CellError, CellFormat, CellValue, Color, Fill,
-    FillPattern, Font, Sheet, SheetContent, SheetState, StyleTable, Workbook, Worksheet,
-    WorksheetBuilder, WorksheetMeta,
+    FillPattern, Font, Sheet, SheetContent, SheetState, StyleTable, Theme, Workbook, Worksheet,
+    WorksheetBuilder, WorksheetMeta, THEME_COLOR_COUNT,
 };
 pub use paint::{build as paint_sheet, PaintOptions, Viewport};
 pub use sheet_meta::{Hyperlink, HyperlinkTarget, Merges, Pane, PaneKind, PaneState, SheetView};
@@ -68,9 +70,14 @@ pub const SHARED_STRINGS_PART: &str = "xl/sharedStrings.xml";
 /// Таблица стилей.
 pub const STYLES_PART: &str = "xl/styles.xml";
 
+/// Отношение темы: `…/relationships/theme`. Имя части темы в пакете может
+/// отличаться (`theme2.xml`), поэтому она ищется по типу связи.
+const THEME_REL: &str = "/theme";
+
 /// Открыть XLSX из сырых байт.
 ///
-/// Читает каталог листов, общую таблицу строк, стили и содержимое всех листов.
+/// Читает каталог листов, общую таблицу строк, стили, тему и содержимое всех
+/// листов.
 ///
 /// Листы разбираются сразу: рендер и экспорт работают по модели, а ленивый
 /// разбор потребовал бы держать открытый архив внутри книги.
@@ -97,6 +104,8 @@ pub fn open(bytes: Vec<u8>) -> Result<Workbook> {
         StyleTable::default()
     };
 
+    let theme = read_theme(&mut archive, &rels)?;
+
     let mut sheets = Vec::with_capacity(catalog.sheets.len());
     for meta in catalog.sheets {
         // Связи листа нужны гиперссылкам: их цели живут в отдельной части.
@@ -109,8 +118,31 @@ pub fn open(bytes: Vec<u8>) -> Result<Workbook> {
         sheets,
         shared_strings,
         style_table,
+        theme,
         catalog.date1904,
     ))
+}
+
+/// Тема книги: часть ищется по связи книги, а не по жёсткому пути — имя темы
+/// в пакете может отличаться от `xl/theme/theme1.xml`.
+///
+/// Отсутствие темы или её части — не ошибка: цвета `theme="n"` тогда просто
+/// не разрешаются, а текст берёт цвет по умолчанию.
+fn read_theme(archive: &mut Archive, rels: &RelMap) -> Result<Theme> {
+    let Some(rel) = rels
+        .items
+        .values()
+        .find(|rel| rel.rel_type.ends_with(THEME_REL))
+    else {
+        return Ok(Theme::default());
+    };
+    let Some(part) = rel.part(WORKBOOK_PART) else {
+        return Ok(Theme::default());
+    };
+    if !archive.contains(&part) {
+        return Ok(Theme::default());
+    }
+    theme::parse(&archive.read(&part)?, part)
 }
 
 /// Связи части пакета, если они есть: у листа без гиперссылок и картинок

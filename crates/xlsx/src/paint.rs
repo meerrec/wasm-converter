@@ -15,7 +15,9 @@ use doc_converter_render::display_list::{
 
 use crate::cellref::{column_name, row_name};
 use crate::layout::{SheetLayout, PX_PER_POINT};
-use crate::model::{Cell, CellValue, Color as CellColor, HorizontalAlign, Sheet, VerticalAlign};
+use crate::model::{
+    Cell, CellValue, Color as CellColor, HorizontalAlign, Sheet, Theme, VerticalAlign,
+};
 use crate::numfmt;
 use crate::Workbook;
 
@@ -644,7 +646,7 @@ fn draw_text(
 
     let font = book.styles().font(format.font).cloned().unwrap_or_default();
     let size = font.size * PX_PER_POINT * scale;
-    let color = resolve_color(font.color).unwrap_or(Color::BLACK);
+    let color = resolve_color(book.theme(), font.color).unwrap_or(Color::BLACK);
     let padding = TEXT_PADDING * scale;
 
     // Числа Excel не выпускает за ячейку и не обрезает: не помещается —
@@ -755,24 +757,37 @@ fn horizontal(align: HorizontalAlign, value: &CellValue) -> HorizontalAlign {
 fn fill_color(book: &Workbook, fill: u32) -> Option<Color> {
     let fill = book.styles().fill(fill)?;
     match fill.pattern {
-        crate::model::FillPattern::Solid => resolve_color(fill.foreground),
+        crate::model::FillPattern::Solid => resolve_color(book.theme(), fill.foreground),
         crate::model::FillPattern::None => None,
         // Узоры Excel рисует растром; в DisplayList растра нет, поэтому узор
         // показывается своим цветом. TODO (Фаза 5): растр узора.
-        _ => resolve_color(fill.foreground).or_else(|| resolve_color(fill.background)),
+        _ => resolve_color(book.theme(), fill.foreground)
+            .or_else(|| resolve_color(book.theme(), fill.background)),
     }
 }
 
 /// Цвет из модели в цвет `DisplayList`.
 ///
-/// Темы (`theme`) требуют `xl/theme/theme1.xml` — это Фаза 5; пока такой цвет
-/// остаётся неразрешённым, и ячейка берёт цвет по умолчанию.
-pub fn resolve_color(color: CellColor) -> Option<Color> {
+/// `theme` — палитра книги: без неё цвета вида `theme="n"` разрешить нечем.
+///
+/// `None` — цвет не задан, индекс вне палитры или палитра такого цвета не
+/// знает.
+pub fn resolve_color(theme: &Theme, color: CellColor) -> Option<Color> {
     match color {
-        // Тема не разрешается без `theme1.xml`, и выдумывать её цвет нельзя.
-        CellColor::None | CellColor::Theme(_) => None,
+        CellColor::None => None,
         CellColor::Rgb(value) => Some(Color(argb_to_rgba(value))),
+        CellColor::Theme(index) => theme_color(theme, index),
         CellColor::Indexed(index) => indexed_color(index).map(Color),
+    }
+}
+
+/// Цвет темы: палитра уже разрешила индекс до `Color::Rgb`, остаётся
+/// переставить каналы. Пустой слот и индекс вне палитры дают `None`.
+fn theme_color(theme: &Theme, index: u32) -> Option<Color> {
+    match theme.color(index)? {
+        CellColor::Rgb(value) => Some(Color(argb_to_rgba(value))),
+        // Палитра хранит только RGB — прочие варианты означают пустой слот.
+        CellColor::None | CellColor::Theme(_) | CellColor::Indexed(_) => None,
     }
 }
 
@@ -855,7 +870,7 @@ fn fill_rect(out: &mut DisplayList, x: f32, y: f32, w: f32, h: f32, fill: Color)
 mod tests {
     use super::*;
     use crate::model::{Border, CellFormat, Fill, FillPattern, Font, StyleTable, WorksheetMeta};
-    use crate::model::{SheetContent, WorksheetBuilder};
+    use crate::model::{SheetContent, Theme, WorksheetBuilder};
     use crate::SharedStrings;
     use crate::SheetState;
     use std::collections::BTreeMap;
@@ -864,6 +879,11 @@ mod tests {
 
     /// Книга с одним листом, собранным вызывающим.
     fn book_with(content: SheetContent, styles: StyleTable) -> Workbook {
+        book_with_theme(content, styles, Theme::default())
+    }
+
+    /// Книга с темой: цвета `theme="n"` разрешаются через неё.
+    fn book_with_theme(content: SheetContent, styles: StyleTable, theme: Theme) -> Workbook {
         let sheet = Sheet::new(
             WorksheetMeta {
                 name: "Лист1".into(),
@@ -872,7 +892,26 @@ mod tests {
             },
             content,
         );
-        Workbook::new(vec![sheet], SharedStrings::default(), styles, false)
+        Workbook::new(vec![sheet], SharedStrings::default(), styles, theme, false)
+    }
+
+    /// Тема Excel: `dk1` записан раньше `lt1`, а `theme="1"` — это `dk1`.
+    fn theme() -> Theme {
+        crate::theme::parse(
+            br#"<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+                  <a:themeElements>
+                    <a:clrScheme>
+                      <a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>
+                      <a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>
+                      <a:dk2><a:srgbClr val="1F497D"/></a:dk2>
+                      <a:lt2><a:srgbClr val="EEECE1"/></a:lt2>
+                      <a:accent1><a:srgbClr val="4F81BD"/></a:accent1>
+                    </a:clrScheme>
+                  </a:themeElements>
+                </a:theme>"#,
+            "xl/theme/theme1.xml",
+        )
+        .unwrap()
     }
 
     fn painted(book: &Workbook, viewport: Viewport, options: &PaintOptions) -> DisplayList {
@@ -1329,7 +1368,12 @@ mod tests {
     #[test]
     fn colors_are_reordered_from_argb_to_rgba() {
         // Аргументы — то, что записано в файле: AARRGGBB.
-        let white = |value: u32| resolve_color(CellColor::Rgb(value)).unwrap().to_css();
+        let none = Theme::default();
+        let white = |value: u32| {
+            resolve_color(&none, CellColor::Rgb(value))
+                .unwrap()
+                .to_css()
+        };
 
         assert_eq!(white(0xFF_FF_FF_FF), "#ffffff");
         assert_eq!(white(0xFF_00_00_00), "#000000");
@@ -1343,15 +1387,148 @@ mod tests {
 
     #[test]
     fn indexed_palette_is_resolved() {
-        assert_eq!(resolve_color(CellColor::Indexed(0)), Some(Color::BLACK));
+        let none = Theme::default();
         assert_eq!(
-            resolve_color(CellColor::Indexed(2)),
+            resolve_color(&none, CellColor::Indexed(0)),
+            Some(Color::BLACK)
+        );
+        assert_eq!(
+            resolve_color(&none, CellColor::Indexed(2)),
             Some(Color(0xFF00_00FF))
         );
-        assert_eq!(resolve_color(CellColor::Indexed(64)), Some(Color::BLACK));
-        assert_eq!(resolve_color(CellColor::Indexed(65)), Some(Color::WHITE));
-        assert_eq!(resolve_color(CellColor::Indexed(200)), None);
-        assert_eq!(resolve_color(CellColor::Theme(4)), None);
-        assert_eq!(resolve_color(CellColor::None), None);
+        assert_eq!(
+            resolve_color(&none, CellColor::Indexed(64)),
+            Some(Color::BLACK)
+        );
+        assert_eq!(
+            resolve_color(&none, CellColor::Indexed(65)),
+            Some(Color::WHITE)
+        );
+        assert_eq!(resolve_color(&none, CellColor::Indexed(200)), None);
+        // Пустая палитра ничего не разрешает — выдумывать цвета нельзя.
+        assert_eq!(resolve_color(&none, CellColor::Theme(4)), None);
+        assert_eq!(resolve_color(&none, CellColor::None), None);
+    }
+
+    #[test]
+    fn theme_colors_are_resolved_through_the_palette() {
+        let theme = theme();
+
+        assert_eq!(
+            resolve_color(&theme, CellColor::Theme(1)),
+            Some(Color::BLACK),
+            "1 — dk1, текст по умолчанию, а не lt1"
+        );
+        assert_eq!(
+            resolve_color(&theme, CellColor::Theme(0)),
+            Some(Color::WHITE)
+        );
+        // accent1 = 4F81BD; в DisplayList каналы уже переставлены.
+        assert_eq!(
+            resolve_color(&theme, CellColor::Theme(4)),
+            Some(Color(0x4F81_BDFF))
+        );
+        assert_eq!(resolve_color(&theme, CellColor::Theme(12)), None);
+        // Слот, которого нет в теме, тоже не разрешается.
+        assert_eq!(resolve_color(&theme, CellColor::Theme(9)), None);
+    }
+
+    #[test]
+    fn default_theme_font_color_paints_black_text() {
+        // Главная ловушка темы: `<color theme="1"/>` — цвет текста по
+        // умолчанию. Если индексировать палитру в порядке XML (`dk1` первым),
+        // `theme="1"` укажет на `lt1`, и текст станет белым — исчезнет.
+        let styles = StyleTable::new(
+            vec![CellFormat::default()],
+            vec![Font {
+                color: CellColor::Theme(1),
+                ..Font::default()
+            }],
+            vec![Fill::default()],
+            vec![Border::default()],
+            BTreeMap::new(),
+        );
+        let mut builder = WorksheetBuilder::new(PART);
+        builder
+            .push(0, Cell::new(0, 0, CellValue::InlineString("текст".into())))
+            .unwrap();
+        let book = book_with_theme(
+            SheetContent {
+                cells: builder.finish(),
+                ..SheetContent::default()
+            },
+            styles,
+            theme(),
+        );
+
+        let dl = painted(
+            &book,
+            Viewport::default(),
+            &PaintOptions {
+                show_grid: false,
+                show_headers: false,
+                ..PaintOptions::default()
+            },
+        );
+
+        let text = (0..dl.len())
+            .filter_map(|i| dl.cmd(i))
+            .find_map(|cmd| match cmd {
+                DrawCommand::Text { color, .. } => Some(*color),
+                _ => None,
+            });
+        assert_eq!(text, Some(Color::BLACK));
+    }
+
+    #[test]
+    fn solid_fill_with_theme_color_is_painted() {
+        let styles = StyleTable::new(
+            vec![
+                CellFormat::default(),
+                CellFormat {
+                    fill: 1,
+                    ..CellFormat::default()
+                },
+            ],
+            vec![Font::default()],
+            vec![
+                Fill::default(),
+                Fill {
+                    pattern: FillPattern::Solid,
+                    foreground: CellColor::Theme(4),
+                    background: CellColor::None,
+                },
+            ],
+            vec![Border::default()],
+            BTreeMap::new(),
+        );
+        let mut builder = WorksheetBuilder::new(PART);
+        builder
+            .push(0, Cell::new(0, 1, CellValue::Number(1.0)))
+            .unwrap();
+        let book = book_with_theme(
+            SheetContent {
+                cells: builder.finish(),
+                ..SheetContent::default()
+            },
+            styles,
+            theme(),
+        );
+        let dl = painted(
+            &book,
+            Viewport::default(),
+            &PaintOptions {
+                show_grid: false,
+                show_headers: false,
+                ..PaintOptions::default()
+            },
+        );
+
+        // accent1 = 4F81BD, непрозрачный: в DisplayList это `4F81BDFF`.
+        let filled = count(
+            &dl,
+            |cmd| matches!(cmd, DrawCommand::Rect { fill, .. } if *fill == Color(0x4F81_BDFF)),
+        );
+        assert_eq!(filled, 1);
     }
 }
