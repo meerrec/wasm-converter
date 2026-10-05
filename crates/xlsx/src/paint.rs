@@ -11,9 +11,14 @@
 //! и столбцы не прокручиваются, остальное — да. Каждый квадрант рисуется под
 //! своим `PushClip`, поэтому содержимое не выползает за его границы.
 
+use std::cell::RefCell;
+
 use doc_converter_render::display_list::{
     Color, DisplayList, DrawCommand, LineStyle, TextAlign, TextBaseline,
 };
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
+use doc_converter_render::text_measure::measure_text;
+use doc_converter_render::viewport::Viewport;
 
 use crate::cellref::{column_name, row_name, CellRef, Range};
 use crate::conditional::{EffectiveStyle, RuleIndex, Visual};
@@ -36,31 +41,15 @@ const TEXT_PADDING: f32 = 3.0;
 /// встроенный стиль Excel «Hyperlink».
 const HLINK_THEME_INDEX: u32 = 10;
 
-/// Что видно в окне.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Viewport {
-    /// Горизонтальная прокрутка, пиксели раскладки.
-    pub scroll_x: f32,
-    /// Вертикальная прокрутка, пиксели раскладки.
-    pub scroll_y: f32,
-    /// Ширина окна в физических пикселях canvas.
-    pub width: f32,
-    /// Высота окна в физических пикселях canvas.
-    pub height: f32,
-    /// Масштаб: зум, умноженный на плотность пикселей экрана.
-    pub scale: f32,
-}
-
-impl Default for Viewport {
-    fn default() -> Self {
-        Self {
-            scroll_x: 0.0,
-            scroll_y: 0.0,
-            width: 800.0,
-            height: 600.0,
-            scale: 1.0,
-        }
-    }
+thread_local! {
+    /// Метрики текста — один реестр на поток. Шрифт по умолчанию (Carlito,
+    /// метрически совместимый с Calibri) зарегистрирован в `new`, и кадры
+    /// переиспользуют тёплый LRU-кэш глифов.
+    ///
+    /// Все ячейки меряются шрифтом по умолчанию: байтов шрифта книги в пакете
+    /// нет, а политика «что делать при промахе» зафиксирована в ADR-0005 —
+    /// метрики обязаны быть детерминированными на любой машине.
+    static FONTS: RefCell<FontRegistry> = RefCell::new(FontRegistry::new(4096));
 }
 
 /// Что рисовать поверх содержимого.
@@ -229,8 +218,8 @@ impl Geometry {
             },
             frozen_w: layout.column_x(frozen_cols) * scale,
             frozen_h: layout.row_y(frozen_rows) * scale,
-            view_left: layout.column_x(frozen_cols) + viewport.scroll_x.max(0.0),
-            view_top: layout.row_y(frozen_rows) + viewport.scroll_y.max(0.0),
+            view_left: layout.column_x(frozen_cols) + viewport.x.max(0.0),
+            view_top: layout.row_y(frozen_rows) + viewport.y.max(0.0),
             layout,
             scale,
             frozen_cols,
@@ -259,7 +248,10 @@ impl Geometry {
 /// Ячейка под точкой окна, в физических пикселях canvas.
 ///
 /// Точка в полосе заголовков даёт крайнюю ячейку: заголовок — это тоже место
-/// листа, и возвращать «никуда» было бы неудобно выделению.
+/// листа, и возвращать «никуда» было бы неудобно выделению. Маппинг «точка →
+/// ячейка» остаётся раскладочным адаптером: `DisplayList` не несёт идентичности
+/// ячеек, а геометрия попадания по командам кадра (картинки, текст) живёт в
+/// `render::hit_test` (ADR-0003).
 #[must_use]
 pub fn hit_test(sheet: &Sheet, viewport: Viewport, x: f32, y: f32) -> crate::cellref::CellRef {
     let geometry = Geometry::new(sheet, viewport, true);
@@ -335,13 +327,13 @@ pub fn build(
         out,
         0.0,
         0.0,
-        viewport.width,
-        viewport.height,
+        viewport.w,
+        viewport.h,
         options.effective_background(),
     );
 
-    let scroll_w = (viewport.width - header_w - frozen_w).max(0.0) / scale;
-    let scroll_h = (viewport.height - header_h - frozen_h).max(0.0) / scale;
+    let scroll_w = (viewport.w - header_w - frozen_w).max(0.0) / scale;
+    let scroll_h = (viewport.h - header_h - frozen_h).max(0.0) / scale;
     let (first_col, last_col) = layout.columns_in(view_left, view_left + scroll_w);
     let (first_row, last_row) = layout.rows_in(view_top, view_top + scroll_h);
 
@@ -399,8 +391,8 @@ pub fn build(
             clip: (
                 screen_x,
                 screen_y,
-                (viewport.width - screen_x).max(0.0),
-                (viewport.height - screen_y).max(0.0),
+                (viewport.w - screen_x).max(0.0),
+                (viewport.h - screen_y).max(0.0),
             ),
         };
         draw_region(book, sheet, &rules, &layout, scale, &region, options, out);
@@ -1130,7 +1122,7 @@ fn draw_headers(headers: &Headers<'_>, out: &mut DisplayList) {
         out,
         0.0,
         0.0,
-        headers.viewport.width,
+        headers.viewport.w,
         headers.header_h,
         headers.options.effective_header_background(),
     );
@@ -1139,7 +1131,7 @@ fn draw_headers(headers: &Headers<'_>, out: &mut DisplayList) {
         0.0,
         0.0,
         headers.header_w,
-        headers.viewport.height,
+        headers.viewport.h,
         headers.options.effective_header_background(),
     );
 
@@ -1150,7 +1142,7 @@ fn draw_headers(headers: &Headers<'_>, out: &mut DisplayList) {
     out.push(DrawCommand::Line {
         x1: 0.0,
         y1: headers.header_h,
-        x2: headers.viewport.width,
+        x2: headers.viewport.w,
         y2: headers.header_h,
         stroke: line,
         stroke_w: 1.0,
@@ -1160,7 +1152,7 @@ fn draw_headers(headers: &Headers<'_>, out: &mut DisplayList) {
         x1: headers.header_w,
         y1: 0.0,
         x2: headers.header_w,
-        y2: headers.viewport.height,
+        y2: headers.viewport.h,
         stroke: line,
         stroke_w: 1.0,
         style: LineStyle::Solid,
@@ -1183,7 +1175,7 @@ fn draw_column_headers(headers: &Headers<'_>, out: &mut DisplayList) {
     } = *headers;
 
     let frozen_w = layout.column_x(frozen_cols) * scale;
-    let scroll_w = (viewport.width - header_w - frozen_w).max(0.0) / scale;
+    let scroll_w = (viewport.w - header_w - frozen_w).max(0.0) / scale;
     let (first, last) = layout.columns_in(view_left, view_left + scroll_w);
     let size = 11.0 * PX_PER_POINT * scale;
 
@@ -1201,7 +1193,7 @@ fn draw_column_headers(headers: &Headers<'_>, out: &mut DisplayList) {
                 continue;
             }
             let visible_x = x.max(header_w);
-            let visible_w = (x + w - visible_x).min(viewport.width - visible_x);
+            let visible_w = (x + w - visible_x).min(viewport.w - visible_x);
             if visible_w <= 0.0 {
                 continue;
             }
@@ -1247,7 +1239,7 @@ fn draw_row_headers(headers: &Headers<'_>, out: &mut DisplayList) {
     } = *headers;
 
     let frozen_h = layout.row_y(frozen_rows) * scale;
-    let scroll_h = (viewport.height - header_h - frozen_h).max(0.0) / scale;
+    let scroll_h = (viewport.h - header_h - frozen_h).max(0.0) / scale;
     let (first, last) = layout.rows_in(view_top, view_top + scroll_h);
     let size = 11.0 * PX_PER_POINT * scale;
 
@@ -1357,8 +1349,15 @@ fn draw_text(
 
     // Числа Excel не выпускает за ячейку и не обрезает: не помещается —
     // показывает решётки. Даты и деньги — тоже числа.
+    // Числа Excel не выпускает за ячейку и не обрезает: не помещается —
+    // показывает решётки. Ширина — настоящие метрики шрифта по умолчанию, а
+    // не оценочная таблица: `FontRegistry` подключён в путь рисования
+    // (ADR-0002, ADR-0005).
     let text = if matches!(cell.value, CellValue::Number(_))
-        && estimate_width(&text, size) > w - padding * 2.0
+        && FONTS.with(|fonts| {
+            let mut fonts = fonts.borrow_mut();
+            measure_text(&mut fonts, DEFAULT_FONT_ID, size, &text)
+        }) > w - padding * 2.0
     {
         HASHES.to_owned()
     } else {
@@ -1403,28 +1402,6 @@ fn draw_text(
 
 /// Что Excel показывает вместо числа, которое не помещается в столбец.
 const HASHES: &str = "#####";
-
-/// Ширина строки в пикселях — оценка по метрикам Calibri.
-///
-/// Цифры в Calibri моноширинные, и вся система ширин Excel построена на ширине
-/// нуля: 7 пикселей при 11 pt. Для чисел с их разделителями оценка поэтому
-/// точна, а произвольный текст так измерять нельзя — впрочем, его Excel и не
-/// заменяет решётками, а пускает в пустого соседа.
-///
-/// TODO (Фаза 4): настоящие метрики из шрифта книги.
-fn estimate_width(text: &str, size_px: f32) -> f32 {
-    let k = size_px / (11.0 * PX_PER_POINT);
-    let sum: f32 = text
-        .chars()
-        .map(|ch| match ch {
-            '0'..='9' => 7.0,
-            '.' | ',' | ' ' => 3.5,
-            '-' | '+' | '/' | ':' => 4.0,
-            _ => 7.5,
-        })
-        .sum();
-    sum * k
-}
 
 /// Текст ячейки так, как его показывает Excel.
 ///
@@ -1860,8 +1837,8 @@ mod tests {
         let book = book_with(numbers(), StyleTable::default());
         // Окно ровно на две строки и два столбца: 128×40 пикселей.
         let viewport = Viewport {
-            width: 128.0,
-            height: 40.0,
+            w: 128.0,
+            h: 40.0,
             ..Viewport::default()
         };
         let options = PaintOptions {
@@ -1884,7 +1861,7 @@ mod tests {
         let scrolled = painted(
             &book,
             Viewport {
-                scroll_y: 20.0,
+                y: 20.0,
                 ..viewport
             },
             &options,
@@ -2036,9 +2013,9 @@ mod tests {
         let book = book_with(content, StyleTable::default());
 
         let viewport = Viewport {
-            scroll_y: 20.0,
-            width: 128.0,
-            height: 60.0,
+            y: 20.0,
+            w: 128.0,
+            h: 60.0,
             ..Viewport::default()
         };
         let dl = painted(
@@ -3387,7 +3364,7 @@ mod tests {
 
         // Прокрутка на ширину картинки уводит её из окна целиком.
         let viewport = Viewport {
-            scroll_x: 40.0,
+            x: 40.0,
             ..Viewport::default()
         };
         let dl = painted(&book, viewport, &content_only());
@@ -3399,7 +3376,7 @@ mod tests {
 
         // На половине ширины в кадре остаётся только видимая часть.
         let viewport = Viewport {
-            scroll_x: 20.0,
+            x: 20.0,
             ..Viewport::default()
         };
         let dl = painted(&book, viewport, &content_only());
@@ -3448,8 +3425,8 @@ mod tests {
     fn zoom_scales_image_rectangles_and_positions() {
         let book = open_fixture("images-png.xlsx");
         let viewport = Viewport {
-            width: 1600.0,
-            height: 1200.0,
+            w: 1600.0,
+            h: 1200.0,
             scale: 2.0,
             ..Viewport::default()
         };

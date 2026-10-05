@@ -9,7 +9,8 @@ use std::cell::RefCell;
 
 use doc_converter_render::display_list::DisplayList;
 use doc_converter_render::sab::SabRing;
-use doc_converter_xlsx::paint::{self, PaintOptions, Viewport};
+use doc_converter_xlsx::paint::{self, PaintOptions};
+use doc_converter_xlsx::Viewport;
 use doc_converter_xlsx::Workbook;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -195,13 +196,13 @@ pub fn xlsx_image_bytes(id: u32) -> Result<js_sys::Uint8Array, JsValue> {
 /// Перевести окно из JS в представление рендера.
 fn viewport_of(value: JsValue) -> Result<Viewport, JsValue> {
     let js: ViewportJs = serde_wasm_bindgen::from_value(value).map_err(to_js)?;
-    Ok(Viewport {
-        scroll_x: js.scroll_x,
-        scroll_y: js.scroll_y,
-        width: js.width,
-        height: js.height,
-        scale: js.scale,
-    })
+    Ok(Viewport::new(
+        js.scroll_x,
+        js.scroll_y,
+        js.width,
+        js.height,
+        js.scale,
+    ))
 }
 
 fn options_of(value: JsValue) -> Result<PaintOptions, JsValue> {
