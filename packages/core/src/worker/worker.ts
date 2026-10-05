@@ -174,7 +174,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     }
     case 'resize': {
       if (!ctx) return;
-      resize_canvas(ctx, msg.cssW, msg.cssH, msg.dpr);
+      resize_canvas(msg.cssW, msg.cssH, msg.dpr);
       reregisterBitmaps();
       if (pending) loop?.request();
       break;

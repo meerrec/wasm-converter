@@ -1,40 +1,22 @@
-use doc_converter_render::painter::{PaintStats, Painter2D};
-use std::cell::RefCell;
+//! WASM-экспорты жизненного цикла painter'а.
+//!
+//! Логика живёт в `render::canvas` (ADR-0003); здесь только wasm-bindgen-обвязка
+//! и сериализация статистики.
+
+use doc_converter_render::canvas::OffscreenPainter;
+use doc_converter_render::painter::PaintStats;
 use wasm_bindgen::prelude::*;
 use web_sys::OffscreenCanvasRenderingContext2d;
-
-thread_local! {
-    static PAINTER: RefCell<Option<Painter2D>> = const { RefCell::new(None) };
-}
-
-pub(crate) fn with_painter<R>(f: impl FnOnce(&mut Painter2D) -> R) -> Result<R, JsValue> {
-    PAINTER.with(|p| {
-        let mut slot = p.borrow_mut();
-        let painter = slot
-            .as_mut()
-            .ok_or_else(|| JsValue::from_str("painter not initialised"))?;
-        Ok(f(painter))
-    })
-}
 
 /// Инициализирует painter ровно один раз. Повторный вызов — ошибка.
 #[wasm_bindgen]
 pub fn init_painter(ctx: OffscreenCanvasRenderingContext2d) -> Result<(), JsValue> {
-    PAINTER.with(|p| {
-        let mut slot = p.borrow_mut();
-        if slot.is_some() {
-            return Err(JsValue::from_str("painter already initialised"));
-        }
-        *slot = Some(Painter2D::new(ctx));
-        Ok(())
-    })
+    OffscreenPainter::install(ctx)
 }
 
 #[wasm_bindgen]
 pub fn dispose_painter() {
-    PAINTER.with(|p| {
-        *p.borrow_mut() = None;
-    });
+    OffscreenPainter::dispose();
 }
 
 #[derive(serde::Serialize)]
@@ -58,11 +40,7 @@ impl From<PaintStats> for PaintStatsJs {
 /// Прямой путь: байты DL копируются в Rust Vec (fallback).
 #[wasm_bindgen]
 pub fn paint_display_list_bytes(bytes: &[u8]) -> Result<JsValue, JsValue> {
-    with_painter(|painter| {
-        let stats = painter.paint_bytes(bytes)?;
-        serde_wasm_bindgen::to_value(&PaintStatsJs::from(stats))
-            .map_err(|e| JsValue::from_str(&format!("serialize: {e}")))
-    })?
+    OffscreenPainter::with(|painter| to_stats(painter.paint_bytes(bytes)?))?
 }
 
 /// SAB-путь: читает текущий слот ring'а и рисует. Освобождает слот.
@@ -71,53 +49,16 @@ pub fn paint_display_list_sab(
     sab: js_sys::SharedArrayBuffer,
     slot_capacity: u32,
 ) -> Result<JsValue, JsValue> {
-    let mut ring = doc_converter_render::sab::SabRing::from_sab(sab, slot_capacity as usize)?;
-    let mut buf = Vec::new();
-    if !ring.copy_current_into(&mut buf)? {
-        let empty = PaintStatsJs {
-            cmds: 0,
-            dropped: true,
-            paint_ms: 0.0,
-        };
-        return Ok(serde_wasm_bindgen::to_value(&empty).unwrap());
-    }
-    // Слот освобождается сразу после копирования: без этого счётчик читателя
-    // стоит на месте, оба слота считаются занятыми, и после второго кадра
-    // запись навсегда упирается в «нет свободного слота».
-    ring.release_current()?;
-    with_painter(|painter| {
-        let stats = painter.paint_bytes(&buf)?;
-        serde_wasm_bindgen::to_value(&PaintStatsJs::from(stats))
-            .map_err(|e| JsValue::from_str(&format!("serialize: {e}")))
-    })?
+    OffscreenPainter::with(|painter| to_stats(painter.paint_sab(sab, slot_capacity)?))?
 }
 
 /// Пересчитывает canvas под DPR и сбрасывает состояние painter'а.
-///
-/// Установка `width`/`height` сбрасывает состояние 2D-контекста, поэтому кэш
-/// кисти обязан сброситься вместе с ним. Кэш `ImageBitmap` чистится тем же
-/// вызовом; сами битмапы к размеру холста не привязаны, и воркер регистрирует
-/// их заново сразу после `resize_canvas`.
 #[wasm_bindgen]
-pub fn resize_canvas(
-    ctx: OffscreenCanvasRenderingContext2d,
-    css_w: f32,
-    css_h: f32,
-    dpr: f32,
-) -> Result<(), JsValue> {
-    let canvas = ctx.canvas();
-    let w = (css_w * dpr).round() as u32;
-    let h = (css_h * dpr).round() as u32;
-    if w == 0 || h == 0 {
-        return Err(JsValue::from_str("canvas size must be > 0"));
-    }
-    canvas.set_width(w);
-    canvas.set_height(h);
+pub fn resize_canvas(css_w: f32, css_h: f32, dpr: f32) -> Result<(), JsValue> {
+    OffscreenPainter::with(|painter| painter.resize(css_w, css_h, dpr))?
+}
 
-    PAINTER.with(|p| {
-        if let Some(painter) = p.borrow_mut().as_mut() {
-            painter.reset_state();
-        }
-    });
-    Ok(())
+fn to_stats(stats: PaintStats) -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(&PaintStatsJs::from(stats))
+        .map_err(|e| JsValue::from_str(&format!("serialize: {e}")))
 }
