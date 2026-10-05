@@ -1,6 +1,9 @@
-use serde::{Deserialize, Serialize};
+//! Геометрия кадра: прямоугольники и точки.
+//!
+//! Типы намеренно без `serde`: у них нет сериализуемого потребителя, и лишняя
+//! зависимость не нужна (ADR-0003).
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Rect {
     pub x: f32,
     pub y: f32,
@@ -38,7 +41,7 @@ impl Rect {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Viewport {
     pub x: f32,
     pub y: f32,

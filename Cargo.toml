@@ -50,6 +50,9 @@ printpdf             = { version = "0.8.2", default-features = false }
 # 0.20, а не 0.18: столько приходит с printpdf, и своя запись должна совпадать,
 # иначе в дереве окажутся две версии rustybuzz.
 rustybuzz            = "0.20"
+# 0.42 — столько уже приходит в дерево транзитивно (printpdf → subsetter):
+# прямая запись той же версии не заводит вторую копию. Решение по ADR-0002.
+skrifa               = "0.42"
 unicode-linebreak    = "0.1"
 unicode-bidi         = "0.3"
 image                = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
