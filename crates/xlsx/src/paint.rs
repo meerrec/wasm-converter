@@ -28,6 +28,9 @@ pub const ROW_HEADER_WIDTH: f32 = 44.0;
 pub const COL_HEADER_HEIGHT: f32 = 20.0;
 /// Поля текста внутри ячейки.
 const TEXT_PADDING: f32 = 3.0;
+/// Индекс слота `hlink` в палитре темы (`SpreadsheetML`): на него ссылается
+/// встроенный стиль Excel «Hyperlink».
+const HLINK_THEME_INDEX: u32 = 10;
 
 /// Что видно в окне.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -374,7 +377,20 @@ fn draw_region(
         let anchor = sheet.cells.cell(range.first);
         let format = anchor.map(|cell| book.styles().resolve(cell.style));
         if let (Some(cell), Some(format)) = (anchor, format) {
-            draw_text(book, cell, format, x, y, w, h, scale, &TextClip::Rect, out);
+            let is_link = sheet.hyperlink_at(range.first).is_some();
+            draw_text(
+                book,
+                cell,
+                format,
+                x,
+                y,
+                w,
+                h,
+                scale,
+                &TextClip::Rect,
+                is_link,
+                out,
+            );
         }
     }
 
@@ -400,7 +416,8 @@ fn draw_region(
             } else {
                 TextClip::None
             };
-            draw_text(book, cell, format, x, y, w, h, scale, &clip, out);
+            let is_link = sheet.hyperlink_at(cell.at(row)).is_some();
+            draw_text(book, cell, format, x, y, w, h, scale, &clip, is_link, out);
         }
     }
 
@@ -964,7 +981,7 @@ enum TextClip {
     Rect,
 }
 
-/// Текст одной ячейки.
+/// Текст одной ячейки; `is_link` — на ячейке лежит гиперссылка.
 #[allow(clippy::too_many_arguments)]
 fn draw_text(
     book: &Workbook,
@@ -976,6 +993,7 @@ fn draw_text(
     h: f32,
     scale: f32,
     clip: &TextClip,
+    is_link: bool,
     out: &mut DisplayList,
 ) {
     let Some(text) = display_text(book, cell, format.num_fmt) else {
@@ -985,10 +1003,32 @@ fn draw_text(
         return;
     }
 
-    let font = book.styles().font(format.font).cloned().unwrap_or_default();
+    let mut font = book.styles().font(format.font).cloned().unwrap_or_default();
     let size = font.size * PX_PER_POINT * scale;
-    let color = resolve_color(book.theme(), font.color).unwrap_or(Color::BLACK);
+    let mut color = resolve_color(book.theme(), font.color).unwrap_or(Color::BLACK);
     let padding = TEXT_PADDING * scale;
+
+    // Ссылка получает оформление по умолчанию — подчёркивание и цвет `hlink`
+    // из темы, как у встроенного стиля Excel «Hyperlink». В файле это
+    // оформление несёт шрифт ячейки: стиль «Hyperlink» Excel прикладывает при
+    // вставке ссылки, а не при отрисовке. Но книга, собранная другой
+    // программой, может объявить `<hyperlink>` без стиля, и тогда ссылка не
+    // отличалась бы от обычного текста.
+    //
+    // Допущение: поведение Excel на таком файле не проверялось — правило задаёт
+    // просмотрщик, чтобы ссылки были видны.
+    //
+    // Приоритет: ячейка со своим шрифтом (`font != 0`) уже оформлена автором —
+    // её подчёркивание и цвет не трогаем; у ячейки со шрифтом книги (`font == 0`)
+    // достраиваем.
+    if is_link && format.font == 0 {
+        font.underline = true;
+        // Пустой слот `hlink` в теме — не повод потерять цвет: остаётся цвет
+        // шрифта.
+        if let Some(link) = resolve_color(book.theme(), CellColor::Theme(HLINK_THEME_INDEX)) {
+            color = link;
+        }
+    }
 
     // Числа Excel не выпускает за ячейку и не обрезает: не помещается —
     // показывает решётки. Даты и деньги — тоже числа.
@@ -1213,6 +1253,7 @@ mod tests {
     use crate::dims::{ColWidth, RowHeight};
     use crate::model::{Border, CellFormat, Fill, FillPattern, Font, StyleTable, WorksheetMeta};
     use crate::model::{SheetContent, Theme, WorksheetBuilder};
+    use crate::sheet_meta::{Hyperlink, HyperlinkTarget};
     use crate::SharedStrings;
     use crate::SheetState;
     use std::collections::BTreeMap;
@@ -1248,6 +1289,8 @@ mod tests {
                       <a:dk2><a:srgbClr val="1F497D"/></a:dk2>
                       <a:lt2><a:srgbClr val="EEECE1"/></a:lt2>
                       <a:accent1><a:srgbClr val="4F81BD"/></a:accent1>
+                      <a:hlink><a:srgbClr val="0000FF"/></a:hlink>
+                      <a:folHlink><a:srgbClr val="800080"/></a:folHlink>
                     </a:clrScheme>
                   </a:themeElements>
                 </a:theme>"#,
@@ -1268,6 +1311,57 @@ mod tests {
             .filter_map(|i| dl.cmd(i))
             .filter(|cmd| want(cmd))
             .count()
+    }
+
+    /// Кадр только с содержимым: сетка и заголовки не мешают искать текст.
+    fn content_only() -> PaintOptions {
+        PaintOptions {
+            show_grid: false,
+            show_headers: false,
+            ..PaintOptions::default()
+        }
+    }
+
+    /// Текстовые команды кадра: содержимое, подчёркивание и цвет.
+    fn text_commands(dl: &DisplayList) -> Vec<(String, bool, Color)> {
+        (0..dl.len())
+            .filter_map(|i| dl.cmd(i))
+            .filter_map(|cmd| match cmd {
+                DrawCommand::Text {
+                    text,
+                    underline,
+                    color,
+                    ..
+                } => Some((dl.string(*text).to_owned(), *underline, *color)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Лист из ячеек `(строка, столбец, формат, текст)` и гиперссылок `ref`.
+    fn content_with(cells: &[(u32, u32, u32, &str)], links: &[&str]) -> SheetContent {
+        let mut builder = WorksheetBuilder::new(PART);
+        for (row, col, style, text) in cells {
+            builder
+                .push(
+                    *row,
+                    Cell::new(*col, *style, CellValue::InlineString((*text).into())),
+                )
+                .unwrap();
+        }
+        SheetContent {
+            cells: builder.finish(),
+            hyperlinks: links
+                .iter()
+                .map(|range| Hyperlink {
+                    range: Range::parse_ref(range).unwrap(),
+                    target: HyperlinkTarget::External("https://example.com/".into()),
+                    display: None,
+                    tooltip: None,
+                })
+                .collect(),
+            ..SheetContent::default()
+        }
     }
 
     fn numbers() -> SheetContent {
@@ -1705,6 +1799,103 @@ mod tests {
             ),
             1
         );
+    }
+
+    #[test]
+    fn hyperlink_cell_without_its_own_font_gets_underline_and_theme_color() {
+        let content = content_with(&[(0, 0, 0, "ссылка"), (0, 1, 0, "текст")], &["A1"]);
+        let book = book_with_theme(content, StyleTable::default(), theme());
+
+        let dl = painted(&book, Viewport::default(), &content_only());
+        let texts = text_commands(&dl);
+
+        let link = texts
+            .iter()
+            .find(|(text, ..)| text == "ссылка")
+            .expect("ссылка в кадре");
+        assert!(link.1, "ссылка подчёркнута");
+        // hlink темы — синий 0000FF; в DisplayList каналы уже RRGGBBAA.
+        assert_eq!(link.2, Color(0x0000_FFFF));
+
+        let plain = texts
+            .iter()
+            .find(|(text, ..)| text == "текст")
+            .expect("сосед в кадре");
+        assert!(!plain.1, "ячейка без ссылки не подчёркнута");
+        assert_eq!(plain.2, Color::BLACK);
+    }
+
+    #[test]
+    fn hyperlink_range_styles_every_covered_cell() {
+        // `ref` гиперссылки — диапазон: оформление получает каждая накрытая
+        // ячейка, а не только левая верхняя.
+        let content = content_with(
+            &[(0, 0, 0, "раз"), (0, 1, 0, "мимо"), (1, 0, 0, "два")],
+            &["A1:A2"],
+        );
+        let book = book_with_theme(content, StyleTable::default(), theme());
+        let texts = text_commands(&painted(&book, Viewport::default(), &content_only()));
+
+        for covered in ["раз", "два"] {
+            let (_, underline, color) = texts
+                .iter()
+                .find(|(text, ..)| text == covered)
+                .unwrap_or_else(|| panic!("{covered}: текста нет в кадре"));
+            assert!(
+                *underline && *color == Color(0x0000_FFFF),
+                "{covered}: ячейка накрыта ссылкой"
+            );
+        }
+        let (_, underline, _) = texts
+            .iter()
+            .find(|(text, ..)| text == "мимо")
+            .expect("текст в кадре");
+        assert!(!*underline, "соседняя ячейка не тронута");
+    }
+
+    #[test]
+    fn empty_theme_hlink_slot_does_not_break_the_link() {
+        // Тема без слота `hlink`: цвет брать неоткуда — остаётся цвет шрифта,
+        // но подчёркивание никуда не девается.
+        let content = content_with(&[(0, 0, 0, "ссылка")], &["A1"]);
+        let book = book_with_theme(content, StyleTable::default(), Theme::default());
+        let texts = text_commands(&painted(&book, Viewport::default(), &content_only()));
+
+        let (_, underline, color) = texts.first().expect("ссылка в кадре");
+        assert!(*underline, "ссылка подчёркнута и без цвета темы");
+        assert_eq!(*color, Color::BLACK);
+    }
+
+    #[test]
+    fn link_with_its_own_font_keeps_the_author_style() {
+        // Автор дал ячейке свой шрифт — красный и без подчёркивания; ссылка не
+        // повод переписать его.
+        let styles = StyleTable::new(
+            vec![
+                CellFormat::default(),
+                CellFormat {
+                    font: 1,
+                    ..CellFormat::default()
+                },
+            ],
+            vec![
+                Font::default(),
+                Font {
+                    color: CellColor::Rgb(0xFF_FF_00_00),
+                    ..Font::default()
+                },
+            ],
+            vec![Fill::default()],
+            vec![Border::default()],
+            BTreeMap::new(),
+        );
+        let content = content_with(&[(0, 0, 1, "ссылка")], &["A1"]);
+        let book = book_with_theme(content, styles, theme());
+        let texts = text_commands(&painted(&book, Viewport::default(), &content_only()));
+
+        let (_, underline, color) = texts.first().expect("ссылка в кадре");
+        assert!(!underline, "подчёркивание автора не включают");
+        assert_eq!(*color, Color(0xFF00_00FF), "цвет автора не перекрашивают");
     }
 
     #[test]

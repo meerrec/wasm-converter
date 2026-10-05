@@ -13,9 +13,11 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use doc_converter_render::display_list::{Color as PixelColor, DisplayList, DrawCommand};
 use doc_converter_xlsx::cellref::CellRef;
 use doc_converter_xlsx::{
-    open, CellValue, Color, PaneKind, PaneState, SheetState, Workbook, XlsxError,
+    open, paint_sheet, CellValue, Color, PaintOptions, PaneKind, PaneState, SheetState, Viewport,
+    Workbook, XlsxError,
 };
 use serde_json::Value;
 
@@ -282,6 +284,60 @@ fn layout_fixtures_keep_their_geometry() {
     let plain = open(std::fs::read(fixtures_dir().join("layout-no-grid.xlsx")).unwrap()).unwrap();
     assert!(!plain.sheets()[0].view.show_grid_lines);
     assert_eq!(plain.sheets()[0].view.zoom, 85);
+}
+
+/// Ссылки фикстуры видны в кадре как ссылки: exceljs объявляет `<hyperlink>`,
+/// но встроенный стиль «Hyperlink» к ячейкам не прикладывает, поэтому
+/// подчёркивание и цвет `hlink` достраивает painter.
+#[test]
+fn layout_links_are_painted_as_links() {
+    let book = open(std::fs::read(fixtures_dir().join("layout-links.xlsx")).unwrap()).unwrap();
+    let sheet = book.sheet("Ссылки").expect("лист фикстуры");
+
+    let mut dl = DisplayList::new();
+    paint_sheet(
+        &book,
+        sheet,
+        Viewport::default(),
+        &PaintOptions {
+            show_grid: false,
+            show_headers: false,
+            ..PaintOptions::default()
+        },
+        &mut dl,
+    );
+
+    let texts: Vec<(String, bool, PixelColor)> = (0..dl.len())
+        .filter_map(|i| dl.cmd(i))
+        .filter_map(|cmd| match cmd {
+            DrawCommand::Text {
+                text,
+                underline,
+                color,
+                ..
+            } => Some((dl.string(*text).to_owned(), *underline, *color)),
+            _ => None,
+        })
+        .collect();
+
+    // A1–A4 — ссылки: внешние и переход на второй лист; B1 — обычный текст.
+    for link in ["Example", "С параметрами", "Почта", "На второй лист"]
+    {
+        let (_, underline, color) = texts
+            .iter()
+            .find(|(text, ..)| text == link)
+            .unwrap_or_else(|| panic!("{link}: текста нет в кадре"));
+        assert!(*underline, "{link}: ссылка не подчёркнута");
+        // hlink темы фикстуры — 0000FF; в DisplayList каналы уже RRGGBBAA.
+        assert_eq!(*color, PixelColor(0x0000_FFFF), "{link}: цвет ссылки");
+    }
+
+    let (_, underline, color) = texts
+        .iter()
+        .find(|(text, ..)| text == "рядом")
+        .expect("B1: текста нет в кадре");
+    assert!(!*underline, "ячейка без ссылки не подчёркнута");
+    assert_eq!(*color, PixelColor::BLACK, "ячейка без ссылки — чёрная");
 }
 
 /// Границы листа: `<dimension>` из файла и фактические не обязаны совпадать,
