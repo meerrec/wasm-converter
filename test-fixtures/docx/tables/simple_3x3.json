@@ -1,0 +1,33 @@
+{
+  "metadata": {
+    "name": "tables/simple_3x3",
+    "description": "Таблица 3x3",
+    "expectedTables": 1
+  },
+  "content": {
+    "tables": [
+      {
+        "rows": 3,
+        "cols": 3,
+        "cells": [
+          [
+            "A1",
+            "A2",
+            "A3"
+          ],
+          [
+            "B1",
+            "B2",
+            "B3"
+          ],
+          [
+            "C1",
+            "C2",
+            "C3"
+          ]
+        ]
+      }
+    ],
+    "paragraphs": []
+  }
+}

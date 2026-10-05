@@ -1,0 +1,29 @@
+{
+  "metadata": {
+    "name": "simple/multiple_paragraphs_2",
+    "description": "5 абзацев",
+    "expectedParagraphs": 5,
+    "expectedTables": 0
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Paragraph 1"
+      },
+      {
+        "text": "Paragraph 2"
+      },
+      {
+        "text": "Paragraph 3"
+      },
+      {
+        "text": "Paragraph 4"
+      },
+      {
+        "text": "Paragraph 5"
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

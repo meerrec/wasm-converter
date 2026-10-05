@@ -1,0 +1,15 @@
+{
+  "metadata": {
+    "name": "edge_cases/special_chars",
+    "description": "Специальные символы",
+    "expectedParagraphs": 1
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "<>&\"'Test&'\"<>"
+      }
+    ],
+    "tables": []
+  }
+}

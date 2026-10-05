@@ -1,0 +1,15 @@
+{
+  "metadata": {
+    "name": "edge_cases/empty_paragraphs",
+    "description": "Пустые абзацы",
+    "expectedParagraphs": 3
+  },
+  "content": {
+    "paragraphs": [
+      "",
+      "Non-empty",
+      ""
+    ],
+    "tables": []
+  }
+}

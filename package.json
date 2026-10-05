@@ -14,13 +14,18 @@
     "clean": "turbo run clean && cargo clean",
     "build:wasm": "bash scripts/build-wasm.sh",
     "gen:fixtures": "node scripts/gen-fixtures.ts",
+    "gen:docx-fixtures": "npx tsx scripts/generate_docx_fixtures.ts",
     "size-limit": "size-limit"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.9",
     "@size-limit/preset-small-lib": "^11.1.6",
+    "archiver": "^8.0.0",
+    "docx": "^9.0.0",
     "exceljs": "^4.4.0",
+    "officegen": "^0.6.5",
     "size-limit": "^11.1.6",
+    "tsx": "^4.19.1",
     "turbo": "^2.3.3",
     "typescript": "^5.6.3"
   },

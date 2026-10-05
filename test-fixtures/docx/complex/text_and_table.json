@@ -1,0 +1,34 @@
+{
+  "metadata": {
+    "name": "complex/text_and_table",
+    "description": "Текст + таблица + текст",
+    "expectedParagraphs": 2,
+    "expectedTables": 1
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Text before"
+      },
+      {
+        "text": "Text after"
+      }
+    ],
+    "tables": [
+      {
+        "rows": 2,
+        "cols": 2,
+        "cells": [
+          [
+            "H1",
+            "H2"
+          ],
+          [
+            "C1",
+            "C2"
+          ]
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "name": "tables/simple_2x2",
+    "description": "Таблица 2x2",
+    "expectedTables": 1
+  },
+  "content": {
+    "tables": [
+      {
+        "rows": 2,
+        "cols": 2,
+        "cells": [
+          [
+            "A1",
+            "A2"
+          ],
+          [
+            "B1",
+            "B2"
+          ]
+        ]
+      }
+    ],
+    "paragraphs": []
+  }
+}

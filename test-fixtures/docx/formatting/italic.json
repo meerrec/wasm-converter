@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "name": "formatting/italic",
+    "description": "Курсив",
+    "expectedParagraphs": 1
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Italic text",
+        "italic": true
+      }
+    ],
+    "tables": []
+  }
+}

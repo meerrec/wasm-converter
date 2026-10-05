@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "name": "formatting/heading_1",
+    "description": "Заголовок уровня 1",
+    "expectedParagraphs": 1
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Heading 1",
+        "style": "Heading1"
+      }
+    ],
+    "tables": []
+  }
+}

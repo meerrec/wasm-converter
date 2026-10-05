@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "name": "formatting/bold",
+    "description": "Жирный текст",
+    "expectedParagraphs": 1
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Bold text",
+        "bold": true
+      }
+    ],
+    "tables": []
+  }
+}

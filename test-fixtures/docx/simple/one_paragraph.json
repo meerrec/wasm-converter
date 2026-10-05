@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "name": "simple/one_paragraph",
+    "description": "Один абзац",
+    "expectedParagraphs": 1,
+    "expectedTables": 0
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Hello, World!"
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

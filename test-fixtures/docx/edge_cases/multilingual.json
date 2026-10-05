@@ -1,0 +1,21 @@
+{
+  "metadata": {
+    "name": "edge_cases/multilingual",
+    "description": "Разные языки",
+    "expectedParagraphs": 3
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "English"
+      },
+      {
+        "text": "Русский"
+      },
+      {
+        "text": "中文"
+      }
+    ],
+    "tables": []
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "metadata": {
+    "name": "simple/empty",
+    "description": "Пустой документ",
+    "expectedParagraphs": 0,
+    "expectedTables": 0
+  },
+  "content": {
+    "paragraphs": [],
+    "tables": [],
+    "images": []
+  }
+}
