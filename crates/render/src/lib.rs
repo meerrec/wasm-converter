@@ -5,6 +5,7 @@
 //! общая граница с `xlsx`/`docx` (ADR-0003); `canvas` — жизненный цикл
 //! OffscreenCanvas-контекста (только wasm32).
 
+pub mod chart;
 pub mod display_list;
 pub mod font;
 pub mod geometry;
