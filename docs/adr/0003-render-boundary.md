@@ -1,6 +1,7 @@
 # ADR 0003: Граница `crates/render`
 
-**Статус:** принято 05.10.2026; модули выносятся в Спринте 5.5
+**Статус:** реализовано в Спринте 5.5: `render::{viewport, canvas, hit_test,
+font, text_measure}` вынесены. Принято 05.10.2026.
 **Контекст:** [`crates/render/src/lib.rs`](../../crates/render/src/lib.rs),
 [`crates/render/src/geometry.rs`](../../crates/render/src/geometry.rs),
 [`crates/xlsx/src/layout.rs`](../../crates/xlsx/src/layout.rs),
@@ -53,8 +54,8 @@
   а коалесирование кадров — и вовсе в TS,
   [`packages/core/src/worker/frame_loop.ts`](../../packages/core/src/worker/frame_loop.ts).
 - Что уже принадлежит `render` и работает: формат DisplayList (магия `DLST`,
-  `DL_VERSION = 3`, заголовок 20 байт, однобайтовые теги), команды `Clear`,
-  `Rect`, `Line`, `Text`, `Image`, `PushClip`/`PopClip`,
+  `DL_VERSION = 4`, заголовок 20 байт, однобайтовые теги), команды `Clear`,
+  `Rect`, `Line`, `Text`, `Image`, `Chart`, `PushClip`/`PopClip`,
   `PushTransform`/`PopTransform`; текст несёт гарнитуру строкой в общем пуле и
   флаги `bold`/`italic`/`underline`, линия — `LineStyle`; формат самодостаточен,
   потому что painter читает его из SAB и не может спросить вызывающего.

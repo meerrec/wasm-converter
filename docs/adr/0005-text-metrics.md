@@ -1,6 +1,7 @@
 # ADR 0005: Источник ширин текста — `skrifa` + таблицы шрифта
 
-**Статус:** принято 05.10.2026; реализация — Спринт 5.5
+**Статус:** реализовано в Спринте 5.5: `render::text_measure` подключён в
+`xlsx::paint`, `estimate_width` удалён. Принято 05.10.2026.
 **Контекст:** [`crates/xlsx/src/paint.rs`](../../crates/xlsx/src/paint.rs),
 [`crates/xlsx/src/layout.rs`](../../crates/xlsx/src/layout.rs),
 [`crates/render/src/font.rs`](../../crates/render/src/font.rs),
