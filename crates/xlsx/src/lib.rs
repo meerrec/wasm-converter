@@ -28,6 +28,7 @@
 #![deny(clippy::pedantic)]
 
 pub mod cellref;
+pub mod conditional;
 pub mod dims;
 pub mod error;
 pub mod layout;
@@ -45,6 +46,7 @@ pub mod worksheet;
 mod xml;
 
 pub use cellref::{CellRef, ParseError, Range};
+pub use conditional::{EffectiveStyle, RuleIndex};
 pub use dims::{ColWidth, ColWidths, RowHeight, RowHeights, SheetDims, SheetFormat};
 pub use error::{Result, XlsxError};
 pub use layout::SheetLayout;

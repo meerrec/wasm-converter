@@ -14,6 +14,7 @@ use doc_converter_render::display_list::{
 };
 
 use crate::cellref::{column_name, row_name, CellRef, Range};
+use crate::conditional::{EffectiveStyle, RuleIndex};
 use crate::layout::{SheetLayout, PX_PER_POINT};
 use crate::model::{
     Border, BorderSide, BorderStyle, Cell, CellValue, Color as CellColor, HorizontalAlign, Sheet,
@@ -232,6 +233,10 @@ pub fn build(
         view_top,
     } = Geometry::new(sheet, viewport, options.show_headers);
 
+    // Условное форматирование: индекс строится раз на кадр, в нём только
+    // правила, меняющие оформление.
+    let rules = RuleIndex::new(book, sheet);
+
     // Список команд переиспользуется между кадрами: без очистки следующий
     // кадр лёг бы поверх предыдущего, и картинка задвоилась бы.
     out.clear();
@@ -293,7 +298,7 @@ pub fn build(
                 (viewport.height - screen_y).max(0.0),
             ),
         };
-        draw_region(book, sheet, &layout, scale, &region, options, out);
+        draw_region(book, sheet, &rules, &layout, scale, &region, options, out);
     }
 
     if options.show_headers {
@@ -316,9 +321,11 @@ pub fn build(
 }
 
 /// Фон, заливки, сетка, границы и текст одного квадранта.
+#[allow(clippy::too_many_arguments)]
 fn draw_region(
     book: &Workbook,
     sheet: &Sheet,
+    rules: &RuleIndex<'_>,
     layout: &SheetLayout,
     scale: f32,
     region: &Region,
@@ -339,8 +346,8 @@ fn draw_region(
             if sheet.merges.covering(cell.at(row)).is_some() {
                 continue;
             }
-            let format = book.styles().resolve(cell.style);
-            let Some(color) = fill_color(book, format.fill) else {
+            let style = rules.style_at(book, cell.at(row));
+            let Some(color) = fill_color(book, &style) else {
                 continue;
             };
             let x = region.screen_x(layout.column_x(col), scale);
@@ -359,29 +366,29 @@ fn draw_region(
     for range in visible_merges(sheet, region) {
         let (x, y, w, h) = range_rect(layout, scale, region, range);
         let anchor = sheet.cells.cell(range.first);
-        let format = anchor.map(|cell| book.styles().resolve(cell.style));
-        let color = format
-            .and_then(|format| fill_color(book, format.fill))
+        let style = anchor.map(|_| rules.style_at(book, range.first));
+        let color = style
+            .as_ref()
+            .and_then(|style| fill_color(book, style))
             .unwrap_or(options.background);
         fill_rect(out, x, y, w, h, color);
     }
 
     // Границы — поверх сетки и заливок: в Excel рамка замещает сетку на своём
     // ребре.
-    draw_borders(book, sheet, layout, scale, region, out);
+    draw_borders(book, sheet, rules, layout, scale, region, out);
 
     // Текст — поверх рамок: он выпускается в пустых соседей и перечёркивался бы
     // их границами.
     for range in visible_merges(sheet, region) {
         let (x, y, w, h) = range_rect(layout, scale, region, range);
-        let anchor = sheet.cells.cell(range.first);
-        let format = anchor.map(|cell| book.styles().resolve(cell.style));
-        if let (Some(cell), Some(format)) = (anchor, format) {
+        if let Some(cell) = sheet.cells.cell(range.first) {
+            let style = rules.style_at(book, range.first);
             let is_link = sheet.hyperlink_at(range.first).is_some();
             draw_text(
                 book,
                 cell,
-                format,
+                &style,
                 x,
                 y,
                 w,
@@ -399,7 +406,7 @@ fn draw_region(
             if sheet.merges.covering(cell.at(row)).is_some() {
                 continue;
             }
-            let format = book.styles().resolve(cell.style);
+            let style = rules.style_at(book, cell.at(row));
             let x = region.screen_x(layout.column_x(col), scale);
             let y = region.screen_y(layout.row_y(row), scale);
             let w = layout.column_width(col) * scale;
@@ -408,7 +415,7 @@ fn draw_region(
             // Excel пускает текст в соседние ячейки, пока те пусты, и обрезает
             // его, как только рядом есть содержимое. Числа он не выпускает
             // никогда: не помещается — показывает «#####» (см. `draw_text`).
-            let align = horizontal(format.alignment.horizontal, &cell.value);
+            let align = horizontal(style.base().alignment.horizontal, &cell.value);
             let clip = if align == HorizontalAlign::Right
                 || !next_is_free(sheet, row, col, region.cols.1)
             {
@@ -417,7 +424,7 @@ fn draw_region(
                 TextClip::None
             };
             let is_link = sheet.hyperlink_at(cell.at(row)).is_some();
-            draw_text(book, cell, format, x, y, w, h, scale, &clip, is_link, out);
+            draw_text(book, cell, &style, x, y, w, h, scale, &clip, is_link, out);
         }
     }
 
@@ -480,6 +487,7 @@ fn visible_merges<'a>(sheet: &'a Sheet, region: &'a Region) -> impl Iterator<Ite
 fn draw_borders(
     book: &Workbook,
     sheet: &Sheet,
+    rules: &RuleIndex<'_>,
     layout: &SheetLayout,
     scale: f32,
     region: &Region,
@@ -493,15 +501,11 @@ fn draw_borders(
             {
                 continue;
             }
-            let format = book.styles().resolve(cell.style);
-            let border = book
-                .styles()
-                .border(format.border)
-                .copied()
-                .unwrap_or_default();
+            let border = rules.style_at(book, cell.at(row)).border(book.styles());
             draw_border(
                 book,
                 sheet,
+                rules,
                 layout,
                 scale,
                 region,
@@ -513,18 +517,16 @@ fn draw_borders(
         }
     }
     for range in visible_merges(sheet, region) {
-        let Some(cell) = sheet.cells.cell(range.first) else {
+        // Рамку показывает только якорь объединения: пустой диапазон рисовать
+        // нечем.
+        if sheet.cells.cell(range.first).is_none() {
             continue;
-        };
-        let format = book.styles().resolve(cell.style);
-        let border = book
-            .styles()
-            .border(format.border)
-            .copied()
-            .unwrap_or_default();
+        }
+        let border = rules.style_at(book, range.first).border(book.styles());
         draw_border(
             book,
             sheet,
+            rules,
             layout,
             scale,
             region,
@@ -650,15 +652,15 @@ impl Edge {
 ///
 /// Ячейка внутри объединения своей рамки не имеет — её показывает якорь, он же
 /// рисуется по контуру диапазона.
-fn side_at(book: &Workbook, sheet: &Sheet, at: CellRef, side: Edge) -> BorderSide {
+fn side_at(
+    book: &Workbook,
+    sheet: &Sheet,
+    rules: &RuleIndex<'_>,
+    at: CellRef,
+    side: Edge,
+) -> BorderSide {
     let at = sheet.merges.covering(at).map_or(at, |range| range.first);
-    let Some(cell) = sheet.cells.cell(at) else {
-        return BorderSide::default();
-    };
-    let format = book.styles().resolve(cell.style);
-    let Some(border) = book.styles().border(format.border) else {
-        return BorderSide::default();
-    };
+    let border = rules.style_at(book, at).border(book.styles());
     match side {
         Edge::Top => border.top,
         Edge::Bottom => border.bottom,
@@ -672,9 +674,11 @@ fn side_at(book: &Workbook, sheet: &Sheet, at: CellRef, side: Edge) -> BorderSid
 /// Скрытые строки и столбцы пропускаются: их рамки в кадр не попадают вовсе, и
 /// ребро с ними делят следующие видимые ячейки. За пределами раскладки соседа
 /// нет — сторона пустая.
+#[allow(clippy::too_many_arguments)]
 fn neighbor_side(
     book: &Workbook,
     sheet: &Sheet,
+    rules: &RuleIndex<'_>,
     layout: &SheetLayout,
     row: u32,
     col: u32,
@@ -719,7 +723,7 @@ fn neighbor_side(
             }
         },
     }
-    side_at(book, sheet, CellRef::new(row, col), edge.facing())
+    side_at(book, sheet, rules, CellRef::new(row, col), edge.facing())
 }
 
 /// Нарисовать рамку прямоугольника: четыре стороны, каждая — с соседом за
@@ -728,6 +732,7 @@ fn neighbor_side(
 fn draw_border(
     book: &Workbook,
     sheet: &Sheet,
+    rules: &RuleIndex<'_>,
     layout: &SheetLayout,
     scale: f32,
     region: &Region,
@@ -750,22 +755,22 @@ fn draw_border(
     // левая или верхняя ячейка — за неё и отвечает последний аргумент.
     let top = resolve_side(
         border.top,
-        neighbor_side(book, sheet, layout, rows.0, cols.0, Edge::Top),
+        neighbor_side(book, sheet, rules, layout, rows.0, cols.0, Edge::Top),
         false,
     );
     let bottom = resolve_side(
         border.bottom,
-        neighbor_side(book, sheet, layout, rows.1, cols.0, Edge::Bottom),
+        neighbor_side(book, sheet, rules, layout, rows.1, cols.0, Edge::Bottom),
         true,
     );
     let left = resolve_side(
         border.left,
-        neighbor_side(book, sheet, layout, rows.0, cols.0, Edge::Left),
+        neighbor_side(book, sheet, rules, layout, rows.0, cols.0, Edge::Left),
         false,
     );
     let right = resolve_side(
         border.right,
-        neighbor_side(book, sheet, layout, rows.0, cols.1, Edge::Right),
+        neighbor_side(book, sheet, rules, layout, rows.0, cols.1, Edge::Right),
         true,
     );
 
@@ -986,7 +991,7 @@ enum TextClip {
 fn draw_text(
     book: &Workbook,
     cell: &Cell,
-    format: crate::model::CellFormat,
+    style: &EffectiveStyle<'_>,
     x: f32,
     y: f32,
     w: f32,
@@ -996,14 +1001,15 @@ fn draw_text(
     is_link: bool,
     out: &mut DisplayList,
 ) {
-    let Some(text) = display_text(book, cell, format.num_fmt) else {
+    let code = style.format_code(book.styles());
+    let Some(text) = display_text_with(book, cell, code) else {
         return;
     };
     if text.is_empty() || w <= 0.0 || h <= 0.0 {
         return;
     }
 
-    let mut font = book.styles().font(format.font).cloned().unwrap_or_default();
+    let mut font = style.font(book.styles());
     let size = font.size * PX_PER_POINT * scale;
     let mut color = resolve_color(book.theme(), font.color).unwrap_or(Color::BLACK);
     let padding = TEXT_PADDING * scale;
@@ -1021,7 +1027,7 @@ fn draw_text(
     // Приоритет: ячейка со своим шрифтом (`font != 0`) уже оформлена автором —
     // её подчёркивание и цвет не трогаем; у ячейки со шрифтом книги (`font == 0`)
     // достраиваем.
-    if is_link && format.font == 0 {
+    if is_link && style.base().font == 0 {
         font.underline = true;
         // Пустой слот `hlink` в теме — не повод потерять цвет: остаётся цвет
         // шрифта.
@@ -1040,14 +1046,14 @@ fn draw_text(
         text
     };
 
-    let (align, tx) = match horizontal(format.alignment.horizontal, &cell.value) {
+    let (align, tx) = match horizontal(style.base().alignment.horizontal, &cell.value) {
         HorizontalAlign::Center | HorizontalAlign::CenterContinuous => {
             (TextAlign::Center, x + w / 2.0)
         }
         HorizontalAlign::Right => (TextAlign::Right, x + w - padding),
         _ => (TextAlign::Left, x + padding),
     };
-    let (baseline, ty) = match format.alignment.vertical {
+    let (baseline, ty) = match style.base().alignment.vertical {
         VerticalAlign::Top => (TextBaseline::Top, y + padding),
         VerticalAlign::Center => (TextBaseline::Middle, y + h / 2.0),
         _ => (TextBaseline::Bottom, y + h - padding),
@@ -1108,13 +1114,19 @@ fn estimate_width(text: &str, size_px: f32) -> f32 {
 /// как их пишет Excel.
 #[must_use]
 pub fn display_text(book: &Workbook, cell: &Cell, num_fmt: u32) -> Option<String> {
+    display_text_with(book, cell, book.styles().format_code(num_fmt))
+}
+
+/// Текст ячейки по уже разрешённому коду формата.
+///
+/// Нужен условному форматированию: правило может задать свой формат числа,
+/// и он перекрывает базовый (см. [`EffectiveStyle::format_code`]). `None` —
+/// формат не задан, число показывается в общем формате.
+fn display_text_with(book: &Workbook, cell: &Cell, code: Option<&str>) -> Option<String> {
     match &cell.value {
         CellValue::Empty => cell.formula.as_ref().map(|_| String::new()),
         CellValue::Number(value) => {
-            let code = book
-                .styles()
-                .format_code(num_fmt)
-                .unwrap_or(numfmt::GENERAL);
+            let code = code.unwrap_or(numfmt::GENERAL);
             Some(numfmt::format(*value, code, book.date1904()))
         }
         CellValue::Bool(value) => Some(if *value { "TRUE" } else { "FALSE" }.to_owned()),
@@ -1135,8 +1147,10 @@ fn horizontal(align: HorizontalAlign, value: &CellValue) -> HorizontalAlign {
 }
 
 /// Цвет заливки ячейки; `None` — заливки нет.
-fn fill_color(book: &Workbook, fill: u32) -> Option<Color> {
-    let fill = book.styles().fill(fill)?;
+///
+/// Заливку берёт из эффективного стиля: сработавшее правило могло задать свою.
+fn fill_color(book: &Workbook, style: &EffectiveStyle<'_>) -> Option<Color> {
+    let fill = style.fill(book.styles())?;
     match fill.pattern {
         crate::model::FillPattern::Solid => resolve_color(book.theme(), fill.foreground),
         crate::model::FillPattern::None => None,
