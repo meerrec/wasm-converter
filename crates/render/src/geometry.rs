@@ -41,6 +41,34 @@ impl Rect {
     }
 }
 
+/// Точка в координатах кадра.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Point {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Point {
+    #[must_use]
+    pub const fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
+}
+
+/// Размер области в физических пикселях canvas.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Size {
+    pub w: f32,
+    pub h: f32,
+}
+
+impl Size {
+    #[must_use]
+    pub const fn new(w: f32, h: f32) -> Self {
+        Self { w, h }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Viewport {
     pub x: f32,
