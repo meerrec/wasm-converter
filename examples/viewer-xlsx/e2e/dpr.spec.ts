@@ -209,8 +209,6 @@ async function measureFrames(
         gridStep,
         edgeRampRows: ramps.length,
         maxEdgeRamp: ramps.length > 0 ? Math.max(...ramps) : -1,
-        edgeProfile,
-        rampHistogram,
       };
     };
 
