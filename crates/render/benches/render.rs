@@ -1,6 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use doc_converter_render::display_list::*;
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
 use doc_converter_render::sab::RingState;
+use doc_converter_render::text_measure::measure_text;
 
 fn make_dl_rects(n: usize) -> Vec<u8> {
     let mut dl = DisplayList::with_capacity(n);
@@ -97,11 +99,38 @@ fn bench_sab_state_cycle(c: &mut Criterion) {
     });
 }
 
+/// Измерение 100 символов на тёплом LRU-кэше; цель ROADMAP §9 — < 1 мкс.
+///
+/// Факт (Apple Silicon, release): ~278 нс — кэш по символу убирает
+/// `cmap`-поиск с горячего пути.
+fn bench_measure_text(c: &mut Criterion) {
+    let mut fonts = FontRegistry::new(4096);
+    let text: String = "0".repeat(100);
+    // Прогрев: первый проход наполняет кэш глифов, мерить его нечестно.
+    black_box(measure_text(
+        &mut fonts,
+        DEFAULT_FONT_ID,
+        11.0 * 96.0 / 72.0,
+        &text,
+    ));
+    c.bench_function("measure_text_100_chars", |b| {
+        b.iter(|| {
+            black_box(measure_text(
+                &mut fonts,
+                DEFAULT_FONT_ID,
+                11.0 * 96.0 / 72.0,
+                black_box(&text),
+            ))
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_dl_encode,
     bench_dl_decode,
     bench_dl_decode_text,
-    bench_sab_state_cycle
+    bench_sab_state_cycle,
+    bench_measure_text
 );
 criterion_main!(benches);
