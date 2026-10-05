@@ -68,6 +68,19 @@ pub fn height_to_px(points: f32) -> f32 {
     points * PX_PER_POINT
 }
 
+/// Английская метрическая единица (EMU): 914 400 на дюйм. При 96 dpi пиксель —
+/// это ровно 9525 EMU.
+pub const EMU_PER_PIXEL: f32 = 9525.0;
+
+/// Перевести длину из EMU в пиксели раскладки.
+///
+/// Так записаны размеры и смещения якорей изображений: `cx`/`cy` и `colOff`/
+/// `rowOff` в `drawing*.xml`.
+#[must_use]
+pub fn emu_to_px(emu: f32) -> f32 {
+    emu / EMU_PER_PIXEL
+}
+
 /// Полоса столбцов одинаковой ширины.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ColSpan {

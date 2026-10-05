@@ -570,6 +570,8 @@ impl<'r> SheetParser<'r> {
             merges: self.merges,
             hyperlinks: self.hyperlinks,
             conditional_formatting: self.conditional_formatting,
+            // Картинки лежат в отдельной части пакета: их подставляет `open`.
+            images: Vec::new(),
         })
     }
 }

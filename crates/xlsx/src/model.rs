@@ -11,6 +11,7 @@ use std::fmt;
 
 use crate::cellref::{CellRef, Range, MAX_COL, MAX_ROW};
 use crate::dims::SheetDims;
+use crate::drawing::SheetImage;
 use crate::error::{Result, XlsxError};
 use crate::sheet_meta::{Hyperlink, Merges, SheetView};
 use crate::strings::SharedStrings;
@@ -1141,6 +1142,11 @@ pub struct SheetContent {
     pub hyperlinks: Vec<Hyperlink>,
     /// Условное форматирование.
     pub conditional_formatting: Vec<ConditionalFormatting>,
+    /// Изображения листа в порядке наложения: первые лежат ниже.
+    ///
+    /// Заполняется [`open`](crate::open): часть листа сама картинок не хранит,
+    /// а только ссылается на чертёж.
+    pub images: Vec<SheetImage>,
 }
 
 /// Лист книги: метаданные из каталога и разобранное содержимое.
@@ -1160,6 +1166,8 @@ pub struct Sheet {
     pub hyperlinks: Vec<Hyperlink>,
     /// Условное форматирование.
     pub conditional_formatting: Vec<ConditionalFormatting>,
+    /// Изображения листа в порядке наложения: первые лежат ниже.
+    pub images: Vec<SheetImage>,
 }
 
 impl Sheet {
@@ -1174,6 +1182,7 @@ impl Sheet {
             merges: content.merges,
             hyperlinks: content.hyperlinks,
             conditional_formatting: content.conditional_formatting,
+            images: content.images,
         }
     }
 

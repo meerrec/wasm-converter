@@ -30,6 +30,7 @@
 pub mod cellref;
 pub mod conditional;
 pub mod dims;
+pub mod drawing;
 pub mod error;
 pub mod layout;
 pub mod model;
@@ -48,6 +49,7 @@ mod xml;
 pub use cellref::{CellRef, ParseError, Range};
 pub use conditional::{EffectiveStyle, RuleIndex};
 pub use dims::{ColWidth, ColWidths, RowHeight, RowHeights, SheetDims, SheetFormat};
+pub use drawing::{EditAs, ImageAnchor, ImageExtent, ImageMarker, SheetImage};
 pub use error::{Result, XlsxError};
 pub use layout::SheetLayout;
 pub use model::{
@@ -78,10 +80,14 @@ pub const STYLES_PART: &str = "xl/styles.xml";
 /// отличаться (`theme2.xml`), поэтому она ищется по типу связи.
 const THEME_REL: &str = "/theme";
 
+/// Отношение чертежа листа: `…/relationships/drawing`. Как и тема, ищется по
+/// типу связи: имя части (`drawing2.xml`) зависит от порядка добавления.
+const DRAWING_REL: &str = "/drawing";
+
 /// Открыть XLSX из сырых байт.
 ///
-/// Читает каталог листов, общую таблицу строк, стили, тему и содержимое всех
-/// листов.
+/// Читает каталог листов, общую таблицу строк, стили, тему, содержимое всех
+/// листов и изображения.
 ///
 /// Листы разбираются сразу: рендер и экспорт работают по модели, а ленивый
 /// разбор потребовал бы держать открытый архив внутри книги.
@@ -112,9 +118,12 @@ pub fn open(bytes: Vec<u8>) -> Result<Workbook> {
 
     let mut sheets = Vec::with_capacity(catalog.sheets.len());
     for meta in catalog.sheets {
-        // Связи листа нужны гиперссылкам: их цели живут в отдельной части.
+        // Связи листа нужны гиперссылкам и изображениям: их цели живут
+        // в отдельных частях.
         let rels = read_rels(&mut archive, &meta.part)?;
-        let content = worksheet::parse(&archive.read(&meta.part)?, &meta.part, rels.as_ref())?;
+        let mut content = worksheet::parse(&archive.read(&meta.part)?, &meta.part, rels.as_ref())?;
+        // Чертёж — отдельная часть: сам лист на него только ссылается.
+        content.images = read_images(&mut archive, &meta.part, rels.as_ref())?;
         sheets.push(Sheet::new(meta, content));
     }
 
@@ -157,4 +166,42 @@ fn read_rels(archive: &mut Archive, source_part: &str) -> Result<Option<RelMap>>
         return Ok(None);
     }
     Ok(Some(RelMap::parse(&archive.read(&part)?)?))
+}
+
+/// Изображения листа: чертёж ищется по связи листа, как тема — по связи книги.
+///
+/// Отсутствие чертежа, битая связь на media или ссылка на часть, которой нет
+/// в пакете, — не ошибка: лист тогда просто остаётся без картинок.
+fn read_images(
+    archive: &mut Archive,
+    sheet_part: &str,
+    rels: Option<&RelMap>,
+) -> Result<Vec<SheetImage>> {
+    let Some(rel) = rels.and_then(|rels| {
+        rels.items
+            .values()
+            .find(|rel| rel.rel_type.ends_with(DRAWING_REL))
+    }) else {
+        return Ok(Vec::new());
+    };
+    let Some(part) = rel.part(sheet_part) else {
+        return Ok(Vec::new());
+    };
+    if !archive.contains(&part) {
+        return Ok(Vec::new());
+    }
+
+    let drawing_rels = read_rels(archive, &part)?;
+    let mut images = drawing::parse(&archive.read(&part)?, &part, drawing_rels.as_ref())?;
+    // Ссылка на media без самой части — битая: рисовать по ней нечего.
+    for image in &mut images {
+        if image
+            .media
+            .as_deref()
+            .is_some_and(|media| !archive.contains(media))
+        {
+            image.media = None;
+        }
+    }
+    Ok(images)
 }
