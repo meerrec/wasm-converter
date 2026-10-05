@@ -14,7 +14,7 @@ use doc_converter_render::display_list::{
 };
 
 use crate::cellref::{column_name, row_name, CellRef, Range};
-use crate::conditional::{EffectiveStyle, RuleIndex};
+use crate::conditional::{EffectiveStyle, RuleIndex, Visual};
 use crate::layout::{SheetLayout, PX_PER_POINT};
 use crate::model::{
     Border, BorderSide, BorderStyle, Cell, CellValue, Color as CellColor, HorizontalAlign, Sheet,
@@ -374,6 +374,13 @@ fn draw_region(
         fill_rect(out, x, y, w, h, color);
     }
 
+    // Полосы данных и значки — поверх сетки и заливок, но под границами и
+    // текстом: изображение правила не должно закрывать ни рамку ячейки, ни её
+    // содержимое.
+    if rules.has_visuals() {
+        draw_visuals(book, sheet, rules, layout, scale, region, out);
+    }
+
     // Границы — поверх сетки и заливок: в Excel рамка замещает сетку на своём
     // ребре.
     draw_borders(book, sheet, rules, layout, scale, region, out);
@@ -384,6 +391,10 @@ fn draw_region(
         let (x, y, w, h) = range_rect(layout, scale, region, range);
         if let Some(cell) = sheet.cells.cell(range.first) {
             let style = rules.style_at(book, range.first);
+            // Значок с `showValue="0"` заменяет значение, а не дополняет его.
+            if style.hides_value() {
+                continue;
+            }
             let is_link = sheet.hyperlink_at(range.first).is_some();
             draw_text(
                 book,
@@ -407,6 +418,10 @@ fn draw_region(
                 continue;
             }
             let style = rules.style_at(book, cell.at(row));
+            // Значок с `showValue="0"` заменяет значение, а не дополняет его.
+            if style.hides_value() {
+                continue;
+            }
             let x = region.screen_x(layout.column_x(col), scale);
             let y = region.screen_y(layout.row_y(row), scale);
             let w = layout.column_width(col) * scale;
@@ -429,6 +444,112 @@ fn draw_region(
     }
 
     out.push(DrawCommand::PopClip);
+}
+
+/// Высота полосы данных от высоты строки; поля сверху и снизу.
+const BAR_HEIGHT_RATIO: f32 = 0.7;
+/// Размер значка от высоты строки.
+const ICON_HEIGHT_RATIO: f32 = 0.7;
+
+/// Полосы данных и значки видимых ячеек.
+///
+/// Объединённые ячейки рисуются по своему диапазону один раз — как текст.
+fn draw_visuals(
+    book: &Workbook,
+    sheet: &Sheet,
+    rules: &RuleIndex<'_>,
+    layout: &SheetLayout,
+    scale: f32,
+    region: &Region,
+    out: &mut DisplayList,
+) {
+    for range in visible_merges(sheet, region) {
+        let (x, y, w, h) = range_rect(layout, scale, region, range);
+        draw_visual(book, rules, range.first, (x, y, w, h), scale, out);
+    }
+    for row in region.rows.0..=region.rows.1 {
+        for (col, cell) in visible_cells(sheet, row, region.cols) {
+            if sheet.merges.covering(cell.at(row)).is_some() {
+                continue;
+            }
+            let x = region.screen_x(layout.column_x(col), scale);
+            let y = region.screen_y(layout.row_y(row), scale);
+            let w = layout.column_width(col) * scale;
+            let h = layout.row_height(row) * scale;
+            draw_visual(book, rules, cell.at(row), (x, y, w, h), scale, out);
+        }
+    }
+}
+
+/// Полоса данных или значок одной ячейки в её прямоугольнике.
+fn draw_visual(
+    book: &Workbook,
+    rules: &RuleIndex<'_>,
+    at: CellRef,
+    (x, y, w, h): (f32, f32, f32, f32),
+    scale: f32,
+    out: &mut DisplayList,
+) {
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let style = rules.style_at(book, at);
+    let Some(visual) = style.visual() else {
+        return;
+    };
+    match visual {
+        // Цвет шкалы уже лёг фоном ячейки (`fill_color`).
+        Visual::ColorScale(_) => {}
+        Visual::DataBar {
+            start, end, color, ..
+        } => {
+            // Полоса оставляет поля по краям ячейки, как в Excel, и рисуется
+            // под текстом: значение ячейки читается поверх неё.
+            let pad = scale;
+            let inner = (w - pad * 2.0).max(0.0);
+            let bar_h = h * BAR_HEIGHT_RATIO;
+            let width = (end - start) * inner;
+            if width > 0.0 {
+                fill_rect(
+                    out,
+                    x + pad + start * inner,
+                    y + (h - bar_h) / 2.0,
+                    width,
+                    bar_h,
+                    color,
+                );
+            }
+        }
+        Visual::Icon {
+            glyph,
+            color,
+            show_value,
+        } => {
+            let font = style.font(book.styles()).name;
+            let size = (h * ICON_HEIGHT_RATIO).min(w * 0.6).max(1.0);
+            let (tx, align) = if show_value {
+                (x + scale, TextAlign::Left)
+            } else {
+                // Значение скрыто — значок стоит по центру ячейки.
+                (x + w / 2.0, TextAlign::Center)
+            };
+            let text = out.intern(glyph);
+            let font_ref = out.intern(&font);
+            out.push(DrawCommand::Text {
+                x: tx,
+                y: y + h / 2.0,
+                text,
+                font: font_ref,
+                size,
+                color,
+                align,
+                baseline: TextBaseline::Middle,
+                bold: false,
+                italic: false,
+                underline: false,
+            });
+        }
+    }
 }
 
 /// Сетка квадранта: линии по границам видимых столбцов и строк.
@@ -1150,6 +1271,10 @@ fn horizontal(align: HorizontalAlign, value: &CellValue) -> HorizontalAlign {
 ///
 /// Заливку берёт из эффективного стиля: сработавшее правило могло задать свою.
 fn fill_color(book: &Workbook, style: &EffectiveStyle<'_>) -> Option<Color> {
+    // Цветовая шкала задаёт фон сама и перекрывает заливку формата.
+    if let Some(background) = style.background() {
+        return Some(background);
+    }
     let fill = style.fill(book.styles())?;
     match fill.pattern {
         crate::model::FillPattern::Solid => resolve_color(book.theme(), fill.foreground),

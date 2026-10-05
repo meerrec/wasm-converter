@@ -8,9 +8,11 @@
 //! разных правил складываются: позднее правило перекрывает только заданные им
 //! поля.
 //!
-//! Здесь считаются только правила, меняющие оформление, — `cellIs` и
-//! `expression`. Шкалы, гистограммы и значки рисует следующий слайс; в файле они
-//! записаны без `dxf`, и в индекс таких правил нет вовсе.
+//! Кроме правил, меняющих оформление (`cellIs`, `expression`), здесь считаются
+//! и те, что рисуют сами: цветовые шкалы, гистограммы и наборы значков. У них
+//! нет `dxf` — оформление задано внутри правила, и его значения (`min`/`max`,
+//! проценты, процентили) зависят от содержимого диапазона. Эти значения
+//! считаются один раз на правило и только если правило попало в кадр.
 //!
 //! Формулы `cellIs` и `expression` разбирает намеренно узкий вычислитель:
 //! полноценного вычислителя формул в крейте нет. Поддержаны сравнение, ссылки
@@ -20,13 +22,18 @@
 //! чем показать неверное.
 
 use std::borrow::Cow;
+use std::cell::OnceCell;
 use std::cmp::Ordering;
+
+use doc_converter_render::display_list::Color as Rgba;
 
 use crate::cellref::{CellRef, Range, MAX_COL, MAX_ROW};
 use crate::model::{
-    Border, BorderSide, BorderStyle, CellFormat, CellIsOperator, CellValue, Color, ConditionalRule,
-    Dxf, DxfNumberFormat, Fill, FillPattern, Font, RuleKind, Sheet, StyleTable, Workbook,
+    Border, BorderSide, BorderStyle, CellFormat, CellIsOperator, CellValue, Color, ColorScale,
+    ConditionalRule, DataBar, Dxf, DxfNumberFormat, Fill, FillPattern, Font, IconSet, RuleKind,
+    Sheet, StyleTable, Theme, Threshold, ThresholdKind, Workbook,
 };
+use crate::paint::resolve_color;
 
 /// Высота полосы строк в индексе правил.
 ///
@@ -49,15 +56,24 @@ pub struct RuleIndex<'a> {
     entries: Vec<Entry<'a>>,
     /// Для каждой полосы строк — записи, пересекающие её, в том же порядке.
     bands: Vec<Vec<usize>>,
+    /// Есть ли правила, рисующие сами: без них `paint` не добавляет слой
+    /// изображений, и шкалы не стоят ничего листу без условного оформления.
+    has_visuals: bool,
 }
 
 /// Одно правило на одном из своих диапазонов.
 #[derive(Debug)]
 struct Entry<'a> {
     range: Range,
-    condition: Condition,
+    /// Условие правила `cellIs`/`expression`; `None` — правило визуальное.
+    condition: Option<Condition>,
     overlay: Overlay<'a>,
+    /// Визуальная часть правила (шкала, гистограмма, значки).
+    visual: Option<VisualRule<'a>>,
     stop_if_true: bool,
+    /// Разрешённые пороги правила; считаются по содержимому диапазона лениво —
+    /// диапазон бывает во весь лист, а видно из него несколько ячеек.
+    thresholds: OnceCell<Thresholds>,
 }
 
 impl<'a> RuleIndex<'a> {
@@ -68,23 +84,25 @@ impl<'a> RuleIndex<'a> {
         let mut ordered = Vec::new();
         for block in &sheet.conditional_formatting {
             for rule in &block.rules {
-                // Правила без `dxf` оформление не меняют: так записаны шкалы,
-                // гистограммы и значки, и так же выглядит потерянный `dxfId`.
-                let Some(dxf) = rule.dxf_id.and_then(|id| styles.dxf(id)) else {
+                let condition = Condition::parse(rule);
+                let visual = VisualRule::parse(&rule.kind);
+                // Правило без `dxf` и без визуальной части не изображает ничего:
+                // так выглядит потерянный `dxfId` и вид правила, который мы не
+                // разбираем (`top10`, `aboveAverage`, …).
+                if condition.is_none() && visual.is_none() {
                     continue;
-                };
-                let Some(condition) = Condition::parse(rule) else {
-                    continue;
-                };
-                let overlay = Overlay::new(dxf);
+                }
+                let overlay = rule.dxf_id.and_then(|id| styles.dxf(id)).map(Overlay::new);
                 for range in &block.ranges {
                     ordered.push((
                         rule.priority,
                         Entry {
                             range: range.normalized(),
                             condition: condition.clone(),
-                            overlay: overlay.clone(),
+                            overlay: overlay.clone().unwrap_or_default(),
+                            visual,
                             stop_if_true: rule.stop_if_true,
+                            thresholds: OnceCell::new(),
                         },
                     ));
                 }
@@ -94,13 +112,22 @@ impl<'a> RuleIndex<'a> {
         // порядке файла.
         ordered.sort_by_key(|(priority, _)| *priority);
         let entries: Vec<Entry<'a>> = ordered.into_iter().map(|(_, entry)| entry).collect();
+        let has_visuals = entries.iter().any(|entry| entry.visual.is_some());
         let bands = Self::bands(&entries, sheet);
 
         Self {
             sheet,
             entries,
             bands,
+            has_visuals,
         }
+    }
+
+    /// Есть ли на листе правила, рисующие сами, — тогда `paint` добавляет слой
+    /// изображений (полосы данных и значки).
+    #[must_use]
+    pub(crate) const fn has_visuals(&self) -> bool {
+        self.has_visuals
     }
 
     /// Разложить записи по полосам строк.
@@ -141,14 +168,57 @@ impl<'a> RuleIndex<'a> {
                 at,
                 anchor: entry.range.first,
             };
-            if entry.condition.matches(&eval) {
-                style.apply(&entry.overlay);
-                if entry.stop_if_true {
-                    break;
-                }
+            let visual = match &entry.visual {
+                // Шкалы, гистограммы и значки считаются только по числу: тексту
+                // и пустой ячейке они не рисуют ничего (допущение: так же ведёт
+                // себя Excel — шкала на текстовую ячейку не ложится).
+                Some(rule) => match eval.cell_value(at) {
+                    Value::Number(value) => self.resolve_visual(book, entry, *rule, value),
+                    _ => None,
+                },
+                None => None,
+            };
+            let fired = match &entry.visual {
+                Some(_) => visual.is_some(),
+                None => entry
+                    .condition
+                    .as_ref()
+                    .is_some_and(|condition| condition.matches(&eval)),
+            };
+            if !fired {
+                continue;
+            }
+            style.apply(&entry.overlay);
+            if let Some(visual) = visual {
+                style.set_visual(visual);
+            }
+            if entry.stop_if_true {
+                break;
             }
         }
         style
+    }
+
+    /// Изображение визуального правила для значения ячейки.
+    fn resolve_visual(
+        &self,
+        book: &Workbook,
+        entry: &Entry<'a>,
+        rule: VisualRule<'a>,
+        value: f64,
+    ) -> Option<Visual> {
+        // Пороги зависят только от содержимого диапазона, а не от ячейки, и
+        // считаются один раз — при первом видимом значении этого правила.
+        let thresholds = entry
+            .thresholds
+            .get_or_init(|| Thresholds::new(self.sheet, entry.range, rule.thresholds()));
+        match rule {
+            VisualRule::ColorScale(scale) => {
+                color_scale(book.theme(), scale, &thresholds.values, value)
+            }
+            VisualRule::DataBar(bar) => data_bar(book.theme(), bar, &thresholds.values, value),
+            VisualRule::IconSet(set) => icon_set(set, &thresholds.values, value),
+        }
     }
 
     /// Записи, чьи диапазоны покрывают ячейку, в порядке применения.
@@ -172,6 +242,9 @@ impl<'a> RuleIndex<'a> {
 pub struct EffectiveStyle<'a> {
     base: CellFormat,
     applied: Overlay<'a>,
+    /// Изображение визуального правила; последнее по порядку применения
+    /// побеждает, как и у полей `dxf`.
+    visual: Option<Visual>,
 }
 
 impl<'a> EffectiveStyle<'a> {
@@ -181,6 +254,7 @@ impl<'a> EffectiveStyle<'a> {
         Self {
             base,
             applied: Overlay::default(),
+            visual: None,
         }
     }
 
@@ -188,6 +262,43 @@ impl<'a> EffectiveStyle<'a> {
     #[must_use]
     pub const fn base(&self) -> CellFormat {
         self.base
+    }
+
+    /// Изображение, которое рисует само правило: полоса данных или значок.
+    ///
+    /// Цветовая шкала сюда не попадает — её цвет отдан заливке (см.
+    /// [`Self::background`]).
+    #[must_use]
+    pub(crate) const fn visual(&self) -> Option<Visual> {
+        match self.visual {
+            Some(Visual::ColorScale(_)) | None => None,
+            Some(visual) => Some(visual),
+        }
+    }
+
+    /// Фон ячейки из цветовой шкалы: он перекрывает заливку формата.
+    #[must_use]
+    pub(crate) const fn background(&self) -> Option<Rgba> {
+        match self.visual {
+            Some(Visual::ColorScale(color)) => Some(color),
+            _ => None,
+        }
+    }
+
+    /// Прячет ли правило значение ячейки (`showValue="0"`).
+    #[must_use]
+    pub(crate) const fn hides_value(&self) -> bool {
+        match self.visual {
+            Some(Visual::DataBar { show_value, .. } | Visual::Icon { show_value, .. }) => {
+                !show_value
+            }
+            _ => false,
+        }
+    }
+
+    /// Принять изображение сработавшего визуального правила.
+    fn set_visual(&mut self, visual: Visual) {
+        self.visual = Some(visual);
     }
 
     /// Шрифт: базовый с наложениями `dxf`.
@@ -268,6 +379,11 @@ impl<'a> EffectiveStyle<'a> {
         }
         if overlay.fill.is_some() {
             self.applied.fill = overlay.fill;
+            // Заливка `dxf` перекрывает фон цветовой шкалы — как и любое
+            // позднее правило. Полоса и значок остаются: они не фон.
+            if matches!(self.visual, Some(Visual::ColorScale(_))) {
+                self.visual = None;
+            }
         }
         if let Some(border) = &overlay.border {
             match &mut self.applied.border {
@@ -403,6 +519,387 @@ impl BorderOverlay {
 /// Сторона, которую `dxf` действительно задаёт.
 fn side(side: BorderSide) -> Option<BorderSide> {
     (side.style != BorderStyle::None || side.color != Color::None).then_some(side)
+}
+
+/// Визуальное правило: шкала, гистограмма или набор значков.
+#[derive(Debug, Clone, Copy)]
+enum VisualRule<'a> {
+    ColorScale(&'a ColorScale),
+    DataBar(&'a DataBar),
+    IconSet(&'a IconSet),
+}
+
+impl<'a> VisualRule<'a> {
+    /// Разобрать правило; `None` — правило не визуальное или нечего рисовать.
+    ///
+    /// У шкалы число цветов должно совпадать с числом порогов, иначе неясно,
+    /// какому порогу какой цвет; у всех трёх видов порогов должно быть не
+    /// меньше двух — с одним полосу и значок не с чем сравнить.
+    fn parse(kind: &'a RuleKind) -> Option<Self> {
+        let rule = match kind {
+            RuleKind::ColorScale(scale) => {
+                if scale.colors.len() != scale.thresholds.len() {
+                    return None;
+                }
+                Self::ColorScale(scale)
+            }
+            RuleKind::DataBar(bar) => Self::DataBar(bar),
+            RuleKind::IconSet(set) => Self::IconSet(set),
+            _ => return None,
+        };
+        (rule.thresholds().len() >= 2).then_some(rule)
+    }
+
+    /// Пороги правила.
+    fn thresholds(self) -> &'a [Threshold] {
+        match self {
+            Self::ColorScale(scale) => &scale.thresholds,
+            Self::DataBar(bar) => &bar.thresholds,
+            Self::IconSet(set) => &set.thresholds,
+        }
+    }
+}
+
+/// Изображение, которое правило рисует само, без `dxf`.
+///
+/// Цвета разрешены в RGBA здесь же: шкала интерполируется между порогами, а
+/// палитра темы доступна только на этом шаге.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Visual {
+    /// Фон ячейки из цветовой шкалы.
+    ColorScale(Rgba),
+    /// Полоса данных: доли ширины ячейки от левого и правого края (0…1).
+    DataBar {
+        start: f32,
+        end: f32,
+        color: Rgba,
+        show_value: bool,
+    },
+    /// Значок набора: глиф и цвет.
+    Icon {
+        glyph: &'static str,
+        color: Rgba,
+        show_value: bool,
+    },
+}
+
+/// Числовые значения порогов правила по содержимому его диапазона.
+///
+/// `NaN` — порог не вычислить: формула (полноценного вычислителя формул в
+/// крейте нет) или в диапазоне нет ни одного числа. Правило с таким порогом не
+/// рисуется вовсе: потерять оформление безопаснее, чем показать неверную
+/// границу.
+#[derive(Debug)]
+struct Thresholds {
+    /// По значению на порог, в порядке порогов.
+    values: Vec<f64>,
+}
+
+impl Thresholds {
+    fn new(sheet: &Sheet, range: Range, thresholds: &[Threshold]) -> Self {
+        let want_sorted = thresholds
+            .iter()
+            .any(|threshold| threshold.kind == ThresholdKind::Percentile);
+        let numbers = Numbers::of(sheet, range, want_sorted);
+        Self {
+            values: thresholds
+                .iter()
+                .map(|threshold| numbers.resolve(threshold))
+                .collect(),
+        }
+    }
+}
+
+/// Числа диапазона: границы и, если нужен процентиль, отсортированный список.
+///
+/// Обход идёт по непустым строкам диапазона: диапазон правила бывает во весь
+/// лист, а ячеек в нём — единицы, и перебирать пустые строки нельзя.
+#[derive(Debug)]
+struct Numbers {
+    count: u64,
+    min: f64,
+    max: f64,
+    sorted: Vec<f64>,
+}
+
+impl Numbers {
+    fn of(sheet: &Sheet, range: Range, want_sorted: bool) -> Self {
+        let mut numbers = Self {
+            count: 0,
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+            sorted: Vec::new(),
+        };
+        for (_, cells) in sheet.cells.rows_in(range.first.row, range.last.row) {
+            // Внутри строки столбцы отсортированы — границы берутся поиском.
+            let start = cells.partition_point(|cell| cell.col < range.first.col);
+            let end = cells.partition_point(|cell| cell.col <= range.last.col);
+            for cell in &cells[start..end] {
+                let CellValue::Number(value) = &cell.value else {
+                    continue;
+                };
+                numbers.count += 1;
+                numbers.min = numbers.min.min(*value);
+                numbers.max = numbers.max.max(*value);
+                if want_sorted {
+                    numbers.sorted.push(*value);
+                }
+            }
+        }
+        if want_sorted {
+            numbers.sorted.sort_by(f64::total_cmp);
+        }
+        numbers
+    }
+
+    /// Значение порога; `NaN` — вычислить нечем.
+    fn resolve(&self, threshold: &Threshold) -> f64 {
+        if self.count == 0 && threshold.kind != ThresholdKind::Number {
+            // Ни одного числа: ни границ, ни процентилей, ни процентов от
+            // диапазона. Числовой порог от содержимого не зависит.
+            return f64::NAN;
+        }
+        match threshold.kind {
+            ThresholdKind::Min => self.min,
+            ThresholdKind::Max => self.max,
+            ThresholdKind::Number => threshold.value.unwrap_or(f64::NAN),
+            ThresholdKind::Percent => threshold.value.map_or(f64::NAN, |percent| {
+                self.min + (self.max - self.min) * percent / 100.0
+            }),
+            ThresholdKind::Percentile => threshold
+                .value
+                .map_or(f64::NAN, |percent| percentile(&self.sorted, percent)),
+            // Значение формулы зависит от листа; вычислителя формул в крейте нет.
+            ThresholdKind::Formula => f64::NAN,
+        }
+    }
+}
+
+/// Процентиль по линейной интерполяции — как `PERCENTILE.INC` в Excel.
+///
+/// Допущение: каким алгоритмом считает процентиль условное форматирование
+/// Excel, не проверялось; взят стандартный линейный.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn percentile(sorted: &[f64], percent: f64) -> f64 {
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
+    let rank = (percent / 100.0).clamp(0.0, 1.0) * (sorted.len() - 1) as f64;
+    let low = rank.floor();
+    let index = low as usize;
+    let fraction = rank - low;
+    match sorted.get(index + 1) {
+        Some(next) => sorted[index] + (next - sorted[index]) * fraction,
+        None => sorted[index],
+    }
+}
+
+/// Цвет шкалы для значения: интерполяция между её порогами.
+///
+/// Значения вне шкалы получают крайние цвета. Порядок порогов задаёт файл, но
+/// полагаться на него нельзя: Excel расставляет их по возрастанию.
+#[allow(clippy::cast_possible_truncation)]
+fn color_scale(theme: &Theme, scale: &ColorScale, values: &[f64], value: f64) -> Option<Visual> {
+    let mut points = Vec::with_capacity(values.len());
+    for (threshold, color) in values.iter().zip(&scale.colors) {
+        // Невычислимый порог или неразрешённый цвет роняет шкалу целиком:
+        // пропущенная точка сдвинула бы цвета на всех ячейках.
+        if !threshold.is_finite() {
+            return None;
+        }
+        points.push((*threshold, resolve_color(theme, *color)?));
+    }
+    if points.len() < 2 {
+        return None;
+    }
+    points.sort_by(|left, right| left.0.total_cmp(&right.0));
+
+    let last = points.len() - 1;
+    if value <= points[0].0 {
+        return Some(Visual::ColorScale(points[0].1));
+    }
+    if value >= points[last].0 {
+        return Some(Visual::ColorScale(points[last].1));
+    }
+    for pair in points.windows(2) {
+        let (low, low_color) = pair[0];
+        let (high, high_color) = pair[1];
+        if value >= low && value <= high {
+            if high <= low {
+                return Some(Visual::ColorScale(high_color));
+            }
+            let fraction = ((value - low) / (high - low)) as f32;
+            return Some(Visual::ColorScale(lerp_color(
+                low_color, high_color, fraction,
+            )));
+        }
+    }
+    None
+}
+
+/// Линейная интерполяция цвета по каналам — в sRGB.
+///
+/// Допущение: в каком пространстве интерполирует Excel, не проверялось; взята
+/// покомпонентная линейная — самое простое чтение формата.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+fn lerp_color(from: Rgba, to: Rgba, t: f32) -> Rgba {
+    let channel = |shift: u32| {
+        let start = ((from.0 >> shift) & 0xFF) as f32;
+        let end = ((to.0 >> shift) & 0xFF) as f32;
+        (start + (end - start) * t).round().clamp(0.0, 255.0) as u32
+    };
+    Rgba(channel(0) | (channel(8) << 8) | (channel(16) << 16) | (channel(24) << 24))
+}
+
+/// Полоса данных: доли ширины ячейки, которые она занимает.
+fn data_bar(theme: &Theme, bar: &DataBar, values: &[f64], value: f64) -> Option<Visual> {
+    let low = *values.first()?;
+    let high = *values.last()?;
+    if !low.is_finite() || !high.is_finite() {
+        return None;
+    }
+    let color = resolve_color(theme, bar.color)?;
+    let (start, end) = bar_span(low, high, value);
+    Some(Visual::DataBar {
+        start,
+        end,
+        color,
+        show_value: bar.show_value,
+    })
+}
+
+/// Доли ячейки, которые занимает полоса: `(начало, конец)`.
+///
+/// Шкала — диапазон порогов `[low, high]`. Если среди значений есть
+/// отрицательные, Excel 2010+ отсчитывает полосы от нулевой оси: положительные
+/// растут вправо, отрицательные — влево. Если отрицательных нет, ось не
+/// показывается и полоса отсчитывается от левого края — самое малое значение
+/// получает полосу нулевой длины.
+///
+/// Не поддержано, потому что этого нет в разобранной модели: цвет
+/// отрицательных полос (`negativeFillColor`), положение оси (`axisPosition`) и
+/// наименьшая длина полосы (`PercentMin`) — расширения `x14`, в файле они лежат
+/// вне `<dataBar>`. Полосы обоих знаков рисуются цветом правила.
+#[allow(clippy::cast_possible_truncation)]
+fn bar_span(low: f64, high: f64, value: f64) -> (f32, f32) {
+    if high <= low {
+        // Вырожденная шкала: сравнивать значение не с чем.
+        return (0.0, 1.0);
+    }
+    if low >= 0.0 {
+        let end = ((value - low) / (high - low)).clamp(0.0, 1.0) as f32;
+        return (0.0, end);
+    }
+    // Ось — положение нуля в шкале.
+    let axis = (-low / (high - low)).clamp(0.0, 1.0);
+    if value >= 0.0 {
+        let end = if high > 0.0 {
+            axis + (1.0 - axis) * (value / high)
+        } else {
+            axis
+        };
+        (axis as f32, end.clamp(axis, 1.0) as f32)
+    } else {
+        // `value / low` положительно: оба отрицательны, отношение — доля
+        // |value| от |low|.
+        let start = axis - axis * (value / low);
+        (start.clamp(0.0, axis) as f32, axis as f32)
+    }
+}
+
+/// Значок набора по значению.
+fn icon_set(set: &IconSet, values: &[f64], value: f64) -> Option<Visual> {
+    let count = values.len();
+    let mut level = 0;
+    for (index, (threshold, cfvo)) in values.iter().zip(&set.thresholds).enumerate() {
+        if !threshold.is_finite() {
+            return None;
+        }
+        let passed = if cfvo.gte {
+            value >= *threshold
+        } else {
+            value > *threshold
+        };
+        if passed && index > level {
+            level = index;
+        }
+    }
+    // `reverse="1"` переворачивает значки, а не пороги: нижнему диапазону
+    // достаётся значок верхнего. Значение ниже первого порога получает нижний
+    // значок — как в Excel.
+    let shown = if set.reverse {
+        count - 1 - level
+    } else {
+        level
+    };
+    Some(Visual::Icon {
+        glyph: icon_glyph(&set.icon_set, shown, count),
+        color: icon_color(shown, count),
+        show_value: set.show_value,
+    })
+}
+
+/// Глиф значка.
+///
+/// В `DrawCommand` нет путей и полигонов, поэтому значок — текстовый глиф: одна
+/// команда на ячейку против пяти `Rect` у фигуры из прямоугольников (на 10k
+/// ячеек это разница в сотни килобайт кадра). Canvas подставляет шрифт по
+/// символу, если глифа нет в гарнитуре ячейки, поэтому `▲`/`▼`/`●`/`★` не
+/// превратятся в пустые квадраты.
+///
+/// Растровые значки Excel не воспроизводим: направление несут только наборы
+/// стрелок, у остальных наборов форма одна, а уровень виден по цвету.
+#[allow(clippy::cast_precision_loss)]
+fn icon_glyph(icon_set: &str, shown: usize, count: usize) -> &'static str {
+    let position = if count > 1 {
+        shown as f32 / (count - 1) as f32
+    } else {
+        0.0
+    };
+    if icon_set.contains("Arrow") {
+        if position < 1.0 / 3.0 {
+            "▼"
+        } else if position > 2.0 / 3.0 {
+            "▲"
+        } else {
+            "●"
+        }
+    } else if icon_set.contains("Star") || icon_set.contains("Rating") {
+        "★"
+    } else {
+        // 3TrafficLights1, 5Quarters, 3Flags, 4Boxes, 3Symbols, 3Signs, …
+        "●"
+    }
+}
+
+/// Цвет значка: палитра условного форматирования Excel, растянутая на число
+/// уровней набора.
+///
+/// Её три цвета — умолчания Excel (`F8696B` → `FFEB84` → `63BE7B`), те же, что
+/// стоят в фикстуре цветовой шкалы. Растровые значки Excel цвета не отдают,
+/// поэтому взят общий ряд «плохо → хорошо».
+#[allow(clippy::cast_precision_loss)]
+fn icon_color(shown: usize, count: usize) -> Rgba {
+    const LOW: Rgba = Rgba(0xF8_69_6B_FF);
+    const MID: Rgba = Rgba(0xFF_EB_84_FF);
+    const HIGH: Rgba = Rgba(0x63_BE_7B_FF);
+    if count <= 1 {
+        return MID;
+    }
+    let position = shown as f32 / (count - 1) as f32;
+    if position <= 0.5 {
+        lerp_color(LOW, MID, position * 2.0)
+    } else {
+        lerp_color(MID, HIGH, (position - 0.5) * 2.0)
+    }
 }
 
 /// Условие правила, по которому оно срабатывает.
@@ -1312,5 +1809,410 @@ mod tests {
         let style = index.style_at(&book, CellRef::new(0, 0));
 
         assert_eq!(style, EffectiveStyle::new(style.base()));
+    }
+
+    // --- Визуальные правила -------------------------------------------------
+
+    /// Правило, рисующее само, — без `dxf`.
+    fn visual_rule(priority: u32, kind: RuleKind) -> ConditionalRule {
+        ConditionalRule {
+            priority,
+            stop_if_true: false,
+            dxf_id: None,
+            kind,
+        }
+    }
+
+    fn cfvo(kind: ThresholdKind, value: Option<f64>) -> Threshold {
+        Threshold {
+            kind,
+            value,
+            gte: true,
+        }
+    }
+
+    fn style_at<'a>(
+        book: &'a Workbook,
+        index: &RuleIndex<'a>,
+        row: u32,
+        col: u32,
+    ) -> EffectiveStyle<'a> {
+        index.style_at(book, CellRef::new(row, col))
+    }
+
+    fn visual_of(book: &Workbook, index: &RuleIndex<'_>, row: u32, col: u32) -> Option<Visual> {
+        style_at(book, index, row, col).visual()
+    }
+
+    fn background_of(book: &Workbook, index: &RuleIndex<'_>, row: u32, col: u32) -> Option<Rgba> {
+        style_at(book, index, row, col).background()
+    }
+
+    fn close(left: f32, right: f32) -> bool {
+        (left - right).abs() < 1e-4
+    }
+
+    /// Книга с визуальным правилом на `A1:A10` и числами в столбце A.
+    fn book_with_visual(kind: RuleKind, cells: &[(u32, u32, f64)]) -> Workbook {
+        book_with_cells(vec![visual_rule(1, kind)], vec![], cells)
+    }
+
+    fn two_color_scale() -> ColorScale {
+        ColorScale {
+            thresholds: vec![
+                cfvo(ThresholdKind::Min, None),
+                cfvo(ThresholdKind::Max, None),
+            ],
+            colors: vec![Color::Rgb(0xFF00_0000), Color::Rgb(0xFFFF_FFFF)],
+        }
+    }
+
+    #[test]
+    fn color_scale_interpolates_between_thresholds() {
+        let book = book_with_visual(
+            RuleKind::ColorScale(two_color_scale()),
+            &[(0, 0, 0.0), (1, 0, 50.0), (2, 0, 100.0)],
+        );
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+
+        // Ноль — первый цвет, сотня — второй, середина — ровно между ними.
+        assert_eq!(background_of(&book, &index, 0, 0), Some(Rgba(0x0000_00FF)));
+        assert_eq!(background_of(&book, &index, 2, 0), Some(Rgba(0xFFFF_FFFF)));
+        assert_eq!(background_of(&book, &index, 1, 0), Some(Rgba(0x8080_80FF)));
+    }
+
+    #[test]
+    fn color_scale_uses_percentile_threshold() {
+        let scale = ColorScale {
+            thresholds: vec![
+                cfvo(ThresholdKind::Min, None),
+                cfvo(ThresholdKind::Percentile, Some(50.0)),
+                cfvo(ThresholdKind::Max, None),
+            ],
+            colors: vec![
+                Color::Rgb(0xFF00_0000),
+                Color::Rgb(0xFFFF_0000),
+                Color::Rgb(0xFFFF_FFFF),
+            ],
+        };
+        // Процентиль 50 от [10, 20, 30, 40] — это 25: значение ровно на
+        // среднем пороге получает средний цвет.
+        let book = book_with_range(
+            vec![visual_rule(1, RuleKind::ColorScale(scale))],
+            vec![],
+            &[
+                (0, 0, 10.0),
+                (0, 1, 25.0),
+                (1, 0, 20.0),
+                (2, 0, 30.0),
+                (3, 0, 40.0),
+            ],
+            "A1:B10",
+        );
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+
+        // `Rgb(0xFFFF_0000)` — это AARRGGBB, в кадре красный: `FF0000FF`.
+        assert_eq!(background_of(&book, &index, 0, 1), Some(Rgba(0xFF00_00FF)));
+        assert_eq!(background_of(&book, &index, 0, 0), Some(Rgba(0x0000_00FF)));
+        assert_eq!(background_of(&book, &index, 3, 0), Some(Rgba(0xFFFF_FFFF)));
+    }
+
+    #[test]
+    fn color_scale_counts_only_cells_inside_the_range() {
+        let book = book_with_range(
+            vec![visual_rule(1, RuleKind::ColorScale(two_color_scale()))],
+            vec![],
+            &[(0, 0, 10.0), (1, 0, 20.0), (5, 0, 100.0)],
+            "A1:A2",
+        );
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+
+        // Сотня лежит вне диапазона и максимумом не становится: 20 — белый.
+        assert_eq!(background_of(&book, &index, 1, 0), Some(Rgba(0xFFFF_FFFF)));
+        assert_eq!(background_of(&book, &index, 5, 0), None);
+    }
+
+    #[test]
+    fn color_scale_skips_text_and_empty_cells() {
+        let book = book_with_range(
+            vec![visual_rule(1, RuleKind::ColorScale(two_color_scale()))],
+            vec![],
+            &[(0, 0, 10.0), (1, 0, 90.0)],
+            "A1:C10",
+        );
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+
+        // Текстовая ячейка шкалой не красится.
+        assert_eq!(background_of(&book, &index, 0, 0), Some(Rgba(0x0000_00FF)));
+        assert_eq!(background_of(&book, &index, 0, 1), None);
+        assert_eq!(background_of(&book, &index, 0, 2), None);
+    }
+
+    #[test]
+    fn color_scale_drops_the_rule_when_a_threshold_is_uncomputable() {
+        let scale = ColorScale {
+            thresholds: vec![
+                cfvo(ThresholdKind::Formula, None),
+                cfvo(ThresholdKind::Max, None),
+            ],
+            colors: vec![Color::Rgb(0xFF00_0000), Color::Rgb(0xFFFF_FFFF)],
+        };
+        let book = book_with_visual(RuleKind::ColorScale(scale), &[(0, 0, 10.0), (1, 0, 20.0)]);
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+
+        assert_eq!(background_of(&book, &index, 0, 0), None);
+    }
+
+    fn two_threshold_bar(color: Color) -> DataBar {
+        DataBar {
+            thresholds: vec![
+                cfvo(ThresholdKind::Number, Some(10.0)),
+                cfvo(ThresholdKind::Number, Some(65.0)),
+            ],
+            color,
+            show_value: true,
+        }
+    }
+
+    fn bar_span_of(visual: Option<Visual>) -> (f32, f32) {
+        match visual {
+            Some(Visual::DataBar { start, end, .. }) => (start, end),
+            other => panic!("ожидалась полоса данных, получено {other:?}"),
+        }
+    }
+
+    #[test]
+    fn data_bar_is_proportional_for_positive_values() {
+        let book = book_with_visual(
+            RuleKind::DataBar(two_threshold_bar(Color::Rgb(0xFF00_0000))),
+            &[(0, 0, 10.0), (1, 0, 37.5), (2, 0, 65.0)],
+        );
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+
+        // Все значения положительные: шкала от минимума к максимуму, и
+        // минимум получает полосу нулевой длины.
+        assert_eq!(bar_span_of(visual_of(&book, &index, 0, 0)), (0.0, 0.0));
+        let (start, end) = bar_span_of(visual_of(&book, &index, 1, 0));
+        assert!(close(start, 0.0), "полоса от левого края: {start}");
+        assert!(close(end, 0.5), "середина шкалы — половина полосы: {end}");
+        assert_eq!(bar_span_of(visual_of(&book, &index, 2, 0)), (0.0, 1.0));
+    }
+
+    #[test]
+    fn data_bar_of_negative_values_grows_from_the_zero_axis() {
+        let bar = DataBar {
+            thresholds: vec![
+                cfvo(ThresholdKind::Number, Some(-50.0)),
+                cfvo(ThresholdKind::Number, Some(70.0)),
+            ],
+            color: Color::Rgb(0xFF00_0000),
+            show_value: true,
+        };
+        let book = book_with_visual(
+            RuleKind::DataBar(bar),
+            &[(0, 0, -40.0), (1, 0, 0.0), (2, 0, 70.0), (3, 0, -50.0)],
+        );
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+
+        // Ось — на 50/120 ширины: отрицательная полоса уходит влево от неё,
+        // положительная — вправо.
+        let (start, end) = bar_span_of(visual_of(&book, &index, 0, 0));
+        assert!(close(start, 0.0833), "начало отрицательной полосы: {start}");
+        assert!(close(end, 0.4167), "конец отрицательной полосы: {end}");
+
+        // Ноль — полоса нулевой длины ровно на оси.
+        let (start, end) = bar_span_of(visual_of(&book, &index, 1, 0));
+        assert!(
+            close(start, 0.4167) && close(end, 0.4167),
+            "ноль: {start}…{end}"
+        );
+
+        let (start, end) = bar_span_of(visual_of(&book, &index, 2, 0));
+        assert!(close(start, 0.4167), "начало положительной полосы: {start}");
+        assert!(close(end, 1.0), "полоса до правого края: {end}");
+
+        // Самое отрицательное значение — полоса от левого края до оси.
+        let (start, end) = bar_span_of(visual_of(&book, &index, 3, 0));
+        assert!(close(start, 0.0), "полоса минимума от левого края: {start}");
+        assert!(close(end, 0.4167), "конец полосы минимума: {end}");
+    }
+
+    #[test]
+    fn data_bar_of_an_all_negative_scale_grows_from_the_right() {
+        let bar = DataBar {
+            thresholds: vec![
+                cfvo(ThresholdKind::Number, Some(-50.0)),
+                cfvo(ThresholdKind::Number, Some(-10.0)),
+            ],
+            color: Color::Rgb(0xFF00_0000),
+            show_value: true,
+        };
+        let book = book_with_visual(RuleKind::DataBar(bar), &[(0, 0, -50.0), (1, 0, -10.0)]);
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+
+        assert_eq!(bar_span_of(visual_of(&book, &index, 0, 0)), (0.0, 1.0));
+        let (start, end) = bar_span_of(visual_of(&book, &index, 1, 0));
+        assert!(close(start, 0.8), "короткая полоса у правого края: {start}");
+        assert!(close(end, 1.0), "короткая полоса до правого края: {end}");
+    }
+
+    fn three_arrow_set(reverse: bool, show_value: bool) -> IconSet {
+        IconSet {
+            icon_set: "3Arrows".into(),
+            reverse,
+            show_value,
+            thresholds: vec![
+                cfvo(ThresholdKind::Number, Some(0.0)),
+                cfvo(ThresholdKind::Number, Some(50.0)),
+                cfvo(ThresholdKind::Number, Some(100.0)),
+            ],
+        }
+    }
+
+    fn icon_of(visual: Option<Visual>) -> (&'static str, Rgba, bool) {
+        match visual {
+            Some(Visual::Icon {
+                glyph,
+                color,
+                show_value,
+            }) => (glyph, color, show_value),
+            other => panic!("ожидался значок, получено {other:?}"),
+        }
+    }
+
+    #[test]
+    fn icon_set_picks_the_icon_by_threshold() {
+        let book = book_with_visual(
+            RuleKind::IconSet(three_arrow_set(false, true)),
+            &[(0, 0, 10.0), (1, 0, 60.0), (2, 0, 100.0)],
+        );
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+
+        assert_eq!(
+            icon_of(visual_of(&book, &index, 0, 0)),
+            ("▼", Rgba(0xF869_6BFF), true)
+        );
+        assert_eq!(
+            icon_of(visual_of(&book, &index, 1, 0)),
+            ("●", Rgba(0xFFEB_84FF), true)
+        );
+        assert_eq!(
+            icon_of(visual_of(&book, &index, 2, 0)),
+            ("▲", Rgba(0x63BE_7BFF), true)
+        );
+    }
+
+    #[test]
+    fn icon_set_reverse_mirrors_the_icons() {
+        let book = book_with_visual(
+            RuleKind::IconSet(three_arrow_set(true, true)),
+            &[(0, 0, 10.0), (1, 0, 100.0)],
+        );
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+
+        // Высшему значению достаётся значок нижнего диапазона и наоборот.
+        assert_eq!(
+            icon_of(visual_of(&book, &index, 1, 0)),
+            ("▼", Rgba(0xF869_6BFF), true)
+        );
+        assert_eq!(
+            icon_of(visual_of(&book, &index, 0, 0)),
+            ("▲", Rgba(0x63BE_7BFF), true)
+        );
+    }
+
+    #[test]
+    fn icon_set_keeps_its_levels_for_four_and_five_icons() {
+        let mut set = three_arrow_set(false, true);
+        set.thresholds = vec![
+            cfvo(ThresholdKind::Number, Some(0.0)),
+            cfvo(ThresholdKind::Number, Some(25.0)),
+            cfvo(ThresholdKind::Number, Some(50.0)),
+            cfvo(ThresholdKind::Number, Some(75.0)),
+        ];
+        let book = book_with_visual(
+            RuleKind::IconSet(set.clone()),
+            &[(0, 0, 0.0), (1, 0, 30.0), (2, 0, 60.0), (3, 0, 80.0)],
+        );
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+
+        let glyphs: Vec<&str> = (0..4)
+            .map(|row| icon_of(visual_of(&book, &index, row, 0)).0)
+            .collect();
+        assert_eq!(glyphs, ["▼", "●", "●", "▲"]);
+
+        // Пять уровней: цвет идёт тем же рядом, а не повторяет четвёрку.
+        set.thresholds.push(cfvo(ThresholdKind::Number, Some(90.0)));
+        let book = book_with_visual(RuleKind::IconSet(set), &[(0, 0, 0.0), (1, 0, 95.0)]);
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+        assert_eq!(icon_of(visual_of(&book, &index, 0, 0)).1, Rgba(0xF869_6BFF));
+        assert_eq!(icon_of(visual_of(&book, &index, 1, 0)).1, Rgba(0x63BE_7BFF));
+    }
+
+    #[test]
+    fn icon_set_hides_the_value_when_asked() {
+        let book = book_with_visual(
+            RuleKind::IconSet(three_arrow_set(false, false)),
+            &[(0, 0, 10.0)],
+        );
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+        let style = style_at(&book, &index, 0, 0);
+
+        assert!(style.hides_value());
+        assert!(style.background().is_none());
+    }
+
+    #[test]
+    fn visual_rules_share_the_priority_order_with_dxf_rules() {
+        // `cellIs` с `stopIfTrue` и меньшим номером приоритета гасит значок.
+        let mut stop = rule(1, 0, CellIsOperator::GreaterThan, &["0"]);
+        stop.stop_if_true = true;
+        let book = book_with_cells(
+            vec![
+                stop,
+                visual_rule(2, RuleKind::IconSet(three_arrow_set(false, true))),
+            ],
+            vec![red()],
+            &[(0, 0, 10.0)],
+        );
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+
+        assert!(visual_of(&book, &index, 0, 0).is_none());
+        assert!(style_at(&book, &index, 0, 0).fill(book.styles()).is_some());
+    }
+
+    #[test]
+    fn dxf_fill_overrides_the_color_scale_background() {
+        // Правило с заливкой идёт позже шкалы — фон берёт заливка `dxf`.
+        let mut fill_rule = rule(2, 0, CellIsOperator::GreaterThan, &["0"]);
+        fill_rule.stop_if_true = false;
+        let book = book_with_cells(
+            vec![
+                visual_rule(1, RuleKind::ColorScale(two_color_scale())),
+                fill_rule,
+            ],
+            vec![red()],
+            &[(0, 0, 10.0), (1, 0, 20.0)],
+        );
+        let sheet = &book.sheets()[0];
+        let index = RuleIndex::new(&book, sheet);
+        let style = style_at(&book, &index, 0, 0);
+
+        assert!(style.background().is_none());
+        assert!(style.fill(book.styles()).is_some());
     }
 }

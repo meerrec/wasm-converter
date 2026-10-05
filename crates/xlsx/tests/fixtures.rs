@@ -13,12 +13,14 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use doc_converter_render::display_list::{Color as PixelColor, DisplayList, DrawCommand};
+use doc_converter_render::display_list::{
+    Color as PixelColor, DisplayList, DrawCommand, TextAlign,
+};
 use doc_converter_xlsx::cellref::{CellRef, Range};
 use doc_converter_xlsx::{
     open, paint_sheet, BorderStyle, CellIsOperator, CellValue, Color, ColorScale, ConditionalRule,
     DataBar, Fill, FillPattern, IconSet, PaintOptions, PaneKind, PaneState, RuleKind, Sheet,
-    SheetState, Threshold, ThresholdKind, Viewport, Workbook, XlsxError,
+    SheetLayout, SheetState, Threshold, ThresholdKind, Viewport, Workbook, XlsxError,
 };
 use serde_json::Value;
 
@@ -696,4 +698,245 @@ fn cf_priorities_fixture_keeps_file_order_and_stop_if_true() {
         Some(4),
         cell_is(CellIsOperator::LessThan, &["15"]),
     );
+}
+
+// --- Визуальные правила: что попадает в кадр --------------------------------
+
+/// Кадр первого листа фикстуры без заголовков и сетки.
+///
+/// Без сетки и заголовков прямоугольники ячеек совпадают с раскладкой, и
+/// заливку шкалы ничто не перекрывает.
+fn painted_fixture(name: &str) -> (Workbook, DisplayList) {
+    let book = open_fixture(name);
+    let sheet = &book.sheets()[0];
+    let mut dl = DisplayList::new();
+    paint_sheet(
+        &book,
+        sheet,
+        Viewport::default(),
+        &PaintOptions {
+            show_grid: false,
+            show_headers: false,
+            ..PaintOptions::default()
+        },
+        &mut dl,
+    );
+    (book, dl)
+}
+
+/// Прямоугольники кадра: `(x, y, ширина, высота, цвет)`.
+fn rects(dl: &DisplayList) -> Vec<(f32, f32, f32, f32, PixelColor)> {
+    (0..dl.len())
+        .filter_map(|i| dl.cmd(i))
+        .filter_map(|cmd| match cmd {
+            DrawCommand::Rect {
+                x, y, w, h, fill, ..
+            } => Some((*x, *y, *w, *h, *fill)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Прямоугольники заданного цвета, в порядке отрисовки.
+fn rects_with(dl: &DisplayList, color: PixelColor) -> Vec<(f32, f32, f32, f32)> {
+    rects(dl)
+        .into_iter()
+        .filter(|(.., fill)| *fill == color)
+        .map(|(x, y, w, h, _)| (x, y, w, h))
+        .collect()
+}
+
+/// Заливка ячейки (row, col) — прямоугольник точно по её границам.
+fn cell_fill(
+    dl: &DisplayList,
+    layout: &SheetLayout,
+    row: u32,
+    col: u32,
+) -> Option<(f32, f32, f32, f32, PixelColor)> {
+    let x = layout.column_x(col);
+    let y = layout.row_y(row);
+    let w = layout.column_width(col);
+    rects(dl).into_iter().find(|(rx, ry, rw, ..)| {
+        (rx - x).abs() < 0.01 && (ry - y).abs() < 0.01 && (rw - w).abs() < 0.01
+    })
+}
+
+/// Текстовые команды кадра: `(текст, x, y, выравнивание, цвет)`.
+fn texts(dl: &DisplayList) -> Vec<(String, f32, f32, TextAlign, PixelColor)> {
+    (0..dl.len())
+        .filter_map(|i| dl.cmd(i))
+        .filter_map(|cmd| match cmd {
+            DrawCommand::Text {
+                text,
+                x,
+                y,
+                align,
+                color,
+                ..
+            } => Some((dl.string(*text).to_owned(), *x, *y, *align, *color)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Номер команды с текстом ячейки — чтобы проверить порядок слоёв.
+fn text_index(dl: &DisplayList, want: &str) -> usize {
+    (0..dl.len())
+        .find(|&i| {
+            matches!(dl.cmd(i), Some(DrawCommand::Text { text, .. }) if dl.string(*text) == want)
+        })
+        .unwrap_or_else(|| panic!("в кадре нет текста {want}"))
+}
+
+/// Номер команды — первого прямоугольника с заданной заливкой.
+fn rect_index(dl: &DisplayList, color: PixelColor) -> usize {
+    (0..dl.len())
+        .find(|&i| matches!(dl.cmd(i), Some(DrawCommand::Rect { fill, .. }) if *fill == color))
+        .unwrap_or_else(|| panic!("в кадре нет прямоугольника цвета {color:?}"))
+}
+
+/// Значок ячейки (row, col): текст и цвет. Значок ищется по координате —
+/// строка задаёт вертикаль, столбец горизонталь.
+fn icon_at(dl: &DisplayList, layout: &SheetLayout, row: u32, col: u32) -> (String, PixelColor) {
+    let y = layout.row_y(row) + layout.row_height(row) / 2.0;
+    let (first, last) = (layout.column_x(col), layout.column_x(col + 1));
+    texts(dl)
+        .into_iter()
+        .find(|(text, tx, ty, ..)| {
+            matches!(text.as_str(), "●" | "▼" | "▲" | "★")
+                && (ty - y).abs() < 0.5
+                && *tx >= first
+                && *tx < last
+        })
+        .map(|(text, _, _, _, color)| (text, color))
+        .unwrap_or_else(|| panic!("нет значка в ячейке ({row}, {col})"))
+}
+
+#[test]
+fn cf_color_scale_fixture_paints_the_cell_background() {
+    let (book, dl) = painted_fixture("cf-color-scale.xlsx");
+    let layout = SheetLayout::new(&book.sheets()[0]);
+
+    // A1:A12 — два цвета, min → max. Крайние значения получают цвета порогов
+    // точно, середина — интерполяцию между ними.
+    let (.., first) = cell_fill(&dl, &layout, 0, 0).expect("A1: заливка шкалы");
+    assert_eq!(first, PixelColor(0xF869_6BFF), "A1: цвет минимума");
+    let (.., last) = cell_fill(&dl, &layout, 11, 0).expect("A12: заливка шкалы");
+    assert_eq!(last, PixelColor(0x63BE_7BFF), "A12: цвет максимума");
+    let (.., middle) = cell_fill(&dl, &layout, 5, 0).expect("A6: заливка шкалы");
+    // 35 в шкале 10…65 — 0.4545 пути от F8696B к 63BE7B.
+    assert_eq!(middle, PixelColor(0xB490_72FF), "A6: интерполяция");
+
+    // B1:B12 — три цвета с процентилем: между min и max стоит жёлтый порог.
+    // Процентиль 50 от 12 значений (40…95 по возрастанию) — это 67.5, а не 70:
+    // `PERCENTILE.INC` берёт ранг 0.5 * (12 - 1) = 5.5, то есть 65 плюс
+    // половина шага до 70. B6 = 70 выше порога, поэтому его цвет — интерполяция
+    // жёлтого к зелёному на 1/11 пути: (70 - 67.5) / (95 - 67.5).
+    let (.., middle) = cell_fill(&dl, &layout, 5, 1).expect("B6: заливка шкалы");
+    assert_eq!(
+        middle,
+        PixelColor(0xF1E7_83FF),
+        "B6: цвет выше порога-процентиля"
+    );
+
+    // C1:C12 — числовые пороги: ниже первого — красный, на верхнем — синий.
+    let (.., low) = cell_fill(&dl, &layout, 0, 2).expect("C1: заливка шкалы");
+    assert_eq!(low, PixelColor(0xFF00_00FF), "C1: цвет ниже первого порога");
+    let (.., high) = cell_fill(&dl, &layout, 11, 2).expect("C12: заливка шкалы");
+    assert_eq!(high, PixelColor(0x0000_FFFF), "C12: цвет верхнего порога");
+}
+
+#[test]
+fn cf_data_bar_fixture_draws_bars_under_the_text() {
+    let (book, dl) = painted_fixture("cf-data-bar.xlsx");
+    let layout = SheetLayout::new(&book.sheets()[0]);
+    let color = PixelColor(0x638E_C6FF);
+    let inner = layout.column_width(0) - 2.0;
+
+    // A1:A12 — все значения положительные: шкала от минимума к максимуму,
+    // минимум получает полосу нулевой длины, максимум — всю ширину с полями.
+    let bars = rects_with(&dl, color);
+    assert_eq!(bars.len(), 11, "минимум полосы не получает");
+    let (x, y, w, h) = *bars.last().expect("полоса A12");
+    assert!(
+        (x - 1.0).abs() < 0.01 && (w - inner).abs() < 0.01,
+        "A12: полоса во всю ячейку с полями: x={x}, w={w}"
+    );
+    // Высота полосы — доля строки, по центру ячейки.
+    assert!(h < layout.row_height(11), "полоса ниже строки: {h}");
+    assert!(y > layout.row_y(11), "полоса не прижата к верху");
+
+    // Полоса рисуется под текстом ячейки: её команда идёт раньше.
+    assert!(
+        rect_index(&dl, color) < text_index(&dl, "65"),
+        "полоса A12 перекрывает текст"
+    );
+
+    // B1:B12 — есть отрицательные: полоса отсчитывается от нулевой оси.
+    let color = PixelColor(0x63BE_7BFF);
+    let bars = rects_with(&dl, color);
+    // Ноль полосы не получает — она у него нулевой длины.
+    assert_eq!(bars.len(), 11, "полосу получает каждая ячейка, кроме нуля");
+    let column = layout.column_x(1);
+    let axis = column + 1.0 + 50.0 / 120.0 * (layout.column_width(1) - 2.0);
+    let (x, y, w, h) = bars[0];
+    // Полоса по центру строки — тем же полем, что и положительные в столбце A.
+    let centered = layout.row_y(0) + (layout.row_height(0) - h) / 2.0;
+    assert!(
+        (y - centered).abs() < 0.01 && x > column && x < axis,
+        "B1: отрицательная полоса слева от оси, по центру строки: x={x}, y={y}"
+    );
+    assert!(h > 0.0 && w > 0.0, "B1: полоса видна");
+    let (x2, _, w2, _) = *bars.last().expect("полоса B12");
+    // Максимум шкалы: полоса начинается на оси и доходит до правого поля.
+    let right = column + layout.column_width(1) - 1.0;
+    assert!(
+        (x2 - axis).abs() < 0.01 && (x2 + w2 - right).abs() < 0.01 && w2 > w,
+        "B12: положительная полоса от оси до края: x2={x2}, axis={axis}, w2={w2}, w={w}"
+    );
+}
+
+#[test]
+fn cf_icon_set_fixture_shows_icons_by_threshold() {
+    let (book, dl) = painted_fixture("cf-icon-set.xlsx");
+    let layout = SheetLayout::new(&book.sheets()[0]);
+
+    // A1:A12 — светофор: значок один (круг), уровень несёт цвет.
+    assert_eq!(
+        icon_at(&dl, &layout, 0, 0),
+        ("●".into(), PixelColor(0xF869_6BFF))
+    );
+    assert_eq!(
+        icon_at(&dl, &layout, 11, 0),
+        ("●".into(), PixelColor(0x63BE_7BFF))
+    );
+
+    // B1:B12 — четыре стрелки с `reverse`: верхнему значению достаётся значок
+    // нижнего уровня, нижнему — верхнего.
+    assert_eq!(
+        icon_at(&dl, &layout, 0, 1),
+        ("▼".into(), PixelColor(0xF869_6BFF))
+    );
+    assert_eq!(
+        icon_at(&dl, &layout, 11, 1),
+        ("▲".into(), PixelColor(0x63BE_7BFF))
+    );
+
+    // C1:C12 — `showValue="0"`: значения не рисуются, значки стоят по центру
+    // ячейки.
+    let texts = texts(&dl);
+    assert!(
+        !texts.iter().any(|(text, ..)| text == "1"),
+        "значение скрыто значком"
+    );
+    let centered = texts
+        .iter()
+        .filter(|(text, tx, _, align, _)| {
+            text == "●"
+                && *align == TextAlign::Center
+                && *tx > layout.column_x(2)
+                && *tx < layout.column_x(3)
+        })
+        .count();
+    assert_eq!(centered, 12, "значки столбца C стоят по центру");
 }

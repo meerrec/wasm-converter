@@ -212,6 +212,21 @@ impl Worksheet {
         (0..self.row_ids.len()).map(|i| (self.row_ids[i], self.cells_of_row(self.row_ids[i])))
     }
 
+    /// Непустые строки в границах `[first, last]` включительно.
+    ///
+    /// Нужен условному форматированию: диапазон правила бывает во весь лист, а
+    /// ячеек в нём — единицы, поэтому обходить все строки листа на каждый
+    /// диапазон нельзя. Границы находятся двоичным поиском по номерам строк.
+    pub(crate) fn rows_in(
+        &self,
+        first: u32,
+        last: u32,
+    ) -> impl Iterator<Item = (u32, &[Cell])> + '_ {
+        let start = self.row_ids.partition_point(|&row| row < first);
+        let end = self.row_ids.partition_point(|&row| row <= last);
+        (start..end).map(move |i| (self.row_ids[i], self.cells_of_row(self.row_ids[i])))
+    }
+
     /// Фактические границы ячеек: первая и последняя непустые строки, а внутри
     /// них — крайние столбцы. `None` — на листе нет ячеек.
     ///
