@@ -13,15 +13,18 @@ use doc_converter_core::rels::RelMap;
 use doc_converter_core::xml::XmlReader;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 
-use crate::cellref::{CellRef, MAX_ROW};
+use crate::cellref::{CellRef, Range, MAX_ROW};
 use crate::dims::{read_col, read_dimension, read_format, read_row, SheetDims};
 use crate::error::{Result, XlsxError};
-use crate::model::{Cell, CellError, CellValue, SheetContent, WorksheetBuilder};
+use crate::model::{
+    Cell, CellError, CellIsOperator, CellValue, ColorScale, ConditionalFormatting, ConditionalRule,
+    DataBar, IconSet, RuleKind, SheetContent, Threshold, ThresholdKind, WorksheetBuilder,
+};
 use crate::sheet_meta::{
     read_hyperlink, read_merge, read_pane, read_view, Hyperlink, Merges, SheetView,
 };
 use crate::strings::read_item_text;
-use crate::xml::{attributes, find, is_true, resolve_reference, Attr};
+use crate::xml::{attributes, color, find, is_true, resolve_reference, Attr};
 
 /// Последняя допустимая строка в 1-based нумерации файла.
 const MAX_ROW_ONE_BASED: u32 = MAX_ROW + 1;
@@ -129,6 +132,14 @@ struct SheetParser<'a> {
     merges: Merges,
     /// Гиперссылки.
     hyperlinks: Vec<Hyperlink>,
+    /// Блок `<conditionalFormatting>`, который сейчас собирается.
+    cf_block: Option<ConditionalFormatting>,
+    /// Правило `<cfRule>`, которое сейчас собирается.
+    cf_rule: Option<ConditionalRule>,
+    /// Готовые блоки условного форматирования.
+    conditional_formatting: Vec<ConditionalFormatting>,
+    /// Мы внутри `<extLst>`: расширения (`x14` и прочие) в модель не идут.
+    in_ext_lst: bool,
     /// Вне `<sheetData>` элементов `<row>`/`<c>` не бывает, а похожие имена
     /// внутри `<extLst>` не должны попадать в модель.
     in_sheet_data: bool,
@@ -155,8 +166,10 @@ enum Sink {
     Idle,
     /// Внутри `<v>` — значение ячейки.
     Value,
-    /// Внутри `<f>` — формула.
+    /// Внутри `<f>` — формула ячейки.
     Formula,
+    /// Внутри `<formula>` правила условного форматирования.
+    CfFormula,
 }
 
 impl<'r> SheetParser<'r> {
@@ -170,6 +183,10 @@ impl<'r> SheetParser<'r> {
             view_seen: false,
             merges: Merges::default(),
             hyperlinks: Vec::new(),
+            cf_block: None,
+            cf_rule: None,
+            conditional_formatting: Vec::new(),
+            in_ext_lst: false,
             in_sheet_data: false,
             row: None,
             next_row: 0,
@@ -238,6 +255,26 @@ impl<'r> SheetParser<'r> {
             }
             b"dimension" | b"sheetFormatPr" | b"col" => self.read_dims(element)?,
             b"sheetView" | b"pane" | b"mergeCell" | b"hyperlink" => self.read_meta(element)?,
+            // Условное форматирование. Пока открыт `<extLst>`, его содержимое
+            // (в том числе `x14:cfRule`) в модель не идёт.
+            b"extLst" => self.in_ext_lst = true,
+            b"conditionalFormatting" if !self.in_ext_lst => {
+                self.open_conditional(element, false)?;
+            }
+            b"cfRule" if !self.in_ext_lst => self.open_cf_rule(element, false)?,
+            b"formula" if self.cf_rule.is_some() && !self.in_ext_lst => {
+                self.text.clear();
+                self.sink = Sink::CfFormula;
+            }
+            b"colorScale" | b"dataBar" | b"iconSet"
+                if self.cf_rule.is_some() && !self.in_ext_lst =>
+            {
+                self.open_cf_visual(element)?;
+            }
+            b"cfvo" if self.cf_rule.is_some() && !self.in_ext_lst => self.push_cfvo(element)?,
+            b"color" if self.cf_rule.is_some() && !self.in_ext_lst => {
+                self.push_cf_color(element)?;
+            }
             _ => {}
         }
         Ok(())
@@ -281,6 +318,109 @@ impl<'r> SheetParser<'r> {
         Ok(())
     }
 
+    /// Открыть блок `<conditionalFormatting>`; `empty` — элемент закрылся сразу.
+    fn open_conditional(&mut self, element: &BytesStart<'_>, empty: bool) -> Result<()> {
+        let attrs = attributes(element, &self.part)?;
+        let block = ConditionalFormatting {
+            ranges: find(&attrs, "sqref").map_or_else(Vec::new, sqref_ranges),
+            rules: Vec::new(),
+        };
+        if empty {
+            self.conditional_formatting.push(block);
+        } else {
+            self.cf_block = Some(block);
+        }
+        Ok(())
+    }
+
+    /// Открыть правило `<cfRule>`; `empty` — элемент закрылся сразу.
+    fn open_cf_rule(&mut self, element: &BytesStart<'_>, empty: bool) -> Result<()> {
+        let attrs = attributes(element, &self.part)?;
+        let rule = ConditionalRule {
+            priority: rule_priority(&attrs),
+            stop_if_true: find(&attrs, "stopIfTrue").is_some_and(is_true),
+            dxf_id: find(&attrs, "dxfId").and_then(|raw| raw.trim().parse().ok()),
+            kind: rule_kind(&attrs),
+        };
+        if empty {
+            self.finish_cf_rule(rule);
+        } else {
+            self.cf_rule = Some(rule);
+        }
+        Ok(())
+    }
+
+    /// Положить готовое правило в текущий блок.
+    fn finish_cf_rule(&mut self, rule: ConditionalRule) {
+        self.cf_rule = None;
+        if let Some(block) = self.cf_block.as_mut() {
+            block.rules.push(rule);
+        }
+    }
+
+    /// Начать визуальное содержимое правила: шкалу, гистограмму или значки.
+    ///
+    /// Элемент может закрыться сразу (`<iconSet/>`): атрибуты уже прочитаны,
+    /// вложенных порогов тогда не будет.
+    fn open_cf_visual(&mut self, element: &BytesStart<'_>) -> Result<()> {
+        let attrs = attributes(element, &self.part)?;
+        let Some(rule) = self.cf_rule.as_mut() else {
+            return Ok(());
+        };
+        match element.local_name().as_ref() {
+            b"colorScale" => rule.kind = RuleKind::ColorScale(ColorScale::default()),
+            b"dataBar" => {
+                rule.kind = RuleKind::DataBar(DataBar {
+                    show_value: find(&attrs, "showValue").is_none_or(is_true),
+                    ..DataBar::default()
+                });
+            }
+            b"iconSet" => {
+                rule.kind = RuleKind::IconSet(IconSet {
+                    icon_set: find(&attrs, "iconSet").unwrap_or("").to_owned(),
+                    reverse: find(&attrs, "reverse").is_some_and(is_true),
+                    show_value: find(&attrs, "showValue").is_none_or(is_true),
+                    ..IconSet::default()
+                });
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Добавить порог (`<cfvo>`) в визуальное содержимое текущего правила.
+    fn push_cfvo(&mut self, element: &BytesStart<'_>) -> Result<()> {
+        let attrs = attributes(element, &self.part)?;
+        let threshold = Threshold {
+            kind: ThresholdKind::parse(find(&attrs, "type").unwrap_or("")),
+            value: find(&attrs, "val").and_then(|raw| raw.trim().parse().ok()),
+            gte: find(&attrs, "gte").is_none_or(is_true),
+        };
+        if let Some(rule) = self.cf_rule.as_mut() {
+            match &mut rule.kind {
+                RuleKind::ColorScale(scale) => scale.thresholds.push(threshold),
+                RuleKind::DataBar(bar) => bar.thresholds.push(threshold),
+                RuleKind::IconSet(set) => set.thresholds.push(threshold),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Добавить цвет: цвет шкалы или цвет полосы гистограммы.
+    fn push_cf_color(&mut self, element: &BytesStart<'_>) -> Result<()> {
+        let attrs = attributes(element, &self.part)?;
+        let value = color(&attrs);
+        if let Some(rule) = self.cf_rule.as_mut() {
+            match &mut rule.kind {
+                RuleKind::ColorScale(scale) => scale.colors.push(value),
+                RuleKind::DataBar(bar) => bar.color = value,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn on_empty<'a>(&mut self, element: &'a BytesStart<'a>) -> Result<()> {
         match element.local_name().as_ref() {
             // Строка без ячеек: модели она не нужна, но номер занимает —
@@ -301,6 +441,21 @@ impl<'r> SheetParser<'r> {
             }
             b"dimension" | b"sheetFormatPr" | b"col" => self.read_dims(element)?,
             b"sheetView" | b"pane" | b"mergeCell" | b"hyperlink" => self.read_meta(element)?,
+            // Пустые элементы условного форматирования: `<cfvo/>`, `<color/>`,
+            // `<cfRule/>`, `<conditionalFormatting/>` закрываются сразу.
+            b"conditionalFormatting" if !self.in_ext_lst => {
+                self.open_conditional(element, true)?;
+            }
+            b"cfRule" if !self.in_ext_lst => self.open_cf_rule(element, true)?,
+            b"colorScale" | b"dataBar" | b"iconSet"
+                if self.cf_rule.is_some() && !self.in_ext_lst =>
+            {
+                self.open_cf_visual(element)?;
+            }
+            b"cfvo" if self.cf_rule.is_some() && !self.in_ext_lst => self.push_cfvo(element)?,
+            b"color" if self.cf_rule.is_some() && !self.in_ext_lst => {
+                self.push_cf_color(element)?;
+            }
             _ => {}
         }
         Ok(())
@@ -335,6 +490,33 @@ impl<'r> SheetParser<'r> {
             }
             b"row" => self.row = None,
             b"sheetData" => self.in_sheet_data = false,
+            b"formula" if self.sink == Sink::CfFormula => {
+                self.sink = Sink::Idle;
+                let formula = self.text.trim();
+                if !formula.is_empty() {
+                    if let Some(rule) = self.cf_rule.as_mut() {
+                        match &mut rule.kind {
+                            RuleKind::CellIs { formulas, .. }
+                            | RuleKind::Expression { formulas } => {
+                                formulas.push(formula.to_owned());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                self.text.clear();
+            }
+            b"cfRule" if !self.in_ext_lst => {
+                if let Some(rule) = self.cf_rule.take() {
+                    self.finish_cf_rule(rule);
+                }
+            }
+            b"conditionalFormatting" if !self.in_ext_lst => {
+                if let Some(block) = self.cf_block.take() {
+                    self.conditional_formatting.push(block);
+                }
+            }
+            b"extLst" => self.in_ext_lst = false,
             _ => {}
         }
         Ok(())
@@ -387,6 +569,7 @@ impl<'r> SheetParser<'r> {
             view: self.view,
             merges: self.merges,
             hyperlinks: self.hyperlinks,
+            conditional_formatting: self.conditional_formatting,
         })
     }
 }
@@ -434,6 +617,46 @@ fn style_index(attrs: &[Attr<'_>]) -> u32 {
         .unwrap_or(0)
 }
 
+/// Вид правила по атрибуту `type`.
+///
+/// Визуальные виды начинаются пустыми: пороги и цвета добавят вложенные
+/// элементы. Незнакомый вид сохраняется как [`RuleKind::Other`].
+fn rule_kind(attrs: &[Attr<'_>]) -> RuleKind {
+    match find(attrs, "type").unwrap_or("") {
+        "cellIs" => RuleKind::CellIs {
+            operator: CellIsOperator::parse(find(attrs, "operator").unwrap_or("")),
+            formulas: Vec::new(),
+        },
+        "expression" => RuleKind::Expression {
+            formulas: Vec::new(),
+        },
+        "colorScale" => RuleKind::ColorScale(ColorScale::default()),
+        "dataBar" => RuleKind::DataBar(DataBar::default()),
+        "iconSet" => RuleKind::IconSet(IconSet::default()),
+        other => RuleKind::Other {
+            rule_type: other.to_owned(),
+        },
+    }
+}
+
+/// Приоритет правила; битое значение считается нулём.
+fn rule_priority(attrs: &[Attr<'_>]) -> u32 {
+    find(attrs, "priority")
+        .and_then(|raw| raw.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Диапазоны из атрибута `sqref` (`A1:A10 C1:C10`).
+///
+/// Битый токен пропускается: правило с частью диапазонов полезнее, чем
+/// неудачное открытие книги.
+fn sqref_ranges(value: &str) -> Vec<Range> {
+    value
+        .split_whitespace()
+        .filter_map(|token| Range::parse_ref(token).ok())
+        .collect()
+}
+
 /// Значение из текста `<v>` по объявленному типу.
 ///
 /// То, что не разбирается — число, индекс общей строки, код ошибки, — остаётся
@@ -478,7 +701,7 @@ fn as_text(raw: &str) -> CellValue {
 #[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
-    use crate::model::Worksheet;
+    use crate::model::{Color, Worksheet};
 
     const PART: &str = "xl/worksheets/sheet1.xml";
 
@@ -826,5 +1049,218 @@ mod tests {
 
         assert_eq!(ws.cell_count(), 0);
         assert_eq!(ws.last_row(), None);
+    }
+
+    #[test]
+    fn reads_conditional_formatting() {
+        let content = content(
+            r#"<sheetData/>
+               <conditionalFormatting sqref="A1:A10 C1:C10">
+                 <cfRule type="cellIs" dxfId="2" priority="3" operator="between" stopIfTrue="1">
+                   <formula>1</formula>
+                   <formula>5</formula>
+                 </cfRule>
+                 <cfRule type="expression" priority="7">
+                   <formula>LEN($A2)&gt;10</formula>
+                 </cfRule>
+               </conditionalFormatting>"#,
+        );
+
+        assert_eq!(content.conditional_formatting.len(), 1);
+        let block = &content.conditional_formatting[0];
+        assert_eq!(
+            block.ranges,
+            vec![
+                Range::parse_ref("A1:A10").unwrap(),
+                Range::parse_ref("C1:C10").unwrap(),
+            ]
+        );
+        assert_eq!(block.rules.len(), 2);
+
+        let first = &block.rules[0];
+        assert_eq!(first.priority, 3);
+        assert!(first.stop_if_true);
+        assert_eq!(first.dxf_id, Some(2));
+        assert_eq!(
+            first.kind,
+            RuleKind::CellIs {
+                operator: CellIsOperator::Between,
+                formulas: vec!["1".to_owned(), "5".to_owned()],
+            }
+        );
+
+        let second = &block.rules[1];
+        assert_eq!(second.priority, 7);
+        assert!(!second.stop_if_true);
+        assert_eq!(second.dxf_id, None);
+        // Сущность `&gt;` разворачивается в `>`.
+        assert_eq!(
+            second.kind,
+            RuleKind::Expression {
+                formulas: vec!["LEN($A2)>10".to_owned()],
+            }
+        );
+    }
+
+    #[test]
+    fn reads_color_scales_bars_and_icon_sets() {
+        let content = content(
+            r#"<conditionalFormatting sqref="A1:A5">
+                 <cfRule type="colorScale" priority="1">
+                   <colorScale>
+                     <cfvo type="min"/>
+                     <cfvo type="percentile" val="50"/>
+                     <cfvo type="max"/>
+                     <color rgb="FFF8696B"/>
+                     <color theme="5"/>
+                     <color rgb="FF63BE7B"/>
+                   </colorScale>
+                 </cfRule>
+                 <cfRule type="dataBar" priority="2">
+                   <dataBar showValue="0">
+                     <cfvo type="num" val="-50"/>
+                     <cfvo type="num" val="70"/>
+                     <color rgb="FF63BE7B"/>
+                   </dataBar>
+                 </cfRule>
+                 <cfRule type="iconSet" priority="3">
+                   <iconSet iconSet="4Arrows" reverse="1" showValue="0">
+                     <cfvo type="percent" val="0"/>
+                     <cfvo type="percent" val="25"/>
+                     <cfvo type="percent" val="50"/>
+                     <cfvo type="percent" val="75"/>
+                   </iconSet>
+                 </cfRule>
+               </conditionalFormatting>"#,
+        );
+
+        let rules = &content.conditional_formatting[0].rules;
+
+        let RuleKind::ColorScale(scale) = &rules[0].kind else {
+            panic!("ожидалась шкала, а разобрано {:?}", rules[0].kind);
+        };
+        assert_eq!(
+            scale.thresholds,
+            vec![
+                Threshold {
+                    kind: ThresholdKind::Min,
+                    value: None,
+                    gte: true,
+                },
+                Threshold {
+                    kind: ThresholdKind::Percentile,
+                    value: Some(50.0),
+                    gte: true,
+                },
+                Threshold {
+                    kind: ThresholdKind::Max,
+                    value: None,
+                    gte: true,
+                },
+            ]
+        );
+        assert_eq!(
+            scale.colors,
+            vec![
+                Color::Rgb(0xFFF8_696B),
+                Color::Theme(5),
+                Color::Rgb(0xFF63_BE7B),
+            ]
+        );
+
+        let RuleKind::DataBar(bar) = &rules[1].kind else {
+            panic!("ожидалась гистограмма, а разобрано {:?}", rules[1].kind);
+        };
+        assert!(!bar.show_value);
+        assert_eq!(bar.color, Color::Rgb(0xFF63_BE7B));
+        assert_eq!(bar.thresholds.len(), 2);
+        assert_eq!(bar.thresholds[0].kind, ThresholdKind::Number);
+        assert_eq!(bar.thresholds[0].value, Some(-50.0));
+
+        let RuleKind::IconSet(set) = &rules[2].kind else {
+            panic!("ожидался набор значков, а разобрано {:?}", rules[2].kind);
+        };
+        assert_eq!(set.icon_set, "4Arrows");
+        assert!(set.reverse);
+        assert!(!set.show_value);
+        assert_eq!(set.thresholds.len(), 4);
+    }
+
+    #[test]
+    fn conditional_formatting_degrades_gracefully() {
+        let content = content(
+            r#"<conditionalFormatting sqref="">
+                 <cfRule type="top10" priority="не число"/>
+                 <cfRule/>
+               </conditionalFormatting>
+               <conditionalFormatting sqref="бред A1:A2">
+                 <cfRule type="unknown" dxfId="x" priority="2"><formula/></cfRule>
+               </conditionalFormatting>"#,
+        );
+
+        let first = &content.conditional_formatting[0];
+        assert!(first.ranges.is_empty());
+        assert_eq!(first.rules[0].priority, 0);
+        assert_eq!(
+            first.rules[0].kind,
+            RuleKind::Other {
+                rule_type: "top10".to_owned(),
+            }
+        );
+        // Правило без `type` тоже сохраняется.
+        assert_eq!(
+            first.rules[1].kind,
+            RuleKind::Other {
+                rule_type: String::new(),
+            }
+        );
+
+        let second = &content.conditional_formatting[1];
+        // Битый токен пропущен, уцелевший диапазон остался.
+        assert_eq!(second.ranges, vec![Range::parse_ref("A1:A2").unwrap()]);
+        assert_eq!(second.rules[0].dxf_id, None);
+        assert_eq!(
+            second.rules[0].kind,
+            RuleKind::Other {
+                rule_type: "unknown".to_owned(),
+            }
+        );
+    }
+
+    /// Содержимое `<extLst>` — расширения (`x14:cfRule` и прочее) — в модель не
+    /// идёт: иначе правила удвоились бы.
+    #[test]
+    fn conditional_formatting_inside_ext_lst_is_ignored() {
+        let content = content(
+            r#"<conditionalFormatting sqref="A1">
+                 <cfRule type="dataBar" priority="1">
+                   <dataBar><cfvo type="min"/><cfvo type="max"/><color rgb="FF638EC6"/></dataBar>
+                   <extLst>
+                     <ext uri="{X}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">
+                       <x14:id>{00000000-0000-4000-8000-000000000001}</x14:id>
+                     </ext>
+                   </extLst>
+                 </cfRule>
+               </conditionalFormatting>
+               <extLst>
+                 <ext uri="{Y}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">
+                   <x14:conditionalFormattings>
+                     <x14:conditionalFormatting>
+                       <x14:cfRule type="dataBar" id="{1}">
+                         <x14:dataBar><x14:cfvo type="autoMin"/><x14:cfvo type="autoMax"/></x14:dataBar>
+                       </x14:cfRule>
+                       <xm:sqref xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">A1</xm:sqref>
+                     </x14:conditionalFormatting>
+                   </x14:conditionalFormattings>
+                 </ext>
+               </extLst>"#,
+        );
+
+        assert_eq!(content.conditional_formatting.len(), 1);
+        assert_eq!(content.conditional_formatting[0].rules.len(), 1);
+        let RuleKind::DataBar(bar) = &content.conditional_formatting[0].rules[0].kind else {
+            panic!("ожидалась гистограмма");
+        };
+        assert_eq!(bar.thresholds.len(), 2);
     }
 }

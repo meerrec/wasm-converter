@@ -49,9 +49,11 @@ pub use dims::{ColWidth, ColWidths, RowHeight, RowHeights, SheetDims, SheetForma
 pub use error::{Result, XlsxError};
 pub use layout::SheetLayout;
 pub use model::{
-    Border, BorderSide, BorderStyle, Cell, CellError, CellFormat, CellValue, Color, Fill,
-    FillPattern, Font, Sheet, SheetContent, SheetState, StyleTable, Theme, Workbook, Worksheet,
-    WorksheetBuilder, WorksheetMeta, THEME_COLOR_COUNT,
+    Border, BorderSide, BorderStyle, Cell, CellError, CellFormat, CellIsOperator, CellValue, Color,
+    ColorScale, ConditionalFormatting, ConditionalRule, DataBar, Dxf, DxfNumberFormat, Fill,
+    FillPattern, Font, IconSet, RuleKind, Sheet, SheetContent, SheetState, StyleTable, Theme,
+    Threshold, ThresholdKind, Workbook, Worksheet, WorksheetBuilder, WorksheetMeta,
+    THEME_COLOR_COUNT,
 };
 pub use paint::{build as paint_sheet, PaintOptions, Viewport};
 pub use sheet_meta::{Hyperlink, HyperlinkTarget, Merges, Pane, PaneKind, PaneState, SheetView};

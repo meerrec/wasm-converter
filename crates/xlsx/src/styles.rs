@@ -14,10 +14,10 @@ use quick_xml::events::{BytesEnd, BytesStart, Event};
 
 use crate::error::Result;
 use crate::model::{
-    Alignment, Border, BorderSide, BorderStyle, CellFormat, Color, Fill, FillPattern, Font,
-    HorizontalAlign, StyleTable, VerticalAlign,
+    Alignment, Border, BorderSide, BorderStyle, CellFormat, Dxf, DxfNumberFormat, Fill,
+    FillPattern, Font, HorizontalAlign, StyleTable, VerticalAlign,
 };
-use crate::xml::{attributes, find, is_true, Attr};
+use crate::xml::{attributes, color, find, is_true, Attr};
 
 /// Разобрать `xl/styles.xml`.
 ///
@@ -41,7 +41,7 @@ pub fn parse(bytes: &[u8], part: impl Into<String>) -> Result<StyleTable> {
 /// Контейнер верхнего уровня, внутри которого мы находимся.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
-    /// Ничего из интересного: `dxfs`, `tableStyles`, `extLst` и прочее.
+    /// Ничего из интересного: `tableStyles`, `extLst` и прочее.
     Other,
     Fonts,
     Fills,
@@ -49,6 +49,8 @@ enum Section {
     NumberFormats,
     CellStyleXfs,
     CellXfs,
+    /// `dxfs` — дифференциальные форматы условного форматирования.
+    Dxfs,
 }
 
 impl Section {
@@ -61,6 +63,7 @@ impl Section {
             b"numFmts" => Some(Self::NumberFormats),
             b"cellStyleXfs" => Some(Self::CellStyleXfs),
             b"cellXfs" => Some(Self::CellXfs),
+            b"dxfs" => Some(Self::Dxfs),
             _ => None,
         }
     }
@@ -156,9 +159,13 @@ struct StyleParser {
     fills: Vec<Fill>,
     borders: Vec<Border>,
     number_formats: BTreeMap<u32, String>,
+    /// `dxfs` — дифференциальные форматы для условного форматирования.
+    dxfs: Vec<Dxf>,
     /// `cellStyleXfs` — базовые форматы для цепочки `xfId`.
     base_formats: Vec<CellFormat>,
     raw_formats: Vec<RawFormat>,
+    /// `dxf`, который сейчас собирается.
+    dxf: Option<Dxf>,
     font: Option<Font>,
     fill: Option<Fill>,
     border: Option<Border>,
@@ -174,8 +181,10 @@ impl StyleParser {
             fills: Vec::new(),
             borders: Vec::new(),
             number_formats: BTreeMap::new(),
+            dxfs: Vec::new(),
             base_formats: Vec::new(),
             raw_formats: Vec::new(),
+            dxf: None,
             font: None,
             fill: None,
             border: None,
@@ -210,23 +219,25 @@ impl StyleParser {
                     self.section = Section::from_name(name.as_ref()).unwrap_or(Section::Other);
                 }
             }
-            b"font" if self.section == Section::Fonts => {
+            b"dxf" if self.section == Section::Dxfs => {
+                self.dxf = Some(Dxf::default());
+                if !is_start {
+                    self.finish_dxf();
+                }
+            }
+            b"font" if matches!(self.section, Section::Fonts | Section::Dxfs) => {
                 self.font = Some(Font::default());
                 if !is_start {
-                    if let Some(font) = self.font.take() {
-                        self.fonts.push(font);
-                    }
+                    self.finish_font();
                 }
             }
-            b"fill" if self.section == Section::Fills => {
+            b"fill" if matches!(self.section, Section::Fills | Section::Dxfs) => {
                 self.fill = Some(Fill::default());
                 if !is_start {
-                    if let Some(fill) = self.fill.take() {
-                        self.fills.push(fill);
-                    }
+                    self.finish_fill();
                 }
             }
-            b"border" if self.section == Section::Borders => {
+            b"border" if matches!(self.section, Section::Borders | Section::Dxfs) => {
                 let border = Border {
                     diagonal_up: find(&attrs, "diagonalUp").is_some_and(is_true),
                     diagonal_down: find(&attrs, "diagonalDown").is_some_and(is_true),
@@ -234,9 +245,7 @@ impl StyleParser {
                 };
                 self.border = Some(border);
                 if !is_start {
-                    if let Some(border) = self.border.take() {
-                        self.borders.push(border);
-                    }
+                    self.finish_border();
                 }
             }
             b"patternFill" => {
@@ -300,7 +309,10 @@ impl StyleParser {
             }
             b"xf" => self.push_format(&attrs),
             // Выравнивание вложено в `xf` и относится к последнему из них.
-            b"alignment" => self.set_alignment(&attrs),
+            // В `dxf` оно не разбирается, но и не должно достаться чужому `xf`.
+            b"alignment" if matches!(self.section, Section::CellStyleXfs | Section::CellXfs) => {
+                self.set_alignment(&attrs);
+            }
             b"numFmt" => self.push_number_format(&attrs),
             _ => {}
         }
@@ -316,23 +328,61 @@ impl StyleParser {
             return;
         }
         match name.as_ref() {
-            b"font" => {
-                if let Some(font) = self.font.take() {
-                    self.fonts.push(font);
-                }
-            }
-            b"fill" => {
-                if let Some(fill) = self.fill.take() {
-                    self.fills.push(fill);
-                }
-            }
-            b"border" => {
-                if let Some(border) = self.border.take() {
-                    self.borders.push(border);
-                }
-            }
+            b"font" => self.finish_font(),
+            b"fill" => self.finish_fill(),
+            b"border" => self.finish_border(),
+            b"dxf" => self.finish_dxf(),
             b"left" | b"right" | b"top" | b"bottom" | b"diagonal" => self.side = None,
             _ => {}
+        }
+    }
+
+    /// Закрыть `<font>`: либо в таблицу шрифтов, либо в текущий `dxf`.
+    fn finish_font(&mut self) {
+        let Some(font) = self.font.take() else {
+            return;
+        };
+        if self.section == Section::Dxfs {
+            if let Some(dxf) = self.dxf.as_mut() {
+                dxf.font = Some(font);
+                return;
+            }
+        }
+        self.fonts.push(font);
+    }
+
+    /// Закрыть `<fill>`: либо в таблицу заливок, либо в текущий `dxf`.
+    fn finish_fill(&mut self) {
+        let Some(fill) = self.fill.take() else {
+            return;
+        };
+        if self.section == Section::Dxfs {
+            if let Some(dxf) = self.dxf.as_mut() {
+                dxf.fill = Some(fill);
+                return;
+            }
+        }
+        self.fills.push(fill);
+    }
+
+    /// Закрыть `<border>`: либо в таблицу рамок, либо в текущий `dxf`.
+    fn finish_border(&mut self) {
+        let Some(border) = self.border.take() else {
+            return;
+        };
+        if self.section == Section::Dxfs {
+            if let Some(dxf) = self.dxf.as_mut() {
+                dxf.border = Some(border);
+                return;
+            }
+        }
+        self.borders.push(border);
+    }
+
+    /// Закрыть `<dxf>`.
+    fn finish_dxf(&mut self) {
+        if let Some(dxf) = self.dxf.take() {
+            self.dxfs.push(dxf);
         }
     }
 
@@ -394,15 +444,20 @@ impl StyleParser {
         };
     }
 
-    /// Записать пользовательский формат числа.
+    /// Записать формат числа: в таблицу `numFmts` или в текущий `dxf`.
     fn push_number_format(&mut self, attrs: &[Attr<'_>]) {
-        let (Some(id), Some(code)) = (find(attrs, "numFmtId"), find(attrs, "formatCode")) else {
+        let id = find(attrs, "numFmtId").and_then(|raw| raw.trim().parse::<u32>().ok());
+        let code = find(attrs, "formatCode").map(str::to_owned);
+        if self.section == Section::Dxfs {
+            if let Some(dxf) = self.dxf.as_mut() {
+                dxf.number_format = Some(DxfNumberFormat { id, code });
+            }
+            return;
+        }
+        let (Some(id), Some(code)) = (id, code) else {
             return;
         };
-        let Ok(id) = id.trim().parse() else {
-            return;
-        };
-        self.number_formats.insert(id, code.to_owned());
+        self.number_formats.insert(id, code);
     }
 
     /// Разрешить `cellXfs` через базовые форматы.
@@ -412,6 +467,7 @@ impl StyleParser {
             fills,
             borders,
             number_formats,
+            dxfs,
             base_formats,
             raw_formats,
             ..
@@ -422,7 +478,7 @@ impl StyleParser {
             .map(|raw| raw.resolve(base_formats.get(raw.base as usize)))
             .collect();
 
-        StyleTable::new(formats, fonts, fills, borders, number_formats)
+        StyleTable::new(formats, fonts, fills, borders, number_formats).with_dxfs(dxfs)
     }
 }
 
@@ -438,38 +494,13 @@ fn flag(attrs: &[Attr<'_>], name: &str) -> Option<bool> {
     find(attrs, name).map(is_true)
 }
 
-/// Цвет из атрибутов `rgb`, `theme` или `indexed`.
-///
-/// `rgb` бывает восьмизначным (`AARRGGBB`) и шестизначным (`RRGGBB`); во втором
-/// случае альфы в файле нет, и она считается непрозрачной.
-fn color(attrs: &[Attr<'_>]) -> Color {
-    if let Some(rgb) = find(attrs, "rgb") {
-        let digits = rgb.trim().trim_start_matches('#');
-        if let Ok(value) = u32::from_str_radix(digits, 16) {
-            // Шестизначная запись — это `RRGGBB` без альфы, а не полностью
-            // прозрачный цвет: без этой поправки заливки исчезали бы.
-            return Color::Rgb(if digits.len() <= 6 {
-                value | 0xFF00_0000
-            } else {
-                value
-            });
-        }
-    }
-    if let Some(theme) = find(attrs, "theme").and_then(|value| value.trim().parse().ok()) {
-        return Color::Theme(theme);
-    }
-    if let Some(indexed) = find(attrs, "indexed").and_then(|value| value.trim().parse().ok()) {
-        return Color::Indexed(indexed);
-    }
-    Color::None
-}
-
 #[cfg(test)]
 // Кегли в тестах — точные литералы (`11`, `14.5`), оба представимы в `f32`,
 // поэтому сравнение на равенство здесь осмысленно.
 #[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
+    use crate::model::Color;
 
     const PART: &str = "xl/styles.xml";
 
@@ -676,5 +707,104 @@ mod tests {
         assert_eq!(table.borders().count(), 1);
         assert_eq!(table.len(), 1);
         assert!(table.border(0).unwrap().diagonal_down);
+    }
+
+    #[test]
+    fn reads_dxfs() {
+        let table = styles(
+            r#"<dxfs count="3">
+                 <dxf><font><b/><color rgb="FF9C0006"/></font></dxf>
+                 <dxf>
+                   <fill><patternFill patternType="solid"><fgColor rgb="FFFFC7CE"/></patternFill></fill>
+                   <numFmt numFmtId="164" formatCode="0.00%"/>
+                 </dxf>
+                 <dxf><border><top style="thin"><color rgb="FF000000"/></top></border></dxf>
+               </dxfs>"#,
+        );
+
+        assert_eq!(table.dxfs().count(), 3);
+
+        let first = table.dxf(0).unwrap();
+        let font = first.font.as_ref().unwrap();
+        assert!(font.bold);
+        assert_eq!(font.color, Color::Rgb(0xFF9C_0006));
+        assert_eq!(first.fill, None);
+
+        let second = table.dxf(1).unwrap();
+        let fill = second.fill.as_ref().unwrap();
+        assert_eq!(fill.pattern, FillPattern::Solid);
+        assert_eq!(fill.foreground, Color::Rgb(0xFFFF_C7CE));
+        let num_fmt = second.number_format.as_ref().unwrap();
+        assert_eq!(num_fmt.id, Some(164));
+        assert_eq!(num_fmt.code.as_deref(), Some("0.00%"));
+
+        let border = table.dxf(2).unwrap().border.as_ref().unwrap();
+        assert_eq!(border.top.style, BorderStyle::Thin);
+        assert_eq!(border.top.color, Color::Rgb(0xFF00_0000));
+        assert_eq!(table.dxf(3), None);
+    }
+
+    #[test]
+    fn dxf_groups_are_optional() {
+        let table = styles(r#"<dxfs count="1"><dxf/></dxfs>"#);
+
+        assert_eq!(table.dxfs().count(), 1);
+        assert_eq!(table.dxf(0).unwrap(), &Dxf::default());
+    }
+
+    #[test]
+    fn dxf_groups_do_not_leak_into_their_tables() {
+        let table = styles(
+            r#"<fonts><font><name val="Calibri"/></font></fonts>
+               <fills><fill><patternFill patternType="gray125"/></fill></fills>
+               <borders><border><top style="thin"/></border></borders>
+               <dxfs>
+                 <dxf>
+                   <font><b/></font>
+                   <fill><patternFill patternType="solid"/></fill>
+                   <border><bottom style="double"/></border>
+                 </dxf>
+               </dxfs>"#,
+        );
+
+        assert_eq!(table.fonts().count(), 1);
+        assert_eq!(table.fills().count(), 1);
+        assert_eq!(table.borders().count(), 1);
+        assert_eq!(table.font(0).unwrap().name, "Calibri");
+        assert!(!table.font(0).unwrap().bold);
+        assert_eq!(table.fill(0).unwrap().pattern, FillPattern::Gray125);
+        assert_eq!(table.border(0).unwrap().top.style, BorderStyle::Thin);
+
+        let dxf = table.dxf(0).unwrap();
+        assert!(dxf.font.as_ref().unwrap().bold);
+        assert_eq!(dxf.fill.as_ref().unwrap().pattern, FillPattern::Solid);
+        assert_eq!(
+            dxf.border.as_ref().unwrap().bottom.style,
+            BorderStyle::Double
+        );
+    }
+
+    /// Выравнивание в `dxf` модель не разбирает, но оно не должно достаться
+    /// последнему `xf` из `cellXfs`.
+    #[test]
+    fn dxf_alignment_does_not_reach_cell_formats() {
+        let table = styles(
+            r#"<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+               <dxfs count="1"><dxf><alignment horizontal="center"/></dxf></dxfs>"#,
+        );
+
+        assert_eq!(table.get(0).unwrap().alignment, Alignment::default());
+        assert_eq!(table.dxf(0).unwrap(), &Dxf::default());
+    }
+
+    #[test]
+    fn dxf_number_format_without_id_stays_in_the_dxf() {
+        let table = styles(r#"<dxfs><dxf><numFmt formatCode="0.0"/></dxf></dxfs>"#);
+
+        let num_fmt = table.dxf(0).unwrap().number_format.as_ref().unwrap();
+        assert_eq!(num_fmt.id, None);
+        assert_eq!(num_fmt.code.as_deref(), Some("0.0"));
+        // В таблицу пользовательских форматов запись не попала.
+        assert_eq!(table.number_formats().count(), 0);
     }
 }

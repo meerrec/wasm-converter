@@ -15,6 +15,7 @@ use quick_xml::XmlVersion;
 use smallvec::SmallVec;
 
 use crate::error::{Result, XlsxError};
+use crate::model::Color;
 
 /// Атрибут: локальное имя без префикса и развёрнутое значение.
 #[derive(Debug)]
@@ -65,6 +66,32 @@ pub(crate) fn find<'a>(attrs: &'a [Attr<'_>], name: &str) -> Option<&'a str> {
 /// `xsd:boolean`: истина — `1` или `true`.
 pub(crate) fn is_true(value: &str) -> bool {
     matches!(value, "1" | "true")
+}
+
+/// Цвет из атрибутов `rgb`, `theme` или `indexed`.
+///
+/// `rgb` бывает восьмизначным (`AARRGGBB`) и шестизначным (`RRGGBB`); во втором
+/// случае альфы в файле нет, и она считается непрозрачной.
+pub(crate) fn color(attrs: &[Attr<'_>]) -> Color {
+    if let Some(rgb) = find(attrs, "rgb") {
+        let digits = rgb.trim().trim_start_matches('#');
+        if let Ok(value) = u32::from_str_radix(digits, 16) {
+            // Шестизначная запись — это `RRGGBB` без альфы, а не полностью
+            // прозрачный цвет: без этой поправки заливки исчезали бы.
+            return Color::Rgb(if digits.len() <= 6 {
+                value | 0xFF00_0000
+            } else {
+                value
+            });
+        }
+    }
+    if let Some(theme) = find(attrs, "theme").and_then(|value| value.trim().parse().ok()) {
+        return Color::Theme(theme);
+    }
+    if let Some(indexed) = find(attrs, "indexed").and_then(|value| value.trim().parse().ok()) {
+        return Color::Indexed(indexed);
+    }
+    Color::None
 }
 
 /// Развернуть ссылку на сущность (`&amp;`, `&#65;`, `&#x41;`) в текст.

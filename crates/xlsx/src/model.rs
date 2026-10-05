@@ -639,6 +639,8 @@ pub struct StyleTable {
     borders: Vec<Border>,
     /// Пользовательские форматы чисел: `numFmtId` → код формата.
     number_formats: BTreeMap<u32, String>,
+    /// Дифференциальные форматы (`dxfs`) для условного форматирования.
+    dxfs: Vec<Dxf>,
 }
 
 impl StyleTable {
@@ -658,6 +660,7 @@ impl StyleTable {
             fills,
             borders,
             number_formats,
+            dxfs: Vec::new(),
         }
     }
 
@@ -744,6 +747,262 @@ impl StyleTable {
         self.number_formats
             .iter()
             .map(|(&id, code)| (id, code.as_str()))
+    }
+
+    /// Добавить дифференциальные форматы (`dxfs`), разобранные из `styles.xml`.
+    ///
+    /// Отдельным шагом, а не аргументом [`StyleTable::new`]: таблица нужна и
+    /// без условного форматирования, а `dxfs` — необязательная секция.
+    #[must_use]
+    pub fn with_dxfs(mut self, dxfs: Vec<Dxf>) -> Self {
+        self.dxfs = dxfs;
+        self
+    }
+
+    /// Дифференциальный формат по индексу из `dxfId` правила.
+    ///
+    /// `None` — индекс вне `dxfs`: правило без формата, его нечем применить.
+    #[must_use]
+    pub fn dxf(&self, index: u32) -> Option<&Dxf> {
+        self.dxfs.get(index as usize)
+    }
+
+    /// Все дифференциальные форматы в порядке индексов.
+    pub fn dxfs(&self) -> impl Iterator<Item = &Dxf> {
+        self.dxfs.iter()
+    }
+}
+
+/// Дифференциальный формат (`<dxf>`): изменения поверх формата ячейки.
+///
+/// На него ссылается правило условного форматирования (`dxfId`). Группы
+/// необязательны: `None` — формат эту группу не трогает. Внутри группы значения
+/// по умолчанию тоже означают «не задано»: например, `Font::bold == false`
+/// полужирность не включает, но и не гарантирует её снятия — OOXML не различает
+/// эти случаи.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Dxf {
+    /// Шрифт.
+    pub font: Option<Font>,
+    /// Заливка.
+    pub fill: Option<Fill>,
+    /// Рамка.
+    pub border: Option<Border>,
+    /// Формат числа.
+    pub number_format: Option<DxfNumberFormat>,
+}
+
+/// Формат числа внутри `dxf`.
+///
+/// В отличие от `cellXfs`, здесь код может лежать прямо в элементе, без ссылки
+/// на секцию `numFmts`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DxfNumberFormat {
+    /// `numFmtId` — ссылка на встроенный или пользовательский код.
+    pub id: Option<u32>,
+    /// `formatCode` — код, записанный прямо в `dxf`.
+    pub code: Option<String>,
+}
+
+/// Блок `<conditionalFormatting>`: диапазоны и действующие на них правила.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConditionalFormatting {
+    /// Диапазоны из атрибута `sqref`; в файле их бывает несколько через пробел.
+    pub ranges: Vec<Range>,
+    /// Правила в порядке файла; очерёдность применения задаёт
+    /// [`ConditionalRule::priority`], а не этот порядок.
+    pub rules: Vec<ConditionalRule>,
+}
+
+/// Правило `<cfRule>`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConditionalRule {
+    /// Приоритет: меньшее число применяется раньше.
+    ///
+    /// В ECMA-376 атрибут `priority` обязателен; при его отсутствии или
+    /// нечисловом значении правило получает 0 и проверяется первым. Это
+    /// допущение разбора, а не требование формата.
+    pub priority: u32,
+    /// Остановить проверку следующих правил, если это истинно (`stopIfTrue`).
+    pub stop_if_true: bool,
+    /// Индекс дифференциального формата в [`StyleTable::dxf`]; `None` — формат
+    /// не задан: так записаны шкалы, гистограммы и значки, и так же выглядит
+    /// правило с потерянным `dxfId`.
+    pub dxf_id: Option<u32>,
+    /// Содержимое правила.
+    pub kind: RuleKind,
+}
+
+/// Содержимое правила условного форматирования.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuleKind {
+    /// `cellIs`: значение ячейки сравнивается с формулами.
+    CellIs {
+        /// Оператор сравнения.
+        operator: CellIsOperator,
+        /// Формулы: одна у бинарных операторов, две у `between`/`notBetween`.
+        formulas: Vec<String>,
+    },
+    /// `expression`: правило срабатывает, когда истинна формула.
+    Expression {
+        /// Формулы правила (Excel пишет одну).
+        formulas: Vec<String>,
+    },
+    /// `colorScale`: цвет ячейки по её значению.
+    ColorScale(ColorScale),
+    /// `dataBar`: полоса пропорционально значению.
+    DataBar(DataBar),
+    /// `iconSet`: значок по значению.
+    IconSet(IconSet),
+    /// Вид, который модель не разбирает (`top10`, `aboveAverage`,
+    /// `containsText`, `timePeriod`, …). Имя вида сохраняется, чтобы потребитель
+    /// мог отличить правило и решить, поддерживать ли его.
+    Other {
+        /// Значение атрибута `type`, как оно записано в файле.
+        rule_type: String,
+    },
+}
+
+/// Оператор правила `cellIs` (`ST_ConditionalFormattingOperator`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CellIsOperator {
+    /// `<`.
+    LessThan,
+    /// `<=`.
+    LessThanOrEqual,
+    /// `=`; сюда же сводится отсутствующий или незнакомый оператор — иначе
+    /// правило нельзя было бы вычислить (допущение разбора).
+    #[default]
+    Equal,
+    /// `<>`.
+    NotEqual,
+    /// `>=`.
+    GreaterThanOrEqual,
+    /// `>`.
+    GreaterThan,
+    /// Между двумя формулами включительно.
+    Between,
+    /// Вне двух формул.
+    NotBetween,
+}
+
+impl CellIsOperator {
+    /// Оператор по значению `operator`; незнакомое значение считается равенством.
+    #[must_use]
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "lessThan" => Self::LessThan,
+            "lessThanOrEqual" => Self::LessThanOrEqual,
+            "notEqual" => Self::NotEqual,
+            "greaterThanOrEqual" => Self::GreaterThanOrEqual,
+            "greaterThan" => Self::GreaterThan,
+            "between" => Self::Between,
+            "notBetween" => Self::NotBetween,
+            _ => Self::Equal,
+        }
+    }
+}
+
+/// Порог условного правила (`<cfvo>`): точка на шкале значений.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Threshold {
+    /// Как считается значение порога.
+    pub kind: ThresholdKind,
+    /// `val` — значение для числовых порогов и формул; у `min`/`max` его нет:
+    /// границы берутся из данных.
+    pub value: Option<f64>,
+    /// `gte`: значение, равное порогу, попадает в диапазон. По умолчанию
+    /// включено — так описывает атрибут ECMA-376.
+    pub gte: bool,
+}
+
+/// Вид порога (`type` у `<cfvo>`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThresholdKind {
+    /// Минимум диапазона (`min`).
+    Min,
+    /// Максимум диапазона (`max`).
+    Max,
+    /// Число (`num`); незнакомый вид тоже считается числом.
+    #[default]
+    Number,
+    /// Процент от диапазона (`percent`), 0…100.
+    Percent,
+    /// Процентиль (`percentile`), 0…100.
+    Percentile,
+    /// Формула (`formula`): значение вычисляется выражением.
+    Formula,
+}
+
+impl ThresholdKind {
+    /// Вид порога по значению `type`; незнакомое значение считается числом.
+    #[must_use]
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "min" => Self::Min,
+            "max" => Self::Max,
+            "percent" => Self::Percent,
+            "percentile" => Self::Percentile,
+            "formula" => Self::Formula,
+            _ => Self::Number,
+        }
+    }
+}
+
+/// Цветовая шкала (`<colorScale>`): два или три порога и столько же цветов.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ColorScale {
+    /// Пороги, как записаны в файле.
+    pub thresholds: Vec<Threshold>,
+    /// Цвета; в файле их столько же, сколько порогов.
+    pub colors: Vec<Color>,
+}
+
+/// Гистограмма (`<dataBar>`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DataBar {
+    /// Пороги длины полосы; обычно `min` и `max`.
+    pub thresholds: Vec<Threshold>,
+    /// Цвет полосы.
+    pub color: Color,
+    /// Показывать значение ячейки (`showValue`); умолчание ECMA-376 — да.
+    pub show_value: bool,
+}
+
+impl Default for DataBar {
+    /// Значение показывается, пока в файле не сказано обратное.
+    fn default() -> Self {
+        Self {
+            thresholds: Vec::new(),
+            color: Color::None,
+            show_value: true,
+        }
+    }
+}
+
+/// Набор значков (`<iconSet>`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct IconSet {
+    /// Имя набора из атрибута `iconSet` (`3TrafficLights1`, `4Arrows`, …);
+    /// пустая строка — атрибута не было, действует умолчание Excel.
+    pub icon_set: String,
+    /// Обратный порядок значков (`reverse`).
+    pub reverse: bool,
+    /// Показывать значение ячейки (`showValue`); умолчание ECMA-376 — да.
+    pub show_value: bool,
+    /// Пороги, по одному на значок.
+    pub thresholds: Vec<Threshold>,
+}
+
+impl Default for IconSet {
+    /// Значение показывается, пока в файле не сказано обратное.
+    fn default() -> Self {
+        Self {
+            icon_set: String::new(),
+            reverse: false,
+            show_value: true,
+            thresholds: Vec::new(),
+        }
     }
 }
 
@@ -865,6 +1124,8 @@ pub struct SheetContent {
     pub merges: Merges,
     /// Гиперссылки.
     pub hyperlinks: Vec<Hyperlink>,
+    /// Условное форматирование.
+    pub conditional_formatting: Vec<ConditionalFormatting>,
 }
 
 /// Лист книги: метаданные из каталога и разобранное содержимое.
@@ -882,6 +1143,8 @@ pub struct Sheet {
     pub merges: Merges,
     /// Гиперссылки.
     pub hyperlinks: Vec<Hyperlink>,
+    /// Условное форматирование.
+    pub conditional_formatting: Vec<ConditionalFormatting>,
 }
 
 impl Sheet {
@@ -895,6 +1158,7 @@ impl Sheet {
             view: content.view,
             merges: content.merges,
             hyperlinks: content.hyperlinks,
+            conditional_formatting: content.conditional_formatting,
         }
     }
 
@@ -1258,6 +1522,63 @@ mod tests {
         );
         assert_eq!(CellValue::Number(1.0).text(&strings), None);
         assert_eq!(CellValue::Empty.text(&strings), None);
+    }
+
+    #[test]
+    fn cell_is_operators_parse_and_degrade() {
+        let cases = [
+            ("lessThan", CellIsOperator::LessThan),
+            ("lessThanOrEqual", CellIsOperator::LessThanOrEqual),
+            ("equal", CellIsOperator::Equal),
+            ("notEqual", CellIsOperator::NotEqual),
+            ("greaterThanOrEqual", CellIsOperator::GreaterThanOrEqual),
+            ("greaterThan", CellIsOperator::GreaterThan),
+            ("between", CellIsOperator::Between),
+            ("notBetween", CellIsOperator::NotBetween),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(CellIsOperator::parse(raw), expected, "{raw}");
+        }
+        // Незнакомый оператор сводится к равенству, а не роняет разбор.
+        assert_eq!(CellIsOperator::parse("beginsWith"), CellIsOperator::Equal);
+        assert_eq!(CellIsOperator::parse(""), CellIsOperator::Equal);
+    }
+
+    #[test]
+    fn threshold_kinds_parse_and_degrade() {
+        let cases = [
+            ("min", ThresholdKind::Min),
+            ("max", ThresholdKind::Max),
+            ("num", ThresholdKind::Number),
+            ("percent", ThresholdKind::Percent),
+            ("percentile", ThresholdKind::Percentile),
+            ("formula", ThresholdKind::Formula),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(ThresholdKind::parse(raw), expected, "{raw}");
+        }
+        // Незнакомый вид считается числом: `val` у него осмыслен.
+        assert_eq!(ThresholdKind::parse("autoMin"), ThresholdKind::Number);
+        assert_eq!(ThresholdKind::parse(""), ThresholdKind::Number);
+    }
+
+    #[test]
+    fn visual_rules_show_the_value_by_default() {
+        assert!(DataBar::default().show_value);
+        assert!(IconSet::default().show_value);
+        assert!(ColorScale::default().thresholds.is_empty());
+        assert!(IconSet::default().thresholds.is_empty());
+    }
+
+    #[test]
+    fn dxf_defaults_to_touching_nothing() {
+        let dxf = Dxf::default();
+
+        assert_eq!(dxf, Dxf::default());
+        assert_eq!(dxf.font, None);
+        assert_eq!(dxf.fill, None);
+        assert_eq!(dxf.border, None);
+        assert_eq!(dxf.number_format, None);
     }
 }
 
