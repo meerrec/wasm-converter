@@ -217,7 +217,7 @@ impl<'a> RuleIndex<'a> {
                 color_scale(book.theme(), scale, &thresholds.values, value)
             }
             VisualRule::DataBar(bar) => data_bar(book.theme(), bar, &thresholds.values, value),
-            VisualRule::IconSet(set) => icon_set(set, &thresholds.values, value),
+            VisualRule::IconSet(set, shape) => icon_set(set, shape, &thresholds.values, value),
         }
     }
 
@@ -526,7 +526,34 @@ fn side(side: BorderSide) -> Option<BorderSide> {
 enum VisualRule<'a> {
     ColorScale(&'a ColorScale),
     DataBar(&'a DataBar),
-    IconSet(&'a IconSet),
+    /// Набор значков и разобранная форма глифов: имя набора ищется подстрокой,
+    /// и в горячем пути (оформление ячейки спрашивается по нескольку раз на
+    /// ячейку) этот поиск стоил дороже всей раскладки листа.
+    IconSet(&'a IconSet, IconShape),
+}
+
+/// Форма значков набора — категория имени `iconSet`, разобранная один раз.
+#[derive(Debug, Clone, Copy)]
+enum IconShape {
+    /// Наборы со стрелками (`3Arrows`, `4Arrows`, `5Arrows`, …).
+    Arrows,
+    /// Звёзды и рейтинги (`3Stars`, `5Rating`, …).
+    Star,
+    /// Остальные наборы: светофоры, флаги, четверти, символы, знаки.
+    Other,
+}
+
+impl IconShape {
+    /// Категория по имени набора; повторяет прежние проверки `str::contains`.
+    fn of(icon_set: &str) -> Self {
+        if icon_set.contains("Arrow") {
+            Self::Arrows
+        } else if icon_set.contains("Star") || icon_set.contains("Rating") {
+            Self::Star
+        } else {
+            Self::Other
+        }
+    }
 }
 
 impl<'a> VisualRule<'a> {
@@ -544,7 +571,7 @@ impl<'a> VisualRule<'a> {
                 Self::ColorScale(scale)
             }
             RuleKind::DataBar(bar) => Self::DataBar(bar),
-            RuleKind::IconSet(set) => Self::IconSet(set),
+            RuleKind::IconSet(set) => Self::IconSet(set, IconShape::of(&set.icon_set)),
             _ => return None,
         };
         (rule.thresholds().len() >= 2).then_some(rule)
@@ -555,7 +582,7 @@ impl<'a> VisualRule<'a> {
         match self {
             Self::ColorScale(scale) => &scale.thresholds,
             Self::DataBar(bar) => &bar.thresholds,
-            Self::IconSet(set) => &set.thresholds,
+            Self::IconSet(set, _) => &set.thresholds,
         }
     }
 }
@@ -816,7 +843,7 @@ fn bar_span(low: f64, high: f64, value: f64) -> (f32, f32) {
 }
 
 /// Значок набора по значению.
-fn icon_set(set: &IconSet, values: &[f64], value: f64) -> Option<Visual> {
+fn icon_set(set: &IconSet, shape: IconShape, values: &[f64], value: f64) -> Option<Visual> {
     let count = values.len();
     let mut level = 0;
     for (index, (threshold, cfvo)) in values.iter().zip(&set.thresholds).enumerate() {
@@ -841,7 +868,7 @@ fn icon_set(set: &IconSet, values: &[f64], value: f64) -> Option<Visual> {
         level
     };
     Some(Visual::Icon {
-        glyph: icon_glyph(&set.icon_set, shown, count),
+        glyph: icon_glyph(shape, shown, count),
         color: icon_color(shown, count),
         show_value: set.show_value,
     })
@@ -858,25 +885,25 @@ fn icon_set(set: &IconSet, values: &[f64], value: f64) -> Option<Visual> {
 /// Растровые значки Excel не воспроизводим: направление несут только наборы
 /// стрелок, у остальных наборов форма одна, а уровень виден по цвету.
 #[allow(clippy::cast_precision_loss)]
-fn icon_glyph(icon_set: &str, shown: usize, count: usize) -> &'static str {
+fn icon_glyph(shape: IconShape, shown: usize, count: usize) -> &'static str {
     let position = if count > 1 {
         shown as f32 / (count - 1) as f32
     } else {
         0.0
     };
-    if icon_set.contains("Arrow") {
-        if position < 1.0 / 3.0 {
-            "▼"
-        } else if position > 2.0 / 3.0 {
-            "▲"
-        } else {
-            "●"
+    match shape {
+        IconShape::Arrows => {
+            if position < 1.0 / 3.0 {
+                "▼"
+            } else if position > 2.0 / 3.0 {
+                "▲"
+            } else {
+                "●"
+            }
         }
-    } else if icon_set.contains("Star") || icon_set.contains("Rating") {
-        "★"
-    } else {
+        IconShape::Star => "★",
         // 3TrafficLights1, 5Quarters, 3Flags, 4Boxes, 3Symbols, 3Signs, …
-        "●"
+        IconShape::Other => "●",
     }
 }
 
@@ -2109,6 +2136,21 @@ mod tests {
             icon_of(visual_of(&book, &index, 2, 0)),
             ("▲", Rgba(0x63BE_7BFF), true)
         );
+    }
+
+    /// Звёзды и рейтинги рисуются одним глифом на любом уровне.
+    #[test]
+    fn star_sets_use_the_star_glyph() {
+        for name in ["3Stars", "5Rating"] {
+            let mut set = three_arrow_set(false, true);
+            set.icon_set = name.into();
+            let book = book_with_visual(RuleKind::IconSet(set), &[(0, 0, 10.0), (1, 0, 100.0)]);
+            let sheet = &book.sheets()[0];
+            let index = RuleIndex::new(&book, sheet);
+
+            assert_eq!(icon_of(visual_of(&book, &index, 0, 0)).0, "★", "{name}");
+            assert_eq!(icon_of(visual_of(&book, &index, 1, 0)).0, "★", "{name}");
+        }
     }
 
     #[test]
