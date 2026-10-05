@@ -11,3 +11,22 @@ doc-converter-render = { workspace = true }
 serde                = { workspace = true }
 quick-xml            = { workspace = true }
 thiserror            = { workspace = true }
+miette               = { workspace = true }
+chrono               = { workspace = true }
+smallvec             = { workspace = true }
+
+[dev-dependencies]
+# Сквозные тесты и замеры собирают пакет в памяти, как это делает настоящий Excel.
+zip = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "open"
+harness = false
+
+# proptest тянет rand → getrandom, который не собирается под wasm32 без
+# `getrandom_backend="wasm_js"`; эти dev-зависимости нужны только нативным тестам.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+proptest = { workspace = true }
+# Эталон дифференциального теста — JSON от exceljs.
+serde_json = { workspace = true }

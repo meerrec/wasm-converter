@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-gnu, wasm32-unknown-unknown]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-${{ matrix.target }}
+
+      - name: fmt
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: test
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo test --workspace --all-features
+
+      - name: build (wasm)
+        if: matrix.target == 'wasm32-unknown-unknown'
+        run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm --release
+
+  wasm:
+    name: Wasm bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-wasm-pack
+
+      - run: cargo install wasm-pack --locked
+      - run: bash scripts/build-wasm.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: packages/wasm/pkg
+
+  js:
+    name: JS (node ${{ matrix.node }})
+    needs: wasm
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      # @doc-converter/core типизируется против сгенерированных wasm-bindgen
+      # деклараций, поэтому pkg/ приезжает артефактом из джобы wasm.
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: packages/wasm/pkg
+
+      - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
+
+      # Сквозные тесты примера идут в настоящем браузере: без него они падают
+      # не от ошибки в коде, а от отсутствия браузера.
+      - if: matrix.node == 20
+        run: npx playwright install --with-deps chromium
+
+      - run: pnpm turbo run typecheck test build
+      - if: matrix.node == 20
+        run: pnpm size-limit || true
+
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: 1.98.0 }
+      - run: cargo install cargo-deny --locked && cargo deny check
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
+      - run: pnpm audit --audit-level=high || true

@@ -1,0 +1,5 @@
+[resolver]
+# Держать резолвинг в рамках заявленного MSRV: rust-version = "1.82" в
+# workspace/Cargo.toml. Без этого свежие релизы (time, icu_*, encoding_rs)
+# требуют rustc >= 1.88, и объявленный MSRV перестаёт быть правдой.
+incompatible-rust-versions = "fallback"

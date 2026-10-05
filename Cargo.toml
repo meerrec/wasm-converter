@@ -1,0 +1,78 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/render",
+    "crates/docx",
+    "crates/xlsx",
+    "crates/pdf",
+    "crates/wasm",
+]
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2021"
+license      = "Apache-2.0"
+repository   = "https://github.com/doc-converter/doc-converter"
+rust-version = "1.82"
+
+[workspace.dependencies]
+# ── internal ────────────────────────────────────────────────
+doc-converter-core   = { path = "crates/core",   version = "0.1.0" }
+doc-converter-render = { path = "crates/render", version = "0.2.0" }
+doc-converter-docx   = { path = "crates/docx",   version = "0.1.0" }
+doc-converter-xlsx   = { path = "crates/xlsx",   version = "0.1.0" }
+doc-converter-pdf    = { path = "crates/pdf",    version = "0.1.0" }
+
+# ── external ────────────────────────────────────────────────
+wasm-bindgen         = "0.2"
+js-sys               = "0.3"
+web-sys              = { version = "0.3", features = [
+    "console", "Window", "WorkerGlobalScope",
+    "OffscreenCanvas", "OffscreenCanvasRenderingContext2d",
+    "ImageBitmap", "Performance", "DedicatedWorkerGlobalScope",
+] }
+console_error_panic_hook = "0.1"
+# 0.36 несёт RUSTSEC-2026-0194 и -0195 (DoS на разборе чужого файла);
+# безопасные версии — начиная с 0.41.
+quick-xml            = "0.41"
+zip                  = { version = "2", default-features = false, features = ["deflate"] }
+serde                = { version = "1", features = ["derive"] }
+serde_json           = "1"
+thiserror            = "2"
+miette               = { version = "7", features = ["fancy"] }
+chrono               = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# default-фича `html` тянет azul-*/cssparser/selectors (MPL-2.0, не проходит
+# cargo-deny) и resvg/svg2pdf. XLSX→PDF в Фазе 4 этого не требует.
+printpdf             = { version = "0.8.2", default-features = false }
+# ttf-parser намеренно не объявлен: он unmaintained (RUSTSEC-2026-0192), и Фаза 4
+# выберет между ним и `skrifa` — docs/adr/0002-font-parsing.md.
+# 0.20, а не 0.18: столько приходит с printpdf, и своя запись должна совпадать,
+# иначе в дереве окажутся две версии rustybuzz.
+rustybuzz            = "0.20"
+unicode-linebreak    = "0.1"
+unicode-bidi         = "0.3"
+image                = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+bytemuck             = { version = "1", features = ["derive"] }
+flate2               = "1"
+smallvec             = { version = "1.13", features = ["union", "const_generics"] }
+lru                  = "0.12"
+tracing              = "0.1"
+tracing-wasm         = "0.2"
+
+# ── dev / test ──────────────────────────────────────────────
+# `rayon` (в default-фичах criterion) не собирается под wasm32,
+# поэтому default-фичи выключены, а нужные включены явно.
+criterion            = { version = "0.5", default-features = false, features = [
+    "cargo_bench_support", "html_reports",
+] }
+insta                = { version = "1", features = ["json"] }
+proptest             = "1"
+wasm-bindgen-test    = "0.3"
+
+[profile.release]
+lto           = "fat"
+codegen-units = 1
+opt-level     = "s"
+panic         = "abort"
+strip         = "symbols"

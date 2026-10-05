@@ -1,0 +1,38 @@
+node_modules/
+dist/
+target/
+pkg/
+.turbo/
+*.wasm
+*.wasm.d.ts
+coverage/
+playwright-report/
+test-results/
+.DS_Store
+
+# Cargo
+Cargo.lock.orig
+**/*.rs.bk
+
+# WASM/JS bindings gen
+crates/wasm/pkg/
+packages/*/pkg/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Criterion
+/criterion/
+
+# Fuzz corpus (артефакты)
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/target/

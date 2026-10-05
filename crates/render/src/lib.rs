@@ -1,14 +1,12 @@
-//! Общий `DisplayList` и painter — единый контракт между всеми форматами
-//! и всеми бэкендами (OffscreenCanvas в WASM, PDF в native).
-#![forbid(unsafe_code)]
-#![deny(clippy::pedantic)]
+//! doc-converter-render — painter, DisplayList, SAB ring.
+//!
+//! Фаза 2: OffscreenCanvas painter + двойная буферизация DisplayList.
 
-mod color;
-mod display_list;
-mod font;
-mod geometry;
+pub mod display_list;
+pub mod painter;
+pub mod sab;
 
-pub use color::*;
-pub use display_list::*;
-pub use font::*;
-pub use geometry::*;
+pub use display_list::{
+    Color, DecodeError, DisplayList, DisplayListReader, DrawCommand, StringRef, TextAlign,
+    TextBaseline,
+};

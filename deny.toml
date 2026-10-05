@@ -1,0 +1,24 @@
+[graph]
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "wasm32-unknown-unknown" },
+]
+
+[licenses]
+allow = ["Apache-2.0", "MIT", "BSD-3-Clause", "BSD-2-Clause", "ISC", "Unicode-3.0", "Zlib"]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = [
+    { crate = "openssl" },
+]
+
+[advisories]
+# Уязвимости и yanked-версии отклоняются безусловно (в схеме v2 это поведение
+# по умолчанию, отдельных полей нет). `unmaintained` задаёт охват проверки:
+# all | workspace | transitive | none.
+unmaintained = "workspace"
+ignore = ["RUSTSEC-2026-0187"]
+

@@ -1,0 +1,25 @@
+import { defineConfig, devices } from '@playwright/test';
+
+/** Порт отдельный от остальных примеров: сервер поднимает сам Playwright. */
+const PORT = 5178;
+
+export default defineConfig({
+  testDir: './e2e',
+  timeout: 120_000,
+  expect: { timeout: 20_000 },
+  fullyParallel: false,
+  workers: 1,
+  reporter: process.env.CI ? 'github' : 'list',
+  use: {
+    // Именно `localhost`: Vite слушает IPv6, и 127.0.0.1 не отвечает.
+    baseURL: `http://localhost:${PORT}`,
+    trace: 'retain-on-failure',
+  },
+  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  webServer: {
+    command: `pnpm dev --port ${PORT} --strictPort`,
+    url: `http://localhost:${PORT}`,
+    reuseExistingServer: !process.env.CI,
+    timeout: 180_000,
+  },
+});
