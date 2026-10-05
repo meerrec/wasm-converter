@@ -67,9 +67,9 @@ pnpm size-limit                       # бюджеты из .size-limit.json
 
 ### Контракт Rust ↔ TS: DisplayList
 
-`crates/render/src/display_list.rs` — бинарный формат кадра, общий для Rust и будущих TS-потребителей: магия `"DLST"`, `DL_VERSION = 2`, заголовок 20 байт (`HEADER_SIZE`), команды с однобайтовыми тегами, строки — в общем string pool, на который ссылаются `StringRef { off, len }`. Формат объявлен фиксированным: painter читает его прямо из SAB. Меняя раскладку, синхронизируйте версию/теги и TS-сторону.
+`crates/render/src/display_list.rs` — бинарный формат кадра, общий для Rust и будущих TS-потребителей: магия `"DLST"`, `DL_VERSION = 3`, заголовок 20 байт (`HEADER_SIZE`), команды с однобайтовыми тегами, строки — в общем string pool, на который ссылаются `StringRef { off, len }`. Формат объявлен фиксированным: painter читает его прямо из SAB. Меняя раскладку, синхронизируйте версию/теги и TS-сторону.
 
-Команда `Text` несёт гарнитуру строкой в общем пуле и флаги начертания: painter читает список из SAB и не может спросить у вызывающего, что за шрифт номер три, — формат обязан быть самодостаточным. Цвет в DisplayList — `RRGGBBAA`; в OOXML он записан как `AARRGGBB`, поэтому `xlsx::paint::resolve_color` каналы переставляет.
+Команда `Text` несёт гарнитуру строкой в общем пуле и флаги начертания `bold`/`italic`/`underline`, у `Line` рисунок штриха — `LineStyle` (толщина остаётся в `stroke_w`): painter читает список из SAB и не может спросить у вызывающего, что за шрифт номер три, — формат обязан быть самодостаточным. Цвет в DisplayList — `RRGGBBAA`; в OOXML он записан как `AARRGGBB`, поэтому `xlsx::paint::resolve_color` каналы переставляет.
 
 Painter (`crates/render/src/painter/painter_2d.rs`, только wasm32) живёт в `thread_local!` (`crates/wasm/src/painter_api.rs`), инициализируется один раз, кэширует состояние canvas-контекста (`painter/state.rs`) и `ImageBitmap` (`painter/bitmap_cache.rs`). Два входа: `paint_display_list_sab` (zero-copy из ring, освобождает слот) и `paint_display_list_bytes` (fallback с копированием). `resize_canvas` пересчитывает размеры под DPR и сбрасывает состояние painter'а.
 

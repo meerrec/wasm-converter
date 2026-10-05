@@ -53,12 +53,13 @@
   а коалесирование кадров — и вовсе в TS,
   [`packages/core/src/worker/frame_loop.ts`](../../packages/core/src/worker/frame_loop.ts).
 - Что уже принадлежит `render` и работает: формат DisplayList (магия `DLST`,
-  `DL_VERSION = 2`, заголовок 20 байт, однобайтовые теги), команды `Clear`,
+  `DL_VERSION = 3`, заголовок 20 байт, однобайтовые теги), команды `Clear`,
   `Rect`, `Line`, `Text`, `Image`, `PushClip`/`PopClip`,
   `PushTransform`/`PopTransform`; текст несёт гарнитуру строкой в общем пуле и
-  флаги `bold`/`italic` — формат самодостаточен, потому что painter читает его
-  из SAB и не может спросить вызывающего. Геометрии как типов в `render` при
-  этом нет: координаты в командах — голые `f32`, `PushClip` повторяет `x, y, w, h`.
+  флаги `bold`/`italic`/`underline`, линия — `LineStyle`; формат самодостаточен,
+  потому что painter читает его из SAB и не может спросить вызывающего.
+  Геометрии как типов в `render` при этом нет: координаты в командах — голые
+  `f32`, `PushClip` повторяет `x, y, w, h`.
 - `docx` — заглушка: [`lib.rs`](../../crates/docx/src/lib.rs) открывает архив,
   зовёт `validate_ooxml` и возвращает `Document { _private: () }`;
   `page_count()` отдаёт 1 с TODO. Ни модели параграфов, ни раскладки — второго
