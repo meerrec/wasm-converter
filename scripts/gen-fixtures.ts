@@ -16,8 +16,9 @@
 // той же формуле, что и Excel.
 
 import ExcelJS from 'exceljs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { crc32, deflateRawSync, deflateSync, inflateRawSync } from 'node:zlib';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const OUT_DIR = path.join(ROOT, 'test-fixtures', 'xlsx');
@@ -28,6 +29,12 @@ type Build = (wb: ExcelJS.Workbook) => void;
 interface Fixture {
   name: string;
   build: Build;
+  /**
+   * Правка уже записанного пакета: то, что exceljs не умеет записать сам.
+   * Сейчас это единственный случай — `stopIfTrue` у правил условного
+   * форматирования (см. `addStopIfTrue`).
+   */
+  after?: (file: string) => Promise<void>;
 }
 
 const argb = (hex: string) => ({ argb: `FF${hex.toUpperCase()}` });
@@ -434,6 +441,733 @@ const hyperlinks: Build = (wb) => {
   ws.getCell('B1').value = 'рядом';
 };
 
+// ── Условное форматирование ─────────────────────────────────
+
+/**
+ * Дифференциальный стиль правила (`dxf`): exceljs складывает его в отдельную
+ * таблицу `styles.xml`, а в правиле остаётся ссылка `dxfId`. Набор свойств —
+ * как у стиля ячейки, но применяется к ней фрагментарно.
+ */
+type Dxf = Partial<ExcelJS.Style>;
+
+const dxfFill = (hex: string): Dxf => ({
+  fill: { type: 'pattern', pattern: 'solid', fgColor: argb(hex) },
+});
+
+/** Столбец 1..12 значений: видно, на каком значении сработал порог. */
+function cfNumbers(ws: ExcelJS.Worksheet, col: number, start: number, step: number): void {
+  for (let r = 1; r <= 12; r += 1) {
+    ws.getCell(r, col).value = start + r * step;
+  }
+}
+
+/**
+ * `cellIs`: операторы и пороги.
+ *
+ * В типах exceljs у `cellIs` объявлены четыре оператора, но писатель
+ * подставляет в XML любой: ECMA-376 §18.18.15 разрешает ещё `notEqual`,
+ * `lessThanOrEqual`, `greaterThanOrEqual` и `notBetween`.
+ */
+const cfCellIs: Build = (wb) => {
+  const ws = wb.addWorksheet('Операторы');
+  cfNumbers(ws, 1, 5, 5);
+  cfNumbers(ws, 2, 100, -5);
+  for (let r = 1; r <= 12; r += 1) {
+    const cell = ws.getCell(r, 3);
+    cell.value = r / 12;
+    cell.numFmt = '0%';
+  }
+
+  ws.addConditionalFormatting({
+    ref: 'A1:A12',
+    rules: [
+      {
+        type: 'cellIs',
+        operator: 'greaterThan',
+        formulae: ['30'],
+        priority: 1,
+        style: dxfFill('FFC7CE'),
+      },
+      {
+        type: 'cellIs',
+        operator: 'lessThanOrEqual',
+        formulae: ['20'],
+        priority: 2,
+        style: dxfFill('C6EFCE'),
+      },
+      {
+        type: 'cellIs',
+        operator: 'between',
+        formulae: ['25', '45'],
+        priority: 3,
+        style: dxfFill('FFEB9C'),
+      },
+    ],
+  });
+  ws.addConditionalFormatting({
+    ref: 'C1:C12',
+    rules: [
+      {
+        type: 'cellIs',
+        operator: 'equal',
+        formulae: ['0.5'],
+        priority: 4,
+        style: { font: { bold: true, color: { argb: 'FF9C0006' } } },
+      },
+      {
+        type: 'cellIs',
+        operator: 'notEqual',
+        formulae: ['0.25'],
+        priority: 5,
+        style: { font: { italic: true } },
+      },
+      {
+        type: 'cellIs',
+        operator: 'greaterThanOrEqual',
+        formulae: ['0.75'],
+        priority: 6,
+        style: { border: { top: { style: 'thin', color: argb('000000') } } },
+      },
+      {
+        type: 'cellIs',
+        operator: 'notBetween',
+        formulae: ['0.3', '0.7'],
+        priority: 7,
+        style: dxfFill('DDDDDD'),
+      },
+    ],
+  });
+};
+
+/** `colorScale`: две и три цвета, пороги `min`/`max`, проценты и процентили. */
+const cfColorScale: Build = (wb) => {
+  const ws = wb.addWorksheet('Цветовые шкалы');
+  cfNumbers(ws, 1, 5, 5);
+  cfNumbers(ws, 2, 100, -5);
+  for (let r = 1; r <= 12; r += 1) {
+    const cell = ws.getCell(r, 3);
+    cell.value = r / 12;
+    cell.numFmt = '0%';
+  }
+
+  ws.addConditionalFormatting({
+    ref: 'A1:A12',
+    rules: [
+      {
+        type: 'colorScale',
+        priority: 1,
+        cfvo: [{ type: 'min' }, { type: 'max' }],
+        color: [{ argb: 'FFF8696B' }, { argb: 'FF63BE7B' }],
+      },
+    ],
+  });
+  ws.addConditionalFormatting({
+    ref: 'B1:B12',
+    rules: [
+      {
+        type: 'colorScale',
+        priority: 2,
+        cfvo: [{ type: 'min' }, { type: 'percentile', value: 50 }, { type: 'max' }],
+        color: [{ argb: 'FFF8696B' }, { argb: 'FFFFEB84' }, { argb: 'FF63BE7B' }],
+      },
+    ],
+  });
+  ws.addConditionalFormatting({
+    ref: 'C1:C12',
+    rules: [
+      {
+        type: 'colorScale',
+        priority: 3,
+        cfvo: [
+          { type: 'num', value: 0.1 },
+          { type: 'percent', value: 50 },
+          { type: 'num', value: 1 },
+        ],
+        color: [{ argb: 'FFFF0000' }, { argb: 'FFFFFFFF' }, { argb: 'FF0000FF' }],
+      },
+    ],
+  });
+};
+
+/**
+ * `dataBar`: гистограмма в ячейке.
+ *
+ * `gradient: true` оставляет правило в базовой схеме: без него exceljs уходит
+ * в расширение `x14`, а туда он пишет случайный guid — эталон перестал бы
+ * воспроизводиться. По той же причине `x14Id` задан явно: exceljs оставляет
+ * в `extLst` пустой `<x14:id/>`, а так ссылка получается целой.
+ */
+const cfDataBar: Build = (wb) => {
+  const ws = wb.addWorksheet('Гистограммы');
+  cfNumbers(ws, 1, 5, 5);
+  cfNumbers(ws, 2, -50, 10);
+
+  ws.addConditionalFormatting({
+    ref: 'A1:A12',
+    rules: [
+      {
+        type: 'dataBar',
+        priority: 1,
+        gradient: true,
+        cfvo: [{ type: 'min' }, { type: 'max' }],
+        color: { argb: 'FF638EC6' },
+        x14Id: '{00000000-0000-4000-8000-000000000001}',
+      },
+    ],
+  });
+  ws.addConditionalFormatting({
+    ref: 'B1:B12',
+    rules: [
+      {
+        type: 'dataBar',
+        priority: 2,
+        gradient: true,
+        cfvo: [
+          { type: 'num', value: -50 },
+          { type: 'num', value: 70 },
+        ],
+        color: { argb: 'FF63BE7B' },
+        x14Id: '{00000000-0000-4000-8000-000000000002}',
+      },
+    ],
+  });
+};
+
+/** `iconSet`: наборы на 3, 4 и 5 значков, с `reverse` и без значений. */
+const cfIconSet: Build = (wb) => {
+  const ws = wb.addWorksheet('Значки');
+  cfNumbers(ws, 1, 5, 5);
+  cfNumbers(ws, 2, 100, -5);
+  cfNumbers(ws, 3, 0, 1);
+
+  ws.addConditionalFormatting({
+    ref: 'A1:A12',
+    rules: [
+      {
+        type: 'iconSet',
+        iconSet: '3TrafficLights1',
+        priority: 1,
+        cfvo: [
+          { type: 'percent', value: 0 },
+          { type: 'percent', value: 33 },
+          { type: 'percent', value: 67 },
+        ],
+      },
+    ],
+  });
+  ws.addConditionalFormatting({
+    ref: 'B1:B12',
+    rules: [
+      {
+        type: 'iconSet',
+        iconSet: '4Arrows',
+        priority: 2,
+        reverse: true,
+        cfvo: [
+          { type: 'percent', value: 0 },
+          { type: 'percent', value: 25 },
+          { type: 'percent', value: 50 },
+          { type: 'percent', value: 75 },
+        ],
+      },
+    ],
+  });
+  ws.addConditionalFormatting({
+    ref: 'C1:C12',
+    rules: [
+      {
+        type: 'iconSet',
+        iconSet: '5Quarters',
+        priority: 3,
+        showValue: false,
+        cfvo: [
+          { type: 'percent', value: 0 },
+          { type: 'percent', value: 20 },
+          { type: 'percent', value: 40 },
+          { type: 'percent', value: 60 },
+          { type: 'percent', value: 80 },
+        ],
+      },
+    ],
+  });
+};
+
+/** `expression`: правило-формула, в том числе поверх нескольких столбцов. */
+const cfExpression: Build = (wb) => {
+  const ws = wb.addWorksheet('Формулы');
+  ws.getCell('A1').value = 'Позиция';
+  ws.getCell('B1').value = 'Число';
+  for (let r = 2; r <= 13; r += 1) {
+    ws.getCell(r, 1).value = `Позиция ${r - 1}`;
+    ws.getCell(r, 2).value = (r * 7) % 23;
+  }
+
+  ws.addConditionalFormatting({
+    ref: 'B2:B13',
+    rules: [
+      {
+        type: 'expression',
+        formulae: ['MOD($B2,2)=0'],
+        priority: 1,
+        style: dxfFill('DDEBF7'),
+      },
+    ],
+  });
+  ws.addConditionalFormatting({
+    ref: 'A2:B13',
+    rules: [
+      {
+        type: 'expression',
+        formulae: ['$B2=0'],
+        priority: 2,
+        style: dxfFill('FFC7CE'),
+      },
+      {
+        type: 'expression',
+        formulae: ['LEN($A2)>10'],
+        priority: 3,
+        style: { font: { italic: true } },
+      },
+    ],
+  });
+};
+
+/**
+ * Приоритеты: несколько правил на одном диапазоне, порядок в файле не
+ * совпадает с номерами приоритетов, у самого приоритетного — `stopIfTrue`
+ * (дописывается `addStopIfTrue`: exceljs этот атрибут не пишет).
+ */
+const cfPriorities: Build = (wb) => {
+  const ws = wb.addWorksheet('Приоритеты');
+  cfNumbers(ws, 1, 5, 5);
+  cfNumbers(ws, 3, 5, 5);
+
+  ws.addConditionalFormatting({
+    ref: 'A1:A12',
+    rules: [
+      {
+        type: 'cellIs',
+        operator: 'greaterThan',
+        formulae: ['30'],
+        priority: 9,
+        style: dxfFill('C6EFCE'),
+      },
+      {
+        type: 'cellIs',
+        operator: 'greaterThan',
+        formulae: ['45'],
+        priority: 5,
+        style: dxfFill('FFC7CE'),
+      },
+      {
+        type: 'cellIs',
+        operator: 'greaterThan',
+        formulae: ['55'],
+        priority: 7,
+        style: { font: { bold: true } },
+      },
+    ],
+  });
+  // Второй блок на том же диапазоне: правила из разных блоков не сливаются.
+  ws.addConditionalFormatting({
+    ref: 'A1:A12',
+    rules: [
+      {
+        type: 'expression',
+        formulae: ['MOD($A1,2)=0'],
+        priority: 12,
+        style: dxfFill('FFEB9C'),
+      },
+    ],
+  });
+  ws.addConditionalFormatting({
+    ref: 'C1:C12',
+    rules: [
+      {
+        type: 'cellIs',
+        operator: 'lessThan',
+        formulae: ['15'],
+        priority: 3,
+        style: dxfFill('D9D9D9'),
+      },
+    ],
+  });
+};
+
+/** Одно правило на несколько несмежных диапазонов: `sqref` через пробел. */
+const cfMultiRange: Build = (wb) => {
+  const ws = wb.addWorksheet('Много диапазонов');
+  for (let r = 1; r <= 10; r += 1) {
+    for (let c = 1; c <= 6; c += 1) {
+      ws.getCell(r, c).value = r * 10 + c;
+    }
+  }
+
+  ws.addConditionalFormatting({
+    ref: 'A1:A10 C1:C10 E1:E10',
+    rules: [
+      {
+        type: 'cellIs',
+        operator: 'greaterThan',
+        formulae: ['55'],
+        priority: 1,
+        style: dxfFill('FFC7CE'),
+      },
+    ],
+  });
+  ws.addConditionalFormatting({
+    ref: 'B1:B10 D1:D10',
+    rules: [
+      {
+        type: 'expression',
+        formulae: ['MOD(ROW(),2)=0'],
+        priority: 2,
+        style: dxfFill('DDEBF7'),
+      },
+      {
+        type: 'colorScale',
+        priority: 3,
+        cfvo: [{ type: 'min' }, { type: 'max' }],
+        color: [{ argb: 'FFFFFFFF' }, { argb: 'FF4472C4' }],
+      },
+    ],
+  });
+};
+
+// ── Изображения ─────────────────────────────────────────────
+//
+// Байты картинок собираются здесь же: фикстура не должна тянуть бинарь из
+// репозитория (и уж тем более из внешнего файла).
+
+/** Цвет пикселя PNG — три канала по 8 бит. */
+type Rgb = readonly [number, number, number];
+
+/** Чанк PNG: длина, тип, данные и CRC от типа с данными. */
+function pngChunk(type: string, data: Buffer): Buffer {
+  const head = Buffer.alloc(8);
+  head.writeUInt32BE(data.length, 0);
+  head.write(type, 4, 'latin1');
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), data])));
+  return Buffer.concat([head, data, crc]);
+}
+
+/** PNG с шахматкой из двух цветов: маленький, но настоящий файл. */
+function pngBytes(size: number, first: Rgb, second: Rgb): Buffer {
+  const stride = 1 + size * 3;
+  const raw = Buffer.alloc(size * stride);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const color = (Math.floor(x / 4) + Math.floor(y / 4)) % 2 === 0 ? first : second;
+      const at = y * stride + 1 + x * 3;
+      raw[at] = color[0];
+      raw[at + 1] = color[1];
+      raw[at + 2] = color[2];
+    }
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8; // бит на канал
+  ihdr[9] = 2; // truecolor, без альфы
+  // 10..12 остаются нулями: deflate, адаптивные фильтры, без интерлейса.
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+/**
+ * Коды Хаффмана по длинам из `bits` и символам из `values`
+ * (ITU T.81, Annex C): коды выдаются подряд, после каждой длины — сдвиг.
+ */
+function huffmanCodes(bits: number[], values: number[]): Map<number, [number, number]> {
+  const codes = new Map<number, [number, number]>();
+  let code = 0;
+  let i = 0;
+  for (let length = 1; length <= 16; length += 1) {
+    for (let n = 0; n < bits[length - 1]; n += 1) {
+      codes.set(values[i], [code, length]);
+      code += 1;
+      i += 1;
+    }
+    code <<= 1;
+  }
+  return codes;
+}
+
+/** Стандартная таблица Хаффмана для DC-коэффициентов яркости (T.81, K.3.1). */
+const DC_BITS = [0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0];
+const DC_VALUES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+
+/**
+ * Минимальный baseline JPEG в оттенках серого: блоки 8×8 залиты ровным
+ * цветом, поэтому кроме DC-коэффициента в блоке нет ничего и AC-таблица
+ * сводится к одному символу EOB. Полноценный DCT-кодировщик для фикстуры —
+ * лишний код.
+ *
+ * `brightness(x, y)` задаёт яркость 0..255; блок кодируется средним по своим
+ * пикселям. Размеры кратны восьми.
+ */
+function jpegBytes(width: number, height: number, brightness: (x: number, y: number) => number): Buffer {
+  const dc = huffmanCodes(DC_BITS, DC_VALUES);
+  const eob: [number, number] = [0, 1];
+
+  const out: number[] = [];
+  let accumulator = 0;
+  let length = 0;
+  const writeBits = (value: number, count: number): void => {
+    for (let i = count - 1; i >= 0; i -= 1) {
+      accumulator = (accumulator << 1) | ((value >>> i) & 1);
+      length += 1;
+      if (length === 8) {
+        out.push(accumulator);
+        // Байт 0xFF в потоке данных экранируется нулём (T.81, B.1.1.5).
+        if (accumulator === 0xff) out.push(0x00);
+        accumulator = 0;
+        length = 0;
+      }
+    }
+  };
+
+  let previous = 0;
+  for (let by = 0; by < height; by += 8) {
+    for (let bx = 0; bx < width; bx += 8) {
+      let sum = 0;
+      for (let y = by; y < by + 8; y += 1) {
+        for (let x = bx; x < bx + 8; x += 1) {
+          sum += brightness(x, y);
+        }
+      }
+      // Квантователь DC равен 16, поэтому F(0,0)=8·(v−128) превращается в (v−128)/2.
+      const level = Math.round((sum / 64 - 128) / 2);
+      const diff = level - previous;
+      previous = level;
+      if (diff === 0) {
+        writeBits(dc.get(0)![0], dc.get(0)![1]);
+      } else {
+        const size = Math.floor(Math.log2(Math.abs(diff))) + 1;
+        if (size > 11) throw new Error(`яркость ${sum / 64} вне диапазона baseline JPEG`);
+        writeBits(dc.get(size)![0], dc.get(size)![1]);
+        // Отрицательные значения кодируются в дополнительном коде размерности size.
+        writeBits(diff > 0 ? diff : diff + (1 << size) - 1, size);
+      }
+      writeBits(eob[0], eob[1]);
+    }
+  }
+  if (length > 0) {
+    writeBits((1 << (8 - length)) - 1, 8 - length);
+  }
+
+  const segment = (marker: number, payload: Buffer): Buffer => {
+    const head = Buffer.alloc(4);
+    head[0] = 0xff;
+    head[1] = marker;
+    head.writeUInt16BE(payload.length + 2, 2);
+    return Buffer.concat([head, payload]);
+  };
+
+  const quant = Buffer.concat([Buffer.from([0x00]), Buffer.alloc(64, 16)]);
+
+  const frame = Buffer.alloc(6);
+  frame[0] = 8; // точность
+  frame.writeUInt16BE(height, 1);
+  frame.writeUInt16BE(width, 3);
+  frame[5] = 1; // одна компонента
+  const component = Buffer.from([0x01, 0x11, 0x00]);
+  const scan = Buffer.from([0x01, 0x01, 0x00, 0x00, 0x3f, 0x00]);
+
+  const tables = Buffer.concat([
+    Buffer.from([0x00, ...DC_BITS, ...DC_VALUES]),
+    Buffer.from([0x10, 1, ...Array(15).fill(0), 0x00]),
+  ]);
+
+  return Buffer.concat([
+    Buffer.from([0xff, 0xd8]), // SOI
+    segment(0xe0, Buffer.concat([Buffer.from('JFIF\0', 'latin1'), Buffer.from([1, 1, 0, 0, 1, 0, 1, 0, 0])])),
+    segment(0xdb, quant),
+    segment(0xc0, Buffer.concat([frame, component])),
+    segment(0xc4, tables),
+    segment(0xda, scan),
+    Buffer.from(out),
+    Buffer.from([0xff, 0xd9]), // EOI
+  ]);
+}
+
+/** Шахматка 16×16 и полосатая яркость 16×16 — обе картинки крошечные. */
+const IMAGE_PNG = pngBytes(16, [0x2f, 0x6b, 0x9a], [0xd9, 0xe2, 0xf3]);
+const IMAGE_JPEG = jpegBytes(16, 16, (x) => (x < 8 ? 0xd0 : 0x40));
+
+/** PNG: якорь на одну ячейку и якорь на диапазон. */
+const imagesPng: Build = (wb) => {
+  const ws = wb.addWorksheet('PNG');
+  for (let r = 1; r <= 10; r += 1) {
+    for (let c = 1; c <= 8; c += 1) {
+      ws.getCell(r, c).value = r * 10 + c;
+    }
+  }
+  const id = wb.addImage({ buffer: IMAGE_PNG, extension: 'png' });
+  // One-cell: размер задан явно и больше ячейки-якоря — картинка выходит за её границы.
+  ws.addImage(id, { tl: { col: 1, row: 1 }, ext: { width: 96, height: 72 } });
+  // Two-cell: прямоугольник задан диапазоном E3:H8 и тянется по его границам.
+  ws.addImage(id, 'E3:H8');
+};
+
+/** JPEG: те же два якоря, но их границы попадают в середину ячеек. */
+const imagesJpeg: Build = (wb) => {
+  const ws = wb.addWorksheet('JPEG');
+  for (let r = 1; r <= 12; r += 1) {
+    ws.getCell(r, 1).value = r;
+  }
+  const id = wb.addImage({ buffer: IMAGE_JPEG, extension: 'jpeg' });
+  // Начало в середине ячейки D5.
+  ws.addImage(id, { tl: { col: 2.5, row: 3.5 }, ext: { width: 120, height: 80 } });
+  // Конец в середине ячейки, а не по её границе.
+  ws.addImage(id, { tl: { col: 0, row: 0 }, br: { col: 3.5, row: 4 } });
+};
+
+/** Картинки поверх данных и у края листа — там, где нужно обрезать. */
+const imagesOverData: Build = (wb) => {
+  const ws = wb.addWorksheet('Поверх данных');
+  ws.getRow(1).values = ['Товар', 'Цена', 'Количество', 'Сумма'];
+  for (let r = 2; r <= 9; r += 1) {
+    ws.getCell(r, 1).value = `Товар ${r - 1}`;
+    ws.getCell(r, 2).value = r * 100;
+    ws.getCell(r, 3).value = r;
+    ws.getCell(r, 4).value = { formula: `B${r}*C${r}`, result: r * 100 * r };
+  }
+
+  const png = wb.addImage({ buffer: IMAGE_PNG, extension: 'png' });
+  const jpeg = wb.addImage({ buffer: IMAGE_JPEG, extension: 'jpeg' });
+  // Ровно по диапазону таблицы: под картинкой остаются ячейки с данными.
+  ws.addImage(png, 'B2:D5');
+  // Картинка шире своей ячейки-якоря: прямоугольник пересекает границы соседей.
+  ws.addImage(jpeg, { tl: { col: 5, row: 1 }, ext: { width: 140, height: 100 } });
+  // Прижата к правому краю листа: видимая часть обрезается границей листа.
+  ws.addImage(png, { tl: { col: 16381, row: 4 }, ext: { width: 80, height: 60 } });
+};
+
+// ── Правка готового пакета ──────────────────────────────────
+//
+// exceljs не умеет `stopIfTrue` (в 4.4.0 этого атрибута нет ни в одном
+// xform), а фикстуре с приоритетами он нужен. Поэтому книга пишется exceljs,
+// после чего атрибут дописывается в XML листа. Пакет пересобирается целиком:
+// так не приходится пересчитывать смещения и контрольные суммы на месте, и
+// содержимое остальных частей остаётся тем, что записал exceljs.
+
+interface ZipEntry {
+  name: string;
+  data: Buffer;
+}
+
+/** Записи zip: имена и распакованное содержимое, в порядке файла. */
+function unzip(zip: Buffer): ZipEntry[] {
+  let end = zip.length - 22;
+  while (end >= 0 && zip.readUInt32LE(end) !== 0x06_05_4b_50) {
+    end -= 1;
+  }
+  if (end < 0) throw new Error('не zip-пакет');
+  const count = zip.readUInt16LE(end + 10);
+  const entries: ZipEntry[] = [];
+  let at = zip.readUInt32LE(end + 16);
+
+  for (let i = 0; i < count; i += 1) {
+    if (zip.readUInt32LE(at) !== 0x02_01_4b_50) throw new Error('центральный каталог испорчен');
+    const method = zip.readUInt16LE(at + 10);
+    const packed = zip.readUInt32LE(at + 20);
+    const nameLength = zip.readUInt16LE(at + 28);
+    const local = zip.readUInt32LE(at + 42);
+    const name = zip.toString('utf8', at + 46, at + 46 + nameLength);
+    const start = local + 30 + zip.readUInt16LE(local + 26) + zip.readUInt16LE(local + 28);
+    const raw = zip.subarray(start, start + packed);
+    entries.push({
+      name,
+      data: method === 0 ? Buffer.from(raw) : inflateRawSync(raw),
+    });
+    at += 46 + nameLength + zip.readUInt16LE(at + 30) + zip.readUInt16LE(at + 32);
+  }
+  return entries;
+}
+
+/**
+ * Собрать zip заново: без сжатых записей и zip64. Дата фиксирована — пакет
+ * получается воспроизводимым, а не «сегодняшним».
+ */
+function zipEntries(entries: ZipEntry[]): Buffer {
+  const dosDate = ((2026 - 1980) << 9) | (1 << 5) | 1;
+  const parts: Buffer[] = [];
+  const directory: Buffer[] = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, 'utf8');
+    const packed = deflateRawSync(entry.data);
+    const checksum = crc32(entry.data);
+
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04_03_4b_50, 0);
+    local.writeUInt16LE(20, 4); // версия распаковщика
+    local.writeUInt16LE(8, 8); // deflate
+    local.writeUInt16LE(dosDate, 12);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(packed.length, 18);
+    local.writeUInt32LE(entry.data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    parts.push(local, name, packed);
+
+    const record = Buffer.alloc(46);
+    record.writeUInt32LE(0x02_01_4b_50, 0);
+    record.writeUInt16LE(20, 4);
+    record.writeUInt16LE(20, 6);
+    record.writeUInt16LE(8, 10);
+    record.writeUInt16LE(dosDate, 14);
+    record.writeUInt32LE(checksum, 16);
+    record.writeUInt32LE(packed.length, 20);
+    record.writeUInt32LE(entry.data.length, 24);
+    record.writeUInt16LE(name.length, 28);
+    record.writeUInt32LE(offset, 42);
+    directory.push(record, name);
+
+    offset += 30 + name.length + packed.length;
+  }
+
+  const central = Buffer.concat(directory);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06_05_4b_50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(central.length, 12);
+  end.writeUInt32LE(offset, 16);
+
+  return Buffer.concat([...parts, central, end]);
+}
+
+/** Заменить одну часть пакета текстом, который вернёт `patch`. */
+function patchZipEntry(zip: Buffer, name: string, patch: (xml: string) => string): Buffer {
+  const entries = unzip(zip);
+  const entry = entries.find((e) => e.name === name);
+  if (!entry) throw new Error(`в пакете нет части ${name}`);
+  entry.data = Buffer.from(patch(entry.data.toString('utf8')), 'utf8');
+  return zipEntries(entries);
+}
+
+/** Дописать `stopIfTrue="1"` правилу с приоритетом 5 в `cf-priorities`. */
+async function addStopIfTrue(file: string): Promise<void> {
+  const priority = 5;
+  const rule = new RegExp(`<cfRule\\b[^>]*\\bpriority="${priority}"[^>]*>`);
+  const patched = patchZipEntry(await readFile(file), 'xl/worksheets/sheet1.xml', (xml) => {
+    if (xml.match(new RegExp(rule, 'g'))?.length !== 1) {
+      throw new Error(`${file}: правило с priority="${priority}" не найдено однозначно`);
+    }
+    return xml.replace(rule, (tag) => `${tag.slice(0, -1)} stopIfTrue="1">`);
+  });
+  await writeFile(file, patched);
+}
+
 // ── Сборка списка ───────────────────────────────────────────
 
 const FIXTURES: Fixture[] = [];
@@ -523,6 +1257,24 @@ FIXTURES.push(
   { name: 'sheets-empty-second', build: emptySecondSheet },
   { name: 'sheets-same-data', build: sameDataSheets },
   { name: 'sheets-many', build: manySheets },
+);
+
+// Условное форматирование: типы правил, операторы, пороги, приоритеты.
+FIXTURES.push(
+  { name: 'cf-cell-is', build: cfCellIs },
+  { name: 'cf-color-scale', build: cfColorScale },
+  { name: 'cf-data-bar', build: cfDataBar },
+  { name: 'cf-icon-set', build: cfIconSet },
+  { name: 'cf-expression', build: cfExpression },
+  { name: 'cf-priorities', build: cfPriorities, after: addStopIfTrue },
+  { name: 'cf-multi-range', build: cfMultiRange },
+);
+
+// Изображения: PNG и JPEG, якоря на ячейку и на диапазон.
+FIXTURES.push(
+  { name: 'images-png', build: imagesPng },
+  { name: 'images-jpeg', build: imagesJpeg },
+  { name: 'images-over-data', build: imagesOverData },
 );
 
 // Крайние случаи: границы листа, вырожденные размеры, длинные цепочки формул.
@@ -945,10 +1697,16 @@ async function main(): Promise<void> {
     const wb = new ExcelJS.Workbook();
     wb.creator = 'doc-converter fixtures';
     wb.created = new Date(Date.UTC(2026, 0, 1));
+    // `modified` exceljs иначе выставляет по часам — перегенерация даёт шум в core.xml.
+    wb.modified = new Date(Date.UTC(2026, 0, 1));
     fixture.build(wb);
 
     const file = path.join(OUT_DIR, `${fixture.name}.xlsx`);
     await wb.xlsx.writeFile(file);
+    // archiver ставит в заголовки zip момент записи — пересобираем пакет с
+    // фиксированной датой (zipEntries), иначе байты плывут от запуска к запуску.
+    await writeFile(file, zipEntries(unzip(await readFile(file))));
+    await fixture.after?.(file);
 
     files[`${fixture.name}.xlsx`] = await oracleFor(file);
   }
