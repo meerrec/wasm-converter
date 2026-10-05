@@ -131,6 +131,64 @@ pub fn xlsx_is_open() -> bool {
     DOC.with(|doc| doc.borrow().is_some())
 }
 
+/// Картинка книги в том виде, в каком её видит интерфейс: id, MIME и размер.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInfo {
+    /// id, которым помечены картинки листов и команды `Image` в кадре.
+    id: u32,
+    /// MIME-тип байтов — интерфейс собирает из них `Blob`.
+    mime: String,
+    /// Длина байтов в [`xlsx_image_bytes`].
+    byte_length: u32,
+}
+
+impl ImageInfo {
+    fn of(image: &doc_converter_xlsx::WorkbookImage) -> Self {
+        Self {
+            id: image.id,
+            mime: image.mime.clone(),
+            byte_length: u32::try_from(image.bytes.len()).unwrap_or(u32::MAX),
+        }
+    }
+}
+
+/// Картинки открытой книги: id, MIME-тип и длина байтов.
+///
+/// Байты в список не входят: их забирает [`xlsx_image_bytes`] по одному id,
+/// чтобы не копировать разом всю media книги.
+///
+/// # Errors
+/// Если книга не открыта.
+#[wasm_bindgen]
+pub fn xlsx_images() -> Result<JsValue, JsValue> {
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
+        let images: Vec<ImageInfo> = book.images().iter().map(ImageInfo::of).collect();
+        serde_wasm_bindgen::to_value(&images).map_err(to_js)
+    })
+}
+
+/// Байты картинки по её id.
+///
+/// Возвращается `Uint8Array` — копия байтов из памяти wasm; буфер принадлежит
+/// интерфейсу, и дальше его можно отдать `postMessage` с transferables.
+///
+/// # Errors
+/// Если книга не открыта или картинки с таким id нет.
+#[wasm_bindgen]
+pub fn xlsx_image_bytes(id: u32) -> Result<js_sys::Uint8Array, JsValue> {
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
+        let image = book
+            .image(id)
+            .ok_or_else(|| to_js(format!("image {id} does not exist")))?;
+        Ok(js_sys::Uint8Array::from(image.bytes.as_slice()))
+    })
+}
+
 /// Перевести окно из JS в представление рендера.
 fn viewport_of(value: JsValue) -> Result<Viewport, JsValue> {
     let js: ViewportJs = serde_wasm_bindgen::from_value(value).map_err(to_js)?;

@@ -1201,6 +1201,25 @@ impl Sheet {
     }
 }
 
+/// Байты media-части книги: запись реестра изображений.
+///
+/// Реестр собирается [`open`](crate::open), пока открыт архив: после разбора
+/// байты картинок больше взять неоткуда. Одна часть пакета — одна запись, даже
+/// если на неё ссылается несколько картинок.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkbookImage {
+    /// Идентификатор записи: тот же id несут [`SheetImage::image_id`] и команда
+    /// `Image` в собранном кадре.
+    pub id: u32,
+    /// Часть пакета, откуда взяты байты (`xl/media/image1.png`).
+    pub media: String,
+    /// MIME-тип по расширению части; незнакомое расширение —
+    /// `application/octet-stream`.
+    pub mime: String,
+    /// Байты как они лежат в пакете: формат декодирует тот, кто рисует.
+    pub bytes: Vec<u8>,
+}
+
 /// Книга: листы и общие для них таблицы.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Workbook {
@@ -1209,6 +1228,7 @@ pub struct Workbook {
     styles: StyleTable,
     theme: Theme,
     date1904: bool,
+    images: Vec<WorkbookImage>,
 }
 
 impl Workbook {
@@ -1227,6 +1247,7 @@ impl Workbook {
             styles,
             theme,
             date1904,
+            images: Vec::new(),
         }
     }
 
@@ -1246,6 +1267,32 @@ impl Workbook {
     #[must_use]
     pub fn sheet(&self, name: &str) -> Option<&Sheet> {
         self.sheets.iter().find(|sheet| sheet.meta.name == name)
+    }
+
+    /// Реестр изображений: байты media-частей, на которые ссылаются листы.
+    ///
+    /// В реестр попадают только части, на которые есть ссылка, и только
+    /// уложившиеся в пределы [`crate::MAX_IMAGE_BYTES`] и
+    /// [`crate::MAX_TOTAL_MEDIA_BYTES`]. Id идут по порядку первого упоминания
+    /// и потому стабильны для одной и той же книги.
+    #[must_use]
+    pub fn images(&self) -> &[WorkbookImage] {
+        &self.images
+    }
+
+    /// Изображение по id, назначенному вызовом [`open`](crate::open);
+    /// `None` — такого id в книге нет.
+    #[must_use]
+    pub fn image(&self, id: u32) -> Option<&WorkbookImage> {
+        self.images.iter().find(|image| image.id == id)
+    }
+
+    /// Приложить к книге реестр изображений; им распоряжается
+    /// [`open`](crate::open).
+    #[must_use]
+    pub fn with_images(mut self, images: Vec<WorkbookImage>) -> Self {
+        self.images = images;
+        self
     }
 
     /// Таблица форматов ячеек.

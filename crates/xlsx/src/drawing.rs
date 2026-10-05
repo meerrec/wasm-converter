@@ -95,6 +95,12 @@ pub struct SheetImage {
     /// Часть пакета с байтами картинки (`xl/media/image1.png`). `None` — связь
     /// не разрешилась или части нет в пакете.
     pub media: Option<String>,
+    /// id записи в реестре книги ([`Workbook::images`](crate::Workbook::images)).
+    ///
+    /// `None` — рисовать нечем: media не разрешилась (см. [`Self::media`]) или
+    /// часть не уложилась в пределы размера. Назначает id
+    /// [`open`](crate::open), а не разбор чертежа.
+    pub image_id: Option<u32>,
     /// Поведение при изменении ячеек; `None` — атрибута в файле нет.
     pub edit_as: Option<EditAs>,
     /// Где картинка лежит на листе.
@@ -479,6 +485,8 @@ impl<'a> DrawingParser<'a> {
         self.images.push(SheetImage {
             name: anchor.name,
             media,
+            // id назначает `open()`: чертёж не знает ни архива, ни соседних листов.
+            image_id: None,
             edit_as: anchor.edit_as,
             anchor: shape,
         });

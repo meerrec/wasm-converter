@@ -220,8 +220,8 @@ fn package(entries: &[(&str, &[u8])]) -> Vec<u8> {
     buf
 }
 
-/// Полный пакет с чертежом; `drawing_part` добавляется вызывающим.
-fn package_with_drawing(drawing: bool) -> Vec<u8> {
+/// Части пакета с чертежом; `drawing` добавляет сам чертёж и его связи.
+fn package_entries(drawing: bool) -> Vec<(&'static str, &'static [u8])> {
     let mut entries: Vec<(&str, &[u8])> = vec![
         ("[Content_Types].xml", CONTENT_TYPES.as_bytes()),
         ("_rels/.rels", ROOT_RELS.as_bytes()),
@@ -238,11 +238,16 @@ fn package_with_drawing(drawing: bool) -> Vec<u8> {
             DRAWING_RELS.as_bytes(),
         ));
     }
-    package(&entries)
+    entries
+}
+
+/// Полный пакет с чертежом или без него.
+fn package_with_drawing(drawing: bool) -> Vec<u8> {
+    package(&package_entries(drawing))
 }
 
 /// Битая ссылка на media: отсутствующая связь и отсутствующая часть не роняют
-/// открытие, но media у таких картинок не разрешается.
+/// открытие, но media у таких картинок не разрешается, а id не назначается.
 #[test]
 fn broken_media_links_keep_the_anchor_without_media() {
     let book = open(package_with_drawing(true)).unwrap();
@@ -256,6 +261,13 @@ fn broken_media_links_keep_the_anchor_without_media() {
     assert_eq!(images[2].media, None);
     assert_eq!(images[2].name.as_deref(), Some("Picture 3"));
     assert!(matches!(images[2].anchor, ImageAnchor::OneCell { .. }));
+
+    assert_eq!(images[0].image_id, Some(0));
+    assert_eq!(images[1].image_id, None);
+    assert_eq!(images[2].image_id, None);
+    assert_eq!(book.images().len(), 1);
+    assert_eq!(book.images()[0].bytes, b"\x89PNG\r\n\x1a\n");
+    assert_eq!(book.images()[0].mime, "image/png");
 }
 
 /// Отсутствующий чертёж — не ошибка: лист остаётся без картинок.
@@ -265,4 +277,99 @@ fn missing_drawing_part_opens_without_images() {
 
     assert_eq!(book.sheets().len(), 1);
     assert!(book.sheets()[0].images.is_empty());
+    assert!(book.images().is_empty());
+}
+
+/// Media, на которую никто не ссылается, в реестр не попадает: реестр — не
+/// свалка частей пакета, а то, что нужно нарисовать.
+#[test]
+fn unreferenced_media_is_not_stored() {
+    let mut entries = package_entries(true);
+    entries.push(("xl/media/orphan.png", b"orphan"));
+    let book = open(package(&entries)).unwrap();
+
+    assert_eq!(book.images().len(), 1);
+    assert_eq!(book.images()[0].media, "xl/media/image1.png");
+}
+
+/// PNG-книга: обе картинки ссылаются на одну часть — запись в реестре одна,
+/// id у картинок совпадают, байты настоящие.
+#[test]
+fn png_book_registry_keeps_shared_media_bytes() {
+    let book = open_fixture("images-png.xlsx");
+    assert_eq!(book.images().len(), 1);
+
+    let stored = &book.images()[0];
+    assert_eq!(stored.id, 0);
+    assert_eq!(stored.media, "xl/media/image1.png");
+    assert_eq!(stored.mime, "image/png");
+    assert_eq!(&stored.bytes[..8], b"\x89PNG\r\n\x1a\n");
+
+    let ids: Vec<_> = book.sheets()[0]
+        .images
+        .iter()
+        .map(|image| image.image_id)
+        .collect();
+    assert_eq!(ids, [Some(0), Some(0)]);
+}
+
+/// JPEG-книга: MIME отличается от PNG, байты непусты.
+#[test]
+fn jpeg_book_registry_keeps_jpeg_bytes() {
+    let book = open_fixture("images-jpeg.xlsx");
+    assert_eq!(book.images().len(), 1);
+
+    let stored = &book.images()[0];
+    assert_eq!(stored.id, 0);
+    assert_eq!(stored.media, "xl/media/image1.jpeg");
+    assert_eq!(stored.mime, "image/jpeg");
+    assert_eq!(&stored.bytes[..2], &[0xFF, 0xD8]);
+    assert_eq!(book.sheets()[0].images[0].image_id, Some(0));
+}
+
+/// Книга «поверх данных»: две части, три картинки; id идут по порядку первого
+/// упоминания, а повторы делят запись.
+#[test]
+fn over_data_book_registry_dedups_media_and_numbers_ids() {
+    let book = open_fixture("images-over-data.xlsx");
+    let registry = book.images();
+    assert_eq!(registry.len(), 2);
+    assert_eq!(registry[0].media, "xl/media/image1.png");
+    assert_eq!(registry[0].mime, "image/png");
+    assert_eq!(registry[1].media, "xl/media/image2.jpeg");
+    assert_eq!(registry[1].mime, "image/jpeg");
+    assert!(registry.iter().all(|image| !image.bytes.is_empty()));
+
+    let ids: Vec<_> = book.sheets()[0]
+        .images
+        .iter()
+        .map(|image| image.image_id)
+        .collect();
+    assert_eq!(ids, [Some(0), Some(1), Some(0)]);
+}
+
+/// Id стабильны: повторное открытие той же книги даёт тот же реестр.
+#[test]
+fn image_ids_are_stable_across_opens() {
+    let first = open_fixture("images-over-data.xlsx");
+    let second = open_fixture("images-over-data.xlsx");
+
+    assert_eq!(first.images(), second.images());
+    let ids = |book: &Workbook| -> Vec<_> {
+        book.sheets()[0]
+            .images
+            .iter()
+            .map(|image| image.image_id)
+            .collect()
+    };
+    assert_eq!(ids(&first), ids(&second));
+}
+
+/// Книга без картинок даёт пустой реестр, а не ошибку.
+#[test]
+fn book_without_images_has_empty_registry() {
+    let book = open_fixture("content-single-cell.xlsx");
+
+    assert!(book.images().is_empty());
+    assert!(book.image(0).is_none());
 }
