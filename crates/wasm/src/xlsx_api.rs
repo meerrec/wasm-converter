@@ -7,7 +7,6 @@
 
 use std::cell::RefCell;
 
-use doc_converter_pdf::{Margins, PageOrientation, PageSize, PdfExporter, PdfOptions};
 use doc_converter_render::display_list::DisplayList;
 use doc_converter_render::sab::SabRing;
 use doc_converter_xlsx::paint::{self, PaintOptions};
@@ -378,114 +377,9 @@ pub fn xlsx_open_bytes(bytes: js_sys::Uint8Array) -> Result<JsValue, JsValue> {
     xlsx_open(bytes.to_vec())
 }
 
-/// Настройки экспорта из интерфейса: имена полей — как у TS `PdfOptions`.
-/// Все поля необязательны; чего нет — берётся умолчание [`PdfOptions`].
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PdfOptionsJs {
-    #[serde(default)]
-    page_size: Option<PageSizeJs>,
-    #[serde(default)]
-    orientation: Option<OrientationJs>,
-    #[serde(default)]
-    margins: Option<MarginsJs>,
-    #[serde(default)]
-    scale: Option<f32>,
-    /// Лист из настроек: интерфейс может экспортировать не тот, что на экране.
-    #[serde(default)]
-    sheet_index: Option<usize>,
-}
-
-/// Размер страницы: строки те же, что в TS-объединении `PdfOptions.pageSize`.
-#[derive(Debug, Clone, Copy, Deserialize)]
-pub enum PageSizeJs {
-    #[serde(rename = "A4")]
-    A4,
-    #[serde(rename = "A3")]
-    A3,
-    #[serde(rename = "Letter")]
-    Letter,
-    #[serde(rename = "Legal")]
-    Legal,
-}
-
-/// Ориентация страницы: в TS она записана строчными.
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OrientationJs {
-    Portrait,
-    Landscape,
-}
-
-/// Поля страницы в миллиметрах.
-#[derive(Debug, Clone, Copy, Deserialize)]
-pub struct MarginsJs {
-    top: f32,
-    right: f32,
-    bottom: f32,
-    left: f32,
-}
-
-impl PdfOptionsJs {
-    /// Дополнить умолчания PDF-крейта тем, что выбрал интерфейс.
-    fn into_options(self) -> PdfOptions {
-        let mut options = PdfOptions::default();
-        if let Some(size) = self.page_size {
-            options.page.size = match size {
-                PageSizeJs::A4 => PageSize::A4,
-                PageSizeJs::A3 => PageSize::A3,
-                PageSizeJs::Letter => PageSize::Letter,
-                PageSizeJs::Legal => PageSize::Legal,
-            };
-        }
-        if let Some(orientation) = self.orientation {
-            options.page.orientation = match orientation {
-                OrientationJs::Portrait => PageOrientation::Portrait,
-                OrientationJs::Landscape => PageOrientation::Landscape,
-            };
-        }
-        if let Some(margins) = self.margins {
-            options.page.margins = Margins {
-                top_mm: margins.top,
-                right_mm: margins.right,
-                bottom_mm: margins.bottom,
-                left_mm: margins.left,
-            };
-        }
-        if let Some(scale) = self.scale {
-            options.page.scale = scale;
-        }
-        options.sheet_index = self.sheet_index;
-        options
-    }
-}
-
-/// Экспортировать лист открытой книги в PDF.
-///
-/// Книга берётся из `DOC` — та же, что рисуется на холсте; `sheetIndex` из
-/// настроек перекрывает аргумент, если задан.
-///
-/// # Errors
-/// Если книга не открыта, листа нет или printpdf не смог собрать документ.
-#[wasm_bindgen]
-pub fn xlsx_export_pdf(sheet: usize, options: JsValue) -> Result<Vec<u8>, JsValue> {
-    // Настройки необязательны: вызов без них — экспорт с умолчаниями.
-    let options = if options.is_undefined() || options.is_null() {
-        PdfOptions::default()
-    } else {
-        serde_wasm_bindgen::from_value::<PdfOptionsJs>(options)
-            .map_err(to_js)?
-            .into_options()
-    };
-    let sheet = options.sheet_index.unwrap_or(sheet);
-
-    DOC.with(|doc| {
-        let doc = doc.borrow();
-        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
-        let mut exporter = PdfExporter::new(options);
-        exporter.export_xlsx_sheet(book, sheet).map_err(to_js)
-    })
-}
+// Экспорт в PDF живёт в отдельном модуле (`crates/pdf-wasm`): printpdf тянет
+// за собой svg2pdf/usvg/lopdf и раздувает бандл в разы, а нужен он только по
+// клику «Экспорт в PDF». Воркер грузит его лениво.
 
 fn now() -> f64 {
     js_sys::Date::now()
