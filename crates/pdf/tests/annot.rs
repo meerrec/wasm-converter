@@ -7,7 +7,7 @@
 //! страницу ячейках нужны свои. Книга собирается публичными конструкторами
 //! `doc-converter-xlsx` (`WorksheetBuilder`, `Sheet::new`, `Workbook::new`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use doc_converter_pdf::{Margins, PageConfig, PageSize, PdfExporter, PdfOptions};
 use doc_converter_xlsx::layout::SheetLayout;
@@ -20,11 +20,16 @@ use lopdf::{Dictionary, Document, Object};
 /// Часть пакета синтетического листа; нужна только текстам ошибок.
 const PART: &str = "xl/worksheets/sheet1.xml";
 
+/// Путь книги из общего набора фикстур.
+fn fixture_path(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../test-fixtures/xlsx")
+        .join(name)
+}
+
 /// Открыть книгу из общего набора фикстур.
 fn open_fixture(name: &str) -> Workbook {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../test-fixtures/xlsx")
-        .join(name);
+    let path = fixture_path(name);
     let bytes = std::fs::read(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
     doc_converter_xlsx::open(bytes).unwrap_or_else(|err| panic!("{name}: {err}"))
 }
@@ -495,6 +500,42 @@ fn comment_follows_cell_to_second_page() {
         text_string(&found[1].1, b"Contents"),
         "примечание ко второй"
     );
+}
+
+/// Сквозной путь: примечания, разобранные из `comments1.xml` фикстуры,
+/// доезжают до PDF с тем же текстом и автором, что в модели листа.
+///
+/// Фикстуру пишет `pnpm gen:fixtures` (`scripts/gen-fixtures.ts`), в git её
+/// может не быть — тогда тест пропускается с причиной, как `external.rs` без
+/// `qpdf`, а не падает.
+#[test]
+fn fixture_comments_reach_the_pdf() {
+    if !fixture_path("comments-legacy.xlsx").is_file() {
+        eprintln!("нет фикстуры comments-legacy.xlsx — тест пропущен");
+        return;
+    }
+    let book = open_fixture("comments-legacy.xlsx");
+    let sheet = &book.sheets()[0];
+    let doc = export(&book, PdfOptions::default());
+    let found = text_annotations(&doc);
+
+    let mut expected: Vec<(String, Option<String>)> = sheet
+        .comments
+        .iter()
+        .map(|comment| (comment.text.clone(), comment.author.clone()))
+        .collect();
+    let mut actual: Vec<(String, Option<String>)> = found
+        .iter()
+        .map(|(_, annot)| {
+            (
+                text_string(annot, b"Contents"),
+                annot.get(b"T").ok().map(|_| text_string(annot, b"T")),
+            )
+        })
+        .collect();
+    expected.sort();
+    actual.sort();
+    assert_eq!(actual, expected, "текст и автор примечаний ≠ модели листа");
 }
 
 /// Лист без примечаний: `/Text`-аннотаций нет, экспорт не падает.
