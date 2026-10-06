@@ -46,6 +46,17 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: cargo test --workspace --all-features
 
+      # Форк исключён из workspace (см. `exclude` в корневом Cargo.toml), и
+      # `cargo test --workspace` его тесты не видит — без отдельного шага они
+      # снова сгниют. Дефолтные фичи выключены намеренно: они тянут `html`
+      # через resvg, а тот идёт под MPL-2.0, которую `deny.toml` не разрешает.
+      # Проверяем ровно ту конфигурацию, которую собирает workspace
+      # (`default-features = false`), иначе CI зеленел бы на том, чего мы не поставляем.
+      - name: test (printpdf fork)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        working-directory: vendor/printpdf
+        run: cargo test --no-default-features
+
       - name: build (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
         run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm --release
