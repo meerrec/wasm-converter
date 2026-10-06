@@ -1,5 +1,6 @@
 //! Производительные гейты спринта 6: 1000 ячеек → PDF меньше 200 КиБ,
-//! 10 страниц быстрее 300 мс (ROADMAP §9).
+//! 10 страниц быстрее 300 мс (ROADMAP §9). Спринт 7 добавляет бюджет размера
+//! сжатого PDF (DoD 9): плотная книга 2000 ячеек — меньше 32 КиБ.
 //!
 //! Размер PDF детерминирован при фиксированных фикстурах и настройках, поэтому
 //! гейт жёсткий. Время в CI нестабильно — общий раннер, разогрев, соседние
@@ -15,6 +16,15 @@ use doc_converter_pdf::{PdfExporter, PdfOptions};
 
 /// Бюджет размера из ROADMAP §9: 200 КиБ.
 const SIZE_BUDGET_BYTES: usize = 200 * 1024;
+
+/// Бюджет размера сжатого PDF (DoD 9): плотная книга 2000 ячеек — 32 КиБ.
+///
+/// Замер 06.10.2026: `content-dense.xlsx` — 14 510 Б со сжатием против
+/// 211 559 Б без него. Порог в 2,2× от замера ловит откат любой из трёх правок
+/// форка (без них файл возвращается к сырым ≈211 КиБ) и оставляет запас на рост
+/// фикстуры. Факт и степень сжатия (фильтры, отношение ≥1,5×) проверяет
+/// `compression.rs`; здесь — только абсолютный потолок, как у гейта 1000 ячеек.
+const COMPRESSED_SIZE_BUDGET_BYTES: usize = 32 * 1024;
 
 /// Мягкий порог времени: 3× от бюджета 300 мс.
 const TIME_SOFT_GATE: Duration = Duration::from_millis(900);
@@ -47,6 +57,31 @@ fn thousand_cells_pdf_fits_under_200_kib() {
     assert!(
         pdf.len() < SIZE_BUDGET_BYTES,
         "PDF из 1000 ячеек не влез в бюджет: {} байт ({:.1} КиБ) при пороге {SIZE_BUDGET_BYTES} байт",
+        pdf.len(),
+        pdf.len() as f64 / 1024.0,
+    );
+}
+
+#[test]
+fn content_dense_compressed_pdf_fits_under_32_kib() {
+    let book = open("content-dense.xlsx");
+    // `compress: true` задан явно, а не взят из дефолта: гейт обязан ломаться,
+    // если сжатие выключат, а не молча мерить несжатый файл.
+    let pdf = PdfExporter::new(PdfOptions {
+        compress: true,
+        ..PdfOptions::default()
+    })
+    .export_xlsx_sheet(&book, 0)
+    .expect("PDF собирается");
+
+    eprintln!(
+        "content-dense.xlsx: PDF со сжатием {} байт ({:.1} КиБ), бюджет {COMPRESSED_SIZE_BUDGET_BYTES} байт",
+        pdf.len(),
+        pdf.len() as f64 / 1024.0,
+    );
+    assert!(
+        pdf.len() < COMPRESSED_SIZE_BUDGET_BYTES,
+        "сжатый PDF плотной книги не влез в бюджет: {} байт ({:.1} КиБ) при пороге {COMPRESSED_SIZE_BUDGET_BYTES} байт",
         pdf.len(),
         pdf.len() as f64 / 1024.0,
     );
