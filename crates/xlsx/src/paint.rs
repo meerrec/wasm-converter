@@ -553,12 +553,17 @@ fn draw_region(
     out.push(DrawCommand::PopClip);
 }
 
-/// Прямоугольник картинки в координатах раскладки: `(x, y, w, h)`.
+/// Прямоугольник якоря в координатах раскладки: `(x, y, w, h)`.
+///
+/// Общий для картинок и диаграмм: якорь у них один и тот же, и PDF обязан
+/// считать его той же геометрией, что и canvas-путь, — цена расхождения уже
+/// видна на `cell_rect` (ADR-0011 §6).
 ///
 /// `from` — верхний левый угол, `to` — нижний правый (в OOXML он исключающий,
 /// то есть задаёт границу, а не последний пиксель). Повреждённый якорь может
 /// дать отрицательный размер — рисование такие пропускает.
-fn anchor_rect(layout: &SheetLayout, anchor: ImageAnchor) -> (f32, f32, f32, f32) {
+#[must_use]
+pub fn anchor_rect(layout: &SheetLayout, anchor: ImageAnchor) -> (f32, f32, f32, f32) {
     let (from, to) = match anchor {
         ImageAnchor::OneCell { from, ext } => {
             let x = layout.column_x(from.col) + from.col_off;
