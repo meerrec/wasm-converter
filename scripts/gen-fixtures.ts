@@ -1051,6 +1051,82 @@ const imagesOverData: Build = (wb) => {
   ws.addImage(png, { tl: { col: 16381, row: 4 }, ext: { width: 80, height: 60 } });
 };
 
+// ── PDF: текст и масштаб ────────────────────────────────────
+
+/**
+ * Кириллица и переносы: общий для канвы и PDF разбор строк (F1) обязан
+ * ломать одни и те же слова в одних и тех же местах.
+ */
+const textCyrillicWrap: Build = (wb) => {
+  const ws = wb.addWorksheet('Кириллица');
+  ws.getColumn(1).width = 40;
+  ws.getColumn(2).width = 4;
+  // 9 — «ширина по умолчанию» самого exceljs: такую колонку он не пишет.
+  ws.getColumn(3).width = 8;
+
+  ws.getCell('A1').value = 'Привет, мир';
+  ws.getCell('A2').value = 'Документ report final версия v2: смешанный текст';
+  ws.getCell('A3').value = 'ё Ё Ђ ћ №5 — тире, дефис - и «ёлочки»';
+  // Длинный текст: несколько строк переноса по словам.
+  const long =
+    'Перенос строки в ячейке проверяется по точкам разрыва: одинаковые слова должны ломаться одинаково и на канве, и в PDF. ';
+  const wrapped = ws.getCell('A4');
+  wrapped.value = long.repeat(2).trim();
+  wrapped.alignment = { wrapText: true, vertical: 'top' };
+  // Высота под четыре строки: иначе перенос обрезался бы уже на первой.
+  ws.getRow(4).height = 60;
+  // Явный перевод строки: жёсткий разрыв не зависит от ширины колонки.
+  const manual = ws.getCell('A5');
+  manual.value = 'первая строка\nвторая строка переноса';
+  manual.alignment = { wrapText: true, vertical: 'top' };
+  ws.getRow(5).height = 30;
+  // Слово не влезает в колонку целиком — перенос обязан разорвать его.
+  const word = ws.getCell('C1');
+  word.value = 'гидроэлектростанция';
+  word.alignment = { wrapText: true, vertical: 'top' };
+  // Число в колонке шириной 4 не помещается: Excel рисует `#####`.
+  const narrow = ws.getCell('B1');
+  narrow.value = 1234567.89;
+  narrow.numFmt = '#,##0.00';
+};
+
+/** Ровно 1000 непустых ячеек без стилей: бюджет размера PDF (< 200 КБ). */
+const scale1000Cells: Build = (wb) => {
+  const ws = wb.addWorksheet('1000 ячеек');
+  for (let r = 1; r <= 50; r += 1) {
+    ws.getCell(r, 1).value = `Строка ${r}`;
+    for (let c = 2; c <= 20; c += 1) {
+      ws.getCell(r, c).value = r * 100 + c;
+    }
+  }
+};
+
+/**
+ * Высокий лист: на A4 даёт больше десяти страниц (бюджет «10 страниц < 300 мс»).
+ *
+ * Строки однострочные и без своей высоты (15 pt по умолчанию): число страниц
+ * тогда зависит только от числа строк, а не от того, учитывает ли разбивку
+ * `ht` из файла. 600 строк — около двенадцати страниц A4 при любой разумной
+ * высоте полей, с запасом к порогу в десять.
+ */
+const scaleTenPages: Build = (wb) => {
+  const ws = wb.addWorksheet('Отчёт');
+  ws.addRow(['№', 'Наименование', 'Артикул', 'Количество', 'Цена', 'Сумма']);
+  ws.getColumn(2).width = 40;
+  for (let r = 1; r <= 600; r += 1) {
+    ws.addRow([
+      r,
+      `Позиция ${r}: средний текст отчёта`,
+      `АРТ-${String(r).padStart(5, '0')}`,
+      (r % 17) + 1,
+      // Деньги считаются в копейках и делятся один раз: иначе накопленная
+      // погрешность double расходится с тем, что записано в файл.
+      (((r * 137) % 9000) + 1000) / 100,
+      (((r * 291) % 30000) + 10000) / 100,
+    ]);
+  }
+};
+
 // ── Правка готового пакета ──────────────────────────────────
 //
 // exceljs не умеет `stopIfTrue` (в 4.4.0 этого атрибута нет ни в одном
@@ -1257,6 +1333,10 @@ FIXTURES.push(
   { name: 'sheets-empty-second', build: emptySecondSheet },
   { name: 'sheets-same-data', build: sameDataSheets },
   { name: 'sheets-many', build: manySheets },
+
+  { name: 'text-cyrillic-wrap', build: textCyrillicWrap },
+  { name: 'scale-1000-cells', build: scale1000Cells },
+  { name: 'scale-ten-pages', build: scaleTenPages },
 );
 
 // Условное форматирование: типы правил, операторы, пороги, приоритеты.
