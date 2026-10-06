@@ -168,6 +168,10 @@ version = "0.4.0"
 bmp = ["image/bmp"]
 dds = ["image/dds"]
 default = ["html"]
+# Кодогенератор defaultfonts в src/font.rs требует ttf/woff2 из
+# examples/assets/fonts, которых нет в вендоре; фича не входит в default.
+# Включать только с положенными в vendor/printpdf/examples/assets/fonts ассетами.
+example-fonts = []
 gif = ["image/gif"]
 hdr = ["image/hdr"]
 html = [

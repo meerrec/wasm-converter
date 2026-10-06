@@ -11,9 +11,12 @@
 //! Почему свой сериализатор: lopdf 0.35 держит модуль `writer` приватным,
 //! публичных `write_indirect_object`/`write_object` нет, а складывать объекты
 //! страниц в `Document`, чтобы потом отдать их `save_to`, — значит снова
-//! копить их в памяти. Формат повторяет `lopdf::writer` байт в байт (на этом
-//! стоит тест совместимости со старым путём), иначе пути разошлись бы на одних
-//! и тех же данных.
+//! копить их в памяти. Синтаксис значений повторяет `lopdf::writer`
+//! (экранирование, разделители, xref), иначе пути разошлись бы на одних и тех
+//! же данных. Побайтового совпадения всего файла со старым путём при этом нет:
+//! объекты пишутся в другом порядке, расхождение начинается с 15-го байта
+//! (после заголовка). Побайтово равны только потоки содержимого страниц — на
+//! это и опирается тест совместимости.
 //!
 //! Шрифты: сессия готовит subset-шрифты до первой страницы, поэтому
 //! вызывающий передаёт страницы для сбора глифов (`font_probe_pages`); без них
@@ -630,8 +633,8 @@ mod tests {
     use super::*;
     use crate::ops::Op;
     use crate::{
-        Actions, BuiltinFont, Destination, LinkAnnotation, Mm, PdfDocument, PdfPage,
-        PdfSaveOptions, Point, Pt, Rect, TextItem,
+        Actions, BuiltinFont, Destination, LinkAnnotation, Mm, PageAnnotId, PageAnnotation,
+        PdfDocument, PdfPage, PdfSaveOptions, Point, Pt, Rect, TextItem,
     };
 
     fn render(object: &Object) -> String {
@@ -652,8 +655,9 @@ mod tests {
         // Одиночные — экранируются.
         assert_eq!(literal(b"a(b"), "(a\\(b)");
         assert_eq!(literal(b"a)b"), "(a\\)b)");
-        // `)` без пары экранируется, парная `)` после парной `(` — нет.
-        assert_eq!(literal(b"))("), "(\\)(\\()");
+        // Закрывающие без открывающих перед ними — обе экранируются,
+        // одиночная открывающая в конце — тоже (так же считает lopdf).
+        assert_eq!(literal(b"))("), "(\\)\\)\\()");
         assert_eq!(literal(b"(a(b)c)d"), "((a(b)c)d)");
         assert_eq!(literal(b"a\\b"), "(a\\\\b)");
         assert_eq!(literal(b"a\rb"), "(a\\rb)");
@@ -1110,8 +1114,12 @@ mod tests {
             "не все объекты попали в xref"
         );
         assert_eq!(
-            parsed.trailer.get(b"Size").and_then(Object::as_i64),
-            Some(i64::from(size))
+            parsed
+                .trailer
+                .get(b"Size")
+                .and_then(Object::as_i64)
+                .expect("в трейлере нет /Size"),
+            i64::from(size)
         );
     }
 
