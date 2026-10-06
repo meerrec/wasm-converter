@@ -575,6 +575,7 @@ dependencies = [
  "doc-converter-render",
  "doc-converter-xlsx",
  "flate2",
+ "lopdf",
  "printpdf",
  "serde",
  "thiserror",
