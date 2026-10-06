@@ -23,6 +23,9 @@ import { crc32, deflateRawSync, deflateSync, inflateRawSync } from 'node:zlib';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const OUT_DIR = path.join(ROOT, 'test-fixtures', 'xlsx');
 const ORACLE = path.join(OUT_DIR, 'oracle.json');
+// Тяжёлые книги (сотни килобайт) в репозиторий не кладутся: генератор пишет
+// их в каталог сборки, откуда их берут бенч и `mem_probe`.
+const HEAVY_DIR = path.join(ROOT, 'target', 'fixtures');
 
 type Build = (wb: ExcelJS.Workbook) => void;
 
@@ -1127,6 +1130,260 @@ const scaleTenPages: Build = (wb) => {
   }
 };
 
+/**
+ * Пятьсот страниц A4 — потолок DoD 1 (бенч `bench_pdf_time_500_pages`).
+ *
+ * В репозиторий книга не кладётся: её эталон добавил бы к `oracle.json`
+ * больше мегабайта, а ценность фикстуры — во времени экспорта, не в разборе
+ * (масштаб разбора уже покрыт `scale-ten-pages`). Генератор пишет её в
+ * `target/fixtures/` — каталог сборки, git его не видит; бенч и `mem_probe`
+ * берут книгу оттуда.
+ *
+ * Строки без своей высоты, как в `scaleTenPages`: число страниц тогда зависит
+ * только от их количества, а не от того, учитывает ли разбивку `ht` из файла.
+ * При 15 pt на A4 помещается ≈46 строк, поэтому 23 000 строк — около 500
+ * страниц; фактическое число печатает бенч.
+ */
+const scale500Pages: Build = (wb) => {
+  const ws = wb.addWorksheet('500 страниц');
+  ws.getColumn(1).width = 10;
+  ws.getColumn(2).width = 32;
+  for (let r = 1; r <= 23_000; r += 1) {
+    ws.getCell(r, 1).value = r;
+    ws.getCell(r, 2).value = `Позиция ${r}: строка отчёта`;
+  }
+};
+
+// ── Диаграммы ───────────────────────────────────────────────
+//
+// exceljs не умеет диаграммы ни одного из пяти видов. Поэтому в готовый
+// пакет дописываются части `xl/charts/chart*.xml`, чертёж и оба rels-файла —
+// тем же приёмом, что `stopIfTrue`: unzip → правка/добавление частей →
+// `zipEntries`. Цепочка связей «лист → чертёж → диаграмма» настоящая: ровно её
+// разбирает `crates/xlsx/tests/charts.rs`, поэтому фикстуру можно брать в
+// тесты C3/C4/C5 без сборки пакета в памяти.
+
+/** Данные диаграмм: те же числа лежат и в ячейках листа, и в кэшах частей. */
+const QUARTERS = ['Кв. 1', 'Кв. 2', 'Кв. 3', 'Кв. 4'];
+const PLAN = [120, 150, 90, 180];
+const FACT = [100, 140, 130, 160];
+const SCATTER_X = [1, 2, 3, 4, 5];
+const SCATTER_Y = [12, 18, 9, 22, 15];
+
+interface ChartSpec {
+  /** Имя элемента внутри `c:plotArea`. */
+  element: 'barChart' | 'lineChart' | 'areaChart' | 'pieChart' | 'scatterChart';
+  title: string;
+  categories: string[];
+  series: Array<{ name: string; values: number[] }>;
+  /** Точечная диаграмма кладёт X в `xVal`, Y — в `yVal`. */
+  scatter?: boolean;
+}
+
+interface PlacedChart {
+  spec: ChartSpec;
+  /** Имя фигуры в чертеже; оно же подпись диаграммы. */
+  name: string;
+  /** Якорь `twoCellAnchor` в 0-based колонках и строках. */
+  from: [number, number];
+  to: [number, number];
+}
+
+const CHARTS: PlacedChart[] = [
+  {
+    name: 'План и факт',
+    from: [5, 1],
+    to: [10, 15],
+    spec: {
+      element: 'barChart',
+      title: 'План и факт',
+      categories: QUARTERS,
+      series: [
+        { name: 'План', values: PLAN },
+        { name: 'Факт', values: FACT },
+      ],
+    },
+  },
+  {
+    name: 'Динамика',
+    from: [12, 1],
+    to: [17, 15],
+    spec: { element: 'lineChart', title: 'Динамика', categories: QUARTERS, series: [{ name: 'Факт', values: FACT }] },
+  },
+  {
+    name: 'Площадь',
+    from: [5, 17],
+    to: [10, 31],
+    spec: { element: 'areaChart', title: 'Площадь', categories: QUARTERS, series: [{ name: 'Факт', values: FACT }] },
+  },
+  {
+    name: 'Доли',
+    from: [12, 17],
+    to: [17, 31],
+    spec: { element: 'pieChart', title: 'Доли', categories: QUARTERS, series: [{ name: 'Факт', values: FACT }] },
+  },
+  {
+    name: 'Точки',
+    from: [19, 1],
+    to: [24, 15],
+    spec: {
+      element: 'scatterChart',
+      title: 'Точки',
+      categories: SCATTER_X.map(String),
+      series: [{ name: 'Замеры', values: SCATTER_Y }],
+      scatter: true,
+    },
+  },
+];
+
+/**
+ * Книга с пятью диаграммами — по одной на каждый поддержанный вид.
+ *
+ * Данные пишутся и в ячейки: так файл похож на книгу из Excel, а тесты паритета
+ * (C5) могут сверить подписи и числа с содержимым листа.
+ */
+const chartsFiveKinds: Build = (wb) => {
+  const ws = wb.addWorksheet('Диаграммы');
+  ws.getCell('A1').value = 'Категория';
+  ws.getCell('B1').value = 'План';
+  ws.getCell('C1').value = 'Факт';
+  QUARTERS.forEach((quarter, i) => {
+    ws.getCell(i + 2, 1).value = quarter;
+    ws.getCell(i + 2, 2).value = PLAN[i];
+    ws.getCell(i + 2, 3).value = FACT[i];
+  });
+  ws.getCell('E1').value = 'X';
+  ws.getCell('F1').value = 'Y';
+  SCATTER_X.forEach((x, i) => {
+    ws.getCell(i + 2, 5).value = x;
+    ws.getCell(i + 2, 6).value = SCATTER_Y[i];
+  });
+};
+
+/** Точки кэша — тот же формат, что пишет Excel: `ptCount` и `pt` по индексам. */
+function cachePoints(values: string[]): string {
+  const points = values.map((value, idx) => `<c:pt idx="${idx}"><c:v>${value}</c:v></c:pt>`).join('');
+  return `<c:ptCount val="${values.length}"/>${points}`;
+}
+
+/** Серия диаграммы: имя, категории (или X) и значения (или Y) из кэшей. */
+function chartSeriesXml(series: ChartSpec['series'][number], spec: ChartSpec): string {
+  const name = `<c:tx><c:strRef><c:strCache>${cachePoints([series.name])}</c:strCache></c:strRef></c:tx>`;
+  const values = cachePoints(series.values.map(String));
+  const [cat, val] = spec.scatter
+    ? [
+        `<c:xVal><c:numRef><c:numCache>${cachePoints(spec.categories)}</c:numCache></c:numRef></c:xVal>`,
+        `<c:yVal><c:numRef><c:numCache>${values}</c:numCache></c:numRef></c:yVal>`,
+      ]
+    : [
+        `<c:cat><c:strRef><c:strCache>${cachePoints(spec.categories)}</c:strCache></c:strRef></c:cat>`,
+        `<c:val><c:numRef><c:numCache>${values}</c:numCache></c:numRef></c:val>`,
+      ];
+  return `<c:ser>${name}${cat}${val}</c:ser>`;
+}
+
+/** Часть `xl/charts/chartN.xml`: вид, заголовок и серии с кэшами. */
+function chartXml(spec: ChartSpec): string {
+  const series = spec.series.map((s) => chartSeriesXml(s, spec)).join('');
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <c:chart>
+    <c:title><c:tx><c:rich><a:p><a:r><a:t>${spec.title}</a:t></a:r></a:p></c:rich></c:tx></c:title>
+    <c:plotArea><c:${spec.element}>${series}</c:${spec.element}></c:plotArea>
+  </c:chart>
+</c:chartSpace>`;
+}
+
+/** Якорь диаграммы в чертеже: те же `from`/`to`, что у картинок. */
+function chartAnchorXml(id: number, chart: PlacedChart, relId: string): string {
+  const marker = (tag: 'from' | 'to', [col, row]: [number, number]) =>
+    `<xdr:${tag}><xdr:col>${col}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${row}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:${tag}>`;
+  return `<xdr:twoCellAnchor>${marker('from', chart.from)}${marker('to', chart.to)}<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${id}" name="${chart.name}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart r:id="${relId}"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor>`;
+}
+
+/** Блок `<Drawing>` листа: чертёж и его связи — по диаграмме на фигуру. */
+function drawingEntry(): ZipEntry {
+  const anchors = CHARTS.map((chart, i) => chartAnchorXml(i + 2, chart, `rId${i + 1}`)).join('');
+  return {
+    name: 'xl/drawings/drawing1.xml',
+    data: Buffer.from(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${anchors}</xdr:wsDr>`,
+      'utf8',
+    ),
+  };
+}
+
+/** Связи чертежа: `rIdN` из `<c:chart>` → часть диаграммы. */
+function drawingRelsEntry(): ZipEntry {
+  const rels = CHARTS.map(
+    (_, i) =>
+      `<Relationship Id="rId${i + 1}" Target="../charts/chart${i + 1}.xml" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"/>`,
+  ).join('');
+  return {
+    name: 'xl/drawings/_rels/drawing1.xml.rels',
+    data: Buffer.from(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}</Relationships>`,
+      'utf8',
+    ),
+  };
+}
+
+/** Связь листа с чертежом: без неё `read_drawing_objects` вернёт пусто. */
+function sheetDrawingRelsEntry(): ZipEntry {
+  return {
+    name: 'xl/worksheets/_rels/sheet1.xml.rels',
+    data: Buffer.from(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Target="../drawings/drawing1.xml" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"/>
+</Relationships>`,
+      'utf8',
+    ),
+  };
+}
+
+/** Дописать пять диаграмм и чертёж в готовую книгу `charts-five-kinds`. */
+async function addCharts(file: string): Promise<void> {
+  const entries = unzip(await readFile(file));
+  const contentTypes = entries.find((e) => e.name === '[Content_Types].xml');
+  const sheet = entries.find((e) => e.name === 'xl/worksheets/sheet1.xml');
+  if (!contentTypes || !sheet) throw new Error(`${file}: в пакете нет частей листа`);
+  if (entries.some((e) => e.name.startsWith('xl/drawings/') || e.name.startsWith('xl/charts/'))) {
+    throw new Error(`${file}: части чертежа уже есть — exceljs начал писать drawings?`);
+  }
+
+  const chartParts = CHARTS.map((chart, i) => ({
+    name: `xl/charts/chart${i + 1}.xml`,
+    data: Buffer.from(chartXml(chart.spec), 'utf8'),
+  }));
+  // Связь листа объявляет `r:id` у `<drawing>`; суффикс у пары обязателен —
+  // иначе `read_rels` не найдёт её рядом с `sheet1.xml`.
+  const overrides = ['/xl/drawings/drawing1.xml', ...chartParts.map((part) => `/${part.name}`)]
+    .map(
+      (name) =>
+        `<Override PartName="${name}" ContentType="${
+          name.includes('/charts/')
+            ? 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml'
+            : 'application/vnd.openxmlformats-officedocument.drawing+xml'
+        }"/>`,
+    )
+    .join('');
+  contentTypes.data = Buffer.from(
+    contentTypes.data.toString('utf8').replace('</Types>', `${overrides}</Types>`),
+    'utf8',
+  );
+
+  const drawing = '<drawing xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId1"/>';
+  const sheetXml = sheet.data.toString('utf8');
+  if (!sheetXml.includes('</worksheet>')) throw new Error(`${file}: лист не закрыт`);
+  sheet.data = Buffer.from(sheetXml.replace('</worksheet>', `${drawing}</worksheet>`), 'utf8');
+
+  entries.push(sheetDrawingRelsEntry(), drawingEntry(), drawingRelsEntry(), ...chartParts);
+  await writeFile(file, zipEntries(entries));
+}
+
 // ── Правка готового пакета ──────────────────────────────────
 //
 // exceljs не умеет `stopIfTrue` (в 4.4.0 этого атрибута нет ни в одном
@@ -1248,6 +1505,9 @@ async function addStopIfTrue(file: string): Promise<void> {
 
 const FIXTURES: Fixture[] = [];
 
+/** Книги для `target/fixtures/`: в репозиторий и `oracle.json` не попадают. */
+const HEAVY_FIXTURES: Fixture[] = [];
+
 /** Простой лист с одной колонкой значений. */
 function column(name: string, sheet: string, values: Array<string | number | boolean>): Fixture {
   return {
@@ -1356,6 +1616,12 @@ FIXTURES.push(
   { name: 'images-jpeg', build: imagesJpeg },
   { name: 'images-over-data', build: imagesOverData },
 );
+
+// Диаграммы: пять поддержанных видов в одной книге — источник для C3/C4/C5.
+FIXTURES.push({ name: 'charts-five-kinds', build: chartsFiveKinds, after: addCharts });
+
+// Тяжёлые книги — в git не идут, генератор кладёт их в target/fixtures/.
+HEAVY_FIXTURES.push({ name: 'scale-500-pages', build: scale500Pages });
 
 // Крайние случаи: границы листа, вырожденные размеры, длинные цепочки формул.
 FIXTURES.push(
@@ -1766,33 +2032,54 @@ async function oracleFor(file: string): Promise<Json> {
   return { sheets };
 }
 
+/** Пустая книга с фиксированными метаданными: перегенерация не шумит core.xml. */
+function freshWorkbook(): ExcelJS.Workbook {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'doc-converter fixtures';
+  wb.created = new Date(Date.UTC(2026, 0, 1));
+  // `modified` exceljs иначе выставляет по часам — перегенерация даёт шум в core.xml.
+  wb.modified = new Date(Date.UTC(2026, 0, 1));
+  return wb;
+}
+
+/** Записать книгу фикстуры: пакет пересобирается с фиксированной датой zip. */
+async function writeFixture(fixture: Fixture, dir: string): Promise<string> {
+  const wb = freshWorkbook();
+  fixture.build(wb);
+
+  const file = path.join(dir, `${fixture.name}.xlsx`);
+  await wb.xlsx.writeFile(file);
+  // archiver ставит в заголовки zip момент записи — пересобираем пакет с
+  // фиксированной датой (zipEntries), иначе байты плывут от запуска к запуску.
+  await writeFile(file, zipEntries(unzip(await readFile(file))));
+  await fixture.after?.(file);
+  return file;
+}
+
 async function main(): Promise<void> {
   if (new Set(FIXTURES.map((f) => f.name)).size !== FIXTURES.length) {
     throw new Error('имена фикстур повторяются');
   }
   await mkdir(OUT_DIR, { recursive: true });
+  await mkdir(HEAVY_DIR, { recursive: true });
 
   const files: Json = {};
   for (const fixture of FIXTURES) {
-    const wb = new ExcelJS.Workbook();
-    wb.creator = 'doc-converter fixtures';
-    wb.created = new Date(Date.UTC(2026, 0, 1));
-    // `modified` exceljs иначе выставляет по часам — перегенерация даёт шум в core.xml.
-    wb.modified = new Date(Date.UTC(2026, 0, 1));
-    fixture.build(wb);
-
-    const file = path.join(OUT_DIR, `${fixture.name}.xlsx`);
-    await wb.xlsx.writeFile(file);
-    // archiver ставит в заголовки zip момент записи — пересобираем пакет с
-    // фиксированной датой (zipEntries), иначе байты плывут от запуска к запуску.
-    await writeFile(file, zipEntries(unzip(await readFile(file))));
-    await fixture.after?.(file);
-
+    const file = await writeFixture(fixture, OUT_DIR);
     files[`${fixture.name}.xlsx`] = await oracleFor(file);
+  }
+
+  // Тяжёлые книги: без эталона и вне git — их ценность в размере, а не в разборе.
+  const heavy: string[] = [];
+  for (const fixture of HEAVY_FIXTURES) {
+    heavy.push(path.relative(ROOT, await writeFixture(fixture, HEAVY_DIR)));
   }
 
   await writeFile(ORACLE, `${JSON.stringify({ version: 1, files })}\n`);
   console.log(`фикстур: ${FIXTURES.length}, эталон: ${path.relative(ROOT, ORACLE)}`);
+  if (heavy.length > 0) {
+    console.log(`тяжёлые (не в git): ${heavy.join(', ')}`);
+  }
 }
 
 await main();

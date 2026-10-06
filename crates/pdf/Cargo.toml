@@ -11,7 +11,12 @@ doc-converter-render = { workspace = true }
 doc-converter-docx   = { workspace = true }
 doc-converter-xlsx   = { workspace = true }
 serde                = { workspace = true }
-printpdf             = { workspace = true }
+# Фичи `png`/`jpeg` включают декодеры printpdf для медиачастей XLSX:
+# workspace ставит printpdf с `default-features = false`, и без них
+# `RawImage::decode_from_bytes` отказывает и PNG, и JPEG. Прочие форматы
+# (gif, webp, bmp, tiff) не включаем: декодеры — вес wasm, а вставки редки
+# (решение задачи D3, см. docs/sprint-7/plan.md).
+printpdf             = { workspace = true, features = ["png", "jpeg"] }
 # ttf-parser объявлен в стеке ROADMAP §4, но в коде не используется, а с
 # 2026 года помечен unmaintained (RUSTSEC-2026-0192). Вернуть его или взять
 # рекомендованный `skrifa` — решение Фазы 4, когда метрики глифов понадобятся
