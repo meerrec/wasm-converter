@@ -225,6 +225,11 @@ fn page_counts_are_pinned() {
 /// `content-dense` и `size-20x100x1` (правые ячейки раньше отбрасывались за
 /// `max_x`) и `layout-column-widths` (пятый столбец шириной 60 символов уехал
 /// на вторую полосу).
+///
+/// `edge-merged-styled` пересчитан после починки заливок: полигон строился от
+/// верхней кромки (`Rect::to_polygon` в вендоренной 0.8.2), и каждая заливка
+/// уезжала вниз на высоту своего прямоугольника. Эталон был снят с багованной
+/// отрисовки — потому баг и не ловился.
 const DRAWING: &[(&str, u64)] = &[
     ("scale-ten-pages.xlsx", 0xc427_d500_5031_3cb4),
     ("edge-many-rows.xlsx", 0x8451_e5a1_99cc_39e7),
@@ -232,7 +237,7 @@ const DRAWING: &[(&str, u64)] = &[
     ("size-20x100x1.xlsx", 0xd2eb_fa1b_4c50_b1a7),
     ("values-strings.xlsx", 0xc9ad_db68_a27a_67f7),
     ("layout-column-widths.xlsx", 0xc279_e1d4_8bc9_ace5),
-    ("edge-merged-styled.xlsx", 0xf1fa_6ec1_b8db_84b6),
+    ("edge-merged-styled.xlsx", 0xb63d_5a61_2eb5_544e),
     ("content-empty-sheet.xlsx", 0x615d_6ab3_aa58_b40f),
 ];
 
