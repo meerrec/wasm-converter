@@ -1,6 +1,6 @@
-//! Гиперссылки листа → аннотации `/Link` на страницах PDF.
+//! Гиперссылки листа → аннотации `/Link`, примечания → `/Text` на страницах PDF.
 //!
-//! Прямоугольник ссылки берётся из геометрии листа [`SheetLayout`] — той же,
+//! Прямоугольник аннотации берётся из геометрии листа [`SheetLayout`] — той же,
 //! что рисует ячейки painter, — и переносится в координаты страницы общим с
 //! painter'ом сдвигом среза, поэтому аннотация накрывает ровно напечатанную
 //! ячейку, в том числе после разбивки по страницам.
@@ -9,6 +9,8 @@
 //! в документ попадает один лист книги, поэтому переход разрешается только
 //! на печатаемом листе. `HyperlinkTarget::Broken` аннотации не даёт: цель не
 //! разрешилась ещё при разборе книги, и делать вид, что адрес известен, нельзя.
+//! Примечание — текст в `/Contents` и автор в `/T`; страницу ему выбирает
+//! [`comment_placements`], и она одна на примечание.
 //!
 //! Закладки outline собирает [`add_outline`]: пункт верхнего уровня на лист.
 //! У XLSX нет заголовков в смысле DOCX — ни стилей заголовков, ни разделов, —
@@ -16,23 +18,29 @@
 
 use doc_converter_xlsx::layout::SheetLayout;
 use doc_converter_xlsx::{CellRef, Comment, HyperlinkTarget, Range, Sheet};
-use printpdf::{Actions, Destination, LinkAnnotation, Op, PdfDocument};
+use printpdf::{Actions, Annotation, Destination, LinkAnnotation, Op, PdfDocument, TextAnnotation};
 
 use crate::layout::{PageGeometry, RectPx};
 use crate::pagination::{PageSlice, SheetPage};
 use crate::painter::page_rect;
 
-/// Аннотации страницы: по одной на каждую ссылку, чьи ячейки попали в срез.
+/// Аннотации страницы: ссылки, чьи ячейки попали в срез, и примечания,
+/// которым досталась эта страница.
 ///
 /// `pages` — все страницы листа: по ним цель внутренней ссылки разрешается
-/// в номер страницы PDF.
+/// в номер страницы PDF. `placements` — примечания с их страницами,
+/// посчитанные один раз на лист: искать страницу для каждого примечания на
+/// каждом кадре — квадрат по числу страниц. `page_index` — номер текущей
+/// страницы в `pages`, с нуля.
 #[must_use]
 pub(crate) fn page_annotations(
     sheet: &Sheet,
     layout: &SheetLayout,
     pages: &[SheetPage<'_>],
+    placements: &[CommentPlacement<'_>],
     geometry: &PageGeometry,
     slice: &PageSlice,
+    page_index: usize,
 ) -> Vec<Op> {
     let mut ops = Vec::new();
     for link in &sheet.hyperlinks {
@@ -50,14 +58,32 @@ pub(crate) fn page_annotations(
         let Some(rect) = link_rect_on_page(sheet, layout, slice, link.range) else {
             continue;
         };
-        ops.push(Op::LinkAnnotation {
-            link: LinkAnnotation::new(
+        ops.push(Op::Annotation {
+            annot: Annotation::Link(LinkAnnotation::new(
                 geometry.rect_to_pt(rect).to_pdf(geometry.height_pt()),
                 actions,
                 None,
                 None,
                 None,
-            ),
+            )),
+        });
+    }
+    for placement in placements {
+        // Примечание — одно на книгу: страницу получает первая, где видна
+        // ячейка, включая случай повторяемой шапки. `None` — ячейка не
+        // напечатана нигде, аннотировать нечего.
+        let Some((page, rect)) = placement.page else {
+            continue;
+        };
+        if page != page_index + 1 {
+            continue;
+        }
+        ops.push(Op::Annotation {
+            annot: Annotation::Text(TextAnnotation {
+                rect: geometry.rect_to_pt(rect).to_pdf(geometry.height_pt()),
+                contents: placement.comment.text.clone(),
+                title: placement.comment.author.clone(),
+            }),
         });
     }
     ops
@@ -69,8 +95,6 @@ pub(crate) fn page_annotations(
 /// прямоугольник на ней в координатах страницы, пиксели раскладки. `None` —
 /// ячейка не напечатана ни на одной странице; запись всё равно остаётся в
 /// списке, чтобы потеря не обнаруживалась молча по недостаче.
-// Пока читает только тест: `/Text`-аннотацию пишет следующий срез E4.
-#[allow(dead_code)]
 pub(crate) struct CommentPlacement<'a> {
     /// Примечание из книги: текст, автор и адрес ячейки.
     pub comment: &'a Comment,
@@ -91,8 +115,10 @@ pub(crate) struct CommentPlacement<'a> {
 /// собранной с `with_page_top_px(slice.offset_y)`. Ячейка, закрытая чужим
 /// объединением, не печатается, как и её содержимое, — примечание на ней
 /// остаётся без страницы.
-#[allow(dead_code)]
-// Пока читает только тест: `/Text`-аннотацию пишет следующий срез E4.
+///
+/// Результат считается один раз на лист: [`page_annotations`] зовётся на
+/// каждой странице, и поиск здесь на каждый кадр был бы квадратом по числу
+/// страниц.
 #[must_use]
 pub(crate) fn comment_placements<'a>(
     sheet: &'a Sheet,

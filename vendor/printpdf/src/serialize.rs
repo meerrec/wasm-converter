@@ -13,10 +13,10 @@ use lopdf::{
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
-    color::IccProfile, font::SubsetFont, Actions, BuiltinFont, Color, ColorArray, Destination,
-    FontId, IccProfileType, ImageOptimizationOptions, LayerInternalId, Line, LinkAnnotation, Op,
+    color::IccProfile, font::SubsetFont, Actions, Annotation, BuiltinFont, Color, ColorArray,
+    Destination, FontId, IccProfileType, ImageOptimizationOptions, LayerInternalId, Line, Op,
     PaintMode, ParsedFont, PdfDocument, PdfDocumentInfo, PdfPage, PdfResources, PdfWarnMsg, Polygon,
-    PrepFont, TextItem, XObject, XObjectId,
+    PrepFont, Rect, TextItem, XObject, XObjectId,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
@@ -315,11 +315,11 @@ pub fn serialize_pdf<W: Write>(
             }
 
             // Gather annotations
-            let links = page
+            let annotation_ops = page
                 .ops
                 .iter()
                 .filter_map(|l| match l {
-                    Op::LinkAnnotation { link } => Some(link.clone()),
+                    Op::Annotation { annot } => Some(annot.clone()),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -328,9 +328,9 @@ pub fn serialize_pdf<W: Write>(
             // Апстрим клал массив аннотаций в ресурсы страницы, где его
             // просмотрщики не ищут: ссылки молча оставались некликабельными.
             let annots = Array(
-                links
+                annotation_ops
                     .iter()
-                    .map(|l| Dictionary(link_annotation_to_dict(l, &page_ids_reserved)))
+                    .map(|a| Dictionary(annotation_to_dict(a, &page_ids_reserved)))
                     .collect(),
             );
 
@@ -361,7 +361,7 @@ pub fn serialize_pdf<W: Write>(
                 ("Contents", Reference(doc.add_object(merged_layer_stream))),
             ];
             // Форк: аннотации принадлежат странице; пустой массив не пишем.
-            if !links.is_empty() {
+            if !annotation_ops.is_empty() {
                 page_entries.push(("Annots", annots));
             }
             let page_obj = LoDictionary::from_iter(page_entries);
@@ -707,7 +707,7 @@ pub(crate) fn translate_operations(
                     matrix.as_array().iter().copied().map(Real).collect(),
                 ));
             }
-            Op::LinkAnnotation { link: _ } => {
+            Op::Annotation { annot: _ } => {
                 // TODO!
             }
             Op::UseXobject { id, transform } => {
@@ -1346,32 +1346,59 @@ fn icc_to_stream(val: &IccProfile) -> LoStream {
     LoStream::new(stream_dict, val.icc.clone())
 }
 
-pub(crate) fn link_annotation_to_dict(la: &LinkAnnotation, page_ids: &[lopdf::ObjectId]) -> LoDictionary {
-    let ll = la.rect.lower_left();
-    let ur = la.rect.upper_right();
+/// Аннотация страницы → словарь PDF: общие ключи плюс нагрузка подтипа.
+///
+/// Форк (ADR-0010): в 0.8.2 функция жёстко ставила `/Subtype /Link` и
+/// содержимого не знала, поэтому примечание XLSX (`/Text`) выразить было
+/// нечем. Теперь подтип берётся из [`Annotation`], а точка сериализации одна
+/// на все подтипы — стриминговый путь зовёт её же.
+pub(crate) fn annotation_to_dict(a: &Annotation, page_ids: &[lopdf::ObjectId]) -> LoDictionary {
+    match a {
+        Annotation::Link(la) => {
+            let mut dict = annotation_base("Link", &la.rect);
+            dict.set("A", Dictionary(actions_to_dict(&la.actions, page_ids)));
+            dict.set(
+                "Border",
+                Array(la.border.to_array().into_iter().map(Real).collect()),
+            );
+            dict.set(
+                "C",
+                Array(
+                    color_array_to_f32(&la.color)
+                        .into_iter()
+                        .map(Real)
+                        .collect(),
+                ),
+            );
+            dict.set("H", Name(la.highlighting.get_id().into()));
+            dict
+        }
+        Annotation::Text(t) => {
+            let mut dict = annotation_base("Text", &t.rect);
+            // Текстовая строка PDF — PDFDocEncoding либо UTF-16BE с BOM:
+            // текст примечания произвольный Unicode, и кириллица в
+            // PDFDocEncoding не влезает.
+            dict.set("Contents", encode_text_to_utf16be(&t.contents));
+            if let Some(title) = &t.title {
+                dict.set("T", encode_text_to_utf16be(title));
+            }
+            dict
+        }
+    }
+}
 
-    let mut dict: LoDictionary = LoDictionary::new();
+/// Общие ключи любой аннотации: `/Type`, `/Subtype` и `/Rect`.
+fn annotation_base(subtype: &str, rect: &Rect) -> LoDictionary {
+    let ll = rect.lower_left();
+    let ur = rect.upper_right();
+
+    let mut dict = LoDictionary::new();
     dict.set("Type", Name("Annot".into()));
-    dict.set("Subtype", Name("Link".into()));
+    dict.set("Subtype", Name(subtype.into()));
     dict.set(
         "Rect",
         Array(vec![Real(ll.x.0), Real(ll.y.0), Real(ur.x.0), Real(ur.y.0)]),
     );
-    dict.set("A", Dictionary(actions_to_dict(&la.actions, page_ids)));
-    dict.set(
-        "Border",
-        Array(la.border.to_array().into_iter().map(Real).collect()),
-    );
-    dict.set(
-        "C",
-        Array(
-            color_array_to_f32(&la.color)
-                .into_iter()
-                .map(Real)
-                .collect(),
-        ),
-    );
-    dict.set("H", Name(la.highlighting.get_id().into()));
     dict
 }
 
