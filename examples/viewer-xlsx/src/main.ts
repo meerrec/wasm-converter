@@ -18,6 +18,7 @@ const sheetSelect = required<HTMLSelectElement>('#sheet');
 const zoomSelect = required<HTMLSelectElement>('#zoom');
 const gridBox = required<HTMLInputElement>('#grid');
 const headersBox = required<HTMLInputElement>('#headers');
+const exportButton = required<HTMLButtonElement>('#export-pdf');
 const cellOutput = required<HTMLElement>('#cell');
 const cmdsOutput = required<HTMLElement>('#cmds');
 const buildOutput = required<HTMLElement>('#build');
@@ -27,6 +28,8 @@ const status = required<HTMLElement>('#status');
 
 let handle: XlsxViewerHandle | null = null;
 let sheets: SheetInfo[] = [];
+/** Подпись открытого документа: из неё получается имя PDF при экспорте. */
+let currentLabel: string | null = null;
 
 /** Имена колонок как в Excel: 0 → A, 26 → AA. */
 function columnName(col: number): string {
@@ -42,6 +45,20 @@ function columnName(col: number): string {
 
 function setStatus(text: string): void {
   status.textContent = text;
+}
+
+/** Погасить всё управление: без вьюера нажимать нечего. */
+function disableControls(): void {
+  const controls = [
+    fileInput,
+    fixtureSelect,
+    sheetSelect,
+    zoomSelect,
+    gridBox,
+    headersBox,
+    exportButton,
+  ];
+  for (const control of controls) control.disabled = true;
 }
 
 function fillSheetList(list: SheetInfo[]): void {
@@ -62,14 +79,65 @@ async function show(bytes: ArrayBuffer, label: string): Promise<void> {
   try {
     sheets = await handle.open(bytes);
   } catch (e) {
+    currentLabel = null;
+    exportButton.disabled = true;
     setStatus(`не открылось: ${e instanceof Error ? e.message : String(e)}`);
     return;
   }
+  currentLabel = label;
+  exportButton.disabled = false;
   const elapsed = Math.round(performance.now() - started);
   fillSheetList(sheets);
   const first = sheets.findIndex((sheet) => !sheet.hidden);
   handle.showSheet(first < 0 ? 0 : first);
   setStatus(`${label}: ${sheets.length} лист(ов) за ${elapsed} мс`);
+}
+
+/** Имя файла для скачивания: подпись документа без расширения, иначе запасное. */
+function pdfFileName(): string {
+  const label = currentLabel?.trim();
+  if (!label) return 'sheet.pdf';
+  // Расширение у выбранного файла может быть любым, поэтому срезаем последнее.
+  const base = label.replace(/\.[^.]*$/, '');
+  return `${base || label}.pdf`;
+}
+
+/** Отдать байты файлом: временная ссылка на blob, клик и отзыв ссылки. */
+function downloadPdf(bytes: Uint8Array, name: string): void {
+  // Копия в Uint8Array над обычным ArrayBuffer: тип из воркера —
+  // Uint8Array<ArrayBufferLike> (в ArrayBufferLike входит SharedArrayBuffer),
+  // а BlobPart принимает только ArrayBuffer. Заодно гарантирован сдвиг 0.
+  const copy = new Uint8Array(bytes);
+  const url = URL.createObjectURL(new Blob([copy], { type: 'application/pdf' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // Отзываем не сразу: браузер начинает скачивание асинхронно, и немедленный
+  // revoke успевает отменить его (в WebKit — стабильно).
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+/** Экспорт текущего листа в PDF: файл собирает Rust в воркере, здесь — скачивание. */
+async function exportCurrentPdf(): Promise<void> {
+  const active = handle;
+  if (!active) return;
+  exportButton.disabled = true;
+  setStatus('экспортирую PDF…');
+  try {
+    const bytes = await active.exportPdf();
+    const name = pdfFileName();
+    downloadPdf(bytes, name);
+    setStatus(`PDF готов: ${name}, ${Math.round(bytes.byteLength / 1024)} КБ`);
+  } catch (e) {
+    // Ошибку показываем в строке состояния: alert перекрыл бы пример,
+    // а исключение из обработчика не должно ронять страницу.
+    setStatus(`экспорт не удался: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    exportButton.disabled = false;
+  }
 }
 
 async function loadFixture(name: string): Promise<void> {
@@ -99,9 +167,17 @@ async function listFixtures(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  handle = await createXlsxViewer(viewer, {
-    workerUrl: new URL('./worker.ts', import.meta.url),
-  });
+  try {
+    handle = await createXlsxViewer(viewer, {
+      workerUrl: new URL('./worker.ts', import.meta.url),
+    });
+  } catch (e) {
+    // Нет OffscreenCanvas/transferControlToOffscreen — вьюер не поднять:
+    // показываем причину и гасим управление, не роняя страницу исключением.
+    setStatus(e instanceof Error ? e.message : String(e));
+    disableControls();
+    return;
+  }
 
   handle.onTick((stats) => {
     cmdsOutput.textContent = String(stats.cmds);
@@ -143,6 +219,10 @@ async function main(): Promise<void> {
   };
   gridBox.addEventListener('change', applyView);
   headersBox.addEventListener('change', applyView);
+
+  exportButton.addEventListener('click', () => {
+    void exportCurrentPdf();
+  });
 
   // Перетаскивание файла в окно.
   viewer.addEventListener('dragover', (event) => {
