@@ -22,15 +22,24 @@ jobs:
   ssim:
     name: LibreOffice SSIM
     runs-on: ubuntu-latest
-    # Формат бумаги LibreOffice по умолчанию берёт из локали (A4 в C/POSIX,
-    # Letter в en_US), а наш экспорт по умолчанию A4. Локаль раннера — не наш
-    # выбор и может смениться; фиксируем её, иначе все страницы разъедутся по
-    # размеру и первый прогон будет неотличим от поломки харнесса.
+    # Формат бумаги LibreOffice по умолчанию берёт из локали, а наш экспорт —
+    # A4. C.UTF-8 (как и en_US) даёт Letter: первый прогон оракула не снял ни
+    # одного SSIM именно поэтому — 1275x1650 px у эталона против 1240x1755 у
+    # нас. ru_RU.UTF-8 даёт A4, а заодно совпадает с языковым контекстом
+    # фикстур (formats-date-ru, text-cyrillic-wrap).
+    #
+    # Локаль влияет и на форматирование дат в эталоне: если SSIM на фикстурах с
+    # форматами окажется заметно ниже остальных — первая гипотеза эта.
     env:
-      LANG: C.UTF-8
-      LC_ALL: C.UTF-8
+      LANG: ru_RU.UTF-8
+      LC_ALL: ru_RU.UTF-8
     steps:
       - uses: actions/checkout@v4
+
+      # Без генерации локали LANG=ru_RU.UTF-8 остаётся несуществующей локалью,
+      # и LibreOffice снова уходит на Letter.
+      - name: ru_RU locale (LibreOffice A4)
+        run: sudo locale-gen ru_RU.UTF-8
 
       - uses: dtolnay/rust-toolchain@master
         with:

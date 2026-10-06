@@ -25,10 +25,10 @@
 # (`PdfOptions::sheet_index` уже есть): тогда пары «лист книги ↔ страницы
 # эталона» станут осмысленными.
 #
-# Формат бумаги у LibreOffice берётся из умолчаний системы (A4 в C/POSIX,
-# Letter в en_US), поэтому размеры страниц сверяются до SSIM: расхождение
-# размеров означает разные бумагу или масштаб, и число SSIM по таким страницам
-# не значило бы ничего.
+# Формат бумаги LibreOffice берёт из умолчаний локали (Letter в C.UTF-8 и en_US,
+# A4 в ru_RU и de_DE), а наш экспорт всегда A4; поэтому размеры страниц
+# сверяются до SSIM. Локаль эталона скрипт не переключает — её задаёт workflow
+# (ru_RU.UTF-8): иначе числа зависели бы от машины, а не от рендера.
 #
 # Внешние утилиты есть в CI (см. .github/workflows/oracle.yml); там же прогон и
 # живёт. Локально без них скрипт штатно скипается кодом 3.
@@ -83,9 +83,11 @@ done
 if command -v magick >/dev/null 2>&1; then
   im_compare=(magick compare)
   im_identify=(magick identify)
-elif command -v compare >/dev/null 2>&1; then
+  im_convert=(magick convert)
+elif command -v compare >/dev/null 2>&1 && command -v convert >/dev/null 2>&1; then
   im_compare=(compare)
   im_identify=(identify)
+  im_convert=(convert)
 else
   missing+=("imagemagick")
 fi
@@ -112,7 +114,7 @@ mkdir -p "$workdir"
 workdir=$(cd "$workdir" && pwd)
 fixtures_dir=$(cd "$fixtures_dir" && pwd)
 mkdir -p "$workdir/ref" "$workdir/our" "$workdir/pages/lo" "$workdir/pages/our" \
-  "$workdir/diff" "$workdir/log" "$workdir/ssim"
+  "$workdir/diff" "$workdir/crop" "$workdir/log" "$workdir/ssim"
 
 # Прогон без ограничения по времени рискует зависнуть до лимита джобы, поэтому
 # soffice идёт под timeout(1). В macOS его нет без coreutils — тогда запускаем
@@ -242,15 +244,44 @@ compare_fixture() {
 
   local ssim_file=$workdir/ssim/$stem.txt
   : >"$ssim_file"
-  local i a b size_a size_b val diff
+  local i a b size_a size_b val
   for ((i = 0; i < shared; i++)); do
     a=${lo_imgs[$i]}
     b=${our_imgs[$i]}
     size_a=$("${im_identify[@]}" -format '%wx%h' "$a" 2>/dev/null) || size_a=""
     size_b=$("${im_identify[@]}" -format '%wx%h' "$b" 2>/dev/null) || size_b=""
-    if [ -z "$size_a" ] || [ -z "$size_b" ] || [ "$size_a" != "$size_b" ]; then
-      note+="страница $((i + 1)): размеры ${size_a:-?} и ${size_b:-?} — SSIM не считан; "
+    if [ -z "$size_a" ] || [ -z "$size_b" ]; then
+      note+="${note:+; }страница $((i + 1)): не определил размеры страниц"
       continue
+    fi
+    if [ "$size_a" != "$size_b" ]; then
+      # Пиксельный размер страницы poppler считает как ceil(точек * dpi / 72), и
+      # на одной и той же бумаге он выходит разным: наш A4 записан как 595x842 pt
+      # и даёт 1240x1755, A4 LibreOffice (595.28x841.89 pt) — 1241x1754. Пара
+      # пикселей — это округление сетки растеризации, а не разные бумага или
+      # масштаб, поэтому такие страницы обрезаются до общего размера: обрезка, в
+      # отличие от ресайза, не размывает края и не занижает метрику. Больше двух
+      # пикселей — это Letter против A4 или другой масштаб, и SSIM по ним ничего
+      # не значил бы.
+      local w_a=${size_a%x*} h_a=${size_a#*x} w_b=${size_b%x*} h_b=${size_b#*x}
+      local dw=$((w_a - w_b)) dh=$((h_a - h_b))
+      [ "$dw" -lt 0 ] && dw=$((-dw))
+      [ "$dh" -lt 0 ] && dh=$((-dh))
+      if [ "$dw" -gt 2 ] || [ "$dh" -gt 2 ]; then
+        note+="${note:+; }страница $((i + 1)): размеры $size_a и $size_b — разные бумага или масштаб, SSIM не считан"
+        continue
+      fi
+      local w=$((w_a < w_b ? w_a : w_b)) h=$((h_a < h_b ? h_a : h_b))
+      local crop_lo=$workdir/crop/lo-$stem-$((i + 1)).png
+      local crop_our=$workdir/crop/our-$stem-$((i + 1)).png
+      if ! "${im_convert[@]}" "$a" -crop "${w}x${h}+0+0" +repage "$crop_lo" 2>/dev/null ||
+        ! "${im_convert[@]}" "$b" -crop "${w}x${h}+0+0" +repage "$crop_our" 2>/dev/null; then
+        note+="${note:+; }страница $((i + 1)): не обрезал страницы до общего размера"
+        continue
+      fi
+      note+="${note:+; }страница $((i + 1)): размеры $size_a и $size_b — округление сетки растеризации, сравнено по фрагменту ${w}x${h}"
+      a=$crop_lo
+      b=$crop_our
     fi
 
     # Метрика печатается в stderr, поэтому stdout уводится в /dev/null, а stderr
@@ -259,7 +290,7 @@ compare_fixture() {
     status=0
     val=$("${im_compare[@]}" -metric SSIM "$a" "$b" "$workdir/diff/$stem-$((i + 1)).png" 2>&1 >/dev/null) || status=$?
     if [ "$status" -ge 2 ]; then
-      note+="страница $((i + 1)): compare упал (код $status); "
+      note+="${note:+; }страница $((i + 1)): compare упал (код $status)"
       continue
     fi
 
@@ -268,7 +299,7 @@ compare_fixture() {
     # бы скрипт из-за «нет совпадений» — это не ошибка растеризации.
     val=$(printf '%s\n' "$val" | awk 'match($0, /-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?/) { print substr($0, RSTART, RLENGTH); exit }')
     if [ -z "$val" ]; then
-      note+="страница $((i + 1)): compare не напечатал SSIM; "
+      note+="${note:+; }страница $((i + 1)): compare не напечатал SSIM"
       continue
     fi
     printf '%s\n' "$val" >>"$ssim_file"
@@ -282,12 +313,10 @@ compare_fixture() {
     )
     outcome=ok
   else
-    note+="SSIM не снят ни с одной страницы${note:+; }"
+    note+="${note:+; }SSIM не снят ни с одной страницы"
     outcome=fail
   fi
 
-  # Хвостовой разделитель от примечаний по страницам — мусор в таблице.
-  note=${note%; }
   return 0
 }
 
@@ -310,6 +339,11 @@ done
 # --- отчёт ------------------------------------------------------------------
 
 report=$workdir/report.md
+# Версия и локаль эталона — часть результата: по ним видно, каким LibreOffice и
+# с какой бумагой по умолчанию получены числа (см. шапку скрипта). `--version`
+# печатает несколько строк, версия — первая.
+soffice_version=$(soffice --version 2>/dev/null | head -1) || true
+[ -n "$soffice_version" ] || soffice_version="неизвестна"
 {
   echo "# XLSX: наш PDF против LibreOffice"
   echo
@@ -319,6 +353,7 @@ report=$workdir/report.md
   echo "совпадение заливок и цветов текста ею не проверяется."
   echo
   echo "Прогон: $(date -u '+%Y-%m-%d %H:%M UTC')"
+  echo "Эталон: $soffice_version; локаль LANG=${LANG:-(не задана)} LC_ALL=${LC_ALL:-(не задана)}"
   echo
   echo "| фикстура | страниц у LO | страниц у нас | min SSIM | mean SSIM | примечание |"
   echo "| --- | --- | --- | --- | --- | --- |"
