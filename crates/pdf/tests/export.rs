@@ -175,6 +175,36 @@ fn cell_text_reaches_the_page() {
 }
 
 #[test]
+fn long_sheet_is_split_into_pages() {
+    // 600 строк по 15 px и A4 с полями по умолчанию: на страницу их влезает
+    // 64, поэтому страниц должно быть не меньше десяти.
+    let bytes = export("scale-ten-pages.xlsx", 0);
+
+    let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
+    let pages = doc.get_pages().len();
+    assert!(pages >= 10, "лист не разбит на страницы: страниц {pages}");
+
+    // Текст первой и последней страниц не пуст: содержимое не потерялось при
+    // разбивке.
+    for (index, page) in doc.get_pages().into_iter() {
+        let content = doc.get_page_content(page).expect("поток содержимого");
+        let content = String::from_utf8_lossy(&content);
+        assert!(
+            content.contains("Tj"),
+            "страница {index} пуста: при разбивке потерялся текст"
+        );
+    }
+}
+
+#[test]
+fn short_sheet_stays_one_page() {
+    let bytes = export("content-single-cell.xlsx", 0);
+
+    let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
+    assert_eq!(doc.get_pages().len(), 1, "короткий лист — одна страница");
+}
+
+#[test]
 fn empty_sheet_is_still_a_page() {
     let bytes = export("content-empty-sheet.xlsx", 0);
 

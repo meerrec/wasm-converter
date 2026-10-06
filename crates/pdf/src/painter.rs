@@ -1,12 +1,12 @@
-//! Сборка страницы PDF: обход ячеек листа и запись операций printpdf.
+//! Сборка страниц PDF: обход ячеек листа и запись операций printpdf.
 //!
 //! Порядок слоёв повторяет оба «экранных» пути (Excel и `xlsx::paint`):
 //! сначала заливки, поверх них рамки, поверх всего текст. Поэтому обход листа
 //! идёт тремя проходами по заранее собранному списку ячеек, а не одним.
 //!
-//! Страница пока одна. Место пагинации — [`crate::layout`] и этот модуль:
-//! список [`PaintedCell`] уже отделён от записи операций, разбить его на
-//! страницы можно будет без переписывания обхода.
+//! Лист длиннее страницы печатается несколькими страницами: строки делятся на
+//! страницы до отрисовки ([`paginate`]), каждая страница получает свою
+//! геометрию со сдвигом по вертикали. Разбивка по столбцам — Спринт 7.
 //!
 //! Ещё не перенесены настройки [`PdfOptions`], за которыми стоит заметная
 //! работа: сетка (`print_grid_lines`), `fit_to_width`, повтор заголовков,
@@ -33,7 +33,14 @@ struct PaintedCell<'a> {
     style: CellStyle,
 }
 
-/// Открыть ячейку листа и собрать PDF одной страницей.
+/// Ячейки одной страницы и её верх в пикселях раскладки.
+struct SheetPage<'a> {
+    /// Верх страницы в координатах листа; вычитается при записи операций.
+    top_px: f32,
+    cells: Vec<PaintedCell<'a>>,
+}
+
+/// Открыть лист книги и собрать PDF всеми его страницами.
 ///
 /// # Errors
 /// [`PdfError::NoSuchSheet`], если индекса нет в книге; [`PdfError::Font`],
@@ -64,22 +71,24 @@ pub fn export(
     let font = fonts::embed_default(&mut doc, &mut warnings)?;
     let mut registry = FontRegistry::new(FONT_CACHE);
 
-    let mut ops: Vec<Op> = Vec::new();
-    draw_sheet(
-        &mut ops,
-        &mut registry,
-        font.id(),
-        &page,
-        book,
-        sheet,
-        &layout,
-    );
+    for sheet_page in paginate(book, sheet, &layout, &page) {
+        let page_geom = page.with_page_top_px(sheet_page.top_px);
+        let mut ops: Vec<Op> = Vec::new();
+        draw_page(
+            &mut ops,
+            &mut registry,
+            font.id(),
+            &page_geom,
+            book,
+            &sheet_page.cells,
+        );
+        doc.with_pages(vec![PdfPage::new(
+            Mm::from(Pt(page_geom.width_pt())),
+            Mm::from(Pt(page_geom.height_pt())),
+            ops,
+        )]);
+    }
 
-    doc.with_pages(vec![PdfPage::new(
-        Mm::from(Pt(page.width_pt())),
-        Mm::from(Pt(page.height_pt())),
-        ops,
-    )]);
     let save = PdfSaveOptions {
         // `optimize` у printpdf сжимает потоки — это и есть `compress`.
         optimize: options.compress,
@@ -88,23 +97,21 @@ pub fn export(
     Ok(doc.save(&save, &mut warnings))
 }
 
-/// Записать лист в операции страницы.
-fn draw_sheet(
+/// Записать ячейки страницы в её операции.
+fn draw_page(
     ops: &mut Vec<Op>,
     registry: &mut FontRegistry,
     pdf_font: &printpdf::FontId,
     page: &PageGeometry,
     book: &Workbook,
-    sheet: &Sheet,
-    layout: &SheetLayout,
+    cells: &[PaintedCell<'_>],
 ) {
-    let cells = collect_cells(book, sheet, layout, page);
-    for painted in &cells {
+    for painted in cells {
         if let Some(color) = painted.style.fill {
             background::fill_rect(ops, page.rect_to_pt(painted.rect), page.height_pt(), color);
         }
     }
-    for painted in &cells {
+    for painted in cells {
         if border::is_visible(&painted.style.border) {
             border::draw_border(
                 ops,
@@ -115,7 +122,7 @@ fn draw_sheet(
             );
         }
     }
-    for painted in &cells {
+    for painted in cells {
         let cell = painted.cell;
         let Some(mut value) = display_text(book, cell, painted.style.number_format) else {
             continue;
@@ -144,19 +151,41 @@ fn draw_sheet(
     }
 }
 
-/// Собрать ячейки листа, попадающие на страницу.
+/// Разбить ячейки листа на страницы по строкам.
+///
+/// Строка не разрывается между страницами: как только её низ выходит за
+/// границу области содержимого, начинается новая страница — с этой строки.
+/// Высоты строк берутся из раскладки абсолютными, поэтому пустые строки
+/// занимают на странице своё место. Страницы без ячеек не создаются: первой
+/// странице задаёт верх первая строка с ячейкой, остальным — строка, на
+/// которой случился разрыв. Пустой лист — одна пустая страница.
 ///
 /// Ячейка объединения рисуется один раз — на своей левой верхней: остальные
 /// пусты и отдельного текста не несут.
-fn collect_cells<'a>(
+fn paginate<'a>(
     book: &Workbook,
     sheet: &'a Sheet,
     layout: &SheetLayout,
     page: &PageGeometry,
-) -> Vec<PaintedCell<'a>> {
-    let (max_x, max_y) = page.content_px();
-    let mut cells = Vec::new();
+) -> Vec<SheetPage<'a>> {
+    let (max_x, max_h_px) = page.content_px();
+    let mut pages: Vec<SheetPage<'a>> = Vec::new();
     for (row, row_cells) in sheet.cells.rows() {
+        let top_px = layout.row_y(row);
+        let bottom_px = layout.row_y(row + 1);
+        let breaks = match pages.last() {
+            None => true,
+            Some(current) => bottom_px > current.top_px + max_h_px,
+        };
+        if breaks {
+            pages.push(SheetPage {
+                top_px,
+                cells: Vec::new(),
+            });
+        }
+        let Some(current) = pages.last_mut() else {
+            continue;
+        };
         for cell in row_cells {
             let Some(rect) = cell_rect(sheet, layout, cell.at(row)) else {
                 continue;
@@ -164,18 +193,24 @@ fn collect_cells<'a>(
             if rect.w <= 0.0 || rect.h <= 0.0 {
                 continue;
             }
-            // За границей первой страницы: разбивка на страницы — следующий срез.
-            if rect.x >= max_x || rect.y >= max_y {
+            // Правее области содержимого: разбивка по столбцам — Спринт 7.
+            if rect.x >= max_x {
                 continue;
             }
-            cells.push(PaintedCell {
+            current.cells.push(PaintedCell {
                 cell,
                 rect,
                 style: styles::resolve(book, cell),
             });
         }
     }
-    cells
+    if pages.is_empty() {
+        pages.push(SheetPage {
+            top_px: 0.0,
+            cells: Vec::new(),
+        });
+    }
+    pages
 }
 
 /// Прямоугольник ячейки в пикселях раскладки; `None` — ячейку закрывает

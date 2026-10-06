@@ -107,7 +107,7 @@ pub fn draw_cell_text(
         // подъём берётся из метрик того же шрифта.
         let baseline_px = line_top_px + metrics.ascent;
         let cursor_x_pt = page.px_to_pt(line_x_px) + page.origin_x_pt();
-        let baseline_y_pt = page.px_to_pt(baseline_px) + page.origin_y_pt();
+        let baseline_y_pt = page.y_px_to_pt(baseline_px) + page.origin_y_pt();
 
         // Каждый фрагмент — своё `BT`/`ET`: `Td` внутри текстовой секции
         // смещает начало относительно предыдущего, а координаты у нас
