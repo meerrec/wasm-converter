@@ -842,6 +842,30 @@ pub(crate) fn export_book_to<W: Write>(
     options: &PdfOptions,
     out: &mut W,
 ) -> Result<(), PdfError> {
+    let (mut doc, prepared, first_page_geometry) = prepare_book(book, sheets, options)?;
+    write_book(
+        &mut doc,
+        &prepared,
+        book,
+        options,
+        &first_page_geometry,
+        out,
+    )
+}
+
+/// Подготовить листы книги и документ под запись: открыть листы, завести
+/// документ с метаданными и глобальными ресурсами (прозрачность водяного знака,
+/// картинки).
+///
+/// Пустая книга отсекается здесь же: у PDF без страниц нет каталога страниц, и
+/// файл невалиден. Геометрия первой страницы возвращается копией: она нужна
+/// зондам до записи, а `prepared` к тому моменту правится регистрацией
+/// картинок — ссылкой из него её уже не взять.
+fn prepare_book<'a>(
+    book: &'a Workbook,
+    sheets: &[usize],
+    options: &PdfOptions,
+) -> Result<(PdfDocument, Vec<PreparedSheet<'a>>, PageGeometry), PdfError> {
     let selection: Vec<usize> = if sheets.is_empty() {
         (0..book.sheets().len()).collect()
     } else {
@@ -851,10 +875,6 @@ pub(crate) fn export_book_to<W: Write>(
         .iter()
         .map(|&index| prepare_sheet(book, index, options))
         .collect::<Result<Vec<_>, _>>()?;
-    // Пустая книга — не «все её листы, которых нет»: у PDF без страниц нет
-    // каталога страниц, и файл невалиден. Геометрия берётся копией: `prepared`
-    // дальше правится (регистрация картинок), и ссылка на его элемент не
-    // пережила бы эту правку.
     let first_page_geometry = prepared.first().ok_or(PdfError::NoSheets)?.page;
 
     // Заголовок документа: заданный пользователем, иначе — имя листа, если он
@@ -903,7 +923,25 @@ pub(crate) fn export_book_to<W: Write>(
             &sheet.pagination.pages,
         );
     }
+    Ok((doc, prepared, first_page_geometry))
+}
 
+/// Дописать в подготовленный документ закладки и шрифты, собрать зонды глифов и
+/// записать страницы; хвост (каталог, xref) допишет [`StreamSession::finish`] —
+/// приёмнику не нужен `seek`.
+///
+/// Шрифты подрезаются один раз на документ ([`StreamSession::begin`]), поэтому
+/// символы собираются со всех листов в общий набор: символ листа, не попавший в
+/// зонды, вывелся бы нулевым глифом — молча. Нумерация зондов та же, что у
+/// записи: `&P`/`&N` в колонтитулах обязаны совпасть.
+fn write_book<W: Write>(
+    doc: &mut PdfDocument,
+    prepared: &[PreparedSheet<'_>],
+    book: &Workbook,
+    options: &PdfOptions,
+    first_page_geometry: &PageGeometry,
+    out: &mut W,
+) -> Result<(), PdfError> {
     let mut warnings: Vec<PdfWarnMsg> = Vec::new();
     // Закладка — на лист, и ведёт на его первую страницу. `pages` — длина
     // листа: по ней `add_outline` отсчитывает начало следующего. Записывается
@@ -916,13 +954,13 @@ pub(crate) fn export_book_to<W: Write>(
             pages: sheet.pagination.pages.len(),
         })
         .collect();
-    annot::add_outline(&mut doc, &spans, options.bookmarks);
+    annot::add_outline(doc, &spans, options.bookmarks);
 
     let mut faces = fonts::FaceSet::default();
-    for sheet in &prepared {
+    for sheet in prepared {
         faces.merge(sheet.pagination.faces);
     }
-    let embedded = fonts::embed(&mut doc, &mut warnings, faces)?;
+    let embedded = fonts::embed(doc, &mut warnings, faces)?;
 
     let page_count: usize = prepared
         .iter()
@@ -933,7 +971,7 @@ pub(crate) fn export_book_to<W: Write>(
     // Нумерация зондов та же, что у записи: `&P`/`&N` в колонтитулах обязаны
     // совпасть, иначе подрезанный шрифт не покроет символы реальной страницы.
     let mut first_page_no = 1;
-    for sheet in &prepared {
+    for sheet in prepared {
         let (header, footer) = sheet_overlay(options, sheet.sheet);
         collect_glyphs(
             &mut glyphs,
@@ -954,14 +992,14 @@ pub(crate) fn export_book_to<W: Write>(
         );
         first_page_no += sheet.pagination.pages.len();
     }
-    let probe = probe_pages_from(glyphs, &first_page_geometry);
+    let probe = probe_pages_from(glyphs, first_page_geometry);
     let save = PdfSaveOptions {
         // `optimize` у printpdf сжимает потоки — это и есть `compress`.
         optimize: options.compress,
         ..PdfSaveOptions::default()
     };
     let mut session = StreamSession::begin(
-        &doc,
+        doc,
         &probe,
         BTreeSet::new(),
         page_count,
@@ -972,7 +1010,7 @@ pub(crate) fn export_book_to<W: Write>(
 
     write_pages(
         &mut session,
-        &prepared,
+        prepared,
         book,
         &embedded,
         &mut registry,
