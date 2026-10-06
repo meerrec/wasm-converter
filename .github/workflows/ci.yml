@@ -117,8 +117,11 @@ jobs:
       - run: pnpm --filter @doc-converter/example-viewer-xlsx exec playwright install --with-deps chromium firefox webkit
 
       - run: pnpm turbo run typecheck test build
+      # Гейт: регрессия бюджета блокирует merge (ROADMAP §9). Строка про wasm
+      # просмотрщика в `.size-limit.mjs` держит ленивость PDF: если модуль
+      # экспорта вернётся в основной бандл, бюджет покраснеет.
       - if: matrix.node == 20
-        run: pnpm size-limit || true
+        run: pnpm size-limit
 
   audit:
     name: Security audit
