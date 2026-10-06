@@ -31,6 +31,26 @@ fn open(name: &str) -> doc_converter_xlsx::Workbook {
     doc_converter_xlsx::open(bytes).unwrap_or_else(|err| panic!("{name}: {err}"))
 }
 
+/// Тяжёлая фикстура (500 страниц) в репозитории не лежит: генератор пишет её
+/// в `target/fixtures/` — книга на 23 000 строк растёт в git, а её ценность в
+/// размере, не в разборе (см. `scripts/gen-fixtures.ts`). `test-fixtures/xlsx`
+/// проверяется первым: книга, положенная туда руками, тоже найдётся.
+fn heavy_fixture(name: &str) -> PathBuf {
+    let direct = fixture(name);
+    if direct.is_file() {
+        return direct;
+    }
+    let heavy = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/fixtures")
+        .join(name);
+    assert!(
+        heavy.is_file(),
+        "{} нет — сначала `pnpm gen:fixtures` (или `node scripts/gen-fixtures.ts`)",
+        heavy.display()
+    );
+    heavy
+}
+
 /// Собрать PDF листа 0 с заданными настройками.
 fn export_with(book: &doc_converter_xlsx::Workbook, opts: PdfOptions) -> Vec<u8> {
     PdfExporter::new(opts)
@@ -135,6 +155,57 @@ fn bench_pdf_time_1000_cells(c: &mut Criterion) {
     group.finish();
 }
 
+/// DoD 1: 500 страниц быстрее 3 с. Печатается медиана пяти прогонов: criterion
+/// считает выборочное среднее и печатает интервал, а гейту нужно одно число,
+/// устойчивое к шуму общего раннера. `assert` числа страниц — порог обязан
+/// измеряться на книге не меньше 500 страниц, иначе замер ничего не значит.
+fn bench_pdf_time_500_pages(c: &mut Criterion) {
+    let path = heavy_fixture("scale-500-pages.xlsx");
+    let bytes = std::fs::read(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+    let input_kib = bytes.len() as f64 / 1024.0;
+    let book =
+        doc_converter_xlsx::open(bytes).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+    let pages = page_count(&export(&book));
+    assert!(
+        pages >= 500,
+        "фикстура дала {pages} страниц — порог DoD 1 требует не меньше 500"
+    );
+    let median = median_ms(5, || {
+        export(&book);
+    });
+    println!(
+        "500 страниц: {pages} стр., вход {input_kib:.0} КиБ, медиана экспорта {median:.0} мс \
+         (порог 3000 мс)"
+    );
+
+    let mut group = c.benchmark_group("pdf");
+    group.throughput(Throughput::Elements(pages as u64));
+    // Прогон — сотни миллисекунд; сотня сэмплов criterion растянула бы бенч
+    // на минуты, десяти хватает для порядка числа.
+    group.sample_size(10);
+    group.bench_function("bench_pdf_time_500_pages", |b| {
+        b.iter(|| export(black_box(&book)));
+    });
+    group.finish();
+}
+
+/// ВРЕМЕННЫЙ чек фикстуры диаграмм — удаляется до сдачи.
+fn check_charts_fixture(_c: &mut Criterion) {
+    let book = open("charts-five-kinds.xlsx");
+    let sheet = &book.sheets()[0];
+    println!("charts-five-kinds: диаграмм {}", sheet.charts.len());
+    for chart in &sheet.charts {
+        println!(
+            "  {:?} «{:?}»: серий {}, категории {:?}, первая серия {:?}",
+            chart.chart.kind,
+            chart.chart.title,
+            chart.chart.series.len(),
+            chart.chart.categories,
+            chart.chart.series.first().map(|s| s.values.clone()),
+        );
+    }
+}
+
 /// Разбивка D3 — печатается при запуске, criterion тут только хук запуска.
 fn phases(_c: &mut Criterion) {
     for name in ["scale-ten-pages.xlsx", "scale-1000-cells.xlsx"] {
@@ -180,9 +251,11 @@ fn phases(_c: &mut Criterion) {
 criterion_group!(
     benches,
     phases,
+    check_charts_fixture,
     bench_pdf_size_compressed,
     bench_pdf_size_1000_cells,
     bench_pdf_time_10_pages,
-    bench_pdf_time_1000_cells
+    bench_pdf_time_1000_cells,
+    bench_pdf_time_500_pages
 );
 criterion_main!(benches);
