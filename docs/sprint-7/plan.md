@@ -2,7 +2,7 @@
 
 - Ветка: `sprint/7-pagination-pdf` · issue [#4](https://github.com/meerrec/wasm-converter/issues/4) · PR [#12](https://github.com/meerrec/wasm-converter/pull/12) (DRAFT)
 - Обновлено: 2026-10-06
-- Прогресс: ✅ 24 · 🔄 2 · ⬜ 19 из 45
+- Прогресс: ✅ 36 · 🔄 3 · ⬜ 6 из 45
 - Статусы: ⬜ не начато · 🔄 в работе · ✅ закрыто
 
 Кикофф. Раздел «Решения» фиксирует договорённости, принятые до старта; восемь разделов ниже — обязательная форма кикоффа, а не украшение.
@@ -284,9 +284,9 @@ DoD: `mem_probe` на 480-страничной фикстуре: полный п
 | --- | --- | --- | --- | --- | --- |
 | C1 | ADR-0011: источник геометрии диаграмм | `docs/adr/0011-chart-geometry.md` | 4 | — | ✅ |
 | C2 | Вынести геометрию из `painter/chart.rs` в canvas-agnostic модуль | `crates/render/src/chart/` | 8 | C1 | ✅ |
-| C3 | PDF: bar/line/area/scatter | `crates/pdf/src/chart.rs` | 8 | C2 | 🔄 модуль и примитивы есть (`2328c74`); вызова из `painter.rs` ещё нет — интеграция идёт параллельной сессией |
-| C4 | PDF: pie (секторы через Безье) | там же | 5 | C3 | 🔄 секторы Безье в `chart.rs` (`2b2db70`); интеграция — там же |
-| C5 | Паритет с canvas и проверка векторности | `crates/pdf/tests/chart.rs`, e2e | 5 | C3, C4 | ⬜ теста `crates/pdf/tests/chart.rs` ещё нет; ждёт интеграции |
+| C3 | PDF: bar/line/area/scatter | `crates/pdf/src/chart.rs` | 8 | C2 | ✅ модуль, примитивы и вызов из `painter.rs` — `chart_layouts` считает геометрию раз на лист (`2328c74`, `468f63e`) |
+| C4 | PDF: pie (секторы через Безье) | там же | 5 | C3 | ✅ секторы Безье (`2b2db70`) и их вызов из `painter.rs` (`468f63e`) |
+| C5 | Паритет с canvas и проверка векторности | `crates/pdf/tests/chart.rs`, e2e | 5 | C3, C4 | ✅ `chart_is_vector_not_image` — в клипах векторные операторы и нет `/Do` на Image XObject (`468f63e`); паритет с холстом в e2e `charts.spec.ts` (`b4a6dd2`) |
 
 **C1 · 4 ч · ADR-0011.**
 Вход: `crates/render/src/chart.rs` (данные, `from_blob` — без cfg), `crates/render/src/painter/chart.rs` (модуль под `#[cfg(target_arch = "wasm32")]`, функция `pub fn paint(ctx: &OffscreenCanvasRenderingContext2d, …)`), `crates/render/src/display_list.rs` (`DrawCommand::Chart { data: StringRef }` — только данные и прямоугольник; ни дуг, ни заливок по контуру в кадре нет — `painter/chart.rs:1-6`).
@@ -326,8 +326,8 @@ DoD: паритет по геометрии: число примитивов и 
 
 | ID | Задача | Артефакт | Часы | Зависит | Статус |
 | --- | --- | --- | --- | --- | --- |
-| D1 | PNG/JPEG → `XObject::Image`, якоря oneCell/twoCell | `crates/pdf/src/image.rs` | 8 | — | ✅ модуль + `tests/image.rs`; в `painter.rs` не подключён |
-| D2 | Обрезка, масштаб, дедупликация XObject'ов | там же | 4 | D1 | ⬜ масштаб и клип по якорю есть (`placement_matrix_and_clip_match_the_anchor`), обрезки (`srcRect`) и дедупликации XObject'ов нет |
+| D1 | PNG/JPEG → `XObject::Image`, якоря oneCell/twoCell | `crates/pdf/src/image.rs` | 8 | — | ✅ модуль + `tests/image.rs`; подключён к `painter.rs` (`fdbf3b7`) |
+| D2 | Обрезка, масштаб, дедупликация XObject'ов | там же | 4 | D1 | ✅ масштаб и клип по якорю, дедупликация (`one_media_part_in_five_anchors_gives_one_xobject`) и обрезка (`c7a80b8`); растяжение как на холсте (`a4aa836`) |
 | D3 | Политика для gif/webp/bmp/tiff | там же + решение | 3 | D1 | ✅ неподдержанные mime пропускаются без декодирования (`gif_is_rejected_by_mime_without_decoding`), цена png/jpeg — +13,8 КиБ gzip (ADR-0010) |
 
 **D1 · 8 ч · Изображения.**
@@ -357,7 +357,7 @@ DoD: файл с gif не роняет экспорт; в отчёте — ст�
 | E1 | Гиперссылки → `/Link` | `crates/pdf/src/annot.rs` | 6 | A2 | ✅ |
 | E2 | Закладки → outline | там же | 4 | A1 | ✅ `add_bookmark`, тесты `bookmarks_disabled_leaves_no_outline` и соседние (`1db3aa2`) |
 | E3 | Парсер комментариев в `crates/xlsx` | `crates/xlsx/src/comments.rs` | 8 | — | ✅ |
-| E4 | Комментарии → `/Text` | `crates/pdf/src/annot.rs` | 4 | E3 | ⬜ эмиссия `/Text` отложена: `annot.rs:72` — «пишет следующий срез E4» |
+| E4 | Комментарии → `/Text` | `crates/pdf/src/annot.rs` | 4 | E3 | ✅ маппинг `comment_placements` (`4875afc`) + эмиссия `/Text` в форке и `painter.rs` (`32460ec`); сквозной проверки на реальной фикстуре пока нет — отдельный срез |
 
 **E1 · 6 ч · Гиперссылки.**
 Вход: `crates/xlsx/src/sheet_meta.rs:182-215` (`Hyperlink`, `HyperlinkTarget::{External, Internal, Broken}`), `Sheet.hyperlinks` + `hyperlink_at` (`model.rs:1214`), printpdf `LinkAnnotation` + `Op::LinkAnnotation` (сериализуется в `/Annots`, serialize.rs:258-273, 1277).
@@ -392,8 +392,8 @@ DoD: lopdf видит `/Subtype /Text` с непустым `/Contents`; коли
 
 | ID | Задача | Артефакт | Часы | Зависит | Статус |
 | --- | --- | --- | --- | --- | --- |
-| F1 | Header/footer с номерами страниц | `crates/pdf/src/overlay.rs` | 6 | A1 | ✅ модуль + `tests/overlay.rs` (коды `&L/&C/&R`, `&P`, `&N`, полосы, номера страниц); в `painter.rs` не подключён |
-| F2 | Водяной знак | там же | 4 | A1 | ✅ водяной знак, `clamp_opacity`/`needs_extgstate`, тесты центра и угла; в `painter.rs` не подключён |
+| F1 | Header/footer с номерами страниц | `crates/pdf/src/overlay.rs` | 6 | A1 | ✅ модуль + `tests/overlay.rs` (коды `&L/&C/&R`, `&P`, `&N`, полосы, номера страниц); подключён к `painter.rs` (`fdbf3b7`) |
+| F2 | Водяной знак | там же | 4 | A1 | ✅ водяной знак, `clamp_opacity`/`needs_extgstate`, тесты центра и угла; подключён к `painter.rs` (`fdbf3b7`) |
 
 **F1 · 6 ч · Колонтитулы.**
 Вход: `PageConfig.margins` (`options.rs:30-34`), `text.rs`, `styles.rs`.
@@ -414,7 +414,7 @@ DoD: PDF валиден; водяной знак присутствует на �
 
 | ID | Задача | Артефакт | Часы | Зависит | Статус |
 | --- | --- | --- | --- | --- | --- |
-| G1 | ADR-0010 «форк printpdf 0.8.2: сжатие и стриминг» | `docs/adr/0010-printpdf-fork.md` | 3 | B1 | ⬜ ADR написан и «принят», но раздел «Влияние на DoD 8» держит снятый критерий 1,5× и расходится с переформулированным DoD 8 — правка после решения по DoD 8 |
+| G1 | ADR-0010 «форк printpdf 0.8.2: сжатие и стриминг» | `docs/adr/0010-printpdf-fork.md` | 3 | B1 | ✅ ADR приведён в соответствие с переформулированным DoD 8: критерий 1,5× снят и объяснён, стриминговый модуль (`src/streaming.rs`) значится поставленным B2a (`e41f05e`) |
 | G2 | Вендоринг: `vendor/printpdf` 0.8.2 (MIT) + `[patch.crates-io]` | `vendor/printpdf/`, корневой `Cargo.toml` | 2 | G1 | ✅ |
 | G3 | Патч `serialize.rs`: три правки | `vendor/printpdf/src/serialize.rs` | 1 | G2 | ✅ |
 | G4 | Регресс-тесты сжатия | `crates/pdf/tests/compression.rs` | 2 | G3 | ✅ |
@@ -457,9 +457,9 @@ DoD: бюджет 1000 ячеек остаётся жёстким и прохо�
 
 | ID | Задача | Артефакт | Часы | Зависит | Статус |
 | --- | --- | --- | --- | --- | --- |
-| H1 | Решение о выходе + API на несколько листов | `crates/pdf/src/lib.rs` | 5 | A1 | ⬜ |
-| H2 | wasm + RPC + UI | `crates/pdf-wasm/src/lib.rs`, `packages/core/src/protocol.ts`, `xlsx_viewer.ts`, пример | 6 | H1 | ⬜ |
-| H3 | e2e на многолистовой книге | `examples/viewer-xlsx/e2e/` | 3 | H2 | ⬜ |
+| H1 | Решение о выходе + API на несколько листов | `crates/pdf/src/lib.rs` | 5 | A1 | ✅ `export_xlsx_book`/`export_xlsx_book_to` — один PDF на книгу, закладка на каждый лист (`3703423`, `crates/pdf/tests/batch.rs`) |
+| H2 | wasm + RPC + UI | `crates/pdf-wasm/src/lib.rs`, `packages/core/src/protocol.ts`, `xlsx_viewer.ts`, пример | 6 | H1 | ✅ `export_pdf_book` в wasm, `allSheets` в протоколе и воркере (`3703423`); кнопка «Экспорт книги» в примере (`0f17ce9`) |
+| H3 | e2e на многолистовой книге | `examples/viewer-xlsx/e2e/` | 3 | H2 | ✅ `book.spec.ts`: три листа, закладки, валидный PDF (`18f7974`) |
 
 **H1 · 5 ч · API.**
 Вход: `PdfExporter::export_xlsx_sheet(&mut self, wb, sheet: usize)` (`crates/pdf/src/lib.rs:60-67`) — односекционный, `Workbook::sheets()` даёт все листы; ROADMAP §6 п.10 «Batch-экспорт всех листов».
@@ -475,7 +475,7 @@ DoD: экспорт книги с 3 листами даёт ожидаемое �
 
 | ID | Задача | Артефакт | Часы | Зависит | Статус |
 | --- | --- | --- | --- | --- | --- |
-| I1 | `print_grid_lines` | `crates/pdf/src/painter.rs`, `tests/grid.rs` | 5 | A1 | ⬜ `crates/pdf/tests/grid.rs` нет; в `painter.rs:11` сетка — в списке оставшейся работы |
+| I1 | `print_grid_lines` | `crates/pdf/src/painter.rs`, `tests/grid.rs` | 5 | A1 | ✅ сетка по рёбрам ячеек под заливками и рамками; `crates/pdf/tests/grid.rs` (`3703423`) |
 | I2 | Решение по PDF/UA: остаётся в спринте как tagged PDF без сертификации | этот план + ROADMAP | 1 | — | ✅ 06.10.2026, реализация — эпик K |
 | I3 | Гигиена: stale `packages/wasm-pdf/pkg` | `.gitignore`/CI-проверка | 2 | — | ✅ |
 
@@ -563,15 +563,15 @@ DoD: формулировка «tagged, конформность не подтв
 
 | ID | Задача | Артефакт | Часы | Зависит | Статус |
 | --- | --- | --- | --- | --- | --- |
-| J1 | Фикстуры: 500 страниц, картинки, диаграммы, ссылки, комментарии | `scripts/gen-fixtures.ts`, `test-fixtures/xlsx/` | 6 | — | ⬜ |
-| J2 | Бенч 500 страниц + memory-гейт | `crates/pdf/benches/pdf.rs`, `budgets.rs` | 5 | A2, B3 | ⬜ |
-| J3 | e2e на новые артефакты | `examples/viewer-xlsx/e2e/` | 5 | C5, D1, E1 | ⬜ |
-| J4 | `qpdf`/`pdftotext` на новых артефактах в CI | `crates/pdf/tests/external.rs` | 3 | E1, D1, F1 | ⬜ |
-| J5 | Чек-лист DoD и edge cases в PR | PR #12 (ведёт оркестратор) | 1 | все | ⬜ |
+| J1 | Фикстуры: 500 страниц, картинки, диаграммы, ссылки, комментарии | `scripts/gen-fixtures.ts`, `test-fixtures/xlsx/` | 6 | — | 🔄 `charts-five-kinds`, `images-*`, `layout-links` в репозитории; `comments-legacy.xlsx` и `layout-broken-link.xlsx` добавлены, но не закоммичены; 500-страничная (heavy, `target/fixtures/`) ждёт пересборки |
+| J2 | Бенч 500 страниц + memory-гейт | `crates/pdf/benches/pdf.rs`, `budgets.rs` | 5 | A2, B3 | 🔄 бенч `bench_pdf_time_500_pages` (`9067bf0`), временная проверка убрана (`9e8bd74`), мягкий гейт 9 с (`fbdd6fb`); ассерт `pages >= 500` ждёт пересборки фикстуры (сейчас 480); memory-гейт — `scripts/check-pdf-memory.sh` в CI, ещё не закоммичен |
+| J3 | e2e на новые артефакты | `examples/viewer-xlsx/e2e/` | 5 | C5, D1, E1 | ✅ спеки `charts/images/links/book.spec.ts` + `pdf-probe.ts` (`b4a6dd2`, `18f7974`); в chromium зелёные |
+| J4 | `qpdf`/`pdftotext` на новых артефактах в CI | `crates/pdf/tests/external.rs` | 3 | E1, D1, F1 | ✅ шесть внешних проверок: qpdf на изображениях, ссылках с закладками, диаграммах; pdftotext на кириллице и колонтитулах (`178d276`); локально скипаются без утилит |
+| J5 | Чек-лист DoD и edge cases в PR | PR #12 (ведёт оркестратор) | 1 | все | 🔄 `docs/sprint-7/edge-cases.md` есть, но написан на старом HEAD (изображения и overlay «не подключены», паритет с холстом «отсутствует») — обновляется |
 
 **J1 · 6 ч · Фикстуры.**
-Вход: `scripts/gen-fixtures.ts` (exceljs + оракул), существующие `scale-1000-cells.xlsx` и `scale-ten-pages.xlsx` (13 страниц) — 500-страничной фикстуры нет.
-Выход: фикстура на 500 страниц (~15 000 строк); книги с картинками, диаграммами (5 kinds), гиперссылками (внешняя, внутренняя, битая), комментариями; при нехватке возможностей exceljs — правка пакета постфактум, как уже сделано для `stopIfTrue` (`gen-fixtures.ts:44-49` — поле `after`).
+Вход: `scripts/gen-fixtures.ts` (exceljs + оракул), существующие `scale-1000-cells.xlsx` и `scale-ten-pages.xlsx` (13 страниц); 500-страничная фикстура — heavy, генерируется в `target/fixtures/` (`HEAVY_FIXTURES`) и в репозитории не лежит.
+Выход: фикстура на 500 страниц (24 000 строк — 23 000 давали 480, меньше контрактных 500, на которых падал бенч); книги с картинками, диаграммами (5 kinds), гиперссылками (внешняя, внутренняя, битая), комментариями; при нехватке возможностей exceljs — правка пакета постфактум, как уже сделано для `stopIfTrue` (`gen-fixtures.ts:44-49` — поле `after`).
 DoD: 291 нативный тест + новые проходят; оракул дополнен; генератор идемпотентен (повторный прогон даёт те же байты).
 Тесты: генератор проверяется прогоном в CI.
 Зависимости: нет (нужна всем). Риски: exceljs не умеет диаграммы и комментарии — часть пакета собирается вручную (zip + XML), это и есть основная работа задачи.
@@ -613,6 +613,24 @@ DoD: экстраполяция Спринта 6 (0,61 мс/страница →
 - **Размер pdf-wasm упал** с 1 766 908 до 1 335 460 байт gzip после закрытия утечки чужих экспортов printpdf (гейт `js-sys` в форке, `9ab54c3`/I3) — улучшение, не регресс; +13,8 КиБ добавляют декодеры png/jpeg (D3).
 
 **Блокеры.** Закрыты: B2 (B2a+B2b), B3, G5, расхождение ADR-0010 с деревом (`2074877`); `cargo fmt --all --check` зелёный. Открыты: интеграция **C3/C4/C5** в `painter.rs` идёт параллельной сессией (`crates/pdf/tests/chart.rs` ещё нет); интеграция **D** и **F** в `painter.rs` не подключена; **D2**; **I1** (сетки нет, `tests/grid.rs` отсутствует); **H** целиком; **E4** (эмиссия `/Text` отложена); **K** и **J** целиком; **G1** (ADR-0010 расходится с переформулированным DoD 8); **E3** — файловой фикстуры с комментариями так и нет (тесты собирают пакет в памяти).
+
+**Заметка волны 5 (06.10.2026).** Статусы приведены к дереву повторной сверкой, в шапке пересчитан прогресс. Закрыто волной:
+
+- **C3–C5** — `painter.rs` зовёт `chart::draw` (геометрия — `chart_layouts` раз на лист, `468f63e`); `crates/pdf/tests/chart.rs::chart_is_vector_not_image` подтверждает вектор в клипах и отсутствие `/Do` на Image XObject; паритет с холстом — e2e `charts.spec.ts` (`b4a6dd2`).
+- **D1/D2, F1/F2** — изображения (обрезка, масштаб, дедупликация XObject'ов) и колонтитулы с водяным знаком подключены к `painter.rs` (`fdbf3b7`, `c7a80b8`, `a4aa836`).
+- **E4** — маппинг `comment_placements` (`4875afc`) и эмиссия `/Text` в форке и `painter.rs` (`32460ec`); сквозной проверки на файловой фикстуре пока нет — она появится отдельным срезом вместе с `comments-legacy.xlsx`.
+- **H1–H3** — API книги `export_xlsx_book`/`export_pdf_book`, `allSheets` в протоколе и воркере (`3703423`); кнопка «Экспорт книги» в примере (`0f17ce9`), e2e `book.spec.ts` (`18f7974`).
+- **I1** — `print_grid_lines` и `crates/pdf/tests/grid.rs` (`3703423`).
+- **J3** — e2e `charts/images/links/book.spec.ts` + `pdf-probe.ts` (`b4a6dd2`, `18f7974`), в chromium зелёные.
+- **J4** — шесть внешних проверок: qpdf на изображениях, ссылках с закладками, диаграммах; pdftotext на кириллице и колонтитулах (`178d276`); локально скипаются без утилит.
+- **G1** — ADR-0010 приведён в соответствие с переформулированным DoD 8: критерий 1,5× снят, стриминговый модуль значится поставленным (`e41f05e`).
+
+Осталось:
+
+- **Эпик K** — целиком ⬜, он замыкающий.
+- **J1** — `charts-five-kinds`, `images-*`, `layout-links` в репозитории; `comments-legacy.xlsx` и `layout-broken-link.xlsx` добавлены, но не закоммичены; 500-страничная heavy-фикстура генерируется в `target/fixtures/` и ждёт пересборки — генератор переведён на 24 000 строк в рабочей правке, 23 000 давали 480 страниц.
+- **J2** — бенч `bench_pdf_time_500_pages` (`9067bf0`), временная проверка убрана (`9e8bd74`), мягкий гейт 9 с (`fbdd6fb`); ассерт `pages >= 500` оставлен контрактом фикстуры — позеленеет после пересборки; memory-гейт (`scripts/check-pdf-memory.sh` и правка CI) — работа второй сессии, ещё не закоммичена.
+- **J5** — `docs/sprint-7/edge-cases.md` написан на старом HEAD: «изображения не подключены», «overlay не подключён», «паритет с холстом отсутствует» уже неверны — документ обновляется.
 
 ---
 
