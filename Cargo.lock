@@ -570,6 +570,7 @@ dependencies = [
 name = "doc-converter-pdf"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "doc-converter-core",
  "doc-converter-docx",
  "doc-converter-render",
@@ -579,6 +580,17 @@ dependencies = [
  "printpdf",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "doc-converter-pdf-wasm"
+version = "0.1.0"
+dependencies = [
+ "doc-converter-pdf",
+ "doc-converter-xlsx",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -599,7 +611,6 @@ dependencies = [
 name = "doc-converter-wasm"
 version = "0.2.0"
 dependencies = [
- "doc-converter-pdf",
  "doc-converter-render",
  "doc-converter-xlsx",
  "js-sys",

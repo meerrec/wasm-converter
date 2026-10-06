@@ -6,6 +6,7 @@ members = [
     "crates/docx",
     "crates/xlsx",
     "crates/pdf",
+    "crates/pdf-wasm",
     "crates/wasm",
 ]
 
