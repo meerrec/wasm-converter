@@ -1,6 +1,7 @@
 # ADR 0012: Tagged PDF — структура без сертификации
 
 **Статус:** Принято 06.10.2026; реализуется в Спринте 7 (эпик K, задачи K1–K6).
+**Отцепка:** если эпик K не влезает в Спринт 7, он целиком уезжает в Спринт 11 — полуразмеченный PDF хуже неразмеченного (DoD эпика K, `docs/sprint-7/plan.md`).
 **Контекст:** [§K и открытый вопрос 11 плана Спринта 7](../sprint-7/plan.md),
 [ADR-0010](0010-printpdf-fork.md), [`crates/pdf/src/painter.rs`](../../crates/pdf/src/painter.rs),
 [`crates/pdf/src/pagination.rs`](../../crates/pdf/src/pagination.rs),
