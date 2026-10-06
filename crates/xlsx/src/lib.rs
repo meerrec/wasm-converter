@@ -1,5 +1,5 @@
-//! XLSX: разбор `workbook.xml`, `sheet*.xml`, `sharedStrings.xml`, `styles.xml`
-//! и `theme1.xml`.
+//! XLSX: разбор `workbook.xml`, `sheet*.xml`, `sharedStrings.xml`,
+//! `styles.xml`, `theme1.xml` и `comments*.xml`.
 //!
 //! ```no_run
 //! use doc_converter_xlsx::{open, CellRef};
@@ -29,6 +29,7 @@
 
 pub mod cellref;
 pub mod chart;
+pub mod comments;
 pub mod conditional;
 pub mod dims;
 pub mod drawing;
@@ -48,6 +49,7 @@ pub mod worksheet;
 mod xml;
 
 pub use cellref::{CellRef, ParseError, Range};
+pub use comments::Comment;
 pub use conditional::{EffectiveStyle, RuleIndex};
 pub use dims::{ColWidth, ColWidths, RowHeight, RowHeights, SheetDims, SheetFormat};
 pub use doc_converter_render::viewport::Viewport;
@@ -87,6 +89,13 @@ const THEME_REL: &str = "/theme";
 /// Отношение чертежа листа: `…/relationships/drawing`. Как и тема, ищется по
 /// типу связи: имя части (`drawing2.xml`) зависит от порядка добавления.
 const DRAWING_REL: &str = "/drawing";
+
+/// Отношение классических примечаний листа: `…/relationships/comments`.
+///
+/// Ищется по типу связи, как тема и чертёж: имя части (`comments2.xml`) зависит
+/// от порядка добавления. Threaded comments связаны другим отношением
+/// (`…/threadedComment`) и сюда не попадают.
+const COMMENTS_REL: &str = "/comments";
 
 /// Предел на одну media-часть: картинка крупнее в реестр не попадает, и её
 /// [`SheetImage`] остаётся без `image_id` — рисовать такую нечем.
@@ -227,6 +236,8 @@ pub fn open(bytes: Vec<u8>) -> Result<Workbook> {
         let (images, charts) = read_drawing_objects(&mut archive, &meta.part, rels.as_ref())?;
         content.images = images;
         content.charts = charts;
+        // Примечания — тоже отдельная часть, связанная с листом.
+        content.comments = read_comments(&mut archive, &meta.part, rels.as_ref())?;
         // Байты media читаются здесь же: дальше архив закрывается.
         for image in &mut content.images {
             let id = media.register(&mut archive, image.media.as_deref())?;
@@ -271,6 +282,32 @@ fn read_rels(archive: &mut Archive, source_part: &str) -> Result<Option<RelMap>>
         return Ok(None);
     }
     Ok(Some(RelMap::parse(&archive.read(&part)?)?))
+}
+
+/// Примечания листа: классические примечания лежат в отдельной части
+/// `xl/comments*.xml`, на которую ссылается лист, — как чертёж.
+///
+/// Отсутствие связи, части или битая цель — не ошибка: лист тогда просто без
+/// примечаний. Threaded comments связаны своим отношением и сюда не попадают.
+fn read_comments(
+    archive: &mut Archive,
+    sheet_part: &str,
+    rels: Option<&RelMap>,
+) -> Result<Vec<Comment>> {
+    let Some(rel) = rels.and_then(|rels| {
+        rels.items
+            .values()
+            .find(|rel| rel.rel_type.ends_with(COMMENTS_REL))
+    }) else {
+        return Ok(Vec::new());
+    };
+    let Some(part) = rel.part(sheet_part) else {
+        return Ok(Vec::new());
+    };
+    if !archive.contains(&part) {
+        return Ok(Vec::new());
+    }
+    comments::parse(&archive.read(&part)?, part)
 }
 
 /// Объекты чертежа листа: картинки и диаграммы. Чертёж ищется по связи листа,
@@ -459,5 +496,23 @@ mod tests {
         assert_eq!(mime_of("xl/media/anim.gif"), "image/gif");
         assert_eq!(mime_of("xl/media/no-extension"), "application/octet-stream");
         assert_eq!(mime_of("xl/media/scan.tiff"), "image/tiff");
+    }
+
+    /// Связь на примечания есть, а самой части нет — лист просто без них.
+    #[test]
+    fn missing_comments_part_is_not_an_error() {
+        let mut archive = archive(&[("xl/worksheets/sheet1.xml", b"<worksheet/>")]);
+        let rels = RelMap::parse(
+            br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                  <Relationship Id="rId1"
+                                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
+                                Target="../comments1.xml"/>
+                </Relationships>"#,
+        )
+        .unwrap();
+
+        let comments =
+            read_comments(&mut archive, "xl/worksheets/sheet1.xml", Some(&rels)).unwrap();
+        assert!(comments.is_empty());
     }
 }

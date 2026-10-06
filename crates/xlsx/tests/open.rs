@@ -362,3 +362,65 @@ fn reads_view_geometry_merges_and_hyperlinks() {
     // У второго листа связей нет вовсе — это не ошибка.
     assert!(wb.sheet("Скрытый").unwrap().hyperlinks.is_empty());
 }
+
+/// Связи листа с примечаниями: гиперссылка из той же части остаётся рабочей.
+const SHEET1_RELS_WITH_COMMENTS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+                Target="https://example.com/?a=1&amp;b=2" TargetMode="External"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
+                Target="../comments1.xml"/>
+</Relationships>"#;
+
+const COMMENTS1: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <authors><author>Ирек</author></authors>
+  <commentList>
+    <comment ref="B1" authorId="0">
+      <text><r><t>Первая</t></r><r><t xml:space="preserve"> строка</t></r></text>
+    </comment>
+  </commentList>
+</comments>"#;
+
+/// Комментарии приходят из части, найденной по связи листа, а не по имени.
+#[test]
+fn reads_comments_through_sheet_rels() {
+    let entries = vec![
+        ("[Content_Types].xml", CONTENT_TYPES),
+        ("_rels/.rels", ROOT_RELS),
+        ("xl/workbook.xml", WORKBOOK),
+        ("xl/_rels/workbook.xml.rels", WORKBOOK_RELS),
+        ("xl/worksheets/sheet1.xml", SHEET1),
+        ("xl/worksheets/sheet2.xml", SHEET2),
+        (
+            "xl/worksheets/_rels/sheet1.xml.rels",
+            SHEET1_RELS_WITH_COMMENTS,
+        ),
+        ("xl/comments1.xml", COMMENTS1),
+    ];
+
+    let wb = open(package(&entries)).unwrap();
+    let sheet = wb.sheet("Данные").unwrap();
+
+    let comment = sheet.comment_at(CellRef::new(0, 1)).unwrap();
+    assert_eq!(comment.author.as_deref(), Some("Ирек"));
+    assert_eq!(comment.text, "Первая строка");
+    assert_eq!(sheet.comments.len(), 1);
+    assert_eq!(sheet.comment_at(CellRef::new(0, 0)), None);
+    // Гиперссылка из той же части связей продолжает работать.
+    assert!(sheet.hyperlink_at(CellRef::new(0, 0)).is_some());
+
+    // У второго листа связи на примечания нет — это не ошибка.
+    assert!(wb.sheet("Скрытый").unwrap().comments.is_empty());
+}
+
+/// Лист без части примечаний открывается, примечаний у него нет.
+#[test]
+fn sheet_without_comments_opens() {
+    let wb = open(package_with_workbook()).unwrap();
+
+    for sheet in wb.sheets() {
+        assert!(sheet.comments.is_empty());
+        assert!(sheet.comment_at(CellRef::new(0, 0)).is_none());
+    }
+}
