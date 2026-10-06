@@ -12,6 +12,7 @@ use printpdf::{
     Mm, Op, OutputImageFormat, PdfDocument, PdfPage, PdfSaveOptions, Pt, RawImage, RawImageData,
     RawImageFormat, Rect,
 };
+use std::collections::BTreeMap;
 
 /// Сторона страницы в точках.
 const PAGE_PT: f32 = 200.0;
@@ -386,4 +387,124 @@ fn no_images_no_xobjects() {
     let parsed = Document::load_mem(&save(&doc)).expect("PDF разбирается lopdf");
     let content = page_ops(&parsed);
     assert!(content.operations.is_empty(), "страница без операций");
+}
+
+// --- сквозные проверки: лист книги → PDF ---
+
+/// Путь к книге в `test-fixtures/xlsx`.
+fn fixture(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../test-fixtures/xlsx")
+        .join(name)
+}
+
+/// Экспортировать лист книги настройками по умолчанию.
+fn export_sheet(name: &str, sheet: usize) -> Vec<u8> {
+    let book = doc_converter_xlsx::open(
+        std::fs::read(fixture(name)).unwrap_or_else(|e| panic!("{name}: {e}")),
+    )
+    .unwrap_or_else(|e| panic!("{name} не открылась: {e}"));
+    doc_converter_pdf::PdfExporter::new(doc_converter_pdf::PdfOptions::default())
+        .export_xlsx_sheet(&book, sheet)
+        .unwrap_or_else(|e| panic!("{name} не экспортировалась: {e}"))
+}
+
+/// Имена `Image`-XObject'ов документа, их потоки и число `Do`-ссылок.
+///
+/// `XObject`'ы у printpdf глобальные: словарь один на документ, и страница
+/// ссылается на него целиком. Поэтому имена собираются со всех страниц в
+/// множество, а `Do` считается по ним же.
+fn document_images(doc: &Document) -> (BTreeMap<Vec<u8>, &lopdf::Stream>, usize) {
+    let mut images: BTreeMap<Vec<u8>, &lopdf::Stream> = BTreeMap::new();
+    for &page_id in doc.get_pages().values() {
+        let resources = resources(doc, page_id);
+        let Ok(xobjects) = resources.get(b"XObject") else {
+            continue;
+        };
+        let Some(xobjects) = deref(doc, xobjects).as_dict().ok() else {
+            continue;
+        };
+        for (name, value) in xobjects {
+            let Some(stream) = deref(doc, value).as_stream().ok() else {
+                continue;
+            };
+            if stream.dict.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Image") {
+                images.insert(name.clone(), stream);
+            }
+        }
+    }
+    let mut draws = 0;
+    for &page_id in doc.get_pages().values() {
+        let bytes = doc.get_page_content(page_id).expect("поток содержимого");
+        let content = Content::decode(&bytes).expect("операции разбираются");
+        draws += content
+            .operations
+            .iter()
+            .filter(|op| op.operator == "Do")
+            .filter(|op| {
+                op.operands
+                    .first()
+                    .and_then(|operand| operand.as_name().ok())
+                    .is_some_and(|name| images.contains_key(name))
+            })
+            .count();
+    }
+    (images, draws)
+}
+
+/// Лист с картинкой несёт `/Image`-XObject, а страница ссылается на него `Do`.
+///
+/// Тест падает, если `painter` перестанет звать `image_ops`: до подключения
+/// модуля PDF обходился без единого `/Image` (дыра D1 приёмки).
+#[test]
+fn sheet_image_reaches_pdf_as_xobject() {
+    let bytes = export_sheet("images-png.xlsx", 0);
+    let doc = Document::load_mem(&bytes).expect("PDF разбирается lopdf");
+    let (images, draws) = document_images(&doc);
+
+    assert_eq!(images.len(), 1, "одна media-часть — один XObject");
+    let stream = images.values().next().expect("XObject есть");
+    assert!(
+        stream
+            .dict
+            .get(b"Width")
+            .and_then(Object::as_i64)
+            .is_ok_and(|w| w > 0),
+        "у картинки есть ширина исходника"
+    );
+    assert!(
+        stream
+            .dict
+            .get(b"Height")
+            .and_then(Object::as_i64)
+            .is_ok_and(|h| h > 0),
+        "у картинки есть высота исходника"
+    );
+    assert_eq!(draws, 2, "два якоря фикстуры — два вывода картинки");
+}
+
+/// Одна media-часть в разных якорях даёт один `XObject`, разные — разные.
+#[test]
+fn repeated_media_part_gives_one_xobject() {
+    let bytes = export_sheet("images-over-data.xlsx", 0);
+    let doc = Document::load_mem(&bytes).expect("PDF разбирается lopdf");
+    let (images, draws) = document_images(&doc);
+
+    assert_eq!(
+        images.len(),
+        2,
+        "png и jpeg — два XObject'а; повтор png не заводит третий"
+    );
+    assert_eq!(draws, 3, "три якоря — три вывода");
+}
+
+/// Лист без картинок не порождает ни XObject'ов, ни `Do`.
+#[test]
+fn sheet_without_images_has_no_xobject() {
+    let bytes = export_sheet("content-mixed-types.xlsx", 0);
+    let doc = Document::load_mem(&bytes).expect("PDF разбирается lopdf");
+    let (images, draws) = document_images(&doc);
+
+    assert!(images.is_empty(), "нет картинок — нет XObject'ов");
+    assert_eq!(draws, 0, "нет картинок — нет /Do");
 }
