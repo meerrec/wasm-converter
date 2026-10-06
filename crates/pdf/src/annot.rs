@@ -318,6 +318,9 @@ mod tests {
     }
 
     /// Заголовок пункта: printpdf кодирует его UTF-16BE с BOM, кириллица цела.
+    // `as_chunks` стабилен с Rust 1.88, а MSRV workspace — 1.82, поэтому
+    // предложение clippy здесь не применяется.
+    #[allow(clippy::chunks_exact_to_as_chunks)]
     fn title(item: &Dictionary) -> String {
         let bytes = item
             .get(b"Title")
@@ -425,7 +428,7 @@ mod tests {
         assert!(outlines(&saved(&doc)).is_none());
     }
 
-    /// DoD: lopdf видит `/Outlines`, число пунктов совпадает с числом листов,
+    /// `DoD`: lopdf видит `/Outlines`, число пунктов совпадает с числом листов,
     /// заголовки — имена листов, `/Dest` ведёт на страницу-объект.
     #[test]
     fn outline_survives_save_and_points_at_pages() {
