@@ -181,6 +181,75 @@ jobs:
       - if: matrix.node == 20
         run: pnpm size-limit
 
+  # Числа DoD спринта 7 (время и память PDF-экспорта) держались на локальных
+  # прогонах: ни `cargo bench`, ни замер памяти не запускались в CI. Память
+  # гейтится жёстко (scripts/check-pdf-memory.sh: предел 40 МиБ, локальный
+  # замер на 500-страничной фикстуре — 29,4 МиБ), время — мягко: число всегда
+  # в логе, превышение даёт warning, а не красный CI (раннеры шумные;
+  # в Спринте 6 жёсткие 300 мс уже меняли на мягкие 900).
+  perf:
+    name: PDF budgets (DoD 1, 8)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-perf
+
+      # Метрику DoD 8 (ru_maxrss процесса) снимает системный time(1): на
+      # macOS это `-l`, на Linux — GNU `-v`. В ubuntu-образе раннера GNU time
+      # может отсутствовать.
+      - name: time tooling
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends time
+
+      # Бенчи не должны сгнивать: компилируем все бенчи workspace, не запуская.
+      - name: bench compile
+        run: cargo bench --workspace --no-run
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Тяжёлой фикстуры (target/fixtures) в git нет: её пишет тот же
+      # генератор, что и остальные фикстуры, — отсюда её берут бенч и mem_probe.
+      - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
+      - run: pnpm gen:fixtures
+
+      - name: build mem_probe
+        run: cargo build --release -p doc-converter-pdf --example mem_probe
+
+      # Жёсткий абсолютный бюджет DoD 8: полный путь (`export_xlsx_sheet`,
+      # PDF целиком в `Vec`) на 500-страничной книге ≤ 40 МиБ.
+      - name: DoD 8 memory gate
+        run: bash scripts/check-pdf-memory.sh target/release/examples/mem_probe target/fixtures/scale-500-pages.xlsx
+
+      # Мягкий гейт DoD 1 (500 страниц < 3000 мс): бенч печатает медиану
+      # пяти прогонов, она уходит в лог всегда; превышение — warning, не красный.
+      - name: DoD 1 time (soft)
+        run: |
+          set -uo pipefail
+          log=$(mktemp)
+          status=0
+          cargo bench -p doc-converter-pdf --bench pdf -- bench_pdf_time_500_pages 2>&1 | tee "$log" || status=$?
+          median=$(grep -oE 'медиана экспорта [0-9]+' "$log" | grep -oE '[0-9]+' | tail -1 || true)
+          if [ -z "$median" ]; then
+            echo "::error::бенч не напечатал медиану экспорта — строка формата изменилась"
+            exit 1
+          fi
+          echo "DoD 1: медиана экспорта — ${median} мс (мягкий порог 3000 мс)"
+          if [ "$median" -gt 3000 ]; then
+            echo "::warning::медиана ${median} мс выше порога DoD 1 (3000 мс)"
+          fi
+          exit "$status"
+
   audit:
     name: Security audit
     runs-on: ubuntu-latest
