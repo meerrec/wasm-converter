@@ -42,7 +42,8 @@ export interface XlsxViewerHandle {
   exportPng(): Promise<Uint8Array>;
   /**
    * Экспорт листа в PDF. Без настроек — весь текущий лист на A4.
-   * `options.sheetIndex` перекрывает показанный лист.
+   * `options.sheetIndex` перекрывает показанный лист, `options.allSheets` —
+   * вся книга одним документом (листы подряд, закладка на каждый).
    */
   exportPdf(options?: PdfOptions): Promise<Uint8Array>;
   /** Подписка на метрики кадров. */

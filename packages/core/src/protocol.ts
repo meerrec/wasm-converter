@@ -32,6 +32,11 @@ export interface PdfOptions {
   margins?: { top: number; right: number; bottom: number; left: number };
   scale?: number;
   sheetIndex?: number;
+  /**
+   * Экспортировать всю книгу одним PDF: листы идут подряд, закладка — на
+   * каждый. `sheetIndex` в этом режиме не участвует — он выбирает один лист.
+   */
+  allSheets?: boolean;
 }
 
 export type WorkerRequest =

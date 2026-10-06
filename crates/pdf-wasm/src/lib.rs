@@ -129,3 +129,21 @@ pub fn export_pdf(bytes: &[u8], sheet: usize, options: JsValue) -> Result<Vec<u8
     let mut exporter = PdfExporter::new(options);
     exporter.export_xlsx_sheet(&book, sheet).map_err(to_js)
 }
+
+/// Экспортировать книгу целиком в один PDF: листы идут подряд, закладка —
+/// на первый лист каждого.
+///
+/// Отличие от [`export_pdf`] только в том, какие листы попадают в документ:
+/// здесь — все, в порядке книги. `options.sheetIndex` в этом пути не читается:
+/// он выбирает один лист, а книга — это все сразу.
+///
+/// # Errors
+/// Если байты не OOXML-пакет, в книге нет листов или printpdf не смог собрать
+/// документ.
+#[wasm_bindgen]
+pub fn export_pdf_book(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValue> {
+    let options = parse_options(options)?;
+    let book = doc_converter_xlsx::open(bytes.to_vec()).map_err(to_js)?;
+    let mut exporter = PdfExporter::new(options);
+    exporter.export_xlsx_book(&book).map_err(to_js)
+}
