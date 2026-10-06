@@ -9,10 +9,14 @@
 //! в документ попадает один лист книги, поэтому переход разрешается только
 //! на печатаемом листе. `HyperlinkTarget::Broken` аннотации не даёт: цель не
 //! разрешилась ещё при разборе книги, и делать вид, что адрес известен, нельзя.
+//!
+//! Закладки outline собирает [`add_outline`]: пункт верхнего уровня на лист.
+//! У XLSX нет заголовков в смысле DOCX — ни стилей заголовков, ни разделов, —
+//! поэтому лист и есть минимальный осмысленный уровень дерева.
 
 use doc_converter_xlsx::layout::SheetLayout;
 use doc_converter_xlsx::{CellRef, HyperlinkTarget, Range, Sheet};
-use printpdf::{Actions, Destination, LinkAnnotation, Op};
+use printpdf::{Actions, Destination, LinkAnnotation, Op, PdfDocument};
 
 use crate::layout::{PageGeometry, RectPx};
 use crate::pagination::{PageSlice, SheetPage};
@@ -57,6 +61,49 @@ pub(crate) fn page_annotations(
         });
     }
     ops
+}
+
+/// Лист в раскладке экспорта: имя и число занятых страниц.
+///
+/// Закладке нужен не срез страницы ([`SheetPage`]), а место листа в документе:
+/// имя — для заголовка пункта, число страниц — чтобы посчитать начало
+/// следующего листа.
+pub(crate) struct SheetSpan<'a> {
+    /// Имя листа — заголовок закладки.
+    pub name: &'a str,
+    /// Сколько страниц занял лист; минимум одна — даже пустой лист даёт страницу.
+    pub pages: usize,
+}
+
+/// Добавить закладки outline: по одной на лист, на страницу начала листа.
+///
+/// Дерево одноуровневое. У XLSX нет заголовков в смысле DOCX — ни стилей
+/// заголовков, ни разделов; именованные диапазоны в модель книги не попадают
+/// (`workbook.rs` читает из `definedNames` только печатаемые заголовки), а
+/// пункт на каждую строку листа превратил бы панель закладок в копию листа.
+/// Лист — единственный крупный уровень, который у книги есть; printpdf 0.8.2
+/// к тому же пишет все пункты плоским списком.
+///
+/// Страницы сквозные: лист занимает `pages` страниц, поэтому следующий
+/// начинается после него. В PDF попадает ссылка на страницу-объект, а не
+/// записанный где-то номер: сменится пагинация — следующий экспорт пересчитает
+/// и закладку вместе с ней.
+///
+/// `enabled` — флаг `PdfOptions::bookmarks`: при `false` в документ не
+/// добавляется ничего, и `/Outlines` не появляется — printpdf пишет его,
+/// только когда карта закладок непуста.
+///
+/// Вызывать до записи страниц: `StreamSession::begin` принимает документ по
+/// неизменяемой ссылке и резервирует id страниц заранее.
+pub(crate) fn add_outline(doc: &mut PdfDocument, sheets: &[SheetSpan<'_>], enabled: bool) {
+    if !enabled {
+        return;
+    }
+    let mut page = 1;
+    for sheet in sheets {
+        doc.add_bookmark(sheet.name, page);
+        page += sheet.pages;
+    }
 }
 
 /// Номер страницы PDF (с единицы), на которую ведёт внутренняя ссылка.
@@ -200,4 +247,213 @@ fn union_rect(a: RectPx, b: RectPx) -> RectPx {
         (a.x + a.w).max(b.x + b.w) - x,
         (a.y + a.h).max(b.y + b.h) - y,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{add_outline, SheetSpan};
+    use lopdf::{Dictionary, Document, Object, ObjectId};
+    use printpdf::{Mm, PdfDocument, PdfPage, PdfSaveOptions};
+    use std::collections::BTreeMap;
+
+    /// Документ из `count` страниц-заготовок: закладке нужно, куда вести.
+    fn document(count: usize) -> PdfDocument {
+        let mut doc = PdfDocument::new("Тест");
+        doc.with_pages(
+            (0..count)
+                .map(|_| PdfPage::new(Mm(72.0), Mm(72.0), Vec::new()))
+                .collect(),
+        );
+        doc
+    }
+
+    /// Закладки в документе как `(заголовок, страница)` по возрастанию страниц.
+    fn bookmarks(doc: &PdfDocument) -> Vec<(&str, usize)> {
+        let mut found: Vec<_> = doc
+            .bookmarks
+            .map
+            .values()
+            .map(|bookmark| (bookmark.name.as_str(), bookmark.page))
+            .collect();
+        found.sort_by_key(|(_, page)| *page);
+        found
+    }
+
+    /// Сохранить и разобрать: проверки смотрят на готовый PDF, а не на карту
+    /// в памяти.
+    fn saved(doc: &PdfDocument) -> Document {
+        let mut warnings = Vec::new();
+        let bytes = doc.save(&PdfSaveOptions::default(), &mut warnings);
+        Document::load_mem(&bytes).expect("PDF разбирается lopdf")
+    }
+
+    /// Словарь `/Outlines` из каталога; `None` — дерева закладок нет.
+    fn outlines(doc: &Document) -> Option<Dictionary> {
+        let catalog = doc.catalog().expect("каталог документа");
+        let outlines = catalog.get(b"Outlines").ok()?;
+        let (_, outlines) = doc.dereference(outlines).expect("разыменование /Outlines");
+        Some(outlines.as_dict().expect("/Outlines — словарь").clone())
+    }
+
+    /// Пункты outline в порядке обхода `/First` → `/Next`: заголовок и номер
+    /// страницы, на которую ведёт `/Dest`.
+    fn pdf_outline(doc: &Document) -> Vec<(String, u32)> {
+        let pages = doc.get_pages();
+        let Some(root) = outlines(doc) else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        let mut next = reference(&root, b"First");
+        while let Some(id) = next {
+            let item = doc.get_dictionary(id).expect("пункт outline — словарь");
+            found.push((title(item), dest_page(&pages, item)));
+            next = reference(item, b"Next");
+        }
+        found
+    }
+
+    /// Ссылка из словаря, если ключ есть (`/First`, `/Next`).
+    fn reference(dict: &Dictionary, key: &[u8]) -> Option<ObjectId> {
+        dict.get(key).ok()?.as_reference().ok()
+    }
+
+    /// Заголовок пункта: printpdf кодирует его UTF-16BE с BOM, кириллица цела.
+    fn title(item: &Dictionary) -> String {
+        let bytes = item
+            .get(b"Title")
+            .expect("/Title")
+            .as_str()
+            .expect("строка")
+            .to_vec();
+        let (bom, body) = bytes.split_at_checked(2).expect("BOM в заголовке");
+        assert_eq!(bom, [0xFE, 0xFF].as_slice(), "заголовок не UTF-16BE");
+        let units: Vec<u16> = body
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect();
+        String::from_utf16(&units).expect("заголовок — UTF-16")
+    }
+
+    /// Номер страницы, на которую ведёт `/Dest`: первым элементом массива
+    /// стоит ссылка на страницу-объект — номера в PDF не хранятся.
+    fn dest_page(pages: &BTreeMap<u32, ObjectId>, item: &Dictionary) -> u32 {
+        let dest = item
+            .get(b"Dest")
+            .expect("/Dest")
+            .as_array()
+            .expect("/Dest — массив");
+        let object = dest
+            .first()
+            .expect("первый элемент /Dest")
+            .as_reference()
+            .expect("/Dest ссылается на страницу");
+        pages
+            .iter()
+            .find(|(_, id)| **id == object)
+            .map(|(number, _)| *number)
+            .expect("страница цели есть в документе")
+    }
+
+    /// Дерево содержит по закладке на лист, и каждая ведёт на страницу начала
+    /// листа: листы занимают разное число страниц, номера сквозные.
+    #[test]
+    fn one_bookmark_per_sheet_on_sheet_start() {
+        let mut doc = document(6);
+        add_outline(
+            &mut doc,
+            &[
+                SheetSpan {
+                    name: "Лист1",
+                    pages: 1,
+                },
+                SheetSpan {
+                    name: "Отчёт",
+                    pages: 3,
+                },
+                SheetSpan {
+                    name: "Лист3",
+                    pages: 2,
+                },
+            ],
+            true,
+        );
+        assert_eq!(bookmarks(&doc), [("Лист1", 1), ("Отчёт", 2), ("Лист3", 5)]);
+    }
+
+    /// Книга из одного листа — одна закладка на первой странице, сколько бы
+    /// страниц лист ни занял.
+    #[test]
+    fn single_sheet_book_has_one_bookmark_at_first_page() {
+        let mut doc = document(4);
+        add_outline(
+            &mut doc,
+            &[SheetSpan {
+                name: "Лист1",
+                pages: 4,
+            }],
+            true,
+        );
+        assert_eq!(bookmarks(&doc), [("Лист1", 1)]);
+    }
+
+    /// `bookmarks: false` — дерева нет ни в документе, ни в готовом PDF:
+    /// printpdf пишет `/Outlines`, только когда карта закладок непуста.
+    #[test]
+    fn disabled_bookmarks_leave_no_outline() {
+        let mut doc = document(2);
+        add_outline(
+            &mut doc,
+            &[SheetSpan {
+                name: "Лист1",
+                pages: 2,
+            }],
+            false,
+        );
+        assert!(doc.bookmarks.map.is_empty());
+        assert!(
+            outlines(&saved(&doc)).is_none(),
+            "при false /Outlines не пишется"
+        );
+    }
+
+    /// Пустой список листов — не ошибка: закладок просто нет.
+    #[test]
+    fn empty_sheet_list_adds_no_bookmarks() {
+        let mut doc = document(1);
+        add_outline(&mut doc, &[], true);
+        assert!(doc.bookmarks.map.is_empty());
+        assert!(outlines(&saved(&doc)).is_none());
+    }
+
+    /// DoD: lopdf видит `/Outlines`, число пунктов совпадает с числом листов,
+    /// заголовки — имена листов, `/Dest` ведёт на страницу-объект.
+    #[test]
+    fn outline_survives_save_and_points_at_pages() {
+        let mut doc = document(3);
+        add_outline(
+            &mut doc,
+            &[
+                SheetSpan {
+                    name: "Лист1",
+                    pages: 2,
+                },
+                SheetSpan {
+                    name: "Лист2",
+                    pages: 1,
+                },
+            ],
+            true,
+        );
+        let pdf = saved(&doc);
+        let root = outlines(&pdf).expect("/Outlines в каталоге");
+        let count = match root.get(b"Count").expect("/Count") {
+            Object::Integer(count) => *count,
+            other => panic!("ожидалось число, получено {other:?}"),
+        };
+        assert_eq!(count, 2, "пунктов не столько, сколько листов");
+        assert_eq!(
+            pdf_outline(&pdf),
+            [("Лист1".to_owned(), 1), ("Лист2".to_owned(), 3)]
+        );
+    }
 }

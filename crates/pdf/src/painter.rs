@@ -61,6 +61,18 @@ pub fn export(
     // `page_cfg` несёт и масштаб, и повтор шапки/первых столбцов: пагинация
     // читает их одним конфигом, а геометрия — уже с итоговым масштабом.
     let pagination = paginate(book, sheet, &layout, &page, &page_cfg);
+    // Закладка — на лист, и ведёт на его первую страницу. `pages` — длина
+    // листа: по ней `add_outline` отсчитывает начало следующего, когда листов
+    // в документе несколько. Записывается до страниц: printpdf резервирует их
+    // id заранее, и закладка обязана попасть в тот же документ.
+    annot::add_outline(
+        &mut doc,
+        &[annot::SheetSpan {
+            name: &sheet.meta.name,
+            pages: pagination.pages.len(),
+        }],
+        options.bookmarks,
+    );
     let fonts = fonts::embed(&mut doc, &mut warnings, pagination.faces)?;
     let mut registry = FontRegistry::new(FONT_CACHE);
 

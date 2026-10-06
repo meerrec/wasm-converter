@@ -15,7 +15,7 @@ use doc_converter_xlsx::{
     Cell, CellValue, Hyperlink, HyperlinkTarget, Range, SharedStrings, Sheet, SheetContent,
     SheetState, StyleTable, Theme, Workbook, WorksheetBuilder, WorksheetMeta,
 };
-use lopdf::{Dictionary, Document};
+use lopdf::{Dictionary, Document, Object};
 
 /// Часть пакета синтетического листа; нужна только текстам ошибок.
 const PART: &str = "xl/worksheets/sheet1.xml";
@@ -363,6 +363,91 @@ fn link_rect_covers_whole_range() {
     assert!(
         range[2] <= width_pt && range[3] <= height_pt,
         "Rect за страницей"
+    );
+}
+
+/// Словарь `/Outlines` из каталога; `None` — дерева закладок в PDF нет.
+fn outlines(doc: &Document) -> Option<Dictionary> {
+    let catalog = doc.catalog().expect("каталог документа");
+    let outlines = catalog.get(b"Outlines").ok()?;
+    let (_, outlines) = doc.dereference(outlines).expect("разыменование /Outlines");
+    Some(outlines.as_dict().expect("/Outlines — словарь").clone())
+}
+
+/// DoD E2: при `bookmarks: false` дерева закладок нет — `/Outlines` в каталоге
+/// не появляется.
+#[test]
+fn bookmarks_disabled_leaves_no_outline() {
+    let book = workbook("Лист1", &[(0, 0, "ячейка")], &[]);
+    let doc = export(
+        &book,
+        PdfOptions {
+            bookmarks: false,
+            ..PdfOptions::default()
+        },
+    );
+    assert!(
+        outlines(&doc).is_none(),
+        "при bookmarks: false дерева быть не должно"
+    );
+}
+
+/// DoD E2: при `bookmarks: true` (умолчание) в PDF есть `/Outlines` с одним
+/// пунктом на лист; заголовок — имя листа (UTF-16BE, кириллица цела), а
+/// `/Dest` ведёт на страницу-объект первой страницы листа.
+#[test]
+fn bookmarks_reach_the_exported_pdf() {
+    let book = workbook("Лист1", &[(0, 0, "ячейка")], &[]);
+    let doc = export(&book, PdfOptions::default());
+    let root = outlines(&doc).expect("/Outlines при bookmarks: true");
+    let count = match root.get(b"Count").expect("/Count") {
+        Object::Integer(count) => *count,
+        other => panic!("ожидалось число, получено {other:?}"),
+    };
+    assert_eq!(count, 1, "закладка одна на лист");
+    let item = doc
+        .get_dictionary(
+            root.get(b"First")
+                .expect("/First")
+                .as_reference()
+                .expect("/First — ссылка"),
+        )
+        .expect("пункт outline — словарь");
+    // Заголовок — UTF-16BE с BOM: так printpdf кодирует текст закладок,
+    // кириллица проходит целиком.
+    let mut title = vec![0xFE, 0xFF];
+    for unit in "Лист1".encode_utf16() {
+        title.extend(unit.to_be_bytes());
+    }
+    assert_eq!(
+        item.get(b"Title")
+            .expect("/Title")
+            .as_str()
+            .expect("строка"),
+        title.as_slice()
+    );
+    let dest = item
+        .get(b"Dest")
+        .expect("/Dest")
+        .as_array()
+        .expect("/Dest — массив");
+    assert_eq!(
+        dest[0].as_reference().expect("/Dest ссылается на страницу"),
+        *doc.get_pages().values().next().expect("первая страница"),
+        "закладка ведёт не на первую страницу листа"
+    );
+}
+
+/// Экспорт книги с одним листом не падает при закладках, включённых по
+/// умолчанию: настройка включена, а лист занимает одну страницу.
+#[test]
+fn single_sheet_book_exports_with_bookmarks() {
+    let book = workbook("Лист1", &[(0, 0, "ячейка")], &[]);
+    let doc = export(&book, PdfOptions::default());
+    assert_eq!(
+        doc.get_pages().len(),
+        1,
+        "у листа с одной строкой одна страница"
     );
 }
 
