@@ -19,7 +19,17 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      // DPR-сценарию нужен свой `deviceScaleFactor`: он идёт вторым проектом.
+      // DPR-сценарию нужен свой `deviceScaleFactor`: он идёт отдельным проектом.
+      testIgnore: /dpr\.spec\.ts/,
+    },
+    {
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'] },
+      testIgnore: /dpr\.spec\.ts/,
+    },
+    {
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'] },
       testIgnore: /dpr\.spec\.ts/,
     },
     {
