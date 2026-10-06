@@ -48,7 +48,7 @@ jobs:
 
       - name: build (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
-        run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm --release
+        run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm --release
 
   wasm:
     name: Wasm bindings
@@ -73,6 +73,11 @@ jobs:
           name: wasm-pkg
           path: packages/wasm/pkg
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pdf-pkg
+          path: packages/wasm-pdf/pkg
+
   js:
     name: JS (node ${{ matrix.node }})
     needs: wasm
@@ -96,6 +101,13 @@ jobs:
         with:
           name: wasm-pkg
           path: packages/wasm/pkg
+
+      # pkg/ обоих модулей приезжает артефактами, потому что генерируется
+      # wasm-bindgen.
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-pdf-pkg
+          path: packages/wasm-pdf/pkg
 
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 
