@@ -55,7 +55,7 @@ impl PdfExporter {
     /// Спринт 7.
     ///
     /// # Errors
-    /// [`doc_converter_core::Error::Malformed`], если листа с таким индексом нет
+    /// [`doc_converter_core::Error::Export`], если листа с таким индексом нет
     /// или printpdf не смог собрать документ.
     pub fn export_xlsx_sheet(
         &mut self,
@@ -63,6 +63,6 @@ impl PdfExporter {
         sheet: usize,
     ) -> Result<Vec<u8>> {
         painter::export(wb, sheet, &self.opts)
-            .map_err(|err| doc_converter_core::Error::Malformed(format!("pdf export: {err}")))
+            .map_err(|err| doc_converter_core::Error::Export(format!("pdf: {err}")))
     }
 }
