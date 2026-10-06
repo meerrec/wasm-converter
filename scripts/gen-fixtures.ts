@@ -9,6 +9,11 @@
 // файла должны сойтись.
 //
 //     node scripts/gen-fixtures.ts
+//     node scripts/gen-fixtures.ts --check
+//
+// `--check` собирает фикстуры заново в стороне и сверяет байты с
+// репозиторием: генератор обязан быть идемпотентным, и проверка — то, чем
+// это подтверждается, а не обещается.
 //
 // Даты пишутся числами с форматом даты, а не объектами `Date`. Так в эталон
 // попадает ровно то, что лежит в файле. exceljs отдаёт такие ячейки обратно
@@ -16,7 +21,7 @@
 // той же формуле, что и Excel.
 
 import ExcelJS from 'exceljs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { crc32, deflateRawSync, deflateSync, inflateRawSync } from 'node:zlib';
 
@@ -34,10 +39,18 @@ interface Fixture {
   build: Build;
   /**
    * Правка уже записанного пакета: то, что exceljs не умеет записать сам.
-   * Сейчас это единственный случай — `stopIfTrue` у правил условного
-   * форматирования (см. `addStopIfTrue`).
+   * Это `stopIfTrue` у правил условного форматирования (см. `addStopIfTrue`),
+   * разные авторы примечаний (`addCommentAuthors`) и битая ссылка
+   * (`breakLink`).
    */
   after?: (file: string) => Promise<void>;
+  /**
+   * Правка копии пакета, по которой строится эталон. Нужна там, где exceljs
+   * книгу не читает: `<hyperlink>` на отсутствующую связь роняет его на
+   * `rels[rId].Target`. Копия отличается только этим элементом, значения
+   * ячеек в ней те же.
+   */
+  oraclePatch?: (zip: Buffer) => Buffer;
 }
 
 const argb = (hex: string) => ({ argb: `FF${hex.toUpperCase()}` });
@@ -442,6 +455,68 @@ const hyperlinks: Build = (wb) => {
   ws.getCell('A3').value = { text: 'Почта', hyperlink: 'mailto:test@example.com' };
   ws.getCell('A4').value = { text: 'На второй лист', hyperlink: '#Лист2!A1' };
   ws.getCell('B1').value = 'рядом';
+};
+
+/** Идентификатор связи, которой в пакете нет: цель разберётся как битая. */
+const BROKEN_LINK_ID = 'rId99';
+const BROKEN_LINK_ELEMENT = `<hyperlink ref="A2" r:id="${BROKEN_LINK_ID}"/>`;
+
+/**
+ * Битая ссылка: пара рабочих ссылок и одна, у которой `r:id` не разрешается.
+ *
+ * exceljs всегда пишет связь для каждой ссылки, поэтому элемент с висячим
+ * `r:id` дописывает `breakLink`. Ячейка A2 при этом обычная — битым бывает
+ * только переход, и это ровно тот случай, который разбирается как
+ * `HyperlinkTarget::Broken`.
+ */
+const brokenLink: Build = (wb) => {
+  const ws = wb.addWorksheet('Ссылки');
+  ws.getCell('A1').value = { text: 'Рабочая ссылка', hyperlink: 'https://example.com/' };
+  ws.getCell('A2').value = 'Битая ссылка';
+  ws.getCell('A3').value = { text: 'Почта', hyperlink: 'mailto:test@example.com' };
+  ws.getCell('B1').value = 'рядом';
+};
+
+// ── Примечания ──────────────────────────────────────────────
+//
+// exceljs пишет классические примечания сам (`cell.note`): часть
+// `xl/comments*.xml`, VML-рисунок и связь листа. Чего он не умеет — разных
+// авторов: список авторов у него всегда один (`<author>Author</author>`), а
+// `authorId` у всех комментариев нулевой, поэтому авторов дописывает
+// `addCommentAuthors` — тем же приёмом, что `stopIfTrue` у правил.
+//
+// Threaded-комментарии (`xl/threadedComments/*.xml`, другое отношение) в
+// фикстуру не подмешиваются: парсер разбирает только классические, и такая
+// книга проверяла бы отсутствие поведения, а не поведение.
+
+/** Авторы примечаний: индекс — тот же `authorId`, что и в части. */
+const COMMENT_AUTHORS = ['Анна Петрова', 'Иван Соколов', 'Мария'];
+
+/** Авторы по частям: часть → пары «ячейка → `authorId`». */
+const COMMENT_AUTHORS_BY_PART: Array<[string, Array<[string, number]>]> = [
+  ['xl/comments1.xml', [['B2', 0], ['C3', 1], ['D4', 2]]],
+  ['xl/comments2.xml', [['A1', 1]]],
+];
+
+const comments: Build = (wb) => {
+  const ws = wb.addWorksheet('Примечания');
+  ws.getCell('A1').value = 'Без примечания';
+  ws.getCell('B2').value = 'Строка отчёта';
+  ws.getCell('B2').note = 'Первая строка\nВторая строка';
+  ws.getCell('C3').value = 42;
+  // Несколько runs в одном примечании: так Excel пишет многострочный текст,
+  // и читатель обязан склеить их в один.
+  ws.getCell('C3').note = {
+    texts: [{ text: 'Итог:' }, { text: '\nзначение с кириллицей: ёжик' }],
+  };
+  ws.getCell('D4').value = 'Ещё ячейка';
+  ws.getCell('D4').note = 'Коротко';
+
+  // Второй лист получает вторую часть (`comments2.xml`): имя части зависит от
+  // порядка добавления, и лист обязан находить её по связи, а не по имени.
+  const second = wb.addWorksheet('Заметки');
+  second.getCell('A1').value = 'На втором листе';
+  second.getCell('A1').note = 'Примечание второго листа';
 };
 
 // ── Условное форматирование ─────────────────────────────────
@@ -1141,14 +1216,15 @@ const scaleTenPages: Build = (wb) => {
  *
  * Строки без своей высоты, как в `scaleTenPages`: число страниц тогда зависит
  * только от их количества, а не от того, учитывает ли разбивку `ht` из файла.
- * При 15 pt на A4 помещается ≈46 строк, поэтому 23 000 строк — около 500
- * страниц; фактическое число печатает бенч.
+ * На A4 помещается ≈48 строк, поэтому 23 000 давали 480 страниц — меньше
+ * порога DoD 1, на котором падал `bench_pdf_time_500_pages`. 24 000 строк
+ * порог перекрывают; фактическое число печатает бенч.
  */
 const scale500Pages: Build = (wb) => {
   const ws = wb.addWorksheet('500 страниц');
   ws.getColumn(1).width = 10;
   ws.getColumn(2).width = 32;
-  for (let r = 1; r <= 23_000; r += 1) {
+  for (let r = 1; r <= 24_000; r += 1) {
     ws.getCell(r, 1).value = r;
     ws.getCell(r, 2).value = `Позиция ${r}: строка отчёта`;
   }
@@ -1501,6 +1577,59 @@ async function addStopIfTrue(file: string): Promise<void> {
   await writeFile(file, patched);
 }
 
+/**
+ * Проставить разных авторов в частях примечаний: exceljs пишет одного
+ * (`<author>Author</author>` и `authorId="0"` у каждого комментария).
+ * Замена проверяется по числу вхождений — молча пропустить нечего.
+ */
+async function addCommentAuthors(file: string): Promise<void> {
+  for (const [part, byRef] of COMMENT_AUTHORS_BY_PART) {
+    const patched = patchZipEntry(await readFile(file), part, (xml) => {
+      const placeholder = '<authors><author>Author</author></authors>';
+      if (xml.split(placeholder).length !== 2) {
+        throw new Error(`${file}: в ${part} не тот список авторов, что пишет exceljs`);
+      }
+      const authors = COMMENT_AUTHORS.map((name) => `<author>${name}</author>`).join('');
+      let out = xml.replace(placeholder, `<authors>${authors}</authors>`);
+      for (const [ref, id] of byRef) {
+        const from = `<comment ref="${ref}" authorId="0">`;
+        if (out.split(from).length !== 2) {
+          throw new Error(`${file}: комментарий ${ref} не найден в ${part} однозначно`);
+        }
+        out = out.replace(from, `<comment ref="${ref}" authorId="${id}">`);
+      }
+      return out;
+    });
+    await writeFile(file, patched);
+  }
+}
+
+/** Дописать в лист ссылку на несуществующую связь: exceljs так не умеет. */
+async function breakLink(file: string): Promise<void> {
+  const zip = await readFile(file);
+  const rels = unzip(zip).find((e) => e.name === 'xl/worksheets/_rels/sheet1.xml.rels');
+  if (!rels || rels.data.toString('utf8').includes(`Id="${BROKEN_LINK_ID}"`)) {
+    throw new Error(`${file}: связь ${BROKEN_LINK_ID} уже есть или нет карты связей`);
+  }
+  const patched = patchZipEntry(zip, 'xl/worksheets/sheet1.xml', (xml) => {
+    if (xml.split('</hyperlinks>').length !== 2) {
+      throw new Error(`${file}: в листе нет ровно одного элемента hyperlinks`);
+    }
+    return xml.replace('</hyperlinks>', `${BROKEN_LINK_ELEMENT}</hyperlinks>`);
+  });
+  await writeFile(file, patched);
+}
+
+/** Копия листа без битого элемента — для чтения эталона (см. `oraclePatch`). */
+function dropBrokenLink(zip: Buffer): Buffer {
+  return patchZipEntry(zip, 'xl/worksheets/sheet1.xml', (xml) => {
+    if (xml.split(BROKEN_LINK_ELEMENT).length !== 2) {
+      throw new Error('битая ссылка не найдена однозначно');
+    }
+    return xml.replace(BROKEN_LINK_ELEMENT, '');
+  });
+}
+
 // ── Сборка списка ───────────────────────────────────────────
 
 const FIXTURES: Fixture[] = [];
@@ -1582,6 +1711,12 @@ FIXTURES.push(
   { name: 'layout-frozen-both', build: frozenBoth },
   { name: 'layout-no-grid', build: noGrid },
   { name: 'layout-links', build: hyperlinks },
+  {
+    name: 'layout-broken-link',
+    build: brokenLink,
+    after: breakLink,
+    oraclePatch: dropBrokenLink,
+  },
 
   { name: 'sheets-two', build: twoSheets },
   { name: 'sheets-three', build: threeSheets },
@@ -1616,6 +1751,9 @@ FIXTURES.push(
   { name: 'images-jpeg', build: imagesJpeg },
   { name: 'images-over-data', build: imagesOverData },
 );
+
+// Примечания: классические, разных авторов, на двух листах.
+FIXTURES.push({ name: 'comments-legacy', build: comments, after: addCommentAuthors });
 
 // Диаграммы: пять поддержанных видов в одной книге — источник для C3/C4/C5.
 FIXTURES.push({ name: 'charts-five-kinds', build: chartsFiveKinds, after: addCharts });
@@ -2008,9 +2146,9 @@ function describe(cell: ExcelJS.Cell, row: number, col: number): CellRecord {
   throw new Error(`неизвестное значение в ${row}:${col}: ${JSON.stringify(value)}`);
 }
 
-async function oracleFor(file: string): Promise<Json> {
+async function oracleFor(bytes: Buffer): Promise<Json> {
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(file);
+  await wb.xlsx.load(bytes);
   const sheets: Json[] = [];
   wb.eachSheet((ws) => {
     const cells: CellRecord[] = [];
@@ -2056,26 +2194,65 @@ async function writeFixture(fixture: Fixture, dir: string): Promise<string> {
   return file;
 }
 
-async function main(): Promise<void> {
+/** Собрать фикстуры репозитория в `dir`; вернуть байты эталона. */
+async function writeRepoFixtures(dir: string): Promise<Buffer> {
   if (new Set(FIXTURES.map((f) => f.name)).size !== FIXTURES.length) {
     throw new Error('имена фикстур повторяются');
   }
-  await mkdir(OUT_DIR, { recursive: true });
-  await mkdir(HEAVY_DIR, { recursive: true });
+  await mkdir(dir, { recursive: true });
 
   const files: Json = {};
   for (const fixture of FIXTURES) {
-    const file = await writeFixture(fixture, OUT_DIR);
-    files[`${fixture.name}.xlsx`] = await oracleFor(file);
+    const file = await writeFixture(fixture, dir);
+    const bytes = await readFile(file);
+    files[`${fixture.name}.xlsx`] = await oracleFor(fixture.oraclePatch?.(bytes) ?? bytes);
+  }
+  return Buffer.from(`${JSON.stringify({ version: 1, files })}\n`);
+}
+
+/**
+ * `--check`: собрать всё заново в стороне и сверить байты с репозиторием.
+ *
+ * Прогон генератора обязан быть идемпотентным: даты фиксированы, zip
+ * пересобирается с постоянной отметкой. Проверка — единственный способ
+ * заметить, что это перестало держаться, не коммитя шум.
+ */
+async function check(): Promise<void> {
+  const dir = path.join(HEAVY_DIR, 'check');
+  await rm(dir, { recursive: true, force: true });
+  await writeFile(path.join(dir, 'oracle.json'), await writeRepoFixtures(dir));
+
+  const drift: string[] = [];
+  for (const name of [...FIXTURES.map((f) => `${f.name}.xlsx`), 'oracle.json']) {
+    const committed = path.join(OUT_DIR, name);
+    const [fresh, old] = await Promise.all([
+      readFile(path.join(dir, name)),
+      readFile(committed),
+    ]);
+    if (!fresh.equals(old)) drift.push(name);
+  }
+  if (drift.length > 0) {
+    throw new Error(`перегенерация разошлась с репозиторием: ${drift.join(', ')}`);
+  }
+  console.log(`фикстур: ${FIXTURES.length}; байты совпадают с репозиторием`);
+}
+
+async function main(): Promise<void> {
+  if (process.argv.includes('--check')) {
+    await check();
+    return;
   }
 
+  const oracle = await writeRepoFixtures(OUT_DIR);
+
   // Тяжёлые книги: без эталона и вне git — их ценность в размере, а не в разборе.
+  await mkdir(HEAVY_DIR, { recursive: true });
   const heavy: string[] = [];
   for (const fixture of HEAVY_FIXTURES) {
     heavy.push(path.relative(ROOT, await writeFixture(fixture, HEAVY_DIR)));
   }
 
-  await writeFile(ORACLE, `${JSON.stringify({ version: 1, files })}\n`);
+  await writeFile(ORACLE, oracle);
   console.log(`фикстур: ${FIXTURES.length}, эталон: ${path.relative(ROOT, ORACLE)}`);
   if (heavy.length > 0) {
     console.log(`тяжёлые (не в git): ${heavy.join(', ')}`);
