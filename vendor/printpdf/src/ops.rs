@@ -256,6 +256,35 @@ impl Layer {
     }
 }
 
+/// Аннотация страницы: подтип и его нагрузка.
+///
+/// Форк (ADR-0010): в 0.8.2 подтип `/Link` был зашит в [`LinkAnnotation`], и
+/// примечание XLSX (`/Text` с текстом в `/Contents`) выразить было нечем.
+/// Подтип стал данными: одна ветка сериализации на все подтипы, и следующий
+/// (`/FreeText`, `/Highlight`) добавится вариантом здесь, а не третьей
+/// операцией. Нагрузка варианта обязательна — у `/Link` действие, у `/Text`
+/// содержимое, — поэтому «аннотация без действия» невыразима.
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "subtype", content = "data")]
+pub enum Annotation {
+    /// Ссылка: прямоугольник, оформление и действие (`/URI` или `/GoTo`).
+    Link(LinkAnnotation),
+    /// Текстовая заметка: текст в `/Contents`, автор в `/T`.
+    Text(TextAnnotation),
+}
+
+/// Текстовая заметка (`/Subtype /Text`) — примечание ячейки XLSX.
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextAnnotation {
+    /// Прямоугольник на странице в пунктах, как у [`LinkAnnotation::rect`].
+    pub rect: Rect,
+    /// Текст заметки — PDF-ключ `/Contents`.
+    pub contents: String,
+    /// Автор — PDF-ключ `/T`; `None` — автора в книге нет, и выдумывать его нельзя.
+    pub title: Option<String>,
+}
+
 /// Operations that can occur in a PDF page
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "type", content = "data")]
@@ -347,9 +376,11 @@ pub enum Op {
     SetTransformationMatrix { matrix: CurTransMat },
     /// Sets a matrix that only affects subsequent text objects.
     SetTextMatrix { matrix: TextMatrix },
-    /// Adds a link annotation (use `PdfDocument::add_link` to register the `LinkAnnotation` on the
-    /// document)
-    LinkAnnotation { link: LinkAnnotation },
+    /// Добавляет аннотацию страницы (`/Link` или `/Text`).
+    ///
+    /// Форк (ADR-0010): в 0.8.2 вариант нёс только `LinkAnnotation`, и второй
+    /// подтип выразить было нечем; теперь подтип — данные.
+    Annotation { annot: Annotation },
     /// Instantiates an XObject with a given transform (if the XObject has a width / height).
     /// Use `PdfDocument::add_xobject` to register the object and get the ID.
     UseXobject {

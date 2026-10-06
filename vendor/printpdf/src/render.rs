@@ -4,7 +4,7 @@ use base64::Engine;
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
-    ops::PdfPage, serialize::prepare_fonts, Actions, BlackGenerationExtraFunction,
+    ops::PdfPage, serialize::prepare_fonts, Actions, Annotation, BlackGenerationExtraFunction,
     BlackGenerationFunction, BlendMode, BuiltinFont, BuiltinOrExternalFontId, ChangedField, Color,
     CurTransMat, Destination, ExtendedGraphicsState, FontId, HalftoneType, Line, LineCapStyle,
     LineDashPattern, LineJoinStyle, OutputImageFormat, OverprintMode, PaintMode, PdfResources,
@@ -834,7 +834,9 @@ fn render_to_svg_internal(
                 let xobject_svg = render_image_to_svg(id, transform, resources, &map, height, &gst);
                 svg.push_str(&xobject_svg);
             }
-            Op::LinkAnnotation { link } => {
+            Op::Annotation {
+                annot: Annotation::Link(link),
+            } => {
                 // Render link annotations as SVG links
                 match &link.actions {
                     Actions::Goto(destination) => {
@@ -877,6 +879,12 @@ fn render_to_svg_internal(
                     }
                 }
             }
+
+            // Текстовой заметке в SVG нечего рисовать: в потоке страницы она
+            // не участвует, значок рисует просмотрщик.
+            Op::Annotation {
+                annot: Annotation::Text(_),
+            } => {}
 
             // Inline image operations - simplified implementation
             Op::BeginInlineImage | Op::BeginInlineImageData | Op::EndInlineImage => {

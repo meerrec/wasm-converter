@@ -1053,6 +1053,11 @@ fn write_pages<W: Write>(
             header,
             footer,
         };
+        // Примечания ищут свою страницу один раз на лист: `page_annotations`
+        // зовётся на каждой странице, а поиск перебирает все страницы листа —
+        // внутри цикла это было бы квадратом по их числу.
+        let comment_placements =
+            annot::comment_placements(sheet.sheet, &sheet.layout, &sheet.pagination.pages);
         for (page_index, sheet_page) in sheet.pagination.pages.iter().enumerate() {
             page_no += 1;
             let page_geom = sheet.page.with_page_top_px(sheet_page.slice.offset_y);
@@ -1076,8 +1081,10 @@ fn write_pages<W: Write>(
                 sheet.sheet,
                 &sheet.layout,
                 &sheet.pagination.pages,
+                &comment_placements,
                 &page_geom,
                 &sheet_page.slice,
+                page_index,
             ));
             let pdf_page = PdfPage::new(
                 Mm::from(Pt(page_geom.width_pt())),

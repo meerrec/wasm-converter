@@ -35,7 +35,7 @@ use crate::{
     ops::Op,
     serialize::{
         build_globals, docinfo_to_dict, encode_text_to_utf16be, get_used_internal_fonts,
-        link_annotation_to_dict, translate_operations, PdfGlobals, PreparedFont,
+        annotation_to_dict, translate_operations, PdfGlobals, PreparedFont,
     },
     BuiltinFont, FontId, LayerInternalId, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg,
 };
@@ -398,11 +398,11 @@ impl<'p, 'w, W: Write> StreamSession<'p, 'w, W> {
             }
         }
 
-        let links = page
+        let annots = page
             .ops
             .iter()
             .filter_map(|l| match l {
-                Op::LinkAnnotation { link } => Some(link.clone()),
+                Op::Annotation { annot } => Some(annot.clone()),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -437,14 +437,14 @@ impl<'p, 'w, W: Write> StreamSession<'p, 'w, W> {
         ];
         // Ровно как `serialize_pdf`: `/Annots` — ключ страницы, пустой массив
         // не пишется.
-        if !links.is_empty() {
+        if !annots.is_empty() {
             page_entries.push((
                 "Annots",
                 Object::Array(
-                    links
+                    annots
                         .iter()
-                        .map(|l| {
-                            Object::Dictionary(link_annotation_to_dict(l, &self.page_ids_reserved))
+                        .map(|a| {
+                            Object::Dictionary(annotation_to_dict(a, &self.page_ids_reserved))
                         })
                         .collect(),
                 ),
@@ -633,8 +633,8 @@ mod tests {
     use super::*;
     use crate::ops::Op;
     use crate::{
-        Actions, BuiltinFont, Destination, LinkAnnotation, Mm, PageAnnotId, PageAnnotation,
-        PdfDocument, PdfPage, PdfSaveOptions, Point, Pt, Rect, TextItem,
+        Actions, Annotation, BuiltinFont, Destination, LinkAnnotation, Mm, PageAnnotId,
+        PageAnnotation, PdfDocument, PdfPage, PdfSaveOptions, Point, Pt, Rect, TextItem,
     };
 
     fn render(object: &Object) -> String {
@@ -728,8 +728,8 @@ mod tests {
     }
 
     fn link_op(actions: Actions) -> Op {
-        Op::LinkAnnotation {
-            link: LinkAnnotation::new(
+        Op::Annotation {
+            annot: Annotation::Link(LinkAnnotation::new(
                 Rect {
                     x: Pt(20.0),
                     y: Pt(700.0),
@@ -740,7 +740,7 @@ mod tests {
                 None,
                 None,
                 None,
-            ),
+            )),
         }
     }
 

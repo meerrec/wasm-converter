@@ -12,8 +12,8 @@ use std::path::Path;
 use doc_converter_pdf::{Margins, PageConfig, PageSize, PdfExporter, PdfOptions};
 use doc_converter_xlsx::layout::SheetLayout;
 use doc_converter_xlsx::{
-    Cell, CellValue, Hyperlink, HyperlinkTarget, Range, SharedStrings, Sheet, SheetContent,
-    SheetState, StyleTable, Theme, Workbook, WorksheetBuilder, WorksheetMeta,
+    Cell, CellRef, CellValue, Comment, Hyperlink, HyperlinkTarget, Range, SharedStrings, Sheet,
+    SheetContent, SheetState, StyleTable, Theme, Workbook, WorksheetBuilder, WorksheetMeta,
 };
 use lopdf::{Dictionary, Document, Object};
 
@@ -32,6 +32,16 @@ fn open_fixture(name: &str) -> Workbook {
 /// Синтетическая книга: лист `name` с ячейками `(строка, столбец, текст)`
 /// (по возрастанию) и гиперссылками `(диапазон, цель)`.
 fn workbook(name: &str, cells: &[(u32, u32, &str)], links: &[(&str, HyperlinkTarget)]) -> Workbook {
+    commented_workbook(name, cells, links, &[])
+}
+
+/// Та же книга плюс примечания `(строка, столбец, автор, текст)`.
+fn commented_workbook(
+    name: &str,
+    cells: &[(u32, u32, &str)],
+    links: &[(&str, HyperlinkTarget)],
+    comments: &[(u32, u32, Option<&str>, &str)],
+) -> Workbook {
     let mut builder = WorksheetBuilder::new(PART);
     for (row, col, text) in cells {
         builder
@@ -50,6 +60,14 @@ fn workbook(name: &str, cells: &[(u32, u32, &str)], links: &[(&str, HyperlinkTar
                 target: target.clone(),
                 display: None,
                 tooltip: None,
+            })
+            .collect(),
+        comments: comments
+            .iter()
+            .map(|(row, col, author, text)| Comment {
+                cell: CellRef::new(*row, *col),
+                author: author.map(str::to_owned),
+                text: (*text).into(),
             })
             .collect(),
         ..SheetContent::default()
@@ -131,6 +149,33 @@ fn name(dict: &Dictionary, key: &[u8]) -> String {
 fn string(dict: &Dictionary, key: &[u8]) -> String {
     let value = dict.get(key).expect("строка в словаре");
     String::from_utf8(value.as_str().expect("строка").to_vec()).expect("строка — UTF-8")
+}
+
+/// Текст из текстовой строки PDF (`/Contents`, `/T`).
+///
+/// Текстовые строки PDF — PDFDocEncoding либо UTF-16BE с BOM; форк пишет
+/// вторым (`encode_text_to_utf16be`), потому что кириллица в PDFDocEncoding
+/// не помещается.
+fn text_string(dict: &Dictionary, key: &[u8]) -> String {
+    let value = dict.get(key).expect("текст в словаре");
+    let Object::String(bytes, _) = value else {
+        panic!("не строка: {value:?}");
+    };
+    let body = bytes
+        .strip_prefix(&[0xFE, 0xFF])
+        .unwrap_or_else(|| panic!("нет BOM UTF-16BE: {bytes:?}"));
+    let (units, rest) = body.as_chunks::<2>();
+    assert!(rest.is_empty(), "UTF-16BE не кратен двум: {body:?}");
+    let text: Vec<u16> = units.iter().copied().map(u16::from_be_bytes).collect();
+    String::from_utf16(&text).expect("UTF-16BE")
+}
+
+/// Аннотации `/Text` всех страниц: `(страница с единицы, словарь)`.
+fn text_annotations(doc: &Document) -> Vec<(u32, Dictionary)> {
+    annotations(doc)
+        .into_iter()
+        .filter(|(_, annot)| name(annot, b"Subtype") == "Text")
+        .collect()
 }
 
 /// Словарь действия `/A` аннотации.
@@ -364,6 +409,112 @@ fn link_rect_covers_whole_range() {
         range[2] <= width_pt && range[3] <= height_pt,
         "Rect за страницей"
     );
+}
+
+/// DoD E4: примечание ячейки — аннотация `/Text` с текстом в `/Contents`
+/// и автором в `/T`; действия у заметки нет.
+#[test]
+fn comment_becomes_text_annotation() {
+    let book = commented_workbook(
+        "Примечания",
+        &[(0, 0, "итог")],
+        &[],
+        &[(0, 0, Some("Иван"), "проверь формулу")],
+    );
+    let doc = export(&book, PdfOptions::default());
+    let found = text_annotations(&doc);
+
+    assert_eq!(found.len(), 1, "одно примечание — одна аннотация");
+    let (page, annot) = &found[0];
+    assert_eq!(*page, 1);
+    assert_eq!(name(annot, b"Type"), "Annot");
+    assert_eq!(text_string(annot, b"Contents"), "проверь формулу");
+    assert_eq!(text_string(annot, b"T"), "Иван");
+    assert!(annot.get(b"A").is_err(), "у заметки нет действия");
+}
+
+/// `/Annots` с заметкой — ключ словаря `/Page`, а не `/Resources`: та же
+/// ловушка, на которой обожглись ссылки. Автора в книге нет — `/T` не
+/// выдумывается.
+#[test]
+fn text_annotations_live_on_page_not_in_resources() {
+    let book = commented_workbook(
+        "Примечания",
+        &[(0, 0, "итог")],
+        &[],
+        &[(0, 0, None, "заметка")],
+    );
+    let doc = export(&book, PdfOptions::default());
+
+    let (number, page_id) = doc.get_pages().into_iter().next().expect("страница");
+    assert_eq!(number, 1);
+    let page = doc.get_dictionary(page_id).expect("словарь страницы");
+    let (_, annots) = doc
+        .dereference(page.get(b"Annots").expect("/Annots нет в словаре страницы"))
+        .expect("разыменование /Annots");
+    let annots = annots.as_array().expect("/Annots — массив");
+    assert_eq!(annots.len(), 1, "одна заметка — одна аннотация");
+    let (_, annot) = doc
+        .dereference(&annots[0])
+        .expect("разыменование аннотации");
+    let annot = annot.as_dict().expect("аннотация — словарь");
+    assert_eq!(name(annot, b"Subtype"), "Text");
+    assert!(annot.get(b"T").is_err(), "/T взялся неоткуда");
+
+    let (_, resources) = doc
+        .dereference(page.get(b"Resources").expect("/Resources"))
+        .expect("разыменование /Resources");
+    let resources = resources.as_dict().expect("/Resources — словарь");
+    assert!(
+        resources.get(b"Annots").is_err(),
+        "/Annots уехал в Resources — дефект printpdf 0.8.2"
+    );
+}
+
+/// Примечание едет на ту страницу, куда попала ячейка: уехавшей на вторую —
+/// аннотация на второй, и только там.
+#[test]
+fn comment_follows_cell_to_second_page() {
+    let book = commented_workbook(
+        "Примечания",
+        &[(0, 0, "первая"), (1, 0, "вторая")],
+        &[],
+        &[
+            (0, 0, None, "примечание к первой"),
+            (1, 0, None, "примечание ко второй"),
+        ],
+    );
+    let doc = export(&book, one_row_page(&book.sheets()[0]));
+    let found = text_annotations(&doc);
+
+    assert_eq!(found.len(), 2, "примечания не потерялись");
+    assert_eq!(found[0].0, 1, "первое примечание — на первой странице");
+    assert_eq!(found[1].0, 2, "примечание уехало вместе с ячейкой");
+    assert_eq!(text_string(&found[0].1, b"Contents"), "примечание к первой");
+    assert_eq!(
+        text_string(&found[1].1, b"Contents"),
+        "примечание ко второй"
+    );
+}
+
+/// Лист без примечаний: `/Text`-аннотаций нет, экспорт не падает.
+/// Ссылка при этом остаётся `/Link` — соседство `/Text` её не сломало.
+#[test]
+fn sheet_without_comments_has_no_text_annotations() {
+    let book = workbook(
+        "Без примечаний",
+        &[(0, 0, "a"), (1, 0, "b")],
+        &[(
+            "A1",
+            HyperlinkTarget::External("https://example.com".into()),
+        )],
+    );
+    let doc = export(&book, PdfOptions::default());
+
+    assert!(text_annotations(&doc).is_empty(), "заметок быть не должно");
+    let annots = annotations(&doc);
+    assert_eq!(annots.len(), 1, "ссылка не потерялась");
+    assert_eq!(name(&annots[0].1, b"Subtype"), "Link");
 }
 
 /// Словарь `/Outlines` из каталога; `None` — дерева закладок в PDF нет.
