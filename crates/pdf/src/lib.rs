@@ -11,10 +11,12 @@
 mod annot;
 mod background;
 mod border;
+pub mod chart;
 mod fonts;
 pub mod image;
 mod layout;
 mod options;
+pub mod overlay;
 mod pagination;
 mod painter;
 mod styles;
@@ -35,6 +37,9 @@ pub(crate) enum PdfError {
     /// Шрифт не разобран `printpdf`.
     #[error("invalid font data: {0}")]
     Font(String),
+    /// Приёмник PDF вернул ошибку записи.
+    #[error("write failed: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 pub struct PdfExporter {
@@ -79,10 +84,10 @@ impl PdfExporter {
     /// приёмнику не нужен seek (xref пишется одной секцией в конце), а колбэк
     /// и чанки выражаются адаптером над `write`, не наоборот.
     ///
-    /// TODO (B2b-2): потоковая сборка страниц (`StreamSession::write_page`) —
-    /// в `painter`; сюда она встанет на место делегирования. Пока painter
-    /// собирает документ целиком, sink получает готовый файл одним куском:
-    /// поведение то же, что у [`PdfExporter::export_xlsx_sheet`].
+    /// Страницы уходят в приёмник по мере сборки: память экспорта не растёт с
+    /// числом страниц, а пик приёмника — его собственное дело (файл на диске
+    /// не буферизуется, `Vec<u8>` — буферизуется целиком). Отличие от
+    /// [`PdfExporter::export_xlsx_sheet`] — только в этом.
     ///
     /// # Errors
     /// [`doc_converter_core::Error::Export`], если листа с таким индексом нет,
@@ -93,8 +98,7 @@ impl PdfExporter {
         sheet: usize,
         out: &mut W,
     ) -> Result<()> {
-        let bytes = self.export_xlsx_sheet(wb, sheet)?;
-        out.write_all(&bytes)
-            .map_err(|err| doc_converter_core::Error::Export(format!("pdf sink: {err}")))
+        painter::export_to(wb, sheet, &self.opts, out)
+            .map_err(|err| doc_converter_core::Error::Export(format!("pdf: {err}")))
     }
 }

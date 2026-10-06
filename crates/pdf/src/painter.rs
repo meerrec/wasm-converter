@@ -11,11 +11,15 @@
 //! работа: сетка (`print_grid_lines`), закреплённые области, картинки и
 //! диаграммы — следующие срезы спринта.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
+
 use doc_converter_render::font::FontRegistry;
 use doc_converter_xlsx::layout::{SheetLayout, PX_PER_POINT};
 use doc_converter_xlsx::paint::display_text;
 use doc_converter_xlsx::{CellValue, Workbook};
-use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg, Pt};
+use printpdf::streaming::StreamSession;
+use printpdf::{FontId, Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg, Pt, TextItem};
 
 use crate::fonts::{EmbeddedFonts, Face};
 use crate::layout::{PageGeometry, RectPx};
@@ -30,12 +34,35 @@ const FONT_CACHE: usize = 4096;
 ///
 /// # Errors
 /// [`PdfError::NoSuchSheet`], если индекса нет в книге; [`PdfError::Font`],
-/// если printpdf не принял байты шрифта.
+/// если printpdf не принял байты шрифта; [`PdfError::Io`], если приёмник
+/// вернул ошибку записи.
 pub fn export(
     book: &Workbook,
     sheet_index: usize,
     options: &PdfOptions,
 ) -> Result<Vec<u8>, PdfError> {
+    let mut pdf = Vec::new();
+    export_to(book, sheet_index, options, &mut pdf)?;
+    Ok(pdf)
+}
+
+/// Собрать PDF и писать его в приёмник страница за страницей.
+///
+/// Страница живёт только до [`StreamSession::write_page`]: содержимое
+/// освобождается сразу после записи, поэтому пик не растёт с числом страниц.
+/// Хвост (закладки, каталог, xref) дописывается в конце — приёмнику не нужен
+/// `seek`.
+///
+/// # Errors
+/// [`PdfError::NoSuchSheet`], если индекса нет в книге; [`PdfError::Font`],
+/// если printpdf не принял байты шрифта; [`PdfError::Io`], если приёмник
+/// вернул ошибку записи.
+pub fn export_to<W: Write>(
+    book: &Workbook,
+    sheet_index: usize,
+    options: &PdfOptions,
+    out: &mut W,
+) -> Result<(), PdfError> {
     let sheet = book
         .sheets()
         .get(sheet_index)
@@ -76,6 +103,22 @@ pub fn export(
     let fonts = fonts::embed(&mut doc, &mut warnings, pagination.faces)?;
     let mut registry = FontRegistry::new(FONT_CACHE);
 
+    let probe = probe_pages(book, &pagination.pages, &page, &fonts, &mut registry);
+    let save = PdfSaveOptions {
+        // `optimize` у printpdf сжимает потоки — это и есть `compress`.
+        optimize: options.compress,
+        ..PdfSaveOptions::default()
+    };
+    let mut session = StreamSession::begin(
+        &doc,
+        &probe,
+        BTreeSet::new(),
+        pagination.pages.len(),
+        &save,
+        out,
+        &mut warnings,
+    )?;
+
     for sheet_page in &pagination.pages {
         let page_geom = page.with_page_top_px(sheet_page.slice.offset_y);
         let mut ops: Vec<Op> = Vec::new();
@@ -94,19 +137,75 @@ pub fn export(
             &page_geom,
             &sheet_page.slice,
         ));
-        doc.with_pages(vec![PdfPage::new(
+        let pdf_page = PdfPage::new(
             Mm::from(Pt(page_geom.width_pt())),
             Mm::from(Pt(page_geom.height_pt())),
             ops,
-        )]);
+        );
+        session.write_page(&pdf_page, &mut warnings)?;
     }
 
-    let save = PdfSaveOptions {
-        // `optimize` у printpdf сжимает потоки — это и есть `compress`.
-        optimize: options.compress,
-        ..PdfSaveOptions::default()
-    };
-    Ok(doc.save(&save, &mut warnings))
+    session.finish()?;
+    Ok(())
+}
+
+/// Страницы-зонды для подрезки шрифтов: по одной на начертание, с одной
+/// текстовой операцией из всех символов, которые лист выведет начертанием.
+///
+/// `StreamSession::begin` подрезает шрифты до записи первой страницы
+/// (`prepare_fonts`), а подрезка перенумеровывает глифы: символ, не попавший
+/// в зонды, выведется нулевым глифом — молча. Поэтому символы собираются до
+/// записи, и источник у них один — та же `draw_page`, что пойдёт в PDF: проход
+/// зондов рисует каждую страницу и выбрасывает операции, оставляя только
+/// символы. Вариант «пре-скан текста» стоил бы почти столько же (перенос и
+/// клиппинг чисел всё равно считает `break_lines`), но разъехался бы с
+/// `draw_page` при первой правке клиппинга или переноса; вариант «полный
+/// шрифт» в форке недоступен: `PdfSaveOptions::subset_fonts` нигде не читается
+/// (`grep subset_fonts vendor/printpdf/src` — определение поля и дефолт), а
+/// полный `DejaVuSans` весит ~760 `КиБ` на начертание против бюджета
+/// `content-dense` в 32 `КиБ`.
+///
+/// Замер двойной отрисовки (release, macOS, `scale-500-pages.xlsx` — 480
+/// страниц): проход зондов 35 мс, экспорт целиком 162 мс против 152 мс до
+/// правки (+7 %): вторая отрисовка с прогретым кэшем метрик дешевле, чем та
+/// экономия, которую даёт стриминговая запись против `doc.save`. Полные числа
+/// 50/100/500 — в `docs/sprint-7/streaming-report.md` (B3).
+fn probe_pages(
+    book: &Workbook,
+    pages: &[SheetPage<'_>],
+    geometry: &PageGeometry,
+    fonts: &EmbeddedFonts,
+    registry: &mut FontRegistry,
+) -> Vec<PdfPage> {
+    let mut chars: BTreeMap<FontId, BTreeSet<char>> = BTreeMap::new();
+    for sheet_page in pages {
+        let page_geom = geometry.with_page_top_px(sheet_page.slice.offset_y);
+        let mut ops: Vec<Op> = Vec::new();
+        draw_page(&mut ops, registry, fonts, &page_geom, book, sheet_page);
+        for op in &ops {
+            if let Op::WriteText { font, items, .. } = op {
+                let set = chars.entry(font.clone()).or_default();
+                for item in items {
+                    if let TextItem::Text(text) = item {
+                        set.extend(text.chars());
+                    }
+                }
+            }
+        }
+    }
+    chars
+        .into_iter()
+        .map(|(font, chars)| {
+            PdfPage::new(
+                Mm::from(Pt(geometry.width_pt())),
+                Mm::from(Pt(geometry.height_pt())),
+                vec![Op::WriteText {
+                    items: vec![TextItem::Text(chars.into_iter().collect())],
+                    font,
+                }],
+            )
+        })
+        .collect()
 }
 
 /// Прямоугольник ячейки в координатах страницы: из координат листа вычитается
