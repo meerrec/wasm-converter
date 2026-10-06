@@ -537,9 +537,10 @@ fn block_starts(flow: &[FlowRow]) -> Vec<usize> {
 /// Сдвинуть разрыв между строками `start..end` по правилам блоков.
 ///
 /// Возвращает конец полосы: разрыв либо остаётся на месте, либо уезжает к
-/// началу блока (сирота) или вверх (вдова). Правила жадные и применяются один
-/// раз — сирота важнее вдовы, а после сдвига к началу блока хвост заведомо
-/// целый.
+/// началу блока (сирота) или вверх (вдова). Сирота важнее вдовы: сдвиг к началу
+/// блока сразу делает хвост целым, а подъём ради вдовы не имеет права оставить
+/// внизу меньше сиротского минимума. Блоку, которому тесно на обе границы, как
+/// в Word, места на странице не находится — он уходит на следующую целиком.
 fn break_with_blocks(
     flow: &[FlowRow],
     blocks: &[usize],
@@ -563,9 +564,26 @@ fn break_with_blocks(
         return block_start;
     }
     // Вдова: хвост блока на следующей странице короче `widow_rows` — строки
-    // подтягиваются с этой страницы, но она не остаётся пустой.
+    // подтягиваются с этой страницы, но не все: страница не остаётся пустой.
     if cfg.widow_rows > 0 && block_start < end && block_end - end < cfg.widow_rows {
-        return (block_end - cfg.widow_rows).max(start + 1);
+        // Блок может быть короче запрошенного хвоста: `saturating_sub` не даёт
+        // разрыву уехать за начало потока; тогда вдова неисполнима, и блок
+        // уходит на следующую страницу целиком — но лишь если страница с ним
+        // не опустеет.
+        let kept = block_end.saturating_sub(cfg.widow_rows);
+        if kept <= block_start {
+            return if block_start > start {
+                block_start
+            } else {
+                end
+            };
+        }
+        // Подъём ради вдовы мог уронить сироту ниже её минимума: блок, которому
+        // мало места на обе границы, уходит на следующую страницу целиком.
+        if cfg.orphan_rows > 0 && kept - block_start < cfg.orphan_rows && block_start > start {
+            return block_start;
+        }
+        return kept.max(start + 1);
     }
     end
 }
@@ -628,7 +646,10 @@ mod tests {
     use std::path::Path;
 
     use doc_converter_xlsx::layout::SheetLayout;
-    use doc_converter_xlsx::{Cell, Workbook};
+    use doc_converter_xlsx::{
+        Cell, CellValue, RowHeight, SharedStrings, SheetContent, SheetState, StyleTable, Theme,
+        Workbook, WorksheetBuilder, WorksheetMeta,
+    };
 
     use super::*;
     use crate::options::PageConfig;
@@ -1499,5 +1520,483 @@ mod tests {
         let slice = &pagination.pages[0].slice;
         assert_eq!(slice.center_x_px.to_bits(), 0);
         assert_eq!(slice.center_y_px.to_bits(), 0);
+    }
+
+    // ── A4: запреты разрыва и умещение по высоте ────────────────────────────
+
+    /// Часть пакета с содержимым листа: синтетическим листам важен её вид.
+    const PART: &str = "xl/worksheets/sheet1.xml";
+
+    /// Лист: ячейки в столбце 0 строк из `filled`, каждая строка до последней
+    /// заполненной — со своей высотой (`heights[row]`, пропуск — 15 pt).
+    fn sheet_rows(filled: &[u32], heights: &[f32]) -> Sheet {
+        let last = filled.iter().copied().max().expect("строки есть");
+        let mut builder = WorksheetBuilder::new(PART);
+        for row in filled {
+            builder
+                .push(*row, Cell::new(0, 0, CellValue::Number(1.0)))
+                .expect("ячейка вставляется");
+        }
+        let mut content = SheetContent {
+            cells: builder.finish(),
+            ..SheetContent::default()
+        };
+        for row in 0..=last {
+            content.dims.rows.push(RowHeight {
+                row,
+                height: heights.get(row as usize).copied().unwrap_or(15.0),
+                custom: true,
+                hidden: false,
+                outline_level: 0,
+            });
+        }
+        Sheet::new(
+            WorksheetMeta {
+                name: "Лист1".into(),
+                part: PART.into(),
+                state: SheetState::Visible,
+            },
+            content,
+        )
+    }
+
+    /// Лист из `count` непустых строк одинаковой высоты.
+    fn uniform_rows(count: u32, height_pt: f32) -> Sheet {
+        let filled: Vec<u32> = (0..count).collect();
+        sheet_rows(&filled, &vec![height_pt; count as usize])
+    }
+
+    /// Полосы строк листа при настройках `cfg`; `header_end` — первая строка
+    /// потока: шапку вырезает вызывающий, как это делает [`paginate`].
+    fn bands_with(
+        sheet: &Sheet,
+        layout: &SheetLayout,
+        cfg: &PageConfig,
+        header_end: u32,
+    ) -> Vec<RowBand> {
+        let page = geometry(cfg, sheet, layout);
+        row_bands(
+            sheet,
+            layout,
+            &page,
+            cfg,
+            header_end,
+            layout.row_y(header_end),
+        )
+    }
+
+    /// Срезы строк полос — то же, что видно в [`PageSlice::rows`].
+    fn band_rows(bands: &[RowBand]) -> Vec<Range<u32>> {
+        bands.iter().map(|band| band.rows.clone()).collect()
+    }
+
+    /// A4: строка, не поместившаяся целиком, начинает следующую страницу, —
+    /// как в Excel. В режиме `avoid_row_break = false` разрыв проходит по
+    /// нижней границе области и строка видна на обеих страницах.
+    #[test]
+    fn avoid_row_break_moves_partial_row_whole_to_next_page() {
+        // 48 строк по 20 px занимают 960 px из 971,3; следующая (100 px) не
+        // влезает целиком, хотя её верх ещё в области содержимого.
+        let mut heights = vec![15.0; 48];
+        heights.push(75.0);
+        let filled: Vec<u32> = (0..49).collect();
+        let sheet = sheet_rows(&filled, &heights);
+        let layout = SheetLayout::new(&sheet);
+
+        let plain = bands_with(&sheet, &layout, &PageConfig::default(), 0);
+        assert_eq!(
+            band_rows(&plain),
+            vec![0..48, 48..49],
+            "неполная строка не перенесена целиком"
+        );
+
+        let split = PageConfig {
+            avoid_row_break: false,
+            ..PageConfig::default()
+        };
+        let bands = bands_with(&sheet, &layout, &split, 0);
+        assert_eq!(band_rows(&bands), vec![0..49, 48..49]);
+        let (_, content_h_px) = geometry(&split, &sheet, &layout).content_px();
+        assert_eq!(
+            bands[1].offset_y.to_bits(),
+            content_h_px.to_bits(),
+            "продолжение строки не прижато к нижней границе области"
+        );
+    }
+
+    /// A4: строка выше целой страницы не дробится и в режиме разрыва.
+    #[test]
+    fn row_taller_than_page_is_never_split() {
+        // 800 pt — это 1066,7 px, больше области содержимого A4 (971,3 px).
+        let sheet = sheet_rows(&[0, 1], &[800.0, 15.0]);
+        let layout = SheetLayout::new(&sheet);
+        let split = PageConfig {
+            avoid_row_break: false,
+            ..PageConfig::default()
+        };
+        assert_eq!(
+            band_rows(&bands_with(&sheet, &layout, &split, 0)),
+            vec![0..1, 1..2]
+        );
+    }
+
+    /// A4: `orphan_rows` не оставляет внизу страницы слишком короткий хвост
+    /// блока — хвост уезжает на следующую страницу вслед за блоком.
+    #[test]
+    fn orphan_rows_moves_short_block_tail_to_next_page() {
+        // Блок A — строки 0..=6, пустая строка 7, блок B — 8..=11; по 100 px.
+        let filled: Vec<u32> = (0..=6).chain(8..=11).collect();
+        let sheet = sheet_rows(&filled, &[75.0; 12]);
+        let layout = SheetLayout::new(&sheet);
+
+        // По умолчанию внизу остаётся строка 8 — одна строка блока B.
+        assert_eq!(
+            band_rows(&bands_with(&sheet, &layout, &PageConfig::default(), 0)),
+            vec![0..9, 9..12]
+        );
+
+        // Минимум 1 — столько и осталось: разрыв не сдвигается.
+        let one = PageConfig {
+            orphan_rows: 1,
+            ..PageConfig::default()
+        };
+        assert_eq!(
+            band_rows(&bands_with(&sheet, &layout, &one, 0)),
+            vec![0..9, 9..12]
+        );
+
+        // Минимум 2 — остатка мало, блок B уходит на следующую страницу целиком.
+        let two = PageConfig {
+            orphan_rows: 2,
+            ..PageConfig::default()
+        };
+        assert_eq!(
+            band_rows(&bands_with(&sheet, &layout, &two, 0)),
+            vec![0..7, 8..12]
+        );
+    }
+
+    /// A4: `widow_rows` подтягивает строки с предыдущей страницы, но не все:
+    /// страница не остаётся пустой.
+    #[test]
+    fn widow_rows_pulls_rows_from_previous_page() {
+        let sheet = uniform_rows(30, 37.5); // 30 строк по 50 px
+        let layout = SheetLayout::new(&sheet);
+
+        assert_eq!(
+            band_rows(&bands_with(&sheet, &layout, &PageConfig::default(), 0)),
+            vec![0..19, 19..30]
+        );
+
+        // Хвост 11 строк — минимум 11 разрыв не сдвигает.
+        let eleven = PageConfig {
+            widow_rows: 11,
+            ..PageConfig::default()
+        };
+        assert_eq!(
+            band_rows(&bands_with(&sheet, &layout, &eleven, 0)),
+            vec![0..19, 19..30]
+        );
+
+        // Минимум 12 — хвоста мало, разрыв поднимается на строку вверх.
+        let twelve = PageConfig {
+            widow_rows: 12,
+            ..PageConfig::default()
+        };
+        let bands = bands_with(&sheet, &layout, &twelve, 0);
+        assert_eq!(band_rows(&bands), vec![0..18, 18..30]);
+        assert_eq!(
+            bands[1].rows.end - bands[1].rows.start,
+            12,
+            "на следующей странице не ровно `widow_rows` строк"
+        );
+    }
+
+    /// A4: сдвиг ради вдовы не оставляет внизу меньше сиротского минимума —
+    /// блок, которому тесно на обе границы, уходит на следующую страницу.
+    #[test]
+    fn widow_shift_respects_orphan_minimum() {
+        // Блок A — строки 0..=4, пустая строка 5, блок B — 6..=12; по 100 px.
+        let filled: Vec<u32> = (0..=4).chain(6..=12).collect();
+        let sheet = sheet_rows(&filled, &[75.0; 13]);
+        let layout = SheetLayout::new(&sheet);
+
+        // Внизу ровно 3 строки блока — сирота молчит, но вдова подняла бы
+        // разрыв так, что внизу осталось бы 2: блок уходит целиком.
+        let tight = PageConfig {
+            orphan_rows: 3,
+            widow_rows: 5,
+            ..PageConfig::default()
+        };
+        assert_eq!(
+            band_rows(&bands_with(&sheet, &layout, &tight, 0)),
+            vec![0..5, 6..13]
+        );
+
+        // С сиротой 2 сдвиг вдовы состоятелен: внизу 2 строки, сверху — ровно 5.
+        let fits = PageConfig {
+            orphan_rows: 2,
+            widow_rows: 5,
+            ..PageConfig::default()
+        };
+        let bands = bands_with(&sheet, &layout, &fits, 0);
+        assert_eq!(band_rows(&bands), vec![0..8, 8..13]);
+        assert_eq!(bands[1].rows.end - bands[1].rows.start, 5);
+    }
+
+    /// A4: вдова длиннее потока не роняет счёт (`usize` не уходит в минус):
+    /// блок уходит на следующую страницу целиком.
+    #[test]
+    fn widow_longer_than_flow_does_not_panic() {
+        // Поток — 20 строк по 50 px: блок A (0..=7), пустая строка 8, блок B
+        // (9..=20); `widow_rows` больше всего потока.
+        let filled: Vec<u32> = (0..=7).chain(9..=20).collect();
+        let sheet = sheet_rows(&filled, &[37.5; 21]);
+        let layout = SheetLayout::new(&sheet);
+        let cfg = PageConfig {
+            widow_rows: 25,
+            ..PageConfig::default()
+        };
+        assert_eq!(
+            band_rows(&bands_with(&sheet, &layout, &cfg, 0)),
+            vec![0..8, 9..21]
+        );
+    }
+
+    /// A4: правила блоков доезжают до страниц [`paginate`], а не только до
+    /// полос: ячейки не теряются и не дублируются.
+    #[test]
+    fn paginate_honors_widow_rows() {
+        let book = Workbook::new(
+            vec![uniform_rows(30, 37.5)],
+            SharedStrings::default(),
+            StyleTable::default(),
+            Theme::default(),
+            false,
+        );
+        let sheet = &book.sheets()[0];
+        let layout = SheetLayout::new(sheet);
+        let cfg = PageConfig {
+            widow_rows: 12,
+            ..PageConfig::default()
+        };
+        let page = geometry(&cfg, sheet, &layout);
+        let pagination = paginate(&book, sheet, &layout, &page, &cfg);
+
+        let slices: Vec<Range<u32>> = pagination
+            .pages
+            .iter()
+            .map(|sheet_page| sheet_page.slice.rows.clone())
+            .collect();
+        assert_eq!(slices, vec![0..18, 18..30]);
+
+        let drawn: Vec<*const Cell> = pagination
+            .pages
+            .iter()
+            .flat_map(|sheet_page| {
+                sheet_page
+                    .cells
+                    .iter()
+                    .map(|painted| std::ptr::from_ref(painted.cell))
+            })
+            .collect();
+        let unique: HashSet<*const Cell> = drawn.iter().copied().collect();
+        assert_eq!(drawn.len(), 30, "часть ячеек не дошла до страниц");
+        assert_eq!(unique.len(), 30, "ячейка нарисована дважды");
+    }
+
+    /// A4: `fit_to_height` ужимает лист под N страниц и только настолько.
+    #[test]
+    fn fit_to_height_shrinks_to_given_page_count() {
+        let sheet = uniform_rows(200, 75.0); // по 100 px
+        let layout = SheetLayout::new(&sheet);
+        assert_eq!(
+            bands_with(&sheet, &layout, &PageConfig::default(), 0).len(),
+            23,
+            "до ужатия лист занимает не 23 полосы"
+        );
+
+        let cfg = PageConfig {
+            fit_to_height: Some(10),
+            ..PageConfig::default()
+        };
+        let scale = print_scale(&cfg, &sheet, &layout);
+        assert!(scale < 1.0, "лист не ужат: масштаб {scale}");
+        let page = PageGeometry::new(&PageConfig {
+            scale,
+            ..cfg.clone()
+        });
+        assert!(
+            row_bands(&sheet, &layout, &page, &cfg, 0, 0.0).len() <= 10,
+            "полос больше десяти при масштабе {scale}"
+        );
+
+        // Масштаб наибольший из подходящих: чуть больше — и полос снова больше.
+        let bigger = PageGeometry::new(&PageConfig {
+            scale: scale * 1.01,
+            ..cfg.clone()
+        });
+        assert!(row_bands(&sheet, &layout, &bigger, &cfg, 0, 0.0).len() > 10);
+    }
+
+    /// A4: `fit_to_height` не растягивает лист: помещающийся и так печатается
+    /// в 100%.
+    #[test]
+    fn fit_to_height_does_not_enlarge() {
+        let sheet = uniform_rows(10, 75.0); // 1000 px: две полосы при 100%
+        let layout = SheetLayout::new(&sheet);
+        let cfg = PageConfig {
+            fit_to_height: Some(5),
+            ..PageConfig::default()
+        };
+        assert_eq!(
+            print_scale(&cfg, &sheet, &layout).to_bits(),
+            1.0_f32.to_bits()
+        );
+    }
+
+    /// A4: «уместить по высоте» перебивает ручной масштаб, как в Excel.
+    #[test]
+    fn fit_to_height_overrides_manual_scale() {
+        let sheet = uniform_rows(200, 75.0);
+        let layout = SheetLayout::new(&sheet);
+        let fitted = |scale: f32| {
+            print_scale(
+                &PageConfig {
+                    scale,
+                    fit_to_height: Some(10),
+                    ..PageConfig::default()
+                },
+                &sheet,
+                &layout,
+            )
+        };
+        assert_eq!(fitted(0.2).to_bits(), fitted(3.0).to_bits());
+        assert_ne!(fitted(0.2).to_bits(), 0.2_f32.to_bits());
+
+        let manual = PageConfig {
+            scale: 0.2,
+            ..PageConfig::default()
+        };
+        assert_eq!(
+            print_scale(&manual, &sheet, &layout).to_bits(),
+            0.2_f32.to_bits()
+        );
+    }
+
+    /// A4: повторяемая шапка отнимает место у полос — подбор масштаба её
+    /// учитывает.
+    #[test]
+    fn fit_to_height_counts_repeated_header() {
+        let sheet = uniform_rows(200, 75.0);
+        let layout = SheetLayout::new(&sheet);
+        let plain = print_scale(
+            &PageConfig {
+                fit_to_height: Some(10),
+                ..PageConfig::default()
+            },
+            &sheet,
+            &layout,
+        );
+        let cfg = PageConfig {
+            repeat_header_rows: 1,
+            fit_to_height: Some(10),
+            ..PageConfig::default()
+        };
+        let with_header = print_scale(&cfg, &sheet, &layout);
+        assert!(
+            with_header < plain,
+            "шапка не отняла место: {with_header} против {plain}"
+        );
+
+        let page = PageGeometry::new(&PageConfig {
+            scale: with_header,
+            ..cfg.clone()
+        });
+        let bands = row_bands(&sheet, &layout, &page, &cfg, 1, layout.row_y(1));
+        assert!(
+            bands.len() <= 10,
+            "с шапкой полос {} — больше десяти",
+            bands.len()
+        );
+    }
+
+    /// A4: место, отнятое шапкой, уводит неполную строку на следующую страницу
+    /// целиком — при конфликте приоритет за `avoid_row_break`.
+    #[test]
+    fn avoid_row_break_counts_repeated_header() {
+        // 41 строка по 100 px: строка 0 — шапка. На первой странице 8 строк
+        // потока (девятая не влезает), дальше шапка отнимает место и у каждой.
+        let sheet = uniform_rows(41, 75.0);
+        let layout = SheetLayout::new(&sheet);
+        let cfg = PageConfig {
+            repeat_header_rows: 1,
+            ..PageConfig::default()
+        };
+        let bands = bands_with(&sheet, &layout, &cfg, 1);
+        assert_eq!(bands[0].rows.start, 1, "шапка попала в поток");
+        assert_eq!(
+            band_rows(&bands)[0],
+            1..9,
+            "первая страница: 8 строк потока"
+        );
+        assert_eq!(
+            band_rows(&bands)[1],
+            9..17,
+            "вторая страница: шапка не отняла место"
+        );
+    }
+
+    /// A4: шапка уменьшает полосу, но вдова всё равно добирает свой минимум на
+    /// следующей странице.
+    #[test]
+    fn widow_rows_counts_repeated_header() {
+        // Строка 0 — шапка, строки 1..=39 — поток по 100 px. С шапкой на
+        // страницу входит 8 строк потока, без вдовы последняя — 7.
+        let sheet = uniform_rows(40, 75.0);
+        let layout = SheetLayout::new(&sheet);
+        let plain = PageConfig {
+            repeat_header_rows: 1,
+            ..PageConfig::default()
+        };
+        let bands = bands_with(&sheet, &layout, &plain, 1);
+        assert!(
+            bands.iter().all(|band| band.rows.start >= 1),
+            "шапка в потоке"
+        );
+        let last = bands.last().expect("полосы есть");
+        assert_eq!(last.rows.end - last.rows.start, 7);
+
+        let cfg = PageConfig {
+            repeat_header_rows: 1,
+            widow_rows: 8,
+            ..PageConfig::default()
+        };
+        let bands = bands_with(&sheet, &layout, &cfg, 1);
+        assert_eq!(bands.len(), 5, "вдова изменила число страниц");
+        let last = bands.last().expect("полосы есть");
+        assert_eq!(
+            last.rows.end - last.rows.start,
+            8,
+            "вдова не добрала строки на шапке"
+        );
+    }
+
+    /// A4: шапка выше листа не включает разрыв строки: при конфликте приоритет
+    /// за `avoid_row_break` — дробить строку негде, вся полоса занята шапкой.
+    #[test]
+    fn header_taller_than_page_keeps_rows_whole() {
+        // Шапка (строка 0) — 1000 px, больше области содержимого A4 (971,3 px).
+        let sheet = sheet_rows(&[0, 1, 2, 3], &[750.0, 15.0, 15.0, 15.0]);
+        let layout = SheetLayout::new(&sheet);
+        let split = PageConfig {
+            avoid_row_break: false,
+            ..PageConfig::default()
+        };
+        assert_eq!(
+            band_rows(&bands_with(&sheet, &layout, &split, 1)),
+            vec![1..2, 2..3, 3..4],
+            "строка потока раздроблена при нулевой полосе"
+        );
     }
 }

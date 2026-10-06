@@ -14,6 +14,7 @@ use crate::comments::Comment;
 use crate::dims::SheetDims;
 use crate::drawing::{ImageAnchor, SheetImage};
 use crate::error::{Result, XlsxError};
+use crate::print_settings::PrintSettings;
 use crate::sheet_meta::{Hyperlink, Merges, SheetView};
 use crate::strings::SharedStrings;
 
@@ -1139,6 +1140,11 @@ pub struct SheetContent {
     pub view: SheetView,
     /// Объединённые ячейки.
     pub merges: Merges,
+    /// Настройки печати из части листа.
+    ///
+    /// Печатаемые заголовки дописывает [`open`](crate::open): их источник —
+    /// `definedNames` книги, а не часть листа.
+    pub print: PrintSettings,
     /// Гиперссылки.
     pub hyperlinks: Vec<Hyperlink>,
     /// Примечания, привязанные к ячейкам.
@@ -1182,6 +1188,8 @@ pub struct Sheet {
     pub view: SheetView,
     /// Объединённые ячейки.
     pub merges: Merges,
+    /// Настройки печати: масштаб, сетка, колонтитулы и повторяемые заголовки.
+    pub print: PrintSettings,
     /// Гиперссылки.
     pub hyperlinks: Vec<Hyperlink>,
     /// Примечания, привязанные к ячейкам.
@@ -1204,6 +1212,7 @@ impl Sheet {
             dims: content.dims,
             view: content.view,
             merges: content.merges,
+            print: content.print,
             hyperlinks: content.hyperlinks,
             comments: content.comments,
             conditional_formatting: content.conditional_formatting,

@@ -8,6 +8,16 @@
 //! Раскладка блоба (little-endian):
 //! `kind:u8`, `has_title:u8`, `categories:u32`, `series:u32`, `title:str`,
 //! категории (`len:u32` + UTF-8), серии (`name:str` + `values:u32` + `f32`).
+//!
+//! Геометрия — в подмодулях: [`layout`] раскладывает данные в canvas-agnostic
+//! примитивы ([`ChartPrim`], ADR-0011), а canvas- и PDF-бэкенды рисуют их
+//! каждый по-своему. Блоб и `DisplayList` при этом не меняются.
+
+mod layout;
+mod prim;
+
+pub use layout::layout;
+pub use prim::{ChartPrim, Point, TextAlign};
 
 /// Виды диаграмм, которые умеет рисовать painter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

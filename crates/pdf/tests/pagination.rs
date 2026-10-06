@@ -485,3 +485,73 @@ fn first_columns_repeat_on_every_page() {
         );
     }
 }
+
+/// Число нарисованных ячеек на каждой странице, по номеру страницы.
+fn sections_per_page(doc: &lopdf::Document) -> Vec<usize> {
+    doc.get_pages()
+        .values()
+        .map(|page_id| text_sections(&doc.get_page_content(*page_id).expect("поток содержимого")))
+        .collect()
+}
+
+/// A4: `fit_to_height` укладывает лист в заданное число страниц.
+#[test]
+fn fit_to_height_limits_page_count() {
+    const FIXTURE: &str = "scale-ten-pages.xlsx";
+    let plain = lopdf::Document::load_mem(&export(FIXTURE)).expect("PDF разбирается lopdf");
+    assert_eq!(plain.get_pages().len(), 13, "эталон фикстуры изменился");
+
+    let bytes = export_with(
+        FIXTURE,
+        PageConfig {
+            fit_to_height: Some(10),
+            ..PageConfig::default()
+        },
+    );
+    let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
+    assert_eq!(
+        doc.get_pages().len(),
+        10,
+        "лист не уложился в десять страниц"
+    );
+    // Ужатие не теряет содержимое: ячейки на месте и на первой странице, и на
+    // последней (подбор масштаба не отбрасывает остаток листа).
+    let sections = sections_per_page(&doc);
+    assert_eq!(sections.iter().sum::<usize>(), 601 * 6);
+    assert!(sections.last().copied().unwrap_or(0) > 0);
+}
+
+/// A4: при `avoid_row_break = false` неполная строка видна на обеих страницах:
+/// разрыв идёт по нижней границе области содержимого, а не по верху строки.
+#[test]
+fn avoid_row_break_false_repeats_split_row() {
+    const FIXTURE: &str = "scale-ten-pages.xlsx";
+    let plain = lopdf::Document::load_mem(&export(FIXTURE)).expect("PDF разбирается lopdf");
+    let split = lopdf::Document::load_mem(&export_with(
+        FIXTURE,
+        PageConfig {
+            avoid_row_break: false,
+            ..PageConfig::default()
+        },
+    ))
+    .expect("PDF разбирается lopdf");
+
+    let plain_sections = sections_per_page(&plain);
+    let split_sections = sections_per_page(&split);
+    assert_eq!(plain_sections.len(), 13, "эталон фикстуры изменился");
+    // Разорванная строка не создаёт лишней страницы: её место занимает та же
+    // позиция листа, с которой она продолжается.
+    assert_eq!(split_sections.len(), 13, "разрыв строки добавил страницу");
+
+    // В строке фикстуры шесть ячеек; на первой странице 48 целых строк, а с
+    // разрывом к ним добавляется сорок девятая — частично видимая.
+    assert_eq!(plain_sections[0], 48 * 6);
+    assert_eq!(split_sections[0], 49 * 6);
+    // На второй странице разорванная строка повторяется: 48 новых плюс одна
+    // повторённая.
+    assert_eq!(split_sections[1], (48 + 2) * 6);
+    // Ни одна ячейка не потеряна: разорванных строк на 12 больше (по одной на
+    // каждой странице, кроме последней).
+    assert_eq!(plain_sections.iter().sum::<usize>(), 601 * 6);
+    assert_eq!(split_sections.iter().sum::<usize>(), (601 + 12) * 6);
+}

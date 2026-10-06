@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::pedantic)]
 
+mod annot;
 mod background;
 mod border;
 mod fonts;

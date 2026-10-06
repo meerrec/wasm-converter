@@ -6,14 +6,18 @@
 
 use doc_converter_core::rels::RelMap;
 use doc_converter_core::xml::XmlReader;
-use quick_xml::events::Event;
+use quick_xml::events::{BytesStart, Event};
 
 use crate::error::{Result, XlsxError};
 use crate::model::{SheetState, WorksheetMeta};
+use crate::print_settings::{parse_print_titles, read_element_text, PrintTitles};
 use crate::xml::{attributes, find, is_true, Attr};
 
 /// Окончание `Type` связи, ведущей на обычный лист.
 const WORKSHEET_REL: &str = "/worksheet";
+
+/// Имя `<definedName>` с печатаемыми заголовками.
+const PRINT_TITLES_NAME: &str = "_xlnm.Print_Titles";
 
 /// То, что `xl/workbook.xml` сообщает о книге.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -22,6 +26,8 @@ pub struct WorkbookMeta {
     pub sheets: Vec<WorksheetMeta>,
     /// `<workbookPr date1904="1"/>`: даты считаются от 1904-01-01.
     pub date1904: bool,
+    /// Печатаемые заголовки листов из `_xlnm.Print_Titles` в `definedNames`.
+    pub print_titles: Vec<PrintTitles>,
 }
 
 impl WorkbookMeta {
@@ -39,10 +45,20 @@ impl WorkbookMeta {
     /// цель связи внешняя.
     pub fn parse(bytes: &[u8], rels: &RelMap, part: impl Into<String>) -> Result<Self> {
         let part = part.into();
-        let mut reader = XmlReader::new(bytes, part.clone());
+        // Пробелы значимы: значения `definedName` — это ссылки с именами
+        // листов, где пробел — часть имени.
+        let mut reader = XmlReader::preserving(bytes, part.clone());
         let mut meta = Self::default();
 
         while let Some(event) = reader.next_significant()? {
+            // `<definedName>` несёт текст, поэтому читается до развилки на
+            // Start/Empty: у остальных событий здесь нет работы.
+            if let Event::Start(element) = &event {
+                if element.local_name().as_ref() == b"definedName" {
+                    read_defined_name(&mut meta, element, &mut reader, &part)?;
+                    continue;
+                }
+            }
             let (Event::Start(element) | Event::Empty(element)) = event else {
                 continue;
             };
@@ -62,6 +78,26 @@ impl WorkbookMeta {
 
         Ok(meta)
     }
+}
+
+/// Прочитать `<definedName>`, если это печатаемые заголовки листа.
+///
+/// Заголовки лежат в книге, а не в части листа, потому что ссылаются на имя
+/// листа. Остальные определённые имена (`_xlnm.Print_Area`, пользовательские)
+/// пропускаются вместе с текстом: внешний цикл на текст не смотрит.
+fn read_defined_name(
+    meta: &mut WorkbookMeta,
+    element: &BytesStart<'_>,
+    reader: &mut XmlReader<'_>,
+    part: &str,
+) -> Result<()> {
+    let attrs = attributes(element, part)?;
+    if find(&attrs, "name") != Some(PRINT_TITLES_NAME) {
+        return Ok(());
+    }
+    let value = read_element_text(reader, part, "definedName")?;
+    meta.print_titles.extend(parse_print_titles(&value));
+    Ok(())
 }
 
 /// Собрать [`WorksheetMeta`] из атрибутов `<sheet>`.
@@ -109,6 +145,7 @@ fn state_of(value: &str) -> SheetState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::print_settings::Span;
 
     const PART: &str = "xl/workbook.xml";
 
@@ -263,5 +300,58 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("outside the package"));
+    }
+
+    #[test]
+    fn reads_print_titles_from_defined_names() {
+        let meta = parse(
+            r#"<sheets>
+                 <sheet name="Лист1" sheetId="1" r:id="rId1"/>
+                 <sheet name="Лист2" sheetId="2" r:id="rId2"/>
+               </sheets>
+               <definedNames>
+                 <definedName name="_xlnm.Print_Area" localSheetId="0">'Лист1'!$A$1:$B$2</definedName>
+                 <definedName name="_xlnm.Print_Titles" localSheetId="1">'Лист2'!$A:$B,'Лист2'!$1:$2</definedName>
+               </definedNames>"#,
+        )
+        .unwrap();
+
+        assert_eq!(meta.print_titles.len(), 1);
+        assert_eq!(meta.print_titles[0].sheet, "Лист2");
+        assert_eq!(meta.print_titles[0].rows, Some(Span { first: 0, last: 1 }));
+        assert_eq!(meta.print_titles[0].cols, Some(Span { first: 0, last: 1 }));
+    }
+
+    #[test]
+    fn print_titles_unescape_entities_in_sheet_names() {
+        let meta = parse(
+            r#"<definedNames>
+                 <definedName name="_xlnm.Print_Titles">'Доходы &amp; расходы'!$1:$1</definedName>
+               </definedNames>"#,
+        )
+        .unwrap();
+
+        assert_eq!(meta.print_titles[0].sheet, "Доходы & расходы");
+    }
+
+    #[test]
+    fn defined_names_without_print_titles_are_ignored() {
+        let meta = parse(
+            r#"<definedNames>
+                 <definedName name="Total">Лист1!$D$10</definedName>
+                 <definedName name="_xlnm.Print_Area">'Лист1'!$A$1:$B$2</definedName>
+               </definedNames>"#,
+        )
+        .unwrap();
+
+        assert!(meta.print_titles.is_empty());
+    }
+
+    #[test]
+    fn workbook_without_defined_names_has_no_print_titles() {
+        let meta =
+            parse(r#"<sheets><sheet name="Лист1" sheetId="1" r:id="rId1"/></sheets>"#).unwrap();
+
+        assert!(meta.print_titles.is_empty());
     }
 }
