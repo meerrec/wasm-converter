@@ -4,6 +4,19 @@
 
 import { createXlsxViewer, type SheetInfo, type XlsxViewerHandle } from '@doc-converter/core';
 
+// PDF-модуль грузится лениво и отдельным файлом: Vite отдаёт его URL-ом
+// (`new URL(..., import.meta.url)` разворачивается в ассет), а не импортом
+// модуля — импорт втянул бы printpdf в основной бандл. Копируя JS как есть,
+// сборщик не кладёт рядом его wasm-бинарь, поэтому второй URL передаётся явно.
+const pdfWasmModuleUrl = new URL(
+  '@doc-converter/wasm-pdf/pkg/doc_converter_pdf_wasm.js',
+  import.meta.url,
+).href;
+const pdfWasmBinaryUrl = new URL(
+  '@doc-converter/wasm-pdf/pkg/doc_converter_pdf_wasm_bg.wasm',
+  import.meta.url,
+).href;
+
 /** Элемент разметки: его отсутствие — ошибка сборки примера, а не рантайма. */
 function required<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -170,6 +183,7 @@ async function main(): Promise<void> {
   try {
     handle = await createXlsxViewer(viewer, {
       workerUrl: new URL('./worker.ts', import.meta.url),
+      pdfWasm: { module: pdfWasmModuleUrl, binary: pdfWasmBinaryUrl },
     });
   } catch (e) {
     // Нет OffscreenCanvas/transferControlToOffscreen — вьюер не поднять:

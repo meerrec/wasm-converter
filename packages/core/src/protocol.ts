@@ -88,11 +88,26 @@ export interface ImageInfo {
 // Отдельно от RPC-конверта выше: paint-путь намеренно без request/response,
 // чтобы кадр не ждал ответа.
 
+/**
+ * Ленивый PDF-модуль: URL его JS-модуля и wasm-бинаря.
+ *
+ * Оба приходят с main-потока: воркер собран бандлом, и относительный путь из
+ * него ничего не значит. Не задан — `export-pdf` вернёт внятную ошибку.
+ */
+export interface PdfModuleUrls {
+  /** JS-модуль `@doc-converter/wasm-pdf`: воркер импортирует его по клику. */
+  module: string;
+  /** Бинарь для `init()`; без него wasm-bindgen ищет его рядом с модулем. */
+  binary?: string | undefined;
+}
+
 export interface InitMsg {
   type: 'init';
   canvas: OffscreenCanvas;
   /** Без значения wasm-bindgen резолвит .wasm относительно своего модуля. */
   wasmUrl?: string | undefined;
+  /** Где лежит PDF-модуль. Не задан — экспорт ответит ошибкой. */
+  pdf?: PdfModuleUrls | undefined;
   slotCapacity: number;
 }
 

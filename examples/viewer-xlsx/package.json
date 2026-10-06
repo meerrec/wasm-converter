@@ -13,7 +13,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@doc-converter/core": "workspace:*"
+    "@doc-converter/core": "workspace:*",
+    "@doc-converter/wasm-pdf": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
