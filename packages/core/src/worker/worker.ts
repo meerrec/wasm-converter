@@ -8,6 +8,7 @@ import init, {
   resize_canvas,
   sab_total_bytes,
   xlsx_build_display_list_sab,
+  xlsx_export_pdf,
   xlsx_hit_test,
   xlsx_hyperlink_at,
   xlsx_image_bytes,
@@ -250,6 +251,17 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         const bytes = await exportPng(ctx.canvas);
         post({ type: 'png', id: msg.id, bytes }, [bytes.buffer]);
       } catch (e) {
+        post({ type: 'error', message: String(e) });
+      }
+      break;
+    }
+    case 'export-pdf': {
+      try {
+        // Книга уже разобрана в thread_local — по проводу идёт только результат.
+        const bytes = xlsx_export_pdf(msg.sheet, msg.options) as Uint8Array;
+        post({ type: 'pdf', id: msg.id, bytes }, [bytes.buffer]);
+      } catch (e) {
+        // Ошибка экспорта — ответ, а не падение воркера: книга остаётся открытой.
         post({ type: 'error', message: String(e) });
       }
       break;

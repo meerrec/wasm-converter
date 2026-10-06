@@ -131,6 +131,17 @@ export interface HitTestMsg {
 }
 export interface ExportPngMsg { type: 'export-png'; id: number }
 
+/**
+ * Экспорт листа в PDF. Считается в воркере: там же лежит разобранная книга.
+ * `sheet` — из тех же единиц, что у `render`, то есть индекс в книге.
+ */
+export interface ExportPdfMsg {
+  type: 'export-pdf';
+  id: number;
+  sheet: number;
+  options: PdfOptions;
+}
+
 /** Гиперссылка под точкой: те же единицы, что у `hit-test`. */
 export interface HyperlinkAtMsg {
   type: 'hyperlink-at';
@@ -152,7 +163,8 @@ export type InMsg =
   | RenderMsg
   | HitTestMsg
   | HyperlinkAtMsg
-  | ExportPngMsg;
+  | ExportPngMsg
+  | ExportPdfMsg;
 
 export interface ReadyMsg {
   type: 'ready';
@@ -168,12 +180,15 @@ export interface HitMsg { type: 'hit'; id: number; cell: [number, number] | null
 /** Ответ на `hyperlink-at`: ссылка под точкой либо ничего. */
 export interface HyperlinkMsg { type: 'hyperlink'; id: number; link: HyperlinkInfo | null }
 export interface PngMsg { type: 'png'; id: number; bytes: Uint8Array }
+/** Готовый PDF. Байты передаются переводом владения — копии нет. */
+export interface PdfMsg { type: 'pdf'; id: number; bytes: Uint8Array }
 export interface WorkerErrorMsg { type: 'error'; message: string }
 
 export type OutMsg =
   | ReadyMsg
   | TickMsg
   | PngMsg
+  | PdfMsg
   | OpenedMsg
   | HitMsg
   | HyperlinkMsg
