@@ -409,7 +409,7 @@ fn export_sheet(name: &str, sheet: usize) -> Vec<u8> {
         .unwrap_or_else(|e| panic!("{name} не экспортировалась: {e}"))
 }
 
-/// Имена `Image`-XObject'ов документа, их потоки и число `Do`-ссылок.
+/// Имена `Image`-`XObject`'ов документа, их потоки и число `Do`-ссылок.
 ///
 /// `XObject`'ы у printpdf глобальные: словарь один на документ, и страница
 /// ссылается на него целиком. Поэтому имена собираются со всех страниц в
@@ -452,7 +452,7 @@ fn document_images(doc: &Document) -> (BTreeMap<Vec<u8>, &lopdf::Stream>, usize)
     (images, draws)
 }
 
-/// Лист с картинкой несёт `/Image`-XObject, а страница ссылается на него `Do`.
+/// Лист с картинкой несёт `/Image`-`XObject`, а страница ссылается на него `Do`.
 ///
 /// Тест падает, если `painter` перестанет звать `image_ops`: до подключения
 /// модуля PDF обходился без единого `/Image` (дыра D1 приёмки).
@@ -498,7 +498,7 @@ fn repeated_media_part_gives_one_xobject() {
     assert_eq!(draws, 3, "три якоря — три вывода");
 }
 
-/// Лист без картинок не порождает ни XObject'ов, ни `Do`.
+/// Лист без картинок не порождает ни `XObject`'ов, ни `Do`.
 #[test]
 fn sheet_without_images_has_no_xobject() {
     let bytes = export_sheet("content-mixed-types.xlsx", 0);

@@ -384,6 +384,10 @@ fn page_operations(doc: &Document, number: u32) -> Vec<Operation> {
 }
 
 /// Число из операнда lopdf.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "единственный вызов — альфа /GS фикстур в 0..1, где i64 → f32 точен"
+)]
 fn operand_number(object: &Object) -> f32 {
     match object {
         Object::Real(value) => *value,
@@ -415,11 +419,11 @@ fn page_text(doc: &Document, number: u32) -> String {
     for (at, token) in events {
         if token == "Tf" {
             if let Some(slash) = content[..at].rfind('/') {
-                font = content[slash + 1..at]
+                content[slash + 1..at]
                     .split_whitespace()
                     .next()
                     .unwrap_or_default()
-                    .to_owned();
+                    .clone_into(&mut font);
             }
             continue;
         }
@@ -466,7 +470,7 @@ fn page_cmaps(doc: &Document, page: lopdf::ObjectId) -> HashMap<String, HashMap<
     cmaps
 }
 
-/// Пары «код → символ» из `beginbfchar`-секции CMap.
+/// Пары «код → символ» из `beginbfchar`-секции `CMap`.
 fn parse_bfchar(cmap: &str) -> HashMap<u16, char> {
     let mut map = HashMap::new();
     let mut inside = false;
@@ -493,7 +497,7 @@ fn parse_bfchar(cmap: &str) -> HashMap<u16, char> {
 }
 
 /// Словарь `/ExtGState` страницы, если он есть.
-fn extgstates<'a>(doc: &'a Document, number: u32) -> Option<&'a lopdf::Dictionary> {
+fn extgstates(doc: &Document, number: u32) -> Option<&lopdf::Dictionary> {
     let page = *doc.get_pages().get(&number).expect("страница есть");
     let (direct, indirect) = doc.get_page_resources(page).expect("ресурсы страницы");
     let resources = match (direct, indirect.first()) {
@@ -615,7 +619,6 @@ fn watermark_reaches_every_page_with_extgstate() {
         let alpha = state
             .get(b"CA")
             .map(operand_number)
-            .ok()
             .expect("альфа заливки в /GS");
         assert!(
             (alpha - 0.25).abs() < 1e-6,
