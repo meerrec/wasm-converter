@@ -157,8 +157,14 @@ fn bench_pdf_time_1000_cells(c: &mut Criterion) {
 
 /// DoD 1: 500 страниц быстрее 3 с. Печатается медиана пяти прогонов: criterion
 /// считает выборочное среднее и печатает интервал, а гейту нужно одно число,
-/// устойчивое к шуму общего раннера. `assert` числа страниц — порог обязан
-/// измеряться на книге не меньше 500 страниц, иначе замер ничего не значит.
+/// устойчивое к шуму общего раннера.
+///
+/// `assert` числа страниц — контракт фикстуры, а не свойство бенча: DoD 1
+/// требует ровно 500 страниц, столько должен давать генератор
+/// (`scripts/gen-fixtures.ts`; при 48 строках на A4 это 24 000 строк).
+/// Порог не понижается под фактический вывод: фикстура, отставшая от
+/// контракта (23 000 строк — 480 страниц), обязана уронить бенч, иначе замер
+/// молча превращается в замер другой книги.
 fn bench_pdf_time_500_pages(c: &mut Criterion) {
     let path = heavy_fixture("scale-500-pages.xlsx");
     let bytes = std::fs::read(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
@@ -168,7 +174,8 @@ fn bench_pdf_time_500_pages(c: &mut Criterion) {
     let pages = page_count(&export(&book));
     assert!(
         pages >= 500,
-        "фикстура дала {pages} страниц — порог DoD 1 требует не меньше 500"
+        "фикстура дала {pages} страниц — DoD 1 требует не меньше 500; \
+         генератор должен писать 24 000 строк (48 строк на A4)"
     );
     let median = median_ms(5, || {
         export(&book);
@@ -187,23 +194,6 @@ fn bench_pdf_time_500_pages(c: &mut Criterion) {
         b.iter(|| export(black_box(&book)));
     });
     group.finish();
-}
-
-/// ВРЕМЕННЫЙ чек фикстуры диаграмм — удаляется до сдачи.
-fn check_charts_fixture(_c: &mut Criterion) {
-    let book = open("charts-five-kinds.xlsx");
-    let sheet = &book.sheets()[0];
-    println!("charts-five-kinds: диаграмм {}", sheet.charts.len());
-    for chart in &sheet.charts {
-        println!(
-            "  {:?} «{:?}»: серий {}, категории {:?}, первая серия {:?}",
-            chart.chart.kind,
-            chart.chart.title,
-            chart.chart.series.len(),
-            chart.chart.categories,
-            chart.chart.series.first().map(|s| s.values.clone()),
-        );
-    }
 }
 
 /// Разбивка D3 — печатается при запуске, criterion тут только хук запуска.
@@ -251,7 +241,6 @@ fn phases(_c: &mut Criterion) {
 criterion_group!(
     benches,
     phases,
-    check_charts_fixture,
     bench_pdf_size_compressed,
     bench_pdf_size_1000_cells,
     bench_pdf_time_10_pages,
