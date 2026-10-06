@@ -36,6 +36,15 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # Доккомментарии крейтов — часть публичного API, а `cargo doc` до этого
+      # не гонялся нигде: битая intra-doc ссылка на приватный элемент жила
+      # месяцами (в этом классе ошибались уже трижды).
+      - name: doc
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps
+
       # PDF-тесты сверяют вывод системными утилитами; только на x86_64,
       # в wasm32-ноге матрицы тесты не гоняются.
       - name: pdf tooling
@@ -60,6 +69,14 @@ jobs:
       - name: build (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
         run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm --release
+
+      # На нативном таргете оба крейта пусты (`#![cfg(target_arch = "wasm32")]`),
+      # поэтому их доккомментарии проверяет только эта нога матрицы.
+      - name: doc (wasm)
+        if: matrix.target == 'wasm32-unknown-unknown'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm --no-deps
 
   wasm:
     name: Wasm bindings
