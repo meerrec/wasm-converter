@@ -5,8 +5,10 @@
 //! [`PX_PER_POINT`]. Масштаб печати (`PageConfig::scale`) применяется здесь же,
 //! как зум у canvas: сама раскладка о нём не знает.
 //!
-//! Страница пока одна: пагинация (разбивка по высоте, повтор заголовков) —
-//! следующий срез, её место — этот модуль.
+//! Лист длиннее страницы печатается несколькими страницами: у каждой свой
+//! верх ([`PageGeometry::with_page_top_px`]), который вычитается из
+//! вертикальных координат. Разбивка по строкам — [`crate::painter`], повтор
+//! заголовков и разбивка по столбцам — Спринт 7.
 
 use doc_converter_xlsx::layout::PX_PER_POINT;
 use printpdf::{Pt, Rect};
@@ -43,6 +45,7 @@ pub struct PageGeometry {
     content_w_pt: f32,
     content_h_pt: f32,
     scale: f32,
+    page_top_px: f32,
 }
 
 impl PageGeometry {
@@ -66,6 +69,19 @@ impl PageGeometry {
             content_w_pt: (width_pt - left - right).max(0.0),
             content_h_pt: (height_pt - top - bottom).max(0.0),
             scale: if cfg.scale > 0.0 { cfg.scale } else { 1.0 },
+            page_top_px: 0.0,
+        }
+    }
+
+    /// Копия геометрии для страницы, начинающейся с `top_px` листа.
+    ///
+    /// Сдвиг только вертикальный: по горизонтали лист пока не делится
+    /// (Спринт 7).
+    #[must_use]
+    pub fn with_page_top_px(self, top_px: f32) -> Self {
+        Self {
+            page_top_px: top_px,
+            ..self
         }
     }
 
@@ -105,6 +121,15 @@ impl PageGeometry {
         px / PX_PER_POINT * self.scale
     }
 
+    /// Пиксели раскладки по вертикали → точки PDF от верха страницы.
+    ///
+    /// Отличие от [`PageGeometry::px_to_pt`] — вычет верха страницы: страница
+    /// печатает свой отрезок листа начиная с области содержимого.
+    #[must_use]
+    pub fn y_px_to_pt(&self, px: f32) -> f32 {
+        self.px_to_pt(px - self.page_top_px)
+    }
+
     /// Сколько пикселей раскладки помещается в область содержимого.
     #[must_use]
     pub fn content_px(&self) -> (f32, f32) {
@@ -117,7 +142,7 @@ impl PageGeometry {
     pub fn rect_to_pt(&self, rect: RectPx) -> RectPt {
         RectPt {
             x: self.origin_x_pt + self.px_to_pt(rect.x),
-            y: self.origin_y_pt + self.px_to_pt(rect.y),
+            y: self.origin_y_pt + self.y_px_to_pt(rect.y),
             w: self.px_to_pt(rect.w),
             h: self.px_to_pt(rect.h),
         }
