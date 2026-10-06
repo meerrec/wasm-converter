@@ -25,8 +25,30 @@ pub enum Error {
     #[error("malformed OOXML: {0}")]
     Malformed(String),
 
+    /// Сбой экспорта во внешний формат (PDF, …).
+    ///
+    /// Ядро не знает, во что экспортируют: формат в сообщении не назван, его
+    /// добавляет вызывающий слой.
+    #[error("export failed: {0}")]
+    Export(String),
+
     #[error("UTF-8 error: {0}")]
     Utf8(#[from] std::str::Utf8Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_error_reads_as_export_failure() {
+        let err = Error::Export("sheet index 7 is out of range".into());
+
+        assert_eq!(
+            err.to_string(),
+            "export failed: sheet index 7 is out of range"
+        );
+    }
+}

@@ -446,8 +446,19 @@ fn out_of_range_sheet_is_an_error() {
     )
     .expect("книга открывается");
     let result = PdfExporter::new(PdfOptions::default()).export_xlsx_sheet(&book, 7);
+    let message = result
+        .expect_err("несуществующий лист — ошибка")
+        .to_string();
 
-    assert!(result.is_err(), "несуществующий лист должен быть ошибкой");
+    // Сбой экспорта — не порча OOXML: у ядра для него свой вариант (ADR-0008).
+    assert!(
+        message.starts_with("export failed: pdf:"),
+        "неверная семантика ошибки: {message}"
+    );
+    assert!(
+        !message.contains("malformed OOXML"),
+        "ошибка экспорта выдана за порчу книги: {message}"
+    );
 }
 
 /// Строки текста, которые рисует canvas-путь, в порядке кадра.
