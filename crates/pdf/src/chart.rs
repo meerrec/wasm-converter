@@ -6,7 +6,7 @@
 //! нельзя.
 //!
 //! Единицы: `rect` и всё, что вернул `layout`, — пиксели раскладки листа, ось
-//! `y` вниз. В точки их переводит [`PageGeometry`] (96 dpi против 72 pt плюс
+//! `y` вниз. В точки их переводит `PageGeometry` (96 dpi против 72 pt плюс
 //! масштаб печати) — как в `text.rs`: один множитель на всю диаграмму, поэтому
 //! геометрия, кегль и толщины линий масштабируются вместе (ADR-0011 §2).
 
@@ -29,34 +29,93 @@ use crate::styles::to_pdf_color;
 /// собирается из четырёх таких четвертей.
 const KAPPA: f64 = 0.552_284_749_830_793_6;
 
-/// Нарисовать диаграмму в прямоугольнике `rect` (пиксели раскладки листа).
+/// Диаграмма листа, разложенная в прямоугольнике якоря.
 ///
-/// Пустая раскладка — нулевой прямоугольник или ни одной серии — не рисует
-/// ничего: ни клипа, ни обёртки `q`/`Q`.
+/// Раскладка ([`layout`]) не зависит от страницы, а `draw_page` вызывается
+/// дважды — зондами шрифтов и записью, — поэтому считается один раз на лист:
+/// страницы потом только переносят примитивы сдвигом среза.
+#[derive(Debug)]
+pub struct Layout {
+    /// Якорь в координатах листа, пиксели раскладки.
+    rect: RectPx,
+    prims: Vec<ChartPrim>,
+}
+
+impl Layout {
+    /// Разложить диаграмму в прямоугольник `rect` (пиксели раскладки листа).
+    #[must_use]
+    pub fn new(rect: RectPx, data: &ChartData) -> Self {
+        Self {
+            rect,
+            prims: layout(Rect::new(rect.x, rect.y, rect.w, rect.h), data),
+        }
+    }
+
+    /// Пусто — рисовать нечего: нулевой якорь или ни одной серии.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.prims.is_empty()
+    }
+
+    /// Якорь диаграммы в координатах листа.
+    #[must_use]
+    pub fn rect(&self) -> RectPx {
+        self.rect
+    }
+}
+
+/// Сдвиг примитивов из координат листа в координаты страницы: раскладка
+/// считается в листе, а страница печатает свой отрезок со своим началом.
+#[derive(Debug, Clone, Copy, Default)]
+struct Shift {
+    dx: f64,
+    dy: f64,
+}
+
+impl Shift {
+    /// Прямоугольник примитива в координатах страницы.
+    fn rect(self, x: f64, y: f64, w: f64, h: f64) -> RectPx {
+        RectPx::new(
+            to_f32(x + self.dx),
+            to_f32(y + self.dy),
+            to_f32(w),
+            to_f32(h),
+        )
+    }
+}
+
+/// Нарисовать разложенную диаграмму на странице.
+///
+/// `rect` — якорь в координатах страницы: примитивы переносятся в него из
+/// координат листа. `clip` — видимая часть якоря на этой странице: у диаграммы
+/// на границе страниц она срезана областью содержимого, а подписи осей и
+/// легенда, вылезшие за якорь, не должны попадать на страницу в любом случае —
+/// как клип видимой части в canvas-бэкенде. Клип обязан жить между `q` и `Q`:
+/// вне пары он срезал бы всё последующее содержимое страницы.
 pub fn draw(
     ops: &mut Vec<Op>,
     registry: &mut FontRegistry,
     pdf_font: &PdfFontId,
     page: &PageGeometry,
     rect: RectPx,
-    data: &ChartData,
+    clip: RectPx,
+    chart: &Layout,
 ) {
-    let prims = layout(Rect::new(rect.x, rect.y, rect.w, rect.h), data);
-    if prims.is_empty() {
+    if chart.prims.is_empty() {
         return;
     }
 
-    // Клип по прямоугольнику диаграммы — как в canvas-бэкенде: подписи осей и
-    // легенда, вылезшие за якорь, не должны попадать на страницу. Клип обязан
-    // жить между `q` и `Q`: вне пары он срезал бы всё последующее содержимое
-    // страницы.
     ops.push(Op::SaveGraphicsState);
     ops.push(Op::DrawPolygon {
-        polygon: rect_polygon(page, rect, PaintMode::Clip),
+        polygon: rect_polygon(page, clip, PaintMode::Clip),
     });
 
-    for prim in &prims {
-        draw_prim(ops, registry, pdf_font, page, prim);
+    let shift = Shift {
+        dx: f64::from(rect.x - chart.rect.x),
+        dy: f64::from(rect.y - chart.rect.y),
+    };
+    for prim in &chart.prims {
+        draw_prim(ops, registry, pdf_font, page, prim, shift);
     }
 
     ops.push(Op::RestoreGraphicsState);
@@ -69,17 +128,14 @@ fn draw_prim(
     pdf_font: &PdfFontId,
     page: &PageGeometry,
     prim: &ChartPrim,
+    shift: Shift,
 ) {
     match prim {
         ChartPrim::Rect { x, y, w, h, fill } => {
             fill_shape(
                 ops,
                 *fill,
-                rect_polygon(
-                    page,
-                    RectPx::new(to_f32(*x), to_f32(*y), to_f32(*w), to_f32(*h)),
-                    PaintMode::Fill,
-                ),
+                rect_polygon(page, shift.rect(*x, *y, *w, *h), PaintMode::Fill),
             );
         }
         ChartPrim::Polyline {
@@ -99,7 +155,7 @@ fn draw_prim(
             });
             ops.push(Op::DrawLine {
                 line: Line {
-                    points: line_points(page, points),
+                    points: line_points(page, points, shift),
                     is_closed: *closed,
                 },
             });
@@ -108,7 +164,7 @@ fn draw_prim(
             if points.is_empty() {
                 return;
             }
-            fill_shape(ops, *fill, filled_polygon(line_points(page, points)));
+            fill_shape(ops, *fill, filled_polygon(line_points(page, points, shift)));
         }
         ChartPrim::Circle { cx, cy, r, fill } => {
             // Отрицательный радиус canvas отвергает и заливает пустой путь —
@@ -116,7 +172,11 @@ fn draw_prim(
             if *r <= 0.0 {
                 return;
             }
-            fill_shape(ops, *fill, filled_polygon(circle_ring(page, *cx, *cy, *r)));
+            fill_shape(
+                ops,
+                *fill,
+                filled_polygon(circle_ring(page, *cx, *cy, *r, shift)),
+            );
         }
         ChartPrim::Sector {
             cx,
@@ -126,7 +186,7 @@ fn draw_prim(
             to,
             fill,
         } => {
-            if let Some(ring) = sector_ring(page, *cx, *cy, *r, *from, *to) {
+            if let Some(ring) = sector_ring(page, *cx, *cy, *r, *from, *to, shift) {
                 fill_shape(ops, *fill, filled_polygon(ring));
             }
         }
@@ -159,7 +219,7 @@ fn draw_prim(
             // ascent, который нужен `text.rs` для верхней границы строки.
             ops.push(Op::StartTextSection);
             ops.push(Op::SetTextCursor {
-                pos: to_pdf_point(page, anchor_x, *y),
+                pos: to_pdf_point(page, anchor_x, *y, shift),
             });
             ops.push(Op::SetFontSize {
                 size: Pt(page.px_to_pt(size_px)),
@@ -176,20 +236,21 @@ fn draw_prim(
 
 /// Пиксели диаграммы (`f64`, ось `y` вниз) в координаты printpdf: тот же
 /// перевод, что в `text.rs` — начало координат в левом нижнем углу страницы.
-fn to_pdf_point(page: &PageGeometry, x: f64, y: f64) -> Point {
+/// Сдвиг [`Shift`] переносит точку из координат листа в координаты страницы.
+fn to_pdf_point(page: &PageGeometry, x: f64, y: f64, shift: Shift) -> Point {
     Point {
-        x: Pt(page.origin_x_pt() + page.px_to_pt(to_f32(x))),
-        y: Pt(page.height_pt() - (page.origin_y_pt() + page.y_px_to_pt(to_f32(y)))),
+        x: Pt(page.origin_x_pt() + page.px_to_pt(to_f32(x + shift.dx))),
+        y: Pt(page.height_pt() - (page.origin_y_pt() + page.y_px_to_pt(to_f32(y + shift.dy)))),
     }
 }
 
 /// Точки ломаной или контура в координатах printpdf; все — вершины, а не
 /// управляющие Безье.
-fn line_points(page: &PageGeometry, points: &[(f64, f64)]) -> Vec<LinePoint> {
+fn line_points(page: &PageGeometry, points: &[(f64, f64)], shift: Shift) -> Vec<LinePoint> {
     points
         .iter()
         .map(|&(x, y)| LinePoint {
-            p: to_pdf_point(page, x, y),
+            p: to_pdf_point(page, x, y, shift),
             bezier: false,
         })
         .collect()
@@ -245,10 +306,10 @@ fn rect_polygon(page: &PageGeometry, rect: RectPx, mode: PaintMode) -> Polygon {
 /// `LinePoint { bezier: true }` плюс конечная точка
 /// (`vendor/printpdf/src/serialize.rs`), одиночная управляющая молча
 /// вырождается в прямую — поэтому дуги кладутся только парами.
-fn circle_ring(page: &PageGeometry, cx: f64, cy: f64, r: f64) -> Vec<LinePoint> {
+fn circle_ring(page: &PageGeometry, cx: f64, cy: f64, r: f64, shift: Shift) -> Vec<LinePoint> {
     let k = r * KAPPA;
     let mut ring = vec![LinePoint {
-        p: to_pdf_point(page, cx + r, cy),
+        p: to_pdf_point(page, cx + r, cy, shift),
         bezier: false,
     }];
     push_arc_segment(
@@ -257,6 +318,7 @@ fn circle_ring(page: &PageGeometry, cx: f64, cy: f64, r: f64) -> Vec<LinePoint> 
         (cx + r, cy + k),
         (cx + k, cy + r),
         (cx, cy + r),
+        shift,
     );
     push_arc_segment(
         &mut ring,
@@ -264,6 +326,7 @@ fn circle_ring(page: &PageGeometry, cx: f64, cy: f64, r: f64) -> Vec<LinePoint> 
         (cx - k, cy + r),
         (cx - r, cy + k),
         (cx - r, cy),
+        shift,
     );
     push_arc_segment(
         &mut ring,
@@ -271,6 +334,7 @@ fn circle_ring(page: &PageGeometry, cx: f64, cy: f64, r: f64) -> Vec<LinePoint> 
         (cx - r, cy - k),
         (cx - k, cy - r),
         (cx, cy - r),
+        shift,
     );
     push_arc_segment(
         &mut ring,
@@ -278,6 +342,7 @@ fn circle_ring(page: &PageGeometry, cx: f64, cy: f64, r: f64) -> Vec<LinePoint> 
         (cx + k, cy - r),
         (cx + r, cy - k),
         (cx + r, cy),
+        shift,
     );
     ring
 }
@@ -289,10 +354,11 @@ fn push_arc_segment(
     c1: (f64, f64),
     c2: (f64, f64),
     end: (f64, f64),
+    shift: Shift,
 ) {
     for (point, bezier) in [(c1, true), (c2, true), (end, false)] {
         ring.push(LinePoint {
-            p: to_pdf_point(page, point.0, point.1),
+            p: to_pdf_point(page, point.0, point.1, shift),
             bezier,
         });
     }
@@ -317,6 +383,7 @@ fn sector_ring(
     r: f64,
     from: f64,
     to: f64,
+    shift: Shift,
 ) -> Option<Vec<LinePoint>> {
     if !(cx.is_finite() && cy.is_finite() && r.is_finite() && from.is_finite() && to.is_finite()) {
         return None;
@@ -340,13 +407,13 @@ fn sector_ring(
 
     let mut ring = vec![
         LinePoint {
-            p: to_pdf_point(page, cx, cy),
+            p: to_pdf_point(page, cx, cy, shift),
             bezier: false,
         },
         // Начало дуги — вершина: без неё первая кривая начнётся в центре,
         // потому что `c` в PDF продолжает путь от текущей точки.
         LinePoint {
-            p: to_pdf_point(page, cx + r * from.cos(), cy + r * from.sin()),
+            p: to_pdf_point(page, cx + r * from.cos(), cy + r * from.sin(), shift),
             bezier: false,
         },
     ];
@@ -363,6 +430,7 @@ fn sector_ring(
             (cx + r * cos_a - k * sin_a, cy + r * sin_a + k * cos_a),
             (cx + r * cos_b + k * sin_b, cy + r * sin_b - k * cos_b),
             (cx + r * cos_b, cy + r * sin_b),
+            shift,
         );
         angle = end_angle;
     }
@@ -427,7 +495,7 @@ mod tests {
     /// Операции одного примитива: клип и обёртку добавляет только [`draw`].
     fn prim_ops(registry: &mut FontRegistry, prim: &ChartPrim) -> Vec<Op> {
         let mut ops = Vec::new();
-        draw_prim(&mut ops, registry, &font(), &page(), prim);
+        draw_prim(&mut ops, registry, &font(), &page(), prim, Shift::default());
         ops
     }
 
@@ -435,13 +503,15 @@ mod tests {
     fn empty_chart_emits_nothing() {
         let mut registry = FontRegistry::new(16);
         let mut ops = Vec::new();
+        let rect = RectPx::new(10.0, 10.0, 200.0, 100.0);
         draw(
             &mut ops,
             &mut registry,
             &font(),
             &page(),
-            RectPx::new(10.0, 10.0, 200.0, 100.0),
-            &ChartData::default(),
+            rect,
+            rect,
+            &Layout::new(rect, &ChartData::default()),
         );
         assert!(ops.is_empty(), "без серий не должно быть ни одной операции");
     }
@@ -450,13 +520,15 @@ mod tests {
     fn zero_rect_emits_nothing() {
         let mut registry = FontRegistry::new(16);
         let mut ops = Vec::new();
+        let rect = RectPx::new(0.0, 0.0, 0.0, 100.0);
         draw(
             &mut ops,
             &mut registry,
             &font(),
             &page(),
-            RectPx::new(0.0, 0.0, 0.0, 100.0),
-            &bar_data(),
+            rect,
+            rect,
+            &Layout::new(rect, &bar_data()),
         );
         assert!(
             ops.is_empty(),
@@ -468,13 +540,15 @@ mod tests {
     fn clip_is_wrapped_in_save_and_restore() {
         let mut registry = FontRegistry::new(16);
         let mut ops = Vec::new();
+        let rect = RectPx::new(10.0, 20.0, 400.0, 200.0);
         draw(
             &mut ops,
             &mut registry,
             &font(),
             &page(),
-            RectPx::new(10.0, 20.0, 400.0, 200.0),
-            &bar_data(),
+            rect,
+            rect,
+            &Layout::new(rect, &bar_data()),
         );
 
         assert_eq!(ops.first(), Some(&Op::SaveGraphicsState));
@@ -678,7 +752,7 @@ mod tests {
     /// Развёрнутый угол, пройденный концами сегментов вокруг центра (`y` в pdf
     /// развёрнута, поэтому ненулевые шаги идут в минус — берём модуль).
     fn swept_angle(ring: &[LinePoint], cx: f64, cy: f64) -> f64 {
-        let center = to_pdf_point(&page(), cx, cy);
+        let center = to_pdf_point(&page(), cx, cy, Shift::default());
         let mut total = 0.0;
         let mut previous: Option<f64> = None;
         for point in ring.iter().skip(1).filter(|point| !point.bezier) {
@@ -821,7 +895,7 @@ mod tests {
     #[test]
     fn quarter_arc_stays_within_a_tenth_of_a_percent_of_the_radius() {
         let ring = sector_ring_of(0.0, FRAC_PI_2);
-        let center = to_pdf_point(&page(), 50.0, 50.0);
+        let center = to_pdf_point(&page(), 50.0, 50.0, Shift::default());
         let radius_pt = f64::from(page().px_to_pt(10.0));
 
         for t in [0.1, 0.25, 0.5, 0.75, 0.9] {

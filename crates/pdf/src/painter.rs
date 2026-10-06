@@ -7,17 +7,21 @@
 //! Лист режется на страницы заранее ([`crate::pagination`]): сюда приходит
 //! срез страницы и её ячейки, отсюда — только геометрия и операции.
 //!
+//! Диаграммы листа рисуются последним слоем — над заливками, рамками и
+//! текстом, как в `xlsx::paint` (картинки там лежат между текстом и
+//! диаграммами; в PDF они ещё не перенесены и встанут туда же).
+//!
 //! Ещё не перенесены настройки [`PdfOptions`], за которыми стоит заметная
-//! работа: сетка (`print_grid_lines`), закреплённые области, картинки и
-//! диаграммы — следующие срезы спринта.
+//! работа: сетка (`print_grid_lines`), закреплённые области, картинки —
+//! следующие срезы спринта.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
 use doc_converter_render::font::FontRegistry;
 use doc_converter_xlsx::layout::{SheetLayout, PX_PER_POINT};
-use doc_converter_xlsx::paint::display_text;
-use doc_converter_xlsx::{CellValue, Workbook};
+use doc_converter_xlsx::paint::{anchor_rect, display_text};
+use doc_converter_xlsx::{CellValue, Sheet, Workbook};
 use printpdf::streaming::StreamSession;
 use printpdf::{FontId, Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg, Pt, TextItem};
 
@@ -25,7 +29,7 @@ use crate::fonts::{EmbeddedFonts, Face};
 use crate::layout::{PageGeometry, RectPx};
 use crate::options::PdfOptions;
 use crate::pagination::{paginate, print_scale, PageSlice, PaintedCell, SheetPage};
-use crate::{annot, background, border, fonts, text, PdfError};
+use crate::{annot, background, border, chart, fonts, text, PdfError};
 
 /// Размер LRU-кэша метрик: столько же, сколько у canvas-пути.
 const FONT_CACHE: usize = 4096;
@@ -103,7 +107,15 @@ pub fn export_to<W: Write>(
     let fonts = fonts::embed(&mut doc, &mut warnings, pagination.faces)?;
     let mut registry = FontRegistry::new(FONT_CACHE);
 
-    let probe = probe_pages(book, &pagination.pages, &page, &fonts, &mut registry);
+    let charts = chart_layouts(sheet, &layout);
+    let probe = probe_pages(
+        book,
+        &pagination.pages,
+        &page,
+        &fonts,
+        &mut registry,
+        &charts,
+    );
     let save = PdfSaveOptions {
         // `optimize` у printpdf сжимает потоки — это и есть `compress`.
         optimize: options.compress,
@@ -129,6 +141,7 @@ pub fn export_to<W: Write>(
             &page_geom,
             book,
             sheet_page,
+            &charts,
         );
         ops.extend(annot::page_annotations(
             sheet,
@@ -170,21 +183,29 @@ pub fn export_to<W: Write>(
 /// правки (+7 %): вторая отрисовка с прогретым кэшем метрик дешевле, чем та
 /// экономия, которую даёт стриминговая запись против `doc.save`. Полные числа
 /// 50/100/500 — в `docs/sprint-7/streaming-report.md` (B3).
+///
+/// Диаграммы зондируются наравне с текстом: их подписи — такие же символы,
+/// которых в ячейках может не быть, и без них подрезка оставила бы у
+/// диаграммы нулевые глифы. Раскладка при этом не считается второй раз — она
+/// приходит готовой ([`chart_layouts`]).
 fn probe_pages(
     book: &Workbook,
     pages: &[SheetPage<'_>],
     geometry: &PageGeometry,
     fonts: &EmbeddedFonts,
     registry: &mut FontRegistry,
+    charts: &[chart::Layout],
 ) -> Vec<PdfPage> {
-    let mut chars: BTreeMap<FontId, BTreeSet<char>> = BTreeMap::new();
+    let mut glyphs: BTreeMap<FontId, BTreeSet<char>> = BTreeMap::new();
     for sheet_page in pages {
         let page_geom = geometry.with_page_top_px(sheet_page.slice.offset_y);
         let mut ops: Vec<Op> = Vec::new();
-        draw_page(&mut ops, registry, fonts, &page_geom, book, sheet_page);
+        draw_page(
+            &mut ops, registry, fonts, &page_geom, book, sheet_page, charts,
+        );
         for op in &ops {
             if let Op::WriteText { font, items, .. } = op {
-                let set = chars.entry(font.clone()).or_default();
+                let set = glyphs.entry(font.clone()).or_default();
                 for item in items {
                     if let TextItem::Text(text) = item {
                         set.extend(text.chars());
@@ -193,7 +214,7 @@ fn probe_pages(
             }
         }
     }
-    chars
+    glyphs
         .into_iter()
         .map(|(font, chars)| {
             PdfPage::new(
@@ -224,6 +245,25 @@ pub(crate) fn page_rect(rect: RectPx, slice: &PageSlice) -> RectPx {
     )
 }
 
+/// Разложить диаграммы листа в прямоугольники их якорей.
+///
+/// Раскладка не зависит от страницы, а [`draw_page`] вызывается дважды —
+/// зондами шрифтов и записью, — поэтому считается здесь один раз на лист:
+/// страницы потом только переносят готовые примитивы сдвигом среза. Пустые
+/// раскладки (нулевой якорь, ни одной серии) отсеиваются заранее, чтобы
+/// `draw_page` не открывал клип вхолостую.
+fn chart_layouts(sheet: &Sheet, layout: &SheetLayout) -> Vec<chart::Layout> {
+    sheet
+        .charts
+        .iter()
+        .filter_map(|placed| {
+            let (x, y, w, h) = anchor_rect(layout, placed.anchor);
+            let chart = chart::Layout::new(RectPx::new(x, y, w, h), &placed.chart);
+            (!chart.is_empty()).then_some(chart)
+        })
+        .collect()
+}
+
 /// Записать ячейки страницы в её операции.
 ///
 /// Начертание выбирается по стилю ячейки, но лишь для записи текста: кегль и
@@ -239,6 +279,7 @@ fn draw_page(
     page: &PageGeometry,
     book: &Workbook,
     sheet_page: &SheetPage<'_>,
+    charts: &[chart::Layout],
 ) {
     let on_page = |painted: &PaintedCell<'_>| page_rect(painted.rect, &sheet_page.slice);
     for painted in &sheet_page.cells {
@@ -283,6 +324,51 @@ fn draw_page(
             &value,
             &painted.style,
             rect,
+        );
+    }
+    draw_charts(ops, registry, fonts, page, sheet_page, charts);
+}
+
+/// Диаграммы страницы — поверх остальных слоёв.
+///
+/// Диаграмма не делится по строкам, как ячейка: каждый якорь лежит на всех
+/// страницах целиком, а видимую часть задаёт клип — пересечение якоря с
+/// областью содержимого страницы. Так диаграмма на границе страниц режется
+/// между ними, а не оставляет след в поле. По горизонтали клипа нет: лист по
+/// столбцам не делится (Спринт 7), и ячейки в правое поле не режутся —
+/// диаграмма следует тому же правилу.
+fn draw_charts(
+    ops: &mut Vec<Op>,
+    registry: &mut FontRegistry,
+    fonts: &EmbeddedFonts,
+    page: &PageGeometry,
+    sheet_page: &SheetPage<'_>,
+    charts: &[chart::Layout],
+) {
+    if charts.is_empty() {
+        return;
+    }
+    let (_, content_h_px) = page.content_px();
+    let band_top = sheet_page.slice.offset_y;
+    let band_bottom = band_top + content_h_px;
+    for placed in charts {
+        let rect = page_rect(placed.rect(), &sheet_page.slice);
+        let clip_top = rect.y.max(band_top);
+        let clip_bottom = (rect.y + rect.h).min(band_bottom);
+        if clip_bottom <= clip_top {
+            continue;
+        }
+        let clip = RectPx::new(rect.x, clip_top, rect.w, clip_bottom - clip_top);
+        // Кегль и начертание диаграммы задаёт `layout` в пикселях, а в PDF
+        // текст идёт regular: `ChartPrim::Text` начертаний не несёт.
+        chart::draw(
+            ops,
+            registry,
+            fonts.id(Face::Regular),
+            page,
+            rect,
+            clip,
+            placed,
         );
     }
 }
