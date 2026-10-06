@@ -2,7 +2,12 @@
 // Rust, рисует painter на OffscreenCanvas. На долю main остаётся разметка,
 // прокрутка и строка состояния.
 
-import { createXlsxViewer, type SheetInfo, type XlsxViewerHandle } from '@doc-converter/core';
+import {
+  createXlsxViewer,
+  type PdfOptions,
+  type SheetInfo,
+  type XlsxViewerHandle,
+} from '@doc-converter/core';
 
 // Воркер подключается суффиксом `?worker&url`: только так Vite собирает его
 // отдельным чанком. Голый `new URL('./worker.ts', import.meta.url)` он считает
@@ -38,6 +43,7 @@ const zoomSelect = required<HTMLSelectElement>('#zoom');
 const gridBox = required<HTMLInputElement>('#grid');
 const headersBox = required<HTMLInputElement>('#headers');
 const exportButton = required<HTMLButtonElement>('#export-pdf');
+const exportBookButton = required<HTMLButtonElement>('#export-book-pdf');
 const cellOutput = required<HTMLElement>('#cell');
 const cmdsOutput = required<HTMLElement>('#cmds');
 const buildOutput = required<HTMLElement>('#build');
@@ -76,6 +82,7 @@ function disableControls(): void {
     gridBox,
     headersBox,
     exportButton,
+    exportBookButton,
   ];
   for (const control of controls) control.disabled = true;
 }
@@ -100,11 +107,13 @@ async function show(bytes: ArrayBuffer, label: string): Promise<void> {
   } catch (e) {
     currentLabel = null;
     exportButton.disabled = true;
+    exportBookButton.disabled = true;
     setStatus(`не открылось: ${e instanceof Error ? e.message : String(e)}`);
     return;
   }
   currentLabel = label;
   exportButton.disabled = false;
+  exportBookButton.disabled = false;
   const elapsed = Math.round(performance.now() - started);
   fillSheetList(sheets);
   const first = sheets.findIndex((sheet) => !sheet.hidden);
@@ -112,13 +121,16 @@ async function show(bytes: ArrayBuffer, label: string): Promise<void> {
   setStatus(`${label}: ${sheets.length} лист(ов) за ${elapsed} мс`);
 }
 
-/** Имя файла для скачивания: подпись документа без расширения, иначе запасное. */
-function pdfFileName(): string {
+/**
+ * Имя файла для скачивания: подпись документа без расширения, иначе запасное.
+ * `suffix` отличает выгрузку всей книги от выгрузки листа.
+ */
+function pdfFileName(suffix = ''): string {
   const label = currentLabel?.trim();
-  if (!label) return 'sheet.pdf';
+  if (!label) return `sheet${suffix}.pdf`;
   // Расширение у выбранного файла может быть любым, поэтому срезаем последнее.
   const base = label.replace(/\.[^.]*$/, '');
-  return `${base || label}.pdf`;
+  return `${base || label}${suffix}.pdf`;
 }
 
 /** Отдать байты файлом: временная ссылка на blob, клик и отзыв ссылки. */
@@ -139,15 +151,22 @@ function downloadPdf(bytes: Uint8Array, name: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-/** Экспорт текущего листа в PDF: файл собирает Rust в воркере, здесь — скачивание. */
-async function exportCurrentPdf(): Promise<void> {
+/**
+ * Экспорт в PDF: лист книги или вся книга — файл собирает Rust в воркере,
+ * здесь остаётся скачивание.
+ */
+async function exportPdf(
+  options: PdfOptions,
+  button: HTMLButtonElement,
+  suffix = '',
+): Promise<void> {
   const active = handle;
   if (!active) return;
-  exportButton.disabled = true;
+  button.disabled = true;
   setStatus('экспортирую PDF…');
   try {
-    const bytes = await active.exportPdf();
-    const name = pdfFileName();
+    const bytes = await active.exportPdf(options);
+    const name = pdfFileName(suffix);
     downloadPdf(bytes, name);
     setStatus(`PDF готов: ${name}, ${Math.round(bytes.byteLength / 1024)} КБ`);
   } catch (e) {
@@ -155,7 +174,7 @@ async function exportCurrentPdf(): Promise<void> {
     // а исключение из обработчика не должно ронять страницу.
     setStatus(`экспорт не удался: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
-    exportButton.disabled = false;
+    button.disabled = false;
   }
 }
 
@@ -241,7 +260,10 @@ async function main(): Promise<void> {
   headersBox.addEventListener('change', applyView);
 
   exportButton.addEventListener('click', () => {
-    void exportCurrentPdf();
+    void exportPdf({}, exportButton);
+  });
+  exportBookButton.addEventListener('click', () => {
+    void exportPdf({ allSheets: true }, exportBookButton, ' (все листы)');
   });
 
   // Перетаскивание файла в окно.
