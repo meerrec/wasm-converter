@@ -4,6 +4,12 @@
 
 import { createXlsxViewer, type SheetInfo, type XlsxViewerHandle } from '@doc-converter/core';
 
+// Воркер подключается суффиксом `?worker&url`: только так Vite собирает его
+// отдельным чанком. Голый `new URL('./worker.ts', import.meta.url)` он считает
+// обычным ассетом и инлайнит исходник в data-URL, где импорт
+// `@doc-converter/core/worker` уже не разрешается, — воркер молча не стартует.
+import workerUrl from './worker.ts?worker&url';
+
 // PDF-модуль грузится лениво и отдельным файлом: Vite отдаёт его URL-ом
 // (`new URL(..., import.meta.url)` разворачивается в ассет), а не импортом
 // модуля — импорт втянул бы printpdf в основной бандл. Копируя JS как есть,
@@ -155,7 +161,7 @@ async function exportCurrentPdf(): Promise<void> {
 
 async function loadFixture(name: string): Promise<void> {
   setStatus(`загружаю ${name}…`);
-  const response = await fetch(`/fixtures/${name}`);
+  const response = await fetch(`${import.meta.env.BASE_URL}fixtures/${name}`);
   if (!response.ok) {
     setStatus(`фикстура не найдена: ${name}`);
     return;
@@ -165,7 +171,7 @@ async function loadFixture(name: string): Promise<void> {
 
 async function listFixtures(): Promise<void> {
   try {
-    const response = await fetch('/fixtures/index.json');
+    const response = await fetch(`${import.meta.env.BASE_URL}fixtures/index.json`);
     if (!response.ok) return;
     const names = (await response.json()) as string[];
     for (const name of names) {
@@ -182,7 +188,7 @@ async function listFixtures(): Promise<void> {
 async function main(): Promise<void> {
   try {
     handle = await createXlsxViewer(viewer, {
-      workerUrl: new URL('./worker.ts', import.meta.url),
+      workerUrl,
       pdfWasm: { module: pdfWasmModuleUrl, binary: pdfWasmBinaryUrl },
     });
   } catch (e) {

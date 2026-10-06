@@ -19,7 +19,7 @@
     }
   },
   "files": ["dist", "README.md"],
-  "sideEffects": false,
+  "sideEffects": ["./dist/worker.js", "./dist/worker.cjs"],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",

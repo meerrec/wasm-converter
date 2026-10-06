@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>doc-converter: просмотр XLSX</title>
+    <!-- Pages не отдаёт COOP/COEP, поэтому в проде заголовки подставляет service worker;
+         в dev и preview он выходит сразу — crossOriginIsolated уже true. -->
+    <script src="%BASE_URL%coi-serviceworker.js"></script>
     <style>
       :root {
         color-scheme: light;

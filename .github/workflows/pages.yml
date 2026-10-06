@@ -1,0 +1,80 @@
+name: Pages
+
+on:
+  push: { branches: [main] }
+  workflow_dispatch:
+
+# Дефолтных прав мало: деплой Pages требует pages: write и id-token: write.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Деплои Pages не параллелятся: незавершённый деплой не отменяем,
+# иначе сайт останется в состоянии предыдущей (уже устаревшей) публикации.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build example
+    runs-on: ubuntu-latest
+    # Vite читает базовый путь из VITE_BASE: на Pages сайт живёт
+    # в /<имя-репозитория>/, а не в корне домена.
+    env:
+      VITE_BASE: /${{ github.event.repository.name }}/
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-wasm-pack
+
+      - run: cargo install wasm-pack --locked
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
+
+      # pkg/ обоих wasm-модулей генерируется wasm-pack; в репозитории его нет.
+      - run: bash scripts/build-wasm.sh
+
+      # Core собирается первым: пример импортирует его из dist/.
+      # Turborepo здесь не используется намеренно — в strict-режиме он не
+      # пробрасывает незадекларированные env-переменные, а VITE_BASE как раз такая.
+      - run: pnpm -F @doc-converter/core build
+      - run: pnpm -F @doc-converter/example-viewer-xlsx build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: examples/viewer-xlsx/dist
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
