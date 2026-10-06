@@ -1,4 +1,0 @@
-[
-  { "path": "packages/core/dist/worker.js", "limit": "550 KB", "gzip": true },
-  { "path": "packages/core/dist/index.js",  "limit": "200 KB", "gzip": true }
-]
