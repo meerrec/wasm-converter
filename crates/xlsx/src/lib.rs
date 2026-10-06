@@ -38,6 +38,7 @@ pub mod layout;
 pub mod model;
 pub mod numfmt;
 pub mod paint;
+pub mod print_settings;
 pub mod sheet_meta;
 pub mod strings;
 pub mod styles;
@@ -64,6 +65,7 @@ pub use model::{
     WorksheetMeta, THEME_COLOR_COUNT,
 };
 pub use paint::{build as paint_sheet, PaintOptions};
+pub use print_settings::{Orientation, PrintSettings, PrintTitles, Span};
 pub use sheet_meta::{Hyperlink, HyperlinkTarget, Merges, Pane, PaneKind, PaneState, SheetView};
 pub use strings::SharedStrings;
 pub use workbook::WorkbookMeta;
@@ -196,7 +198,7 @@ impl MediaRegistry {
 /// Открыть XLSX из сырых байт.
 ///
 /// Читает каталог листов, общую таблицу строк, стили, тему, содержимое всех
-/// листов и изображения.
+/// листов, настройки печати и изображения.
 ///
 /// Листы разбираются сразу: рендер и экспорт работают по модели, а ленивый
 /// разбор потребовал бы держать открытый архив внутри книги.
@@ -225,13 +227,20 @@ pub fn open(bytes: Vec<u8>) -> Result<Workbook> {
 
     let theme = read_theme(&mut archive, &rels)?;
 
+    let WorkbookMeta {
+        sheets: metas,
+        date1904,
+        print_titles,
+    } = catalog;
     let mut media = MediaRegistry::new(MAX_IMAGE_BYTES, MAX_TOTAL_MEDIA_BYTES);
-    let mut sheets = Vec::with_capacity(catalog.sheets.len());
-    for meta in catalog.sheets {
+    let mut sheets = Vec::with_capacity(metas.len());
+    for meta in metas {
         // Связи листа нужны гиперссылкам и изображениям: их цели живут
         // в отдельных частях.
         let rels = read_rels(&mut archive, &meta.part)?;
         let mut content = worksheet::parse(&archive.read(&meta.part)?, &meta.part, rels.as_ref())?;
+        // Печатаемые заголовки лежат в `definedNames` книги, а не в листе.
+        apply_print_titles(&mut content.print, &print_titles, &meta.name);
         // Чертёж — отдельная часть: сам лист на него только ссылается.
         let (images, charts) = read_drawing_objects(&mut archive, &meta.part, rels.as_ref())?;
         content.images = images;
@@ -247,9 +256,21 @@ pub fn open(bytes: Vec<u8>) -> Result<Workbook> {
     }
 
     Ok(
-        Workbook::new(sheets, shared_strings, style_table, theme, catalog.date1904)
+        Workbook::new(sheets, shared_strings, style_table, theme, date1904)
             .with_images(media.images),
     )
+}
+
+/// Дописать печатаемые заголовки из `definedNames` книги в настройки листа.
+///
+/// Ссылка заголовков несёт имя листа, а не его индекс: листы книги хранятся
+/// по именам, поэтому сопоставление идёт по имени. Неизвестное имя (лист
+/// удалён, а `definedNames` остался) молча пропускается.
+fn apply_print_titles(print: &mut PrintSettings, titles: &[PrintTitles], sheet: &str) {
+    if let Some(found) = titles.iter().find(|titles| titles.sheet == sheet) {
+        print.repeat_header_rows = found.rows;
+        print.repeat_first_columns = found.cols;
+    }
 }
 
 /// Тема книги: часть ищется по связи книги, а не по жёсткому пути — имя темы

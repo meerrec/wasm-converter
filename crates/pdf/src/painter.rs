@@ -21,7 +21,7 @@ use crate::fonts::{EmbeddedFonts, Face};
 use crate::layout::{PageGeometry, RectPx};
 use crate::options::PdfOptions;
 use crate::pagination::{paginate, print_scale, PageSlice, PaintedCell, SheetPage};
-use crate::{background, border, fonts, text, PdfError};
+use crate::{annot, background, border, fonts, text, PdfError};
 
 /// Размер LRU-кэша метрик: столько же, сколько у canvas-пути.
 const FONT_CACHE: usize = 4096;
@@ -75,6 +75,13 @@ pub fn export(
             book,
             sheet_page,
         );
+        ops.extend(annot::page_annotations(
+            sheet,
+            &layout,
+            &pagination.pages,
+            &page_geom,
+            &sheet_page.slice,
+        ));
         doc.with_pages(vec![PdfPage::new(
             Mm::from(Pt(page_geom.width_pt())),
             Mm::from(Pt(page_geom.height_pt())),
@@ -97,7 +104,7 @@ pub fn export(
 /// Сдвиг центрирования получают все ячейки страницы, и потока, и повторяемые
 /// части: их прямоугольники уже приведены к началу координат страницы, поэтому
 /// общий сдвиг двигает полосу набора целиком.
-fn page_rect(rect: RectPx, slice: &PageSlice) -> RectPx {
+pub(crate) fn page_rect(rect: RectPx, slice: &PageSlice) -> RectPx {
     RectPx::new(
         rect.x - slice.offset_x + slice.center_x_px,
         rect.y + slice.center_y_px,

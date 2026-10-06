@@ -20,6 +20,9 @@ use crate::model::{
     Cell, CellError, CellIsOperator, CellValue, ColorScale, ConditionalFormatting, ConditionalRule,
     DataBar, IconSet, RuleKind, SheetContent, Threshold, ThresholdKind, WorksheetBuilder,
 };
+use crate::print_settings::{
+    read_element_text, read_page_setup, read_page_setup_pr, read_print_options, PrintSettings,
+};
 use crate::sheet_meta::{
     read_hyperlink, read_merge, read_pane, read_view, Hyperlink, Merges, SheetView,
 };
@@ -130,6 +133,8 @@ struct SheetParser<'a> {
     view_seen: bool,
     /// Объединённые ячейки.
     merges: Merges,
+    /// Настройки печати из самой части листа.
+    print: PrintSettings,
     /// Гиперссылки.
     hyperlinks: Vec<Hyperlink>,
     /// Блок `<conditionalFormatting>`, который сейчас собирается.
@@ -182,6 +187,7 @@ impl<'r> SheetParser<'r> {
             view: SheetView::default(),
             view_seen: false,
             merges: Merges::default(),
+            print: PrintSettings::default(),
             hyperlinks: Vec::new(),
             cf_block: None,
             cf_rule: None,
@@ -255,6 +261,15 @@ impl<'r> SheetParser<'r> {
             }
             b"dimension" | b"sheetFormatPr" | b"col" => self.read_dims(element)?,
             b"sheetView" | b"pane" | b"mergeCell" | b"hyperlink" => self.read_meta(element)?,
+            b"pageSetUpPr" | b"pageSetup" | b"printOptions" => self.read_print(element)?,
+            // Колонтитулы — простой текст с кодами форматирования: храним
+            // строку сырой, разворачивая только XML-сущности.
+            b"oddHeader" => {
+                self.print.odd_header = Some(read_element_text(reader, &self.part, "oddHeader")?);
+            }
+            b"oddFooter" => {
+                self.print.odd_footer = Some(read_element_text(reader, &self.part, "oddFooter")?);
+            }
             // Условное форматирование. Пока открыт `<extLst>`, его содержимое
             // (в том числе `x14:cfRule`) в модель не идёт.
             b"extLst" => self.in_ext_lst = true,
@@ -295,6 +310,19 @@ impl<'r> SheetParser<'r> {
             b"hyperlink" => self
                 .hyperlinks
                 .push(read_hyperlink(&attrs, self.rels, &self.part)?),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Настройки печати: `<pageSetUpPr>`, `<pageSetup>`, `<printOptions>`.
+    /// В живых файлах они пустые, но закрытая пара тегов тоже законна.
+    fn read_print<'e>(&mut self, element: &'e BytesStart<'e>) -> Result<()> {
+        let attrs = attributes(element, &self.part)?;
+        match element.local_name().as_ref() {
+            b"pageSetUpPr" => read_page_setup_pr(&mut self.print, &attrs),
+            b"pageSetup" => read_page_setup(&mut self.print, &attrs),
+            b"printOptions" => read_print_options(&mut self.print, &attrs),
             _ => {}
         }
         Ok(())
@@ -441,6 +469,9 @@ impl<'r> SheetParser<'r> {
             }
             b"dimension" | b"sheetFormatPr" | b"col" => self.read_dims(element)?,
             b"sheetView" | b"pane" | b"mergeCell" | b"hyperlink" => self.read_meta(element)?,
+            b"pageSetUpPr" | b"pageSetup" | b"printOptions" => self.read_print(element)?,
+            b"oddHeader" => self.print.odd_header = Some(String::new()),
+            b"oddFooter" => self.print.odd_footer = Some(String::new()),
             // Пустые элементы условного форматирования: `<cfvo/>`, `<color/>`,
             // `<cfRule/>`, `<conditionalFormatting/>` закрываются сразу.
             b"conditionalFormatting" if !self.in_ext_lst => {
@@ -568,6 +599,7 @@ impl<'r> SheetParser<'r> {
             dims: self.dims,
             view: self.view,
             merges: self.merges,
+            print: self.print,
             hyperlinks: self.hyperlinks,
             // Примечания лежат в отдельной части: их подставляет `open`.
             comments: Vec::new(),
@@ -1268,5 +1300,92 @@ mod tests {
             panic!("ожидалась гистограмма");
         };
         assert_eq!(bar.thresholds.len(), 2);
+    }
+
+    use crate::print_settings::Orientation;
+
+    #[test]
+    fn reads_print_settings() {
+        let content = content(
+            r#"<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>
+               <pageSetup paperSize="9" orientation="landscape" scale="85"
+                          fitToWidth="2" fitToHeight="0"/>
+               <printOptions gridLines="1" headings="1"
+                             horizontalCentered="1" verticalCentered="1"/>"#,
+        );
+        let print = content.print;
+        assert!(print.fit_to_page);
+        assert_eq!(print.paper_size, Some(9));
+        assert_eq!(print.orientation, Orientation::Landscape);
+        assert_eq!(print.scale, 85);
+        assert_eq!(print.fit_to_width, 2);
+        assert_eq!(print.fit_to_height, 0);
+        assert!(print.grid_lines);
+        assert!(print.headings);
+        assert!(print.horizontal_centered);
+        assert!(print.vertical_centered);
+    }
+
+    /// Лист без настроек печати — норма: остаются дефолты ECMA-376.
+    #[test]
+    fn missing_print_settings_are_defaults() {
+        let print = content("<sheetData/>").print;
+        assert_eq!(print, PrintSettings::default());
+    }
+
+    /// Незнакомые атрибуты и значения не роняют разбор, а трактуются как
+    /// отсутствие: из-за одной настройки печати книга открываться не должна.
+    #[test]
+    fn unknown_print_attributes_are_ignored() {
+        let content = content(
+            r#"<pageSetup orientation="diagonal" scale="auto" future="1"/>
+               <printOptions gridLines="0"/>"#,
+        );
+        let print = content.print;
+        assert_eq!(print.orientation, Orientation::Default);
+        assert_eq!(print.scale, 100);
+        assert!(!print.grid_lines);
+    }
+
+    /// Настройки печати встречаются и закрытой парой тегов, а не только
+    /// пустыми элементами.
+    #[test]
+    fn paired_print_tags_are_read_too() {
+        let content = content(
+            r#"<sheetPr><pageSetUpPr fitToPage="true"></pageSetUpPr></sheetPr>
+               <pageSetup orientation="portrait"></pageSetup>
+               <printOptions></printOptions>"#,
+        );
+        assert!(content.print.fit_to_page);
+        assert_eq!(content.print.orientation, Orientation::Portrait);
+    }
+
+    /// Колонтитулы хранятся сырыми: `&C` — код центрирования Excel, а не то,
+    /// что парсер обязан понимать. XML-сущности при этом разворачиваются:
+    /// `&amp;` в файле — `&` в модели.
+    #[test]
+    fn reads_raw_header_and_footer() {
+        let content = content(
+            r#"<headerFooter>
+                 <oddHeader>&amp;C&amp;"Arial,Bold"&amp;12Отчёт</oddHeader>
+                 <oddFooter>&amp;L&amp;D&amp;RСтраница &amp;P</oddFooter>
+                 <evenHeader>чётная</evenHeader>
+               </headerFooter>"#,
+        );
+        assert_eq!(
+            content.print.odd_header.as_deref(),
+            Some(r#"&C&"Arial,Bold"&12Отчёт"#)
+        );
+        assert_eq!(
+            content.print.odd_footer.as_deref(),
+            Some("&L&D&RСтраница &P")
+        );
+    }
+
+    #[test]
+    fn empty_header_elements_are_kept() {
+        let content = content("<headerFooter><oddHeader/><oddFooter/></headerFooter>");
+        assert_eq!(content.print.odd_header.as_deref(), Some(""));
+        assert_eq!(content.print.odd_footer.as_deref(), Some(""));
     }
 }

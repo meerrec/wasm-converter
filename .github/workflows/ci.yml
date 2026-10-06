@@ -70,11 +70,9 @@ jobs:
 
       # I3: .d.ts не должен объявлять экспорты, которых нет в крейте.
       # wasm-bindgen собирает `#[wasm_bindgen]`-элементы из всего графа
-      # зависимостей, а printpdf 0.8.2 компилирует свой wasm-API
-      # (src/wasm/mod.rs, `pub mod api`) без cfg-гейта — поэтому в модуль при
-      # каждой сборке попадают пять чужих `Pdf_*Sync`. Они перечислены
-      # в allowlist ниже; любое другое расхождение — ошибка. Форк (ADR-0010),
-      # закрывший это API гейтом, должен убрать allowlist.
+      # зависимостей; wasm-API printpdf закрыт гейтом в форке
+      # (vendor/printpdf/src/wasm/mod.rs, фича js-sys), поэтому любое
+      # постороннее имя здесь — регрессия.
       - name: check wasm exports
         run: |
           set -euo pipefail
@@ -89,11 +87,7 @@ jobs:
             | awk '{print $3}' | grep -vx initSync | sort -u || true)
           [ -n "$actual" ] || { echo "::error::в $dts нет объявленных export function"; exit 1; }
 
-          leaked=$(printf '%s\n' \
-            Pdf_BytesToDocumentSync Pdf_DocumentToBytesSync Pdf_HtmlToDocumentSync \
-            Pdf_PageToSvgSync Pdf_ResourcesForPageSync)
-
-          unexpected=$(comm -23 <(printf '%s\n' "$actual") <(printf '%s\n%s\n' "$expected" "$leaked" | sort -u))
+          unexpected=$(comm -23 <(printf '%s\n' "$actual") <(printf '%s\n' "$expected"))
           missing=$(comm -23 <(printf '%s\n' "$expected") <(printf '%s\n' "$actual"))
 
           if [ -n "$unexpected" ] || [ -n "$missing" ]; then

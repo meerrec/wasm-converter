@@ -5,10 +5,10 @@
 //! Разбивка D3 печатается один раз за прогон: `xlsx::open` (разбор книги),
 //! `export_xlsx_sheet` (раскладка, сборка документа и `save` printpdf) и
 //! вариант `compress: false`. Отделить `save` от сборки публичным API нельзя:
-//! он целиком внутри `export`. Заодно видно, что `compress` в printpdf 0.8.2
-//! ничего не меняет — ни байты, ни время: `PdfSaveOptions::optimize` там
-//! заглушка (вызов `doc.compress()` закомментирован), а поток страницы
-//! создаётся с `with_compression(false)`.
+//! он целиком внутри `export`. Сжатие несёт вендоренный форк printpdf
+//! (ADR-0010), поэтому `compress: false` — база сравнения: на `content-dense`
+//! сжатие даёт ≈14,5×. Бенч `size_compressed` (DoD 9) печатает оба числа
+//! и множитель.
 //!
 //!     cargo bench -p doc-converter-pdf
 
@@ -84,6 +84,34 @@ fn bench_pdf_size_1000_cells(c: &mut Criterion) {
     group.finish();
 }
 
+/// DoD 9 (спринт 7): выигрыш сжатия на плотной книге (2000 ячеек) — там, где
+/// поток содержимого окупает `FlateDecode`. Порог «≥1,5×» проверяет
+/// `tests/compression.rs`; здесь — фактические числа для отчёта.
+fn bench_pdf_size_compressed(c: &mut Criterion) {
+    let book = open("content-dense.xlsx");
+    let packed = export(&book);
+    let raw = export_with(
+        &book,
+        PdfOptions {
+            compress: false,
+            ..PdfOptions::default()
+        },
+    );
+    println!(
+        "content-dense.xlsx: {} байт без сжатия, {} байт со сжатием ({:.1}×)",
+        raw.len(),
+        packed.len(),
+        raw.len() as f64 / packed.len() as f64
+    );
+
+    let mut group = c.benchmark_group("pdf");
+    group.throughput(Throughput::Bytes(packed.len() as u64));
+    group.bench_function("size_compressed", |b| {
+        b.iter(|| export(black_box(&book)));
+    });
+    group.finish();
+}
+
 fn bench_pdf_time_10_pages(c: &mut Criterion) {
     let book = open("scale-ten-pages.xlsx");
     println!("10 страниц: {}-страничный PDF", page_count(&export(&book)));
@@ -139,11 +167,11 @@ fn phases(_c: &mut Criterion) {
 
         println!(
             "{name}: open {open_ms:.1} мс | export {export_ms:.1} мс ({:.1} КиБ, {} стр.) | \
-             compress=false {uncompressed_ms:.1} мс ({:.1} КиБ) — байт в байт то же: \
-             сжатие в printpdf 0.8.2 не работает",
+             compress=false {uncompressed_ms:.1} мс ({:.1} КиБ) — сжатый PDF в {:.1}× меньше",
             compressed.len() as f64 / 1024.0,
             page_count(&compressed),
             uncompressed.len() as f64 / 1024.0,
+            uncompressed.len() as f64 / compressed.len() as f64,
         );
     }
     println!("printpdf `save` отдельно от сборки не меряется: он внутри export_xlsx_sheet");
@@ -152,6 +180,7 @@ fn phases(_c: &mut Criterion) {
 criterion_group!(
     benches,
     phases,
+    bench_pdf_size_compressed,
     bench_pdf_size_1000_cells,
     bench_pdf_time_10_pages,
     bench_pdf_time_1000_cells

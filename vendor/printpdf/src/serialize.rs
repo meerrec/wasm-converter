@@ -14,9 +14,9 @@ use serde_derive::{Deserialize, Serialize};
 
 use crate::{
     color::IccProfile, font::SubsetFont, Actions, BuiltinFont, Color, ColorArray, Destination,
-    FontId, IccProfileType, ImageOptimizationOptions, Line, LinkAnnotation, Op, PaintMode,
-    ParsedFont, PdfDocument, PdfDocumentInfo, PdfPage, PdfResources, PdfWarnMsg, Polygon, PrepFont,
-    TextItem, XObject, XObjectId,
+    FontId, IccProfileType, ImageOptimizationOptions, LayerInternalId, Line, LinkAnnotation, Op,
+    PaintMode, ParsedFont, PdfDocument, PdfDocumentInfo, PdfPage, PdfResources, PdfWarnMsg, Polygon,
+    PrepFont, TextItem, XObject, XObjectId,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
@@ -81,12 +81,40 @@ pub fn init_doc_and_resources(
     (doc, global_xobject_dict)
 }
 
-pub fn serialize_pdf<W: Write>(
+/// Глобальные объекты PDF, общие для обычной (`serialize_pdf`) и потоковой
+/// (`streaming::StreamSession`) записи.
+///
+/// Правка форка ADR-0010: преамбула вынесена из `serialize_pdf`, чтобы оба
+/// пути собирали одни и те же объекты одним кодом и не разъезжались.
+pub(crate) struct PdfGlobals {
+    pub(crate) doc: lopdf::Document,
+    pub(crate) pages_id: lopdf::ObjectId,
+    pub(crate) catalog: LoDictionary,
+    pub(crate) layer_ids: Option<BTreeMap<LayerInternalId, lopdf::ObjectId>>,
+    pub(crate) prepared_fonts: BTreeMap<FontId, PreparedFont>,
+    pub(crate) global_font_dict_id: lopdf::ObjectId,
+    pub(crate) global_xobject_dict_id: lopdf::ObjectId,
+    pub(crate) global_extgstate_dict_id: lopdf::ObjectId,
+    pub(crate) page_ids_reserved: Vec<lopdf::ObjectId>,
+}
+
+/// Собирает документ и его глобальные объекты: каталог, ICC/XMP/слои, шрифты,
+/// XObject'ы, ExtGState и зарезервированные id страниц.
+///
+/// `font_probe_pages` — страницы, по которым `prepare_fonts` собирает глифы
+/// subset-шрифтов: обычный путь передаёт `pdf.pages`, ленивый — то, что успел
+/// построить вызывающий. `builtin_fonts` — стандартные шрифты документа: у
+/// ленивого пути их нельзя вывести из страниц. `page_count` — сколько id
+/// страниц зарезервировать: ссылки-аннотации на последующие страницы (`/Dest`)
+/// должны быть разрешены до записи первой страницы.
+pub(crate) fn build_globals(
     pdf: &PdfDocument,
+    font_probe_pages: &[PdfPage],
+    builtin_fonts: BTreeSet<BuiltinFont>,
+    page_count: usize,
     opts: &PdfSaveOptions,
-    mut writer: &mut W,
     warnings: &mut Vec<PdfWarnMsg>,
-) -> () {
+) -> PdfGlobals {
     let (mut doc, global_xobject_dict) = init_doc_and_resources(pdf, opts);
     let pages_id = doc.new_object_id();
     let mut catalog = LoDictionary::from_iter(vec![
@@ -191,14 +219,14 @@ pub fn serialize_pdf<W: Write>(
 
     // Build fonts dictionary
     let mut global_font_dict = LoDictionary::new();
-    let prepared_fonts = prepare_fonts(&pdf.resources, &pdf.pages, warnings);
+    let prepared_fonts = prepare_fonts(&pdf.resources, font_probe_pages, warnings);
     for (font_id, prepared) in prepared_fonts.iter() {
         let font_dict = add_font_to_pdf(&mut doc, font_id, prepared);
         let font_dict_id = doc.add_object(font_dict);
         global_font_dict.set(font_id.0.clone(), Reference(font_dict_id));
     }
 
-    for internal_font in get_used_internal_fonts(&pdf.pages) {
+    for internal_font in builtin_fonts {
         let font_dict = builtin_font_to_dict(&internal_font);
         let font_dict_id = doc.add_object(font_dict);
         global_font_dict.set(internal_font.get_pdf_id(), Reference(font_dict_id));
@@ -213,11 +241,42 @@ pub fn serialize_pdf<W: Write>(
     }
     let global_extgstate_dict_id = doc.add_object(global_extgstate_dict);
 
-    let page_ids_reserved = pdf
-        .pages
-        .iter()
+    let page_ids_reserved = (0..page_count)
         .map(|_| doc.new_object_id())
         .collect::<Vec<_>>();
+
+    PdfGlobals {
+        doc,
+        pages_id,
+        catalog,
+        layer_ids,
+        prepared_fonts,
+        global_font_dict_id,
+        global_xobject_dict_id,
+        global_extgstate_dict_id,
+        page_ids_reserved,
+    }
+}
+
+pub fn serialize_pdf<W: Write>(
+    pdf: &PdfDocument,
+    opts: &PdfSaveOptions,
+    mut writer: &mut W,
+    warnings: &mut Vec<PdfWarnMsg>,
+) -> () {
+    let builtin_fonts = get_used_internal_fonts(&pdf.pages);
+    let page_count = pdf.pages.len();
+    let PdfGlobals {
+        mut doc,
+        pages_id,
+        mut catalog,
+        layer_ids,
+        prepared_fonts,
+        global_font_dict_id,
+        global_xobject_dict_id,
+        global_extgstate_dict_id,
+        page_ids_reserved,
+    } = build_globals(pdf, &pdf.pages, builtin_fonts, page_count, opts, warnings);
 
     // Render pages
     let page_ids = pdf
@@ -265,14 +324,14 @@ pub fn serialize_pdf<W: Write>(
                 })
                 .collect::<Vec<_>>();
 
-            page_resources.set(
-                "Annots",
-                Array(
-                    links
-                        .iter()
-                        .map(|l| Dictionary(link_annotation_to_dict(l, &page_ids_reserved)))
-                        .collect(),
-                ),
+            // Форк: `/Annots` — ключ словаря `/Page`, а не `/Resources`.
+            // Апстрим клал массив аннотаций в ресурсы страницы, где его
+            // просмотрщики не ищут: ссылки молча оставались некликабельными.
+            let annots = Array(
+                links
+                    .iter()
+                    .map(|l| Dictionary(link_annotation_to_dict(l, &page_ids_reserved)))
+                    .collect(),
             );
 
             page_resources.set("Font", Reference(global_font_dict_id));
@@ -292,7 +351,7 @@ pub fn serialize_pdf<W: Write>(
             let merged_layer_stream =
                 LoStream::new(LoDictionary::new(), layer_stream).with_compression(true);
 
-            let page_obj = LoDictionary::from_iter(vec![
+            let mut page_entries: Vec<(&str, lopdf::Object)> = vec![
                 ("Type", "Page".into()),
                 ("MediaBox", page.get_media_box()),
                 ("TrimBox", page.get_trim_box()),
@@ -300,7 +359,12 @@ pub fn serialize_pdf<W: Write>(
                 ("Parent", Reference(pages_id)),
                 ("Resources", Reference(doc.add_object(page_resources))),
                 ("Contents", Reference(doc.add_object(merged_layer_stream))),
-            ]);
+            ];
+            // Форк: аннотации принадлежат странице; пустой массив не пишем.
+            if !links.is_empty() {
+                page_entries.push(("Annots", annots));
+            }
+            let page_obj = LoDictionary::from_iter(page_entries);
 
             doc.set_object(*page_id, page_obj);
 
@@ -412,7 +476,7 @@ pub fn serialize_pdf_into_bytes(
     std::mem::drop(writer);
     bytes
 }
-fn get_used_internal_fonts(pages: &[PdfPage]) -> BTreeSet<BuiltinFont> {
+pub(crate) fn get_used_internal_fonts(pages: &[PdfPage]) -> BTreeSet<BuiltinFont> {
     pages
         .iter()
         .flat_map(|p| {
@@ -1212,7 +1276,7 @@ fn add_font_to_pdf(
     ])
 }
 
-fn docinfo_to_dict(m: &PdfDocumentInfo) -> LoDictionary {
+pub(crate) fn docinfo_to_dict(m: &PdfDocumentInfo) -> LoDictionary {
     let trapping = if m.trapped { "True" } else { "False" };
     let gts_pdfx_version = m.conformance.get_identifier_string();
 
@@ -1282,7 +1346,7 @@ fn icc_to_stream(val: &IccProfile) -> LoStream {
     LoStream::new(stream_dict, val.icc.clone())
 }
 
-fn link_annotation_to_dict(la: &LinkAnnotation, page_ids: &[lopdf::ObjectId]) -> LoDictionary {
+pub(crate) fn link_annotation_to_dict(la: &LinkAnnotation, page_ids: &[lopdf::ObjectId]) -> LoDictionary {
     let ll = la.rect.lower_left();
     let ur = la.rect.upper_right();
 
@@ -1356,7 +1420,7 @@ fn color_array_to_f32(c: &ColorArray) -> Vec<f32> {
 }
 
 // Encode text to UTF-16BE with BOM
-fn encode_text_to_utf16be(text: &str) -> lopdf::Object {
+pub(crate) fn encode_text_to_utf16be(text: &str) -> lopdf::Object {
     // Byte Order Mark
     let mut bytes = vec![0xFE, 0xFF];
 

@@ -68,6 +68,10 @@ use utils::*;
 /// Core utils for writing PDF
 pub mod serialize;
 pub use serialize::*;
+/// Потоковая запись PDF: страницы пишутся по одной, без накопления в памяти
+/// (правка форка, ADR-0010)
+pub mod streaming;
+pub use streaming::*;
 /// Core utils for parsing PDF
 pub mod deserialize;
 pub use deserialize::*;

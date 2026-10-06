@@ -18,11 +18,10 @@ wasm-pack build crates/wasm \
   --out-name doc_converter_wasm \
   --release
 
-# В pkg/ этого модуля попадают пять чужих экспортов Pdf_*Sync: printpdf
-# компилирует свой wasm-API без cfg-гейта (wasm/mod.rs, `pub mod api`), а
-# wasm-bindgen тянет #[wasm_bindgen]-элементы из всего графа зависимостей.
-# Это ожидаемо и перечислено в allowlist шага «check wasm exports» в
-# .github/workflows/ci.yml; уйдёт, когда форк закроет API фичей js-sys (ADR-0010).
+# wasm-bindgen собирает #[wasm_bindgen]-элементы из всего графа зависимостей,
+# поэтому wasm-API printpdf закрыт в форке гейтом фичи js-sys
+# (vendor/printpdf/src/wasm/mod.rs) — иначе пять чужих Pdf_*Sync попадали
+# и в pkg этого модуля.
 wasm-pack build crates/pdf-wasm \
   --target web \
   --out-dir "$ROOT/packages/wasm-pdf/pkg" \
