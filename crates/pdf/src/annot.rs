@@ -15,7 +15,7 @@
 //! поэтому лист и есть минимальный осмысленный уровень дерева.
 
 use doc_converter_xlsx::layout::SheetLayout;
-use doc_converter_xlsx::{CellRef, HyperlinkTarget, Range, Sheet};
+use doc_converter_xlsx::{CellRef, Comment, HyperlinkTarget, Range, Sheet};
 use printpdf::{Actions, Destination, LinkAnnotation, Op, PdfDocument};
 
 use crate::layout::{PageGeometry, RectPx};
@@ -61,6 +61,61 @@ pub(crate) fn page_annotations(
         });
     }
     ops
+}
+
+/// Примечание и страница, на которую попала его ячейка.
+///
+/// Запись одна на примечание; `page` — номер страницы PDF (с единицы) и
+/// прямоугольник на ней в координатах страницы, пиксели раскладки. `None` —
+/// ячейка не напечатана ни на одной странице; запись всё равно остаётся в
+/// списке, чтобы потеря не обнаруживалась молча по недостаче.
+// Пока читает только тест: `/Text`-аннотацию пишет следующий срез E4.
+#[allow(dead_code)]
+pub(crate) struct CommentPlacement<'a> {
+    /// Примечание из книги: текст, автор и адрес ячейки.
+    pub comment: &'a Comment,
+    /// Страница и прямоугольник ячейки; `None` — ячейка не попала в печать.
+    pub page: Option<(usize, RectPx)>,
+}
+
+/// Сопоставить примечания листа страницам: страница, прямоугольник и текст.
+///
+/// Страницу выбирает тот же механизм, что и у ссылки ([`link_rect_on_page`]):
+/// первая страница, на которой напечатаны и строка, и столбец ячейки. Поэтому
+/// примечание в повторяемой шапке привязано к первой странице, а не размножено
+/// по всем: `/Text`-аннотация — одна на примечание, так её и считает `DoD` E4,
+/// тогда как ссылку надо нажимать на каждой странице, где видна ячейка.
+///
+/// Прямоугольник — в координатах страницы, пиксели раскладки, как у ссылок:
+/// перед записью в PDF его прогоняет `PageGeometry::rect_to_pt` страницы,
+/// собранной с `with_page_top_px(slice.offset_y)`. Ячейка, закрытая чужим
+/// объединением, не печатается, как и её содержимое, — примечание на ней
+/// остаётся без страницы.
+#[allow(dead_code)]
+// Пока читает только тест: `/Text`-аннотацию пишет следующий срез E4.
+#[must_use]
+pub(crate) fn comment_placements<'a>(
+    sheet: &'a Sheet,
+    layout: &SheetLayout,
+    pages: &[SheetPage<'_>],
+) -> Vec<CommentPlacement<'a>> {
+    sheet
+        .comments
+        .iter()
+        .map(|comment| {
+            let cell = Range {
+                first: comment.cell,
+                last: comment.cell,
+            };
+            CommentPlacement {
+                comment,
+                page: pages.iter().enumerate().find_map(|(index, page)| {
+                    link_rect_on_page(sheet, layout, &page.slice, cell)
+                        .map(|rect| (index + 1, rect))
+                }),
+            }
+        })
+        .collect()
 }
 
 /// Лист в раскладке экспорта: имя и число занятых страниц.
@@ -251,7 +306,15 @@ fn union_rect(a: RectPx, b: RectPx) -> RectPx {
 
 #[cfg(test)]
 mod tests {
-    use super::{add_outline, SheetSpan};
+    use super::{add_outline, comment_placements, SheetSpan};
+    use crate::layout::PageGeometry;
+    use crate::options::{Margins, PageConfig, PageSize};
+    use crate::pagination::{paginate, print_scale, SheetPagination};
+    use doc_converter_xlsx::layout::SheetLayout;
+    use doc_converter_xlsx::{
+        Cell, CellRef, CellValue, Comment, SharedStrings, Sheet, SheetContent, SheetState,
+        StyleTable, Theme, Workbook, WorksheetBuilder, WorksheetMeta,
+    };
     use lopdf::{Dictionary, Document, Object, ObjectId};
     use printpdf::{Mm, PdfDocument, PdfPage, PdfSaveOptions};
     use std::collections::BTreeMap;
@@ -457,6 +520,170 @@ mod tests {
         assert_eq!(
             pdf_outline(&pdf),
             [("Лист1".to_owned(), 1), ("Лист2".to_owned(), 3)]
+        );
+    }
+
+    /// Часть пакета синтетического листа; нужна только текстам ошибок.
+    const PART: &str = "xl/worksheets/sheet1.xml";
+
+    /// Книга с одним листом: ячейки и примечания — `(строка, столбец, текст)`.
+    fn commented_book(cells: &[(u32, u32, &str)], comments: &[(u32, u32, &str)]) -> Workbook {
+        let mut builder = WorksheetBuilder::new(PART);
+        for (row, col, text) in cells {
+            builder
+                .push(
+                    *row,
+                    Cell::new(*col, 0, CellValue::InlineString((*text).into())),
+                )
+                .expect("ячейка");
+        }
+        let content = SheetContent {
+            cells: builder.finish(),
+            comments: comments
+                .iter()
+                .map(|(row, col, text)| Comment {
+                    cell: CellRef::new(*row, *col),
+                    author: None,
+                    text: (*text).into(),
+                })
+                .collect(),
+            ..SheetContent::default()
+        };
+        let meta = WorksheetMeta {
+            name: "Лист".into(),
+            part: PART.into(),
+            state: SheetState::Visible,
+        };
+        Workbook::new(
+            vec![Sheet::new(meta, content)],
+            SharedStrings::default(),
+            StyleTable::default(),
+            Theme::default(),
+            false,
+        )
+    }
+
+    /// Настройки страницы высотой в `content_rows` строк листа; ширина — с
+    /// запасом. Вызывающий берёт число строк плюс полстроки, чтобы разрыв не
+    /// сдвинуло округление `f32`.
+    fn short_page(sheet: &Sheet, content_rows: f32) -> PageConfig {
+        let layout = SheetLayout::new(sheet);
+        let row_h = layout.row_y(1) - layout.row_y(0);
+        let h_mm = content_rows * row_h * 0.75 * 25.4 / 72.0;
+        PageConfig {
+            size: PageSize::Custom { w_mm: 100.0, h_mm },
+            margins: Margins {
+                top_mm: 0.0,
+                right_mm: 0.0,
+                bottom_mm: 0.0,
+                left_mm: 0.0,
+            },
+            ..PageConfig::default()
+        }
+    }
+
+    /// Разложить лист книги так же, как painter: масштаб уже с учётом
+    /// [`print_scale`], геометрия — итоговая.
+    fn paginated<'a>(book: &'a Workbook, cfg: &PageConfig) -> (SheetLayout, SheetPagination<'a>) {
+        let sheet = &book.sheets()[0];
+        let layout = SheetLayout::new(sheet);
+        let mut cfg = cfg.clone();
+        cfg.scale = print_scale(&cfg, sheet, &layout);
+        let page = PageGeometry::new(&cfg);
+        let pages = paginate(book, sheet, &layout, &page, &cfg);
+        (layout, pages)
+    }
+
+    /// Примечание едет за своей ячейкой: уехавшей на вторую страницу — вторая
+    /// страница и прямоугольник её строки.
+    #[test]
+    fn comment_follows_cell_to_second_page() {
+        let book = commented_book(
+            &[(0, 0, "первая"), (1, 0, "вторая")],
+            &[
+                (0, 0, "примечание к первой"),
+                (1, 0, "примечание ко второй"),
+            ],
+        );
+        let (layout, pagination) = paginated(&book, &short_page(&book.sheets()[0], 1.5));
+        assert_eq!(pagination.pages.len(), 2, "каждая строка — своя страница");
+
+        let sheet = &book.sheets()[0];
+        let found = comment_placements(sheet, &layout, &pagination.pages);
+        assert_eq!(found.len(), 2, "примечания не потерялись");
+
+        let (page, rect) = found[1].page.expect("вторая ячейка напечатана");
+        assert_eq!(page, 2, "примечание уехало вместе с ячейкой");
+        assert!((rect.x - layout.column_x(0)).abs() < 1e-3, "{rect:?}");
+        assert!(
+            (rect.y - layout.row_y(1)).abs() < 1e-3,
+            "прямоугольник — на строке ячейки: {rect:?}"
+        );
+        assert!(
+            (rect.h - (layout.row_y(2) - layout.row_y(1))).abs() < 1e-3,
+            "высота — строка ячейки: {rect:?}"
+        );
+
+        let (first, _) = found[0].page.expect("первая ячейка напечатана");
+        assert_eq!(first, 1);
+    }
+
+    /// Ячейка вне напечатанного диапазона оставляет примечание без страницы,
+    /// но не выбрасывает его: потеря должна быть видна вызывающему.
+    ///
+    /// Так выглядит примечание на пустой ячейке за `used_range` — например,
+    /// содержимое стёрли, а примечание осталось. `fit_to_width` такого дать не
+    /// может: он ужимает лист, а не обрезает столбцы, поэтому непопадание даёт
+    /// только ячейка вне занятого диапазона — печатается лишь он.
+    #[test]
+    fn comment_outside_used_range_has_no_page() {
+        let book = commented_book(
+            &[(0, 0, "первая"), (1, 0, "вторая")],
+            &[(9, 0, "оставшееся")],
+        );
+        let (layout, pagination) = paginated(&book, &short_page(&book.sheets()[0], 1.5));
+
+        let sheet = &book.sheets()[0];
+        let found = comment_placements(sheet, &layout, &pagination.pages);
+        assert_eq!(found.len(), 1, "примечание не потерялось");
+        assert_eq!(found[0].comment.text, "оставшееся");
+        assert_eq!(found[0].page, None, "печатать его негде");
+    }
+
+    /// Примечание в повторяемой шапке привязано к первой странице, а не
+    /// размножено по всем страницам, где шапка повторяется.
+    ///
+    /// Примечание — одно на книгу: `/Text`-аннотацию `DoD` E4 считает против
+    /// числа примечаний, и копия на каждой странице разошлась бы с ним. Ссылка
+    /// в шапке ведёт себя иначе (аннотация на каждой странице): её нажимают
+    /// там, где видна ячейка, а примечание лишь отдаёт текст.
+    #[test]
+    fn header_comment_is_pinned_to_first_page() {
+        let book = commented_book(
+            &[(0, 0, "шапка"), (1, 0, "a"), (2, 0, "b"), (3, 0, "c")],
+            &[(0, 0, "сноска к шапке")],
+        );
+        let mut cfg = short_page(&book.sheets()[0], 2.5);
+        cfg.repeat_header_rows = 1;
+        let (layout, pagination) = paginated(&book, &cfg);
+        assert_eq!(
+            pagination.pages.len(),
+            3,
+            "по строке на страницу, шапка сверху"
+        );
+
+        let sheet = &book.sheets()[0];
+        let found = comment_placements(sheet, &layout, &pagination.pages);
+        assert_eq!(found.len(), 1, "одно примечание — одна запись");
+        let (page, rect) = found[0].page.expect("шапка напечатана");
+        assert_eq!(page, 1, "первая страница, а не каждая с шапкой");
+        assert!(
+            (rect.y - layout.row_y(0)).abs() < 1e-3,
+            "прямоугольник — на строке шапки: {rect:?}"
+        );
+        assert!(
+            (rect.h - (layout.row_y(1) - layout.row_y(0))).abs() < 1e-3,
+            "высота — строка шапки: {rect:?}"
         );
     }
 }
