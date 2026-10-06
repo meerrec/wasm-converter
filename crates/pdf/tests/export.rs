@@ -2,13 +2,20 @@
 //!
 //! Фикстуры — те же книги из `test-fixtures/xlsx`, что и у `crates/xlsx`
 //! (собраны `scripts/gen-fixtures.ts`). Проверки структурные: файл парсится
-//! `lopdf`, страница одна, текст извлекается по `ToUnicode` — то же, что
-//! делает `pdftotext` в приёмке спринта.
+//! `lopdf`, текст извлекается по `ToUnicode` — то же, что делает `pdftotext`
+//! в приёмке спринта.
+//!
+//! Совпадение точек переноса с canvas-путём (DoD «Единая логика переноса»)
+//! проверяется сравнением строк текста, а не пикселей: обе стороны рисуют
+//! по `break_lines`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use doc_converter_pdf::{PdfExporter, PdfOptions};
+use doc_converter_render::display_list::{DisplayList, DrawCommand};
+use doc_converter_render::viewport::Viewport;
+use doc_converter_xlsx::paint::PaintOptions;
 
 /// Путь к книге в `test-fixtures/xlsx`.
 fn fixture(name: &str) -> PathBuf {
@@ -441,4 +448,78 @@ fn out_of_range_sheet_is_an_error() {
     let result = PdfExporter::new(PdfOptions::default()).export_xlsx_sheet(&book, 7);
 
     assert!(result.is_err(), "несуществующий лист должен быть ошибкой");
+}
+
+/// Строки текста, которые рисует canvas-путь, в порядке кадра.
+fn canvas_lines(book: &doc_converter_xlsx::Workbook) -> Vec<String> {
+    let mut display_list = DisplayList::new();
+    let viewport = Viewport {
+        x: 0.0,
+        y: 0.0,
+        // Окно заведомо вмещает лист целиком: обрезка по краю окна — не то,
+        // что здесь проверяется.
+        w: 10_000.0,
+        h: 10_000.0,
+        scale: 1.0,
+    };
+    let options = PaintOptions {
+        show_grid: false,
+        show_headers: false,
+        ..PaintOptions::default()
+    };
+    doc_converter_xlsx::paint::build(
+        book,
+        &book.sheets()[0],
+        viewport,
+        &options,
+        &mut display_list,
+    );
+
+    (0..display_list.len())
+        .filter_map(|index| display_list.cmd(index))
+        .filter_map(|cmd| match cmd {
+            DrawCommand::Text { text, .. } => Some(display_list.string(*text).to_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// DoD «Единая логика переноса»: строки текста в PDF и на canvas совпадают.
+///
+/// Сравниваются именно точки разрыва — строки по каждой ячейке в порядке
+/// обхода, а не пиксели. Тест падает, если PDF-путь сменит кегль, ширину
+/// переноса или перестанет звать `break_lines`.
+#[test]
+fn pdf_wraps_text_exactly_like_canvas() {
+    let book = doc_converter_xlsx::open(
+        std::fs::read(fixture("text-cyrillic-wrap.xlsx")).expect("фикстура читается"),
+    )
+    .expect("книга открывается");
+
+    let canvas = canvas_lines(&book);
+    let bytes = PdfExporter::new(PdfOptions::default())
+        .export_xlsx_sheet(&book, 0)
+        .expect("лист экспортируется");
+    let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
+    let page = *doc.get_pages().values().next().expect("страница есть");
+    let pdf: Vec<String> = text_runs(&doc, page)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+
+    assert_eq!(canvas, pdf, "точки переноса PDF разошлись с canvas-путём");
+
+    // Проверка не вырождена: в фикстуре есть и перенос, и «#####».
+    assert!(
+        canvas.len() > 10,
+        "фикстура перестала переносить текст: {canvas:?}"
+    );
+    assert!(
+        canvas.iter().any(|line| line == "#####"),
+        "в фикстуре нет невоместившегося числа: {canvas:?}"
+    );
+    assert!(
+        canvas.iter().any(|line| line.contains("гидро")),
+        "в фикстуре нет длинного слова: {canvas:?}"
+    );
 }
