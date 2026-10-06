@@ -314,7 +314,9 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       try {
         // Первый клик платит за загрузку модуля; дальше он уже в памяти.
         const mod = await loadPdfWasm(urls);
-        const bytes = mod.export_pdf(new Uint8Array(source), msg.sheet, msg.options);
+        const bytes = msg.options.allSheets
+          ? mod.export_pdf_book(new Uint8Array(source), msg.options)
+          : mod.export_pdf(new Uint8Array(source), msg.sheet, msg.options);
         post({ type: 'pdf', id: msg.id, bytes }, [bytes.buffer]);
       } catch (e) {
         // Ошибка экспорта — ответ, а не падение воркера: книга остаётся открытой.

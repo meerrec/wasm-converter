@@ -73,6 +73,16 @@ impl FaceSet {
     pub fn contains(self, face: Face) -> bool {
         self.0[face.index()]
     }
+
+    /// Добавить все начертания другого набора.
+    ///
+    /// Наборы собираются по листам, а шрифты встраиваются один раз на
+    /// документ: книге нужен общий набор, а не по листу.
+    pub fn merge(&mut self, other: Self) {
+        for (slot, present) in self.0.iter_mut().zip(other.0) {
+            *slot |= present;
+        }
+    }
 }
 
 /// Шрифт, встроенный в документ printpdf.

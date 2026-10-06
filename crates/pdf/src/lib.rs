@@ -34,6 +34,9 @@ pub(crate) enum PdfError {
     /// Лист с таким индексом в книге не найден.
     #[error("sheet index {0} is out of range")]
     NoSuchSheet(usize),
+    /// В книге нет ни одного листа.
+    #[error("workbook has no sheets")]
+    NoSheets,
     /// Шрифт не разобран `printpdf`.
     #[error("invalid font data: {0}")]
     Font(String),
@@ -104,6 +107,46 @@ impl PdfExporter {
         out: &mut W,
     ) -> Result<()> {
         painter::export_to(wb, sheet, &self.opts, out)
+            .map_err(|err| doc_converter_core::Error::Export(format!("pdf: {err}")))
+    }
+
+    /// Экспортировать книгу целиком в один PDF: листы идут подряд, закладка
+    /// (при `PdfOptions::bookmarks`) ведёт на первую страницу каждого.
+    ///
+    /// Выход — один документ, а не файл на лист, и не архив: так печатает
+    /// книгу Excel («печать всей книги»), закладка на лист остаётся навигацией
+    /// по книге, а приём байтов не требует ни zip, ни расшифровки формата на
+    /// стороне интерфейса. Свойства страниц у листов общие (настройки
+    /// [`PdfOptions`]); масштаб `fit_to_width`/`fit_to_height` считается на
+    /// лист.
+    ///
+    /// # Errors
+    /// [`doc_converter_core::Error::Export`], если в книге нет листов или
+    /// printpdf не смог собрать документ.
+    pub fn export_xlsx_book(&mut self, wb: &doc_converter_xlsx::Workbook) -> Result<Vec<u8>> {
+        let mut pdf = Vec::new();
+        painter::export_book_to(wb, &[], &self.opts, &mut pdf)
+            .map_err(|err| doc_converter_core::Error::Export(format!("pdf: {err}")))?;
+        Ok(pdf)
+    }
+
+    /// Экспортировать книгу в приёмник байтов.
+    ///
+    /// Отличие от [`PdfExporter::export_xlsx_book`] — только в том же, в чём у
+    /// [`PdfExporter::export_xlsx_sheet_to`]: страницы уходят в приёмник по
+    /// мере сборки, и содержимое страницы освобождается сразу после записи.
+    /// Пик самого приёмника — его дело (файл не буферизуется, `Vec<u8>` —
+    /// буферизуется целиком).
+    ///
+    /// # Errors
+    /// [`doc_converter_core::Error::Export`], если в книге нет листов,
+    /// printpdf не смог собрать документ или приёмник вернул ошибку записи.
+    pub fn export_xlsx_book_to<W: Write>(
+        &mut self,
+        wb: &doc_converter_xlsx::Workbook,
+        out: &mut W,
+    ) -> Result<()> {
+        painter::export_book_to(wb, &[], &self.opts, out)
             .map_err(|err| doc_converter_core::Error::Export(format!("pdf: {err}")))
     }
 }
