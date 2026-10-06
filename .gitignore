@@ -13,6 +13,9 @@ test-results/
 # Cargo
 Cargo.lock.orig
 **/*.rs.bk
+# Побочный продукт автономного прогона тестов форка; поставка в workspace
+# пиньтся корневым Cargo.lock
+vendor/printpdf/Cargo.lock
 
 # WASM/JS bindings gen
 crates/wasm/pkg/
