@@ -36,6 +36,12 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # PDF-тесты сверяют вывод системными утилитами; только на x86_64,
+      # в wasm32-ноге матрицы тесты не гоняются.
+      - name: pdf tooling
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qpdf poppler-utils
+
       - name: test
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: cargo test --workspace --all-features
@@ -96,7 +102,7 @@ jobs:
       # Сквозные тесты примера идут в настоящем браузере: без него они падают
       # не от ошибки в коде, а от отсутствия браузера. Ставится на обе ноги
       # матрицы — `turbo run test` запускает их при любой версии Node.
-      - run: pnpm --filter @doc-converter/example-viewer-xlsx exec playwright install --with-deps chromium
+      - run: pnpm --filter @doc-converter/example-viewer-xlsx exec playwright install --with-deps chromium firefox webkit
 
       - run: pnpm turbo run typecheck test build
       - if: matrix.node == 20
