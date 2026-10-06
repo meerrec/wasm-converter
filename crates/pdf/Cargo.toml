@@ -18,3 +18,9 @@ printpdf             = { workspace = true }
 # на самом деле. См. docs/adr/0002-font-parsing.md.
 flate2               = { workspace = true }
 thiserror            = { workspace = true }
+
+[dev-dependencies]
+# 0.35 с теми же фичами, что у printpdf 0.8.2 (`nom_parser`, без default):
+# та же версия не заводит в дереве вторую копию lopdf, а `rayon` из её
+# default-фич в тестах не нужен (проверено по Cargo.lock).
+lopdf = { version = "0.35", default-features = false, features = ["nom_parser"] }

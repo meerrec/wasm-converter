@@ -29,6 +29,16 @@ pub const DEFAULT_FONT_ID: FontId = 0;
 /// согласованной с шириной колонок. Лицензия SIL OFL 1.1 — `fonts/OFL.txt`.
 const DEFAULT_FONT: &[u8] = include_bytes!("fonts/carlito-subset.ttf");
 
+/// Байты шрифта по умолчанию.
+///
+/// Нужен потребителям, которые встраивают тот же шрифт в свой формат вывода
+/// (PDF-экспорт, `crates/pdf`): держать вторую копию `include_bytes!` они не
+/// должны, иначе шрифты экрана и экспорта разъедутся.
+#[must_use]
+pub fn default_font_bytes() -> &'static [u8] {
+    DEFAULT_FONT
+}
+
 /// Ключ LRU-кэша: метрика зависит от шрифта, глифа и кегля.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct GlyphKey {
