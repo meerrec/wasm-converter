@@ -569,6 +569,8 @@ impl<'r> SheetParser<'r> {
             view: self.view,
             merges: self.merges,
             hyperlinks: self.hyperlinks,
+            // Примечания лежат в отдельной части: их подставляет `open`.
+            comments: Vec::new(),
             conditional_formatting: self.conditional_formatting,
             // Картинки лежат в отдельной части пакета: их подставляет `open`.
             images: Vec::new(),

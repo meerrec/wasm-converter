@@ -68,6 +68,42 @@ jobs:
       - run: cargo install wasm-pack --locked
       - run: bash scripts/build-wasm.sh
 
+      # I3: .d.ts не должен объявлять экспорты, которых нет в крейте.
+      # wasm-bindgen собирает `#[wasm_bindgen]`-элементы из всего графа
+      # зависимостей, а printpdf 0.8.2 компилирует свой wasm-API
+      # (src/wasm/mod.rs, `pub mod api`) без cfg-гейта — поэтому в модуль при
+      # каждой сборке попадают пять чужих `Pdf_*Sync`. Они перечислены
+      # в allowlist ниже; любое другое расхождение — ошибка. Форк (ADR-0010),
+      # закрывший это API гейтом, должен убрать allowlist.
+      - name: check wasm exports
+        run: |
+          set -euo pipefail
+          dts=packages/wasm-pdf/pkg/doc_converter_pdf_wasm.d.ts
+
+          expected=$(grep -rhA1 '^#\[wasm_bindgen\]' crates/pdf-wasm/src --include='*.rs' \
+            | grep -oE 'pub fn [a-z_][a-z0-9_]*' | awk '{print $3}' | sort -u || true)
+          [ -n "$expected" ] || { echo "::error::в crates/pdf-wasm не найдено #[wasm_bindgen] pub fn"; exit 1; }
+
+          # initSync — служебный конструктор wasm-bindgen, не экспорт крейта.
+          actual=$(grep -oE '^export function [A-Za-z_][A-Za-z0-9_]*' "$dts" \
+            | awk '{print $3}' | grep -vx initSync | sort -u || true)
+          [ -n "$actual" ] || { echo "::error::в $dts нет объявленных export function"; exit 1; }
+
+          leaked=$(printf '%s\n' \
+            Pdf_BytesToDocumentSync Pdf_DocumentToBytesSync Pdf_HtmlToDocumentSync \
+            Pdf_PageToSvgSync Pdf_ResourcesForPageSync)
+
+          unexpected=$(comm -23 <(printf '%s\n' "$actual") <(printf '%s\n%s\n' "$expected" "$leaked" | sort -u))
+          missing=$(comm -23 <(printf '%s\n' "$expected") <(printf '%s\n' "$actual"))
+
+          if [ -n "$unexpected" ] || [ -n "$missing" ]; then
+            echo "::error::$dts разошёлся с экспортами crates/pdf-wasm"
+            [ -z "$unexpected" ] || printf 'лишние экспорты в .d.ts:\n%s\n' "$unexpected"
+            [ -z "$missing" ] || printf 'нет экспортов крейта:\n%s\n' "$missing"
+            exit 1
+          fi
+          echo "OK: экспорты .d.ts совпадают с crates/pdf-wasm"
+
       - uses: actions/upload-artifact@v4
         with:
           name: wasm-pkg

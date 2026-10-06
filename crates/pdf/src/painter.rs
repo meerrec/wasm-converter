@@ -4,48 +4,27 @@
 //! сначала заливки, поверх них рамки, поверх всего текст. Поэтому обход листа
 //! идёт тремя проходами по заранее собранному списку ячеек, а не одним.
 //!
-//! Лист длиннее страницы печатается несколькими страницами: строки делятся на
-//! страницы до отрисовки ([`paginate`]), каждая страница получает свою
-//! геометрию со сдвигом по вертикали. Разбивка по столбцам — Спринт 7.
+//! Лист режется на страницы заранее ([`crate::pagination`]): сюда приходит
+//! срез страницы и её ячейки, отсюда — только геометрия и операции.
 //!
 //! Ещё не перенесены настройки [`PdfOptions`], за которыми стоит заметная
-//! работа: сетка (`print_grid_lines`), `fit_to_width`, повтор заголовков,
-//! закреплённые области, картинки и диаграммы — следующие срезы спринта.
+//! работа: сетка (`print_grid_lines`), закреплённые области, картинки и
+//! диаграммы — следующие срезы спринта.
 
 use doc_converter_render::font::FontRegistry;
 use doc_converter_xlsx::layout::{SheetLayout, PX_PER_POINT};
 use doc_converter_xlsx::paint::display_text;
-use doc_converter_xlsx::{Cell, CellRef, CellValue, Sheet, Workbook};
+use doc_converter_xlsx::{CellValue, Workbook};
 use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg, Pt};
 
-use crate::fonts::{EmbeddedFonts, Face, FaceSet};
+use crate::fonts::{EmbeddedFonts, Face};
 use crate::layout::{PageGeometry, RectPx};
 use crate::options::PdfOptions;
-use crate::styles::{self, CellStyle};
+use crate::pagination::{paginate, print_scale, PageSlice, PaintedCell, SheetPage};
 use crate::{background, border, fonts, text, PdfError};
 
 /// Размер LRU-кэша метрик: столько же, сколько у canvas-пути.
 const FONT_CACHE: usize = 4096;
-
-/// Ячейка, готовая к отрисовке: ссылка на модель, её прямоугольник и стиль.
-struct PaintedCell<'a> {
-    cell: &'a Cell,
-    rect: RectPx,
-    style: CellStyle,
-}
-
-/// Ячейки одной страницы и её верх в пикселях раскладки.
-struct SheetPage<'a> {
-    /// Верх страницы в координатах листа; вычитается при записи операций.
-    top_px: f32,
-    cells: Vec<PaintedCell<'a>>,
-}
-
-/// Лист, разбитый на страницы, и начертания, которые на них встретились.
-struct SheetPagination<'a> {
-    faces: FaceSet,
-    pages: Vec<SheetPage<'a>>,
-}
 
 /// Открыть лист книги и собрать PDF всеми его страницами.
 ///
@@ -62,7 +41,11 @@ pub fn export(
         .get(sheet_index)
         .ok_or(PdfError::NoSuchSheet(sheet_index))?;
     let layout = SheetLayout::new(sheet);
-    let page = PageGeometry::new(&options.page);
+    // `fit_to_width` пересчитывает масштаб до сборки геометрии: от него зависят
+    // и полосы, и координаты ячеек.
+    let mut page_cfg = options.page.clone();
+    page_cfg.scale = print_scale(&page_cfg, sheet, &layout);
+    let page = PageGeometry::new(&page_cfg);
 
     let title = if options.title.is_empty() {
         sheet.meta.name.clone()
@@ -75,12 +58,14 @@ pub fn export(
     doc.metadata.info.keywords.clone_from(&options.keywords);
 
     let mut warnings: Vec<PdfWarnMsg> = Vec::new();
-    let pagination = paginate(book, sheet, &layout, &page);
+    // `page_cfg` несёт и масштаб, и повтор шапки/первых столбцов: пагинация
+    // читает их одним конфигом, а геометрия — уже с итоговым масштабом.
+    let pagination = paginate(book, sheet, &layout, &page, &page_cfg);
     let fonts = fonts::embed(&mut doc, &mut warnings, pagination.faces)?;
     let mut registry = FontRegistry::new(FONT_CACHE);
 
     for sheet_page in &pagination.pages {
-        let page_geom = page.with_page_top_px(sheet_page.top_px);
+        let page_geom = page.with_page_top_px(sheet_page.slice.offset_y);
         let mut ops: Vec<Op> = Vec::new();
         draw_page(
             &mut ops,
@@ -88,7 +73,7 @@ pub fn export(
             &fonts,
             &page_geom,
             book,
-            &sheet_page.cells,
+            sheet_page,
         );
         doc.with_pages(vec![PdfPage::new(
             Mm::from(Pt(page_geom.width_pt())),
@@ -105,35 +90,61 @@ pub fn export(
     Ok(doc.save(&save, &mut warnings))
 }
 
+/// Прямоугольник ячейки в координатах страницы: из координат листа вычитается
+/// сдвиг среза ([`PageSlice::offset_x`] — по горизонтали, `offset_y` делает
+/// геометрия) и прибавляется сдвиг центрирования, посчитанный пагинацией.
+///
+/// Сдвиг центрирования получают все ячейки страницы, и потока, и повторяемые
+/// части: их прямоугольники уже приведены к началу координат страницы, поэтому
+/// общий сдвиг двигает полосу набора целиком.
+fn page_rect(rect: RectPx, slice: &PageSlice) -> RectPx {
+    RectPx::new(
+        rect.x - slice.offset_x + slice.center_x_px,
+        rect.y + slice.center_y_px,
+        rect.w,
+        rect.h,
+    )
+}
+
 /// Записать ячейки страницы в её операции.
 ///
 /// Начертание выбирается по стилю ячейки, но лишь для записи текста: кегль и
 /// перенос считает regular, как canvas-путь.
+///
+/// Прямоугольники ячеек приходят в координатах листа, поэтому сдвиг полосы
+/// столбцов вычитается здесь: у [`PageGeometry`] сдвига по горизонтали нет, а по
+/// вертикали его делает `with_page_top_px`.
 fn draw_page(
     ops: &mut Vec<Op>,
     registry: &mut FontRegistry,
     fonts: &EmbeddedFonts,
     page: &PageGeometry,
     book: &Workbook,
-    cells: &[PaintedCell<'_>],
+    sheet_page: &SheetPage<'_>,
 ) {
-    for painted in cells {
+    let on_page = |painted: &PaintedCell<'_>| page_rect(painted.rect, &sheet_page.slice);
+    for painted in &sheet_page.cells {
         if let Some(color) = painted.style.fill {
-            background::fill_rect(ops, page.rect_to_pt(painted.rect), page.height_pt(), color);
+            background::fill_rect(
+                ops,
+                page.rect_to_pt(on_page(painted)),
+                page.height_pt(),
+                color,
+            );
         }
     }
-    for painted in cells {
+    for painted in &sheet_page.cells {
         if border::is_visible(&painted.style.border) {
             border::draw_border(
                 ops,
-                page.rect_to_pt(painted.rect),
+                page.rect_to_pt(on_page(painted)),
                 page.height_pt(),
                 &painted.style.border,
                 book.theme(),
             );
         }
     }
-    for painted in cells {
+    for painted in &sheet_page.cells {
         let cell = painted.cell;
         let Some(mut value) = display_text(book, cell, painted.style.number_format) else {
             continue;
@@ -141,14 +152,10 @@ fn draw_page(
         if value.is_empty() {
             continue;
         }
+        let rect = on_page(painted);
         if matches!(cell.value, CellValue::Number(_)) {
             let size_px = painted.style.font_size_pt * PX_PER_POINT * page.scale();
-            value = text::clip_number(
-                value,
-                size_px,
-                text::inner_width_px(page, painted.rect),
-                registry,
-            );
+            value = text::clip_number(value, size_px, text::inner_width_px(page, rect), registry);
         }
         text::draw_cell_text(
             ops,
@@ -157,86 +164,59 @@ fn draw_page(
             page,
             &value,
             &painted.style,
-            painted.rect,
+            rect,
         );
     }
 }
 
-/// Разбить ячейки листа на страницы по строкам и собрать нужные начертания.
-///
-/// Строка не разрывается между страницами: как только её низ выходит за
-/// границу области содержимого, начинается новая страница — с этой строки.
-/// Высоты строк берутся из раскладки абсолютными, поэтому пустые строки
-/// занимают на странице своё место. Страницы без ячеек не создаются: первой
-/// странице задаёт верх первая строка с ячейкой, остальным — строка, на
-/// которой случился разрыв. Пустой лист — одна пустая страница.
-///
-/// Ячейка объединения рисуется один раз — на своей левой верхней: остальные
-/// пусты и отдельного текста не несут.
-fn paginate<'a>(
-    book: &Workbook,
-    sheet: &'a Sheet,
-    layout: &SheetLayout,
-    page: &PageGeometry,
-) -> SheetPagination<'a> {
-    let (max_x, max_h_px) = page.content_px();
-    let mut faces = FaceSet::default();
-    let mut pages: Vec<SheetPage<'a>> = Vec::new();
-    for (row, row_cells) in sheet.cells.rows() {
-        let top_px = layout.row_y(row);
-        let bottom_px = layout.row_y(row + 1);
-        let breaks = match pages.last() {
-            None => true,
-            Some(current) => bottom_px > current.top_px + max_h_px,
-        };
-        if breaks {
-            pages.push(SheetPage {
-                top_px,
-                cells: Vec::new(),
-            });
-        }
-        let Some(current) = pages.last_mut() else {
-            continue;
-        };
-        for cell in row_cells {
-            let Some(rect) = cell_rect(sheet, layout, cell.at(row)) else {
-                continue;
-            };
-            if rect.w <= 0.0 || rect.h <= 0.0 {
-                continue;
-            }
-            // Правее области содержимого: разбивка по столбцам — Спринт 7.
-            if rect.x >= max_x {
-                continue;
-            }
-            let style = styles::resolve(book, cell);
-            faces.insert(Face::of(style.bold, style.italic));
-            current.cells.push(PaintedCell { cell, rect, style });
-        }
-    }
-    if pages.is_empty() {
-        pages.push(SheetPage {
-            top_px: 0.0,
-            cells: Vec::new(),
-        });
-    }
-    SheetPagination { faces, pages }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::options::PageConfig;
 
-/// Прямоугольник ячейки в пикселях раскладки; `None` — ячейку закрывает
-/// объединение, её левая верхняя рисуется отдельно.
-fn cell_rect(sheet: &Sheet, layout: &SheetLayout, at: CellRef) -> Option<RectPx> {
-    let (first, last) = match sheet.merges.covering(at) {
-        Some(range) if range.first != at => return None,
-        Some(range) => (range.first, range.last),
-        None => (at, at),
-    };
-    let x = layout.column_x(first.col);
-    let y = layout.row_y(first.row);
-    Some(RectPx::new(
-        x,
-        y,
-        layout.column_x(last.col + 1) - x,
-        layout.row_y(last.row + 1) - y,
-    ))
+    /// Срез страницы без полос и повторов: важны только сдвиги.
+    fn plain_slice() -> PageSlice {
+        PageSlice {
+            rows: 0..0,
+            cols: 0..0,
+            header_rows: 0..0,
+            repeat_cols: 0..0,
+            offset_y: 0.0,
+            offset_x: 0.0,
+            center_x_px: 0.0,
+            center_y_px: 0.0,
+        }
+    }
+
+    /// Центрирование сдвигает прямоугольник в точках: 96 px раскладки при 100%
+    /// — это 72 pt, значит половинный сдвиг в 48 px — 36 pt.
+    #[test]
+    fn centering_shifts_cell_rect_in_points() {
+        let page = PageGeometry::new(&PageConfig::default());
+        let rect = RectPx::new(0.0, 0.0, 96.0, 96.0);
+        let plain = page.rect_to_pt(page_rect(rect, &plain_slice()));
+
+        let mut slice = plain_slice();
+        slice.center_x_px = 48.0;
+        slice.center_y_px = 48.0;
+        let centered = page.rect_to_pt(page_rect(rect, &slice));
+
+        let dx = centered.x - plain.x;
+        let dy = centered.y - plain.y;
+        assert!((dx - 36.0).abs() < 1e-3, "сдвиг по x: {dx} pt");
+        assert!((dy - 36.0).abs() < 1e-3, "сдвиг по y: {dy} pt");
+    }
+
+    /// Срез вычитается до центрирования: сдвиг возвращает ячейку к левому краю
+    /// полосы, и лишь потом она уезжает к середине страницы.
+    #[test]
+    fn slice_offset_is_subtracted_before_centering() {
+        let mut slice = plain_slice();
+        slice.offset_x = 40.0;
+        slice.center_x_px = 25.0;
+        slice.center_y_px = 5.0;
+
+        let shifted = page_rect(RectPx::new(100.0, 200.0, 30.0, 10.0), &slice);
+        assert_eq!(shifted, RectPx::new(85.0, 205.0, 30.0, 10.0));
+    }
 }

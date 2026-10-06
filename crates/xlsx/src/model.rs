@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::cellref::{CellRef, Range, MAX_COL, MAX_ROW};
+use crate::comments::Comment;
 use crate::dims::SheetDims;
 use crate::drawing::{ImageAnchor, SheetImage};
 use crate::error::{Result, XlsxError};
@@ -1140,6 +1141,11 @@ pub struct SheetContent {
     pub merges: Merges,
     /// Гиперссылки.
     pub hyperlinks: Vec<Hyperlink>,
+    /// Примечания, привязанные к ячейкам.
+    ///
+    /// Заполняется [`open`](crate::open): часть листа примечаний не хранит,
+    /// а только ссылается на `xl/comments*.xml`.
+    pub comments: Vec<Comment>,
     /// Условное форматирование.
     pub conditional_formatting: Vec<ConditionalFormatting>,
     /// Изображения листа в порядке наложения: первые лежат ниже.
@@ -1178,6 +1184,8 @@ pub struct Sheet {
     pub merges: Merges,
     /// Гиперссылки.
     pub hyperlinks: Vec<Hyperlink>,
+    /// Примечания, привязанные к ячейкам.
+    pub comments: Vec<Comment>,
     /// Условное форматирование.
     pub conditional_formatting: Vec<ConditionalFormatting>,
     /// Изображения листа в порядке наложения: первые лежат ниже.
@@ -1197,6 +1205,7 @@ impl Sheet {
             view: content.view,
             merges: content.merges,
             hyperlinks: content.hyperlinks,
+            comments: content.comments,
             conditional_formatting: content.conditional_formatting,
             images: content.images,
             charts: content.charts,
@@ -1215,6 +1224,12 @@ impl Sheet {
         self.hyperlinks
             .iter()
             .find(|link| link.range.contains(cell))
+    }
+
+    /// Комментарий, привязанный к ячейке.
+    #[must_use]
+    pub fn comment_at(&self, cell: CellRef) -> Option<&Comment> {
+        self.comments.iter().find(|comment| comment.cell == cell)
     }
 }
 

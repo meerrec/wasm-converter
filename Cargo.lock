@@ -575,7 +575,6 @@ dependencies = [
  "doc-converter-docx",
  "doc-converter-render",
  "doc-converter-xlsx",
- "flate2",
  "lopdf",
  "printpdf",
  "serde",
@@ -1400,8 +1399,6 @@ dependencies = [
 [[package]]
 name = "printpdf"
 version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c008a86116be6addc2101202dccc3c59fef7760e325c3b24aaed255f075285c9"
 dependencies = [
  "allsorts-subset-browser",
  "base64",

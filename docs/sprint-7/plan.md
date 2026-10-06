@@ -186,11 +186,11 @@
 
 | ID | Задача | Артефакт | Часы | Зависит | Статус |
 | --- | --- | --- | --- | --- | --- |
-| A1 | Вынести пагинацию из `painter.rs` в `pagination.rs`, ввести срез страницы | `crates/pdf/src/pagination.rs` | 6 | — | ⬜ |
-| A2 | Разбивка по столбцам + `fit_to_width` | там же | 8 | A1 | ⬜ |
-| A3 | `repeat_header_rows`, `repeat_first_columns` | там же | 6 | A2 | ⬜ |
+| A1 | Вынести пагинацию из `painter.rs` в `pagination.rs`, ввести срез страницы | `crates/pdf/src/pagination.rs` | 6 | — | ✅ |
+| A2 | Разбивка по столбцам + `fit_to_width` | там же | 8 | A1 | ✅ |
+| A3 | `repeat_header_rows`, `repeat_first_columns` | там же | 6 | A2 | ✅ |
 | A4 | `avoid_row_break`, `orphan_rows`, `widow_rows`, `fit_to_height` | там же | 6 | A3 | ⬜ |
-| A5 | `center_horizontally`/`center_vertically`: реализовать или удалить | `crates/pdf/src/options.rs` | 3 | A1 | ⬜ |
+| A5 | `center_horizontally`/`center_vertically`: реализовать или удалить | `crates/pdf/src/options.rs` | 3 | A1 | ✅ |
 
 **A1 · 6 ч · Вынести пагинацию и ввести срез страницы.**
 Вход: `crates/pdf/src/painter.rs:176-224` (`paginate()`), `crates/pdf/src/layout.rs`, `crates/pdf/tests/export.rs`.
@@ -341,7 +341,7 @@ DoD: файл с gif не роняет экспорт; в отчёте — ст�
 | --- | --- | --- | --- | --- | --- |
 | E1 | Гиперссылки → `/Link` | `crates/pdf/src/annot.rs` | 6 | A2 | ⬜ |
 | E2 | Закладки → outline | там же | 4 | A1 | ⬜ |
-| E3 | Парсер комментариев в `crates/xlsx` | `crates/xlsx/src/comments.rs` | 8 | — | ⬜ |
+| E3 | Парсер комментариев в `crates/xlsx` | `crates/xlsx/src/comments.rs` | 8 | — | ✅ |
 | E4 | Комментарии → `/Text` | `crates/pdf/src/annot.rs` | 4 | E3 | ⬜ |
 
 **E1 · 6 ч · Гиперссылки.**
@@ -400,9 +400,9 @@ DoD: PDF валиден; водяной знак присутствует на �
 | ID | Задача | Артефакт | Часы | Зависит | Статус |
 | --- | --- | --- | --- | --- | --- |
 | G1 | ADR-0010 «форк printpdf 0.8.2: сжатие и стриминг» | `docs/adr/0010-printpdf-fork.md` | 3 | B1 | ⬜ |
-| G2 | Вендоринг: `vendor/printpdf` 0.8.2 (MIT) + `[patch.crates-io]` | `vendor/printpdf/`, корневой `Cargo.toml` | 2 | G1 | ⬜ |
-| G3 | Патч `serialize.rs`: три правки | `vendor/printpdf/src/serialize.rs` | 1 | G2 | ⬜ |
-| G4 | Регресс-тесты сжатия | `crates/pdf/tests/compression.rs` | 2 | G3 | ⬜ |
+| G2 | Вендоринг: `vendor/printpdf` 0.8.2 (MIT) + `[patch.crates-io]` | `vendor/printpdf/`, корневой `Cargo.toml` | 2 | G1 | ✅ |
+| G3 | Патч `serialize.rs`: три правки | `vendor/printpdf/src/serialize.rs` | 1 | G2 | ✅ |
+| G4 | Регресс-тесты сжатия | `crates/pdf/tests/compression.rs` | 2 | G3 | ✅ |
 | G5 | Прогон `test`/`clippy`/`deny`, перебазировка бенчей, wasm-сборка | `crates/pdf/benches/pdf.rs`, `budgets.rs`, `packages/wasm-pdf/pkg` | 2 | G4 | ⬜ |
 
 **G1 · 3 ч · ADR-0010.**
@@ -511,6 +511,16 @@ DoD: экстраполяция Спринта 6 (0,61 мс/страница →
 Вход: C5, D1, E1. Выход: расширенные спеки в chromium/firefox/webkit. DoD: 22 существующих теста зелёные + новые; тяжёлые сценарии не переносятся в e2e (решение 9).
 **J4 · 3 ч · Внешние проверки.** Вход: новые артефакты. DoD: `qpdf --check` на PDF с картинками, ссылками, аннотациями и outline; `pdftotext` на текст шапок; локально — скип с причиной.
 **J5 · 1 ч · Чек-лист.** Вход: DoD §4. Выход: `docs/sprint-7/edge-cases.md` + чек-лист в PR #12.
+
+**Заметка волны 1 (06.10.2026).** Приёмкой подтверждены и переведены в ✅: A1–A3, A5, E3, G2–G4. Блокеры (статусы затронутых задач не менялись):
+
+- **A4 не закрыта**: в репозитории нет ни одного теста на `avoid_row_break`/`orphan_rows`/`widow_rows`/`fit_to_height`; поведение `fit_to_height` не подтверждено ничем, кроме чтения кода.
+- **I3 закрыта частично**: пять чужих `Pdf_*Sync` остаются в `packages/wasm-pdf/pkg/*.d.ts`; CI-проверка их allowlist'ит, а не устраняет — буква DoD «нет `Pdf_*Sync`» не выполнена.
+- **G5 закрыта частично**: бенч `crates/pdf/benches/pdf.rs` не перебазирован (устаревшие комментарии, ложное «сжатие в printpdf 0.8.2 не работает»), gzip-размер `pdf-wasm` не замерен.
+- **`cargo fmt --all --check` падает**: 2 расхождения в `crates/pdf/tests/compression.rs`; CI-шаг «fmt» на x86_64 будет красным — волна не может считаться зелёной.
+- **Работа волны не закоммичена**: 9 неотслеживаемых и 13 изменённых файлов; HEAD `0ba1c98` затронул только `plan.md`, ветка `sprint/7-pagination-pdf` работу не содержит.
+- **ADR-0010 документирован неточно**: «Решение» говорит, что форк несёт обе правки, хотя модуля стриминга в `vendor/printpdf` ещё нет (B2 впереди); «Следствия» утверждают, что `crates/pdf/Cargo.toml` не меняется, но из него удалён `flate2`.
+- **Мелкое**: у E3 нет файловой фикстуры с комментариями (тесты собирают пакет в памяти), хотя план называл фикстуру в составе выхода задачи.
 
 ---
 

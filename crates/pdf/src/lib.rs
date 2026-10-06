@@ -13,6 +13,7 @@ mod border;
 mod fonts;
 mod layout;
 mod options;
+mod pagination;
 mod painter;
 mod styles;
 mod text;
