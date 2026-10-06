@@ -2,7 +2,7 @@
 
 - Ветка: `sprint/7-pagination-pdf` · issue [#4](https://github.com/meerrec/wasm-converter/issues/4) · PR [#12](https://github.com/meerrec/wasm-converter/pull/12) (DRAFT)
 - Обновлено: 2026-10-06
-- Прогресс: ⬜ 38 из 38
+- Прогресс: ✅ 14 · 🔄 1 · ⬜ 23 из 38
 - Статусы: ⬜ не начато · 🔄 в работе · ✅ закрыто
 
 Кикофф. Раздел «Решения» фиксирует договорённости, принятые до старта; восемь разделов ниже — обязательная форма кикоффа, а не украшение.
@@ -189,7 +189,7 @@
 | A1 | Вынести пагинацию из `painter.rs` в `pagination.rs`, ввести срез страницы | `crates/pdf/src/pagination.rs` | 6 | — | ✅ |
 | A2 | Разбивка по столбцам + `fit_to_width` | там же | 8 | A1 | ✅ |
 | A3 | `repeat_header_rows`, `repeat_first_columns` | там же | 6 | A2 | ✅ |
-| A4 | `avoid_row_break`, `orphan_rows`, `widow_rows`, `fit_to_height` | там же | 6 | A3 | ⬜ |
+| A4 | `avoid_row_break`, `orphan_rows`, `widow_rows`, `fit_to_height` | там же | 6 | A3 | ✅ |
 | A5 | `center_horizontally`/`center_vertically`: реализовать или удалить | `crates/pdf/src/options.rs` | 3 | A1 | ✅ |
 
 **A1 · 6 ч · Вынести пагинацию и ввести срез страницы.**
@@ -238,8 +238,8 @@ DoD: для каждого поля — либо тест на сдвиг в pt,
 
 | ID | Задача | Артефакт | Часы | Зависит | Статус |
 | --- | --- | --- | --- | --- | --- |
-| B1 | Спайк: механизм стриминга, реализуемый в форке 0.8.2 | `docs/analysis/pdf-streaming-spike.md` | 5 | — | ⬜ |
-| B2 | Постраничная запись: правки форка + `painter.rs` | `vendor/printpdf/src/{lib,serialize}.rs`, `crates/pdf/src/painter.rs` | 8 | B1, G1, G2 | ⬜ |
+| B1 | Спайк: механизм стриминга, реализуемый в форке 0.8.2 | `docs/analysis/pdf-streaming-spike.md` | 5 | — | ✅ |
+| B2 | Постраничная запись: правки форка + `painter.rs` | `vendor/printpdf/src/{lib,serialize}.rs`, `crates/pdf/src/painter.rs` | 8 | B1, G1, G2 | 🔄 модуль `streaming.rs` есть, `painter.rs` ещё зовёт `doc.save` |
 | B3 | Замер 50/500 страниц и отчёт | `docs/sprint-7/streaming-report.md` | 4 | B2 | ⬜ |
 
 **B1 · 5 ч · Спайк по механизму.**
@@ -267,8 +267,8 @@ DoD: `mem_probe` на 500 страницах показывает пик ≤ 1,5
 
 | ID | Задача | Артефакт | Часы | Зависит | Статус |
 | --- | --- | --- | --- | --- | --- |
-| C1 | ADR-0011: источник геометрии диаграмм | `docs/adr/0011-chart-geometry.md` | 4 | — | ⬜ |
-| C2 | Вынести геометрию из `painter/chart.rs` в canvas-agnostic модуль | `crates/render/src/chart/` | 8 | C1 | ⬜ |
+| C1 | ADR-0011: источник геометрии диаграмм | `docs/adr/0011-chart-geometry.md` | 4 | — | ✅ |
+| C2 | Вынести геометрию из `painter/chart.rs` в canvas-agnostic модуль | `crates/render/src/chart/` | 8 | C1 | ✅ |
 | C3 | PDF: bar/line/area/scatter | `crates/pdf/src/chart.rs` | 8 | C2 | ⬜ |
 | C4 | PDF: pie (секторы через Безье) | там же | 5 | C3 | ⬜ |
 | C5 | Паритет с canvas и проверка векторности | `crates/pdf/tests/chart.rs`, e2e | 5 | C3, C4 | ⬜ |
@@ -339,7 +339,7 @@ DoD: файл с gif не роняет экспорт; в отчёте — ст�
 
 | ID | Задача | Артефакт | Часы | Зависит | Статус |
 | --- | --- | --- | --- | --- | --- |
-| E1 | Гиперссылки → `/Link` | `crates/pdf/src/annot.rs` | 6 | A2 | ⬜ |
+| E1 | Гиперссылки → `/Link` | `crates/pdf/src/annot.rs` | 6 | A2 | ✅ |
 | E2 | Закладки → outline | там же | 4 | A1 | ⬜ |
 | E3 | Парсер комментариев в `crates/xlsx` | `crates/xlsx/src/comments.rs` | 8 | — | ✅ |
 | E4 | Комментарии → `/Text` | `crates/pdf/src/annot.rs` | 4 | E3 | ⬜ |
@@ -462,7 +462,7 @@ DoD: экспорт книги с 3 листами даёт ожидаемое �
 | --- | --- | --- | --- | --- | --- |
 | I1 | `print_grid_lines` | `crates/pdf/src/painter.rs`, `tests/grid.rs` | 5 | A1 | ⬜ |
 | I2 | Решение по PDF/UA: вынести из спринта | этот план + ROADMAP | 1 | — | ⬜ |
-| I3 | Гигиена: stale `packages/wasm-pdf/pkg` | `.gitignore`/CI-проверка | 2 | — | ⬜ |
+| I3 | Гигиена: stale `packages/wasm-pdf/pkg` | `.gitignore`/CI-проверка | 2 | — | ✅ |
 
 **I1 · 5 ч · Сетка.**
 Вход: мёртвый `PageConfig::print_grid_lines` (`options.rs:44`), эталон canvas — `crates/xlsx/src/paint.rs:458-459` (`draw_grid`) и цвета `dl_color::GRID = 0xD9D9D9FF` / `DARK_GRID` (`paint.rs:91,97`).
@@ -521,6 +521,10 @@ DoD: экстраполяция Спринта 6 (0,61 мс/страница →
 - **Работа волны не закоммичена**: 9 неотслеживаемых и 13 изменённых файлов; HEAD `0ba1c98` затронул только `plan.md`, ветка `sprint/7-pagination-pdf` работу не содержит.
 - **ADR-0010 документирован неточно**: «Решение» говорит, что форк несёт обе правки, хотя модуля стриминга в `vendor/printpdf` ещё нет (B2 впереди); «Следствия» утверждают, что `crates/pdf/Cargo.toml` не меняется, но из него удалён `flate2`.
 - **Мелкое**: у E3 нет файловой фикстуры с комментариями (тесты собирают пакет в памяти), хотя план называл фикстуру в составе выхода задачи.
+
+**Заметка волны 2 (06.10.2026).** Статусы приведены к дереву повторной сверкой. Снято: **A4** (unit-тесты в `crates/pdf/src/pagination.rs`, интеграционные — `fit_to_height_limits_page_count` и `avoid_row_break_false_repeats_split_row` в `crates/pdf/tests/pagination.rs`), **I3** (в `packages/wasm-pdf/pkg/*.d.ts` ноль посторонних `Pdf_*Sync`: единственный `export function` — `export_pdf`, совпадает с `crates/pdf-wasm`; CI-шаг «check wasm exports» падает на любом лишнем имени, а не allowlist'ит), **B1/C1/C2/E1** (спайк с прототипом, ADR-0011, геометрия в `crates/render/src/chart/{layout,prim}.rs`, `annot.rs` с тестами); работа закоммичена (`3ae86be`, `9ab54c3`), `cargo fmt --all --check` зелёный.
+
+Осталось: **B2** — 🔄 (модуль `vendor/printpdf/src/streaming.rs` есть, но `crates/pdf/src/painter.rs:97` зовёт `doc.save`); **B3/J5** — нет `docs/sprint-7/streaming-report.md` и `docs/sprint-7/edge-cases.md`; **G5** — gzip-размер `pdf-wasm` не замерен (бенчи перебазированы в `9ab54c3`); **ADR-0010** разошёлся с деревом в обратную сторону — «Решение» утверждает, что модуля стриминга в форке ещё нет; **E3** — файловой фикстуры с комментариями так и нет.
 
 ---
 
