@@ -3,6 +3,7 @@ import type {
   InMsg,
   OutMsg,
   PaintStats,
+  PdfModuleUrls,
   PdfOptions,
   RenderConfig,
   SheetInfo,
@@ -55,6 +56,11 @@ export interface XlsxViewerOptions {
   workerUrl?: string | URL;
   /** URL wasm-модуля; по умолчанию — рядом с бандлом воркера. */
   wasmUrl?: string;
+  /**
+   * Где лежит ленивый PDF-модуль. Воркер грузит его при первом экспорте;
+   * не задан — кнопка экспорта получит внятную ошибку вместо PDF.
+   */
+  pdfWasm?: PdfModuleUrls;
   /** Размер слота ring'а в байтах. */
   slotCapacity?: number;
   /** Начальный зум. */
@@ -192,9 +198,16 @@ export async function createXlsxViewer(
     };
     worker.addEventListener('message', onMessage);
     const off = canvas.transferControlToOffscreen();
-    worker.postMessage({ type: 'init', canvas: off, wasmUrl: options.wasmUrl, slotCapacity } satisfies InMsg, [
-      off,
-    ]);
+    worker.postMessage(
+      {
+        type: 'init',
+        canvas: off,
+        wasmUrl: options.wasmUrl,
+        pdf: options.pdfWasm,
+        slotCapacity,
+      } satisfies InMsg,
+      [off],
+    );
   });
 
   /** Размер листа в пикселях экрана: зум растягивает раскладку. */

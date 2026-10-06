@@ -8,7 +8,6 @@ import init, {
   resize_canvas,
   sab_total_bytes,
   xlsx_build_display_list_sab,
-  xlsx_export_pdf,
   xlsx_hit_test,
   xlsx_hyperlink_at,
   xlsx_image_bytes,
@@ -21,6 +20,7 @@ import type {
   InMsg,
   OutMsg,
   PaintStats,
+  PdfModuleUrls,
   RenderRequest,
   SheetInfo,
 } from '../protocol.js';
@@ -28,6 +28,9 @@ import { exportPng } from '../render/export_png.js';
 import { startFrameLoop } from './frame_loop';
 
 type Ctx = OffscreenCanvasRenderingContext2D;
+
+/** Тип ленивого модуля берём у сгенерированных wasm-bindgen деклараций. */
+type PdfWasm = typeof import('@doc-converter/wasm-pdf');
 
 let ctx: Ctx | null = null;
 let sab: SharedArrayBuffer | null = null;
@@ -37,6 +40,43 @@ let loop: ReturnType<typeof startFrameLoop> | null = null;
 let pending: RenderRequest | null = null;
 /** Сколько заняла сборка последнего кадра. */
 let buildMs = 0;
+
+/**
+ * Байты открытой книги. Основному модулю они не нужны — книга живёт в
+ * `thread_local` уже разобранной, — но ленивый PDF-модуль разбирает книгу
+ * сам и получает исходный XLSX. Плата — размер файла в памяти воркера;
+ * отпускаем при закрытии книги и на новом `open`.
+ */
+let bookBytes: ArrayBuffer | null = null;
+
+/** Откуда грузить PDF-модуль: заполняется на `init`, до него экспорта нет. */
+let pdfUrls: PdfModuleUrls | null = null;
+/** Загруженный модуль: `import()` и `init()` платятся один раз за воркер. */
+let pdfWasm: PdfWasm | null = null;
+/** Незавершённая загрузка — чтобы два клика подряд не тянули модуль дважды. */
+let pdfWasmLoading: Promise<PdfWasm> | null = null;
+
+/**
+ * Загрузить PDF-модуль по требованию. Неудача не кэшируется: следующий клик
+ * попробует снова, иначе один сетевой сбой навсегда ломал бы экспорт.
+ */
+async function loadPdfWasm(urls: PdfModuleUrls): Promise<PdfWasm> {
+  if (pdfWasm) return pdfWasm;
+  pdfWasmLoading ??= (async () => {
+    // URL динамический: модуль лежит отдельным файлом, и статический импорт
+    // вернул бы его в основной бандл — ровно то, от чего мы ушли.
+    const mod = (await import(/* @vite-ignore */ urls.module)) as PdfWasm;
+    await mod.default(urls.binary);
+    pdfWasm = mod;
+    return mod;
+  })();
+  try {
+    return await pdfWasmLoading;
+  } catch (e) {
+    pdfWasmLoading = null;
+    throw e;
+  }
+}
 
 const post = (msg: OutMsg, transfer: Transferable[] = []) => {
   (self as unknown as Worker).postMessage(msg, transfer);
@@ -133,6 +173,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         }) as Ctx;
         if (!ctx) throw new Error('getContext("2d") returned null');
 
+        pdfUrls = msg.pdf ?? null;
         slotCapacity = msg.slotCapacity;
         // SAB — не transferable, шарится через structured clone.
         sab = alloc_sab(slotCapacity) as unknown as SharedArrayBuffer;
@@ -192,6 +233,9 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       try {
         // wasm-bindgen отдаёт JsValue: разбирает его serde, тип знает только Rust.
         const sheets = xlsx_open(new Uint8Array(msg.bytes)) as SheetInfo[];
+        // Байты остаются в воркере до закрытия книги: их просит ленивый
+        // PDF-модуль. Прежняя книга отпускается здесь же.
+        bookBytes = msg.bytes;
         pending = null;
         // Картинки прежней книги больше не нужны, а id нового файла могут с ними совпасть.
         dropBookBitmaps();
@@ -256,9 +300,21 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       break;
     }
     case 'export-pdf': {
+      const urls = pdfUrls;
+      // Снимок: за время загрузки модуля книгу могли закрыть или сменить.
+      const source = bookBytes;
+      if (!urls) {
+        post({ type: 'error', message: 'pdf module is not configured: init has no pdf urls' });
+        break;
+      }
+      if (!source) {
+        post({ type: 'error', message: 'no workbook is open' });
+        break;
+      }
       try {
-        // Книга уже разобрана в thread_local — по проводу идёт только результат.
-        const bytes = xlsx_export_pdf(msg.sheet, msg.options) as Uint8Array;
+        // Первый клик платит за загрузку модуля; дальше он уже в памяти.
+        const mod = await loadPdfWasm(urls);
+        const bytes = mod.export_pdf(new Uint8Array(source), msg.sheet, msg.options);
         post({ type: 'pdf', id: msg.id, bytes }, [bytes.buffer]);
       } catch (e) {
         // Ошибка экспорта — ответ, а не падение воркера: книга остаётся открытой.
@@ -268,6 +324,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     }
     case 'close': {
       pending = null;
+      bookBytes = null;
       dropBookBitmaps();
       break;
     }

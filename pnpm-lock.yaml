@@ -41,6 +41,9 @@ importers:
       '@doc-converter/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@doc-converter/wasm-pdf':
+        specifier: workspace:*
+        version: link:../../packages/wasm-pdf
     devDependencies:
       '@playwright/test':
         specifier: ^1.63.0
@@ -61,6 +64,9 @@ importers:
         specifier: workspace:*
         version: link:../wasm
     devDependencies:
+      '@doc-converter/wasm-pdf':
+        specifier: workspace:*
+        version: link:../wasm-pdf
       tsup:
         specifier: ^8.3.5
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.28)(tsx@4.23.15)(typescript@5.9.3)
@@ -72,6 +78,8 @@ importers:
         version: 2.1.9(@types/node@26.6.4)
 
   packages/wasm: {}
+
+  packages/wasm-pdf: {}
 
 packages:
 

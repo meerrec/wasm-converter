@@ -3,6 +3,7 @@ export type {
   WorkerResponse,
   Viewport,
   RenderConfig,
+  PdfModuleUrls,
   PdfOptions,
   HitResult,
   CellRef,
