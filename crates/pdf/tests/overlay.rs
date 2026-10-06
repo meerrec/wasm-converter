@@ -322,3 +322,327 @@ fn config_is_empty_until_something_is_set() {
     };
     assert!(!with_watermark.is_empty());
 }
+
+// --- сквозные проверки: колонтитулы и водяной знак в собранном PDF ---
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use doc_converter_pdf::overlay::Watermark as CrateWatermark;
+use doc_converter_pdf::{PdfExporter, PdfOptions};
+use doc_converter_xlsx::Workbook;
+use lopdf::content::{Content, Operation};
+use lopdf::{Document, Object};
+
+/// Имя `/GS`, которым painter выражает прозрачность знака.
+const WATERMARK_GS: &[u8] = b"WatermarkAlpha";
+
+/// Путь к книге в общем наборе фикстур.
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../test-fixtures/xlsx")
+        .join(name)
+}
+
+/// Открыть книгу из фикстур.
+fn open_book(name: &str) -> Workbook {
+    let path = fixture(name);
+    let bytes = std::fs::read(&path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+    doc_converter_xlsx::open(bytes).unwrap_or_else(|err| panic!("{name}: {err}"))
+}
+
+/// Экспортировать лист 0 книги с настройками, которые правит `configure`.
+fn export_with(name: &str, configure: impl FnOnce(&mut PdfOptions)) -> Vec<u8> {
+    let book = open_book(name);
+    let mut options = PdfOptions::default();
+    configure(&mut options);
+    PdfExporter::new(options)
+        .export_xlsx_sheet(&book, 0)
+        .unwrap_or_else(|err| panic!("{name} не экспортировалась: {err}"))
+}
+
+/// PDF разбирается `lopdf`.
+fn parse(bytes: &[u8]) -> Document {
+    Document::load_mem(bytes).expect("PDF разбирается lopdf")
+}
+
+/// Номера страниц документа по возрастанию.
+fn pages(doc: &Document) -> Vec<u32> {
+    doc.get_pages().keys().copied().collect()
+}
+
+/// Операции страницы (номер — с единицы).
+fn page_operations(doc: &Document, number: u32) -> Vec<Operation> {
+    let page = *doc
+        .get_pages()
+        .get(&number)
+        .unwrap_or_else(|| panic!("страницы {number} нет"));
+    let bytes = doc.get_page_content(page).expect("поток содержимого");
+    Content::decode(&bytes)
+        .expect("операции разбираются")
+        .operations
+}
+
+/// Число из операнда lopdf.
+fn operand_number(object: &Object) -> f32 {
+    match object {
+        Object::Real(value) => *value,
+        Object::Integer(value) => *value as f32,
+        other => panic!("операнд не число: {other:?}"),
+    }
+}
+
+/// Текст страницы (с единицы), восстановленный картами `ToUnicode` её шрифтов.
+///
+/// `lopdf::extract_text` на PDF printpdf падает (см. `tests/export.rs`), поэтому
+/// здесь повторяется то, что делает `pdftotext`: hex-строки перед `Tj`
+/// переводятся картой шрифта обратно в символы.
+fn page_text(doc: &Document, number: u32) -> String {
+    let page = *doc
+        .get_pages()
+        .get(&number)
+        .unwrap_or_else(|| panic!("страницы {number} нет"));
+    let cmaps = page_cmaps(doc, page);
+    let content = doc.get_page_content(page).expect("поток содержимого");
+    let content = String::from_utf8_lossy(&content).into_owned();
+    let mut events: Vec<(usize, &str)> = Vec::new();
+    events.extend(content.match_indices("Tf"));
+    events.extend(content.match_indices("Tj"));
+    events.sort_by_key(|(at, _)| *at);
+
+    let mut font = String::new();
+    let mut out = String::new();
+    for (at, token) in events {
+        if token == "Tf" {
+            if let Some(slash) = content[..at].rfind('/') {
+                font = content[slash + 1..at]
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned();
+            }
+            continue;
+        }
+        let Some(open) = content[..at].rfind('<') else {
+            continue;
+        };
+        let Some(close) = content[open..at].find('>') else {
+            continue;
+        };
+        for pair in content.as_bytes()[open + 1..open + close].chunks(4) {
+            let Ok(code) = u16::from_str_radix(&String::from_utf8_lossy(pair), 16) else {
+                continue;
+            };
+            if let Some(ch) = cmaps.get(&font).and_then(|map| map.get(&code)) {
+                out.push(*ch);
+            }
+        }
+        out.push(' ');
+    }
+    out
+}
+
+/// Карта `ToUnicode` каждого шрифта страницы: имя ресурса → «код → символ».
+fn page_cmaps(doc: &Document, page: lopdf::ObjectId) -> HashMap<String, HashMap<u16, char>> {
+    let mut cmaps = HashMap::new();
+    for (name, font) in doc.get_page_fonts(page).expect("шрифты страницы") {
+        let Ok(to_unicode) = font.get(b"ToUnicode") else {
+            continue;
+        };
+        let Ok(id) = to_unicode.as_reference() else {
+            continue;
+        };
+        let Ok(stream) = doc.get_object(id).and_then(Object::as_stream) else {
+            continue;
+        };
+        let Ok(content) = stream.get_plain_content() else {
+            continue;
+        };
+        cmaps.insert(
+            String::from_utf8_lossy(&name).into_owned(),
+            parse_bfchar(&String::from_utf8_lossy(&content)),
+        );
+    }
+    cmaps
+}
+
+/// Пары «код → символ» из `beginbfchar`-секции CMap.
+fn parse_bfchar(cmap: &str) -> HashMap<u16, char> {
+    let mut map = HashMap::new();
+    let mut inside = false;
+    for line in cmap.lines() {
+        let line = line.trim();
+        if line.ends_with("beginbfchar") {
+            inside = true;
+        } else if line == "endbfchar" {
+            inside = false;
+        } else if inside {
+            let Some((source, target)) = line.split_once(' ') else {
+                continue;
+            };
+            let code = u16::from_str_radix(source.trim_matches(['<', '>']), 16);
+            let value = u16::from_str_radix(target.trim_matches(['<', '>']), 16);
+            if let (Ok(code), Ok(value)) = (code, value) {
+                if let Some(ch) = char::from_u32(u32::from(value)) {
+                    map.insert(code, ch);
+                }
+            }
+        }
+    }
+    map
+}
+
+/// Словарь `/ExtGState` страницы, если он есть.
+fn extgstates<'a>(doc: &'a Document, number: u32) -> Option<&'a lopdf::Dictionary> {
+    let page = *doc.get_pages().get(&number).expect("страница есть");
+    let (direct, indirect) = doc.get_page_resources(page).expect("ресурсы страницы");
+    let resources = match (direct, indirect.first()) {
+        (Some(dict), _) => dict,
+        (None, Some(id)) => doc.get_dictionary(*id).expect("словарь ресурсов"),
+        (None, None) => panic!("у страницы нет ресурсов"),
+    };
+    let mut value = resources.get(b"ExtGState").ok()?;
+    while let Object::Reference(id) = value {
+        value = doc.get_object(*id).expect("ссылка разрешается");
+    }
+    value.as_dict().ok()
+}
+
+/// Колонтитул доходит до текста страницы, а `&P`/`&N` разворачиваются после
+/// пагинации: номер в шапке совпадает с номером страницы в PDF.
+#[test]
+fn header_footer_reach_page_text() {
+    let bytes = export_with("scale-ten-pages.xlsx", |options| {
+        options.overlay.header = "&Lстр. &P из &N".to_string();
+        options.overlay.footer = "&CСвод &P".to_string();
+    });
+    let doc = parse(&bytes);
+    let numbers = pages(&doc);
+    let total = numbers.len();
+    assert!(
+        total >= 3,
+        "фикстура должна быть многостраничной, а страниц {total}"
+    );
+
+    let first = page_text(&doc, numbers[0]);
+    assert!(
+        first.contains(&format!("стр. {} из {total}", numbers[0])),
+        "шапка первой страницы: {first:?}"
+    );
+    assert!(
+        first.contains(&format!("Свод {}", numbers[0])),
+        "подвал первой страницы: {first:?}"
+    );
+
+    let last_number = *numbers.last().expect("страницы есть");
+    let last = page_text(&doc, last_number);
+    assert!(
+        last.contains(&format!("стр. {last_number} из {total}")),
+        "шапка последней страницы: {last:?}"
+    );
+}
+
+/// Колонтитулы самой книги (`oddHeader`/`oddFooter`) печатаются и без
+/// настроек: экспорт не теряет то, что задано в файле.
+#[test]
+fn workbook_header_reaches_page_text() {
+    let book = open_book("content-mixed-types.xlsx");
+    let mut sheet = book.sheets()[0].clone();
+    sheet.print.odd_header = Some("&CОтчёт &P из &N".to_string());
+    sheet.print.odd_footer = Some("&Lиз книги".to_string());
+    let book = Workbook::new(
+        vec![sheet],
+        book.shared_strings().clone(),
+        book.styles().clone(),
+        book.theme().clone(),
+        book.date1904(),
+    )
+    .with_images(book.images().to_vec());
+
+    let bytes = PdfExporter::new(PdfOptions::default())
+        .export_xlsx_sheet(&book, 0)
+        .expect("PDF собирается");
+    let doc = parse(&bytes);
+    let text = page_text(&doc, 1);
+    assert!(text.contains("Отчёт 1 из 1"), "шапка книги: {text:?}");
+    assert!(text.contains("из книги"), "подвал книги: {text:?}");
+}
+
+/// Водяной знак присутствует на каждой странице: текст, `Tm`-матрица и `/GS`
+/// при прозрачности.
+#[test]
+fn watermark_reaches_every_page_with_extgstate() {
+    let bytes = export_with("content-mixed-types.xlsx", |options| {
+        options.overlay.watermark = Some(CrateWatermark {
+            text: "ЧЕРНОВИК".to_string(),
+            opacity: 0.25,
+            ..CrateWatermark::default()
+        });
+    });
+    let doc = parse(&bytes);
+    let numbers = pages(&doc);
+    assert!(!numbers.is_empty(), "страницы есть");
+
+    for &number in &numbers {
+        let ops = page_operations(&doc, number);
+        let matrix = ops
+            .iter()
+            .find(|op| op.operator == "Tm")
+            .unwrap_or_else(|| panic!("на странице {number} нет матрицы Tm"));
+        assert_eq!(matrix.operands.len(), 6, "Tm — шесть чисел");
+
+        let gs = ops
+            .iter()
+            .find(|op| {
+                op.operator == "gs"
+                    && op.operands.first().and_then(|o| o.as_name().ok()) == Some(WATERMARK_GS)
+            })
+            .unwrap_or_else(|| panic!("на странице {number} нет /GS водяного знака"));
+
+        assert!(
+            page_text(&doc, number).contains("ЧЕРНОВИК"),
+            "текста знака нет на странице {number}"
+        );
+
+        let extgstates = extgstates(&doc, number).expect("словарь /ExtGState");
+        let name = gs.operands[0].as_name().expect("имя /GS");
+        let state = extgstates.get(name).expect("ресурс /GS есть в словаре");
+        let mut state = state;
+        while let Object::Reference(id) = state {
+            state = doc.get_object(*id).expect("ссылка разрешается");
+        }
+        let state = state.as_dict().expect("/GS — словарь");
+        let alpha = state
+            .get(b"CA")
+            .map(operand_number)
+            .ok()
+            .expect("альфа заливки в /GS");
+        assert!(
+            (alpha - 0.25).abs() < 1e-6,
+            "альфа знака 0.25, а в /GS {alpha}"
+        );
+    }
+}
+
+/// Непрозрачный водяной знак не заводит `/GS`: сплошной заливке он не нужен.
+#[test]
+fn opaque_watermark_needs_no_extgstate() {
+    let bytes = export_with("content-mixed-types.xlsx", |options| {
+        options.overlay.watermark = Some(CrateWatermark {
+            text: "ЧЕРНОВИК".to_string(),
+            opacity: 1.0,
+            ..CrateWatermark::default()
+        });
+    });
+    let doc = parse(&bytes);
+    let ops = page_operations(&doc, 1);
+    assert!(
+        ops.iter().any(|op| op.operator == "Tm"),
+        "матрица поворота есть"
+    );
+    assert!(
+        !ops.iter().any(|op| op.operator == "gs"),
+        "непрозрачному знаку /GS не нужен"
+    );
+    assert!(page_text(&doc, 1).contains("ЧЕРНОВИК"));
+}

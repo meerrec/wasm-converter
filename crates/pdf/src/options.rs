@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::overlay::OverlayConfig;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum PageSize {
     A4,
@@ -125,6 +127,14 @@ pub struct PdfOptions {
     pub compress: bool,
     pub bookmarks: bool,
     pub sheet_index: Option<usize>,
+    /// Колонтитулы и водяной знак документа.
+    ///
+    /// Пустая настройка — поведение без изменений: колонтитулы берутся из
+    /// книги (`oddHeader`/`oddFooter` листа), водяного знака нет. Заданные
+    /// здесь строки перебивают книжные; коды `&L`/`&C`/`&R`, `&P` и `&N`
+    /// разворачиваются при записи, когда число страниц уже известно.
+    #[serde(default)]
+    pub overlay: OverlayConfig,
 }
 
 impl Default for PdfOptions {
@@ -138,6 +148,7 @@ impl Default for PdfOptions {
             compress: true,
             bookmarks: true,
             sheet_index: None,
+            overlay: OverlayConfig::default(),
         }
     }
 }

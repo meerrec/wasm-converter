@@ -8,29 +8,35 @@
 //! срез страницы и её ячейки, отсюда — только геометрия и операции.
 //!
 //! Диаграммы листа рисуются последним слоем — над заливками, рамками и
-//! текстом, как в `xlsx::paint` (картинки там лежат между текстом и
-//! диаграммами; в PDF они ещё не перенесены и встанут туда же).
+//! текстом; картинки лежат между текстом и диаграммами, как в `xlsx::paint`.
+//!
+//! Колонтитулы и водяной знак (`overlay`) рисуются здесь же: их строки несут
+//! символы, которых может не быть в ячейках, и без общего зондового прохода
+//! подрезка шрифтов оставила бы у них нулевые глифы.
 //!
 //! Ещё не перенесены настройки [`PdfOptions`], за которыми стоит заметная
-//! работа: закреплённые области и картинки — следующие срезы спринта.
+//! работа: закреплённые области — следующий срез спринта.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
 use doc_converter_render::display_list::Color;
-use doc_converter_render::font::FontRegistry;
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
+use doc_converter_render::text_measure::measure_text;
 use doc_converter_xlsx::layout::{SheetLayout, PX_PER_POINT};
 use doc_converter_xlsx::paint::{anchor_rect, display_text};
-use doc_converter_xlsx::{CellValue, Sheet, Workbook};
+use doc_converter_xlsx::{CellValue, Sheet, Workbook, WorkbookImage};
 use printpdf::streaming::StreamSession;
 use printpdf::{
-    FontId, Line, LinePoint, Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg, Point, Pt,
-    TextItem,
+    ExtendedGraphicsState, ExtendedGraphicsStateId, FontId, Line, LinePoint, Mm, Op, PdfDocument,
+    PdfPage, PdfResources, PdfSaveOptions, PdfWarnMsg, Point, Pt, TextItem, TextMatrix,
 };
 
 use crate::fonts::{EmbeddedFonts, Face};
+use crate::image;
 use crate::layout::{PageGeometry, RectPx};
 use crate::options::PdfOptions;
+use crate::overlay::{self, Align, OverlayMargins, PageContext, Watermark, WatermarkLayer};
 use crate::pagination::{paginate, print_scale, PageSlice, PaintedCell, SheetPage};
 use crate::styles::to_pdf_color;
 use crate::{annot, background, border, chart, fonts, text, PdfError};
@@ -49,6 +55,18 @@ const GRID_WIDTH_PT: f32 = 0.75;
 /// Допуск совпадения координат, пиксели раскладки: шапка, повторяемые
 /// столбцы и поток сходятся на общей границе.
 const COORD_EPS: f32 = 1e-3;
+
+/// Кегль колонтитулов, pt: умолчание диалога Excel (10 pt).
+///
+/// Абсолютный, без масштаба печати: колонтитул живёт в поле страницы, а не в
+/// полосе набора, и при `fit_to_width` не должен ужиматься вместе с ячейками.
+const STAMP_FONT_SIZE_PT: f32 = 10.0;
+
+/// Имя `/GS` водяного знака в ресурсах документа.
+///
+/// Фиксировано, а не случайно: операции знака собирает и зондовый проход, где
+/// `doc.resources` недоступен, — имя должно быть известно обеим сторонам.
+const WATERMARK_GS: &str = "WatermarkAlpha";
 
 /// Открыть лист книги и собрать PDF всеми его страницами.
 ///
@@ -126,11 +144,19 @@ fn collect_glyphs(
     fonts: &EmbeddedFonts,
     registry: &mut FontRegistry,
     charts: &[chart::Layout],
-    print_grid_lines: bool,
+    options: &PdfOptions,
+    first_page_no: usize,
+    page_count: usize,
 ) {
-    for sheet_page in pages {
+    let base = StampBase::from_options(options);
+    for (index, sheet_page) in pages.iter().enumerate() {
         let page_geom = geometry.with_page_top_px(sheet_page.slice.offset_y);
         let mut ops: Vec<Op> = Vec::new();
+        // Картинки в зондовый проход не передаются: `Op::UseXobject` символов
+        // не несёт, а `XObject`'ы к этому моменту уже зарегистрированы —
+        // повторное размещение стоило бы декодирования и клипов впустую.
+        // Колонтитулы и водяной знак рисуются наравне с ячейками: их символы
+        // обязаны попасть в подрезку шрифтов.
         draw_page(
             &mut ops,
             registry,
@@ -139,7 +165,9 @@ fn collect_glyphs(
             sheet,
             sheet_page,
             charts,
-            print_grid_lines,
+            &[],
+            options.page.print_grid_lines,
+            base.page(first_page_no + index, page_count),
         );
         for op in &ops {
             if let Op::WriteText { font, items, .. } = op {
@@ -211,6 +239,68 @@ fn chart_layouts(sheet: &Sheet, layout: &SheetLayout) -> Vec<chart::Layout> {
             (!chart.is_empty()).then_some(chart)
         })
         .collect()
+}
+
+/// Операции картинок листа по страницам: индекс тот же, что у
+/// [`SheetPage`] в [`SheetPagination::pages`](crate::pagination::SheetPagination).
+///
+/// `resources` — ресурсы документа, а не страницы: `XObject`'ы общие для всех
+/// страниц, и `StreamSession` переводит `Op::UseXobject` по
+/// `pdf.resources.xobjects`, поэтому регистрация обязана пройти до начала
+/// записи. Одинаковые байты дают один `XObject` ([`image::place_all`]): одна и
+/// та же media-часть в нескольких якорях — один объект на документ.
+///
+/// Якорь берётся той же геометрией, что у диаграмм ([`anchor_rect`] и
+/// [`page_rect`]), а видимая часть — пересечение с полосой страницы: так же
+/// нарезает картинку canvas-путь (`xlsx::paint::draw_images`), растягивая её
+/// на видимый прямоугольник. Картинка с повреждённым якорем (неположительная
+/// сторона или сторона за пределами страницы) пропускается.
+fn image_ops(
+    resources: &mut PdfResources,
+    book: &Workbook,
+    sheet: &Sheet,
+    layout: &SheetLayout,
+    page: &PageGeometry,
+    pages: &[SheetPage<'_>],
+) -> Vec<Vec<Op>> {
+    let registry: BTreeMap<u32, &WorkbookImage> = book
+        .images()
+        .iter()
+        .map(|image| (image.id, image))
+        .collect();
+    let (_, content_h_px) = page.content_px();
+    let mut pages_ops = Vec::with_capacity(pages.len());
+    for sheet_page in pages {
+        let band_top = sheet_page.slice.offset_y;
+        let band_bottom = band_top + content_h_px;
+        let mut placements: Vec<image::Placement<'_>> = Vec::new();
+        // Порядок `Sheet.images` — порядок наложения: первые лежат ниже, и
+        // `place_all` сохраняет его в операциях.
+        for placed in &sheet.images {
+            let Some(image_id) = placed.image_id else {
+                continue;
+            };
+            let Some(media) = registry.get(&image_id) else {
+                continue;
+            };
+            let (x, y, w, h) = anchor_rect(layout, placed.anchor);
+            let rect = page_rect(RectPx::new(x, y, w, h), &sheet_page.slice);
+            let top = rect.y.max(band_top);
+            let bottom = (rect.y + rect.h).min(band_bottom);
+            if bottom <= top {
+                continue;
+            }
+            let visible = RectPx::new(rect.x, top, rect.w, bottom - top);
+            placements.push(image::Placement {
+                id: &media.media,
+                mime: &media.mime,
+                bytes: &media.bytes,
+                rect: page.rect_to_pt(visible).to_pdf(page.height_pt()),
+            });
+        }
+        pages_ops.push(image::place_all(resources, &placements).ops);
+    }
+    pages_ops
 }
 
 /// Линии печатной сетки: по рёбрам ячеек области печати.
@@ -326,12 +416,14 @@ fn segment(from: (f32, f32), to: (f32, f32)) -> Op {
     }
 }
 
-/// Книга и раскладка её листа: по ним идёт обход ячеек и строится сетка, а от
-/// страницы к странице они не меняются.
+/// Книга, раскладка её листа и колонтитулы: от страницы к странице не меняются.
 #[derive(Clone, Copy)]
 struct SheetFrame<'a> {
     book: &'a Workbook,
     layout: &'a SheetLayout,
+    /// Сырые строки колонтитулов листа (коды Excel, см. [`sheet_overlay`]).
+    header: &'a str,
+    footer: &'a str,
 }
 
 /// Записать ячейки страницы в её операции.
@@ -354,8 +446,17 @@ fn draw_page(
     sheet: SheetFrame<'_>,
     sheet_page: &SheetPage<'_>,
     charts: &[chart::Layout],
+    images: &[Op],
     print_grid_lines: bool,
+    stamp: PageStamp<'_>,
 ) {
+    // Водяной знак «под содержимым» — раньше всего остального: ячейки,
+    // картинки и диаграммы обязаны лечь поверх него.
+    if let Some(watermark) = stamp.watermark {
+        if watermark.layer == WatermarkLayer::Under {
+            draw_watermark(ops, fonts, page, watermark);
+        }
+    }
     // Сетка — под всем содержимым: заливка и рамка её перекрывают, как в Excel.
     if print_grid_lines {
         draw_grid(ops, page, sheet.layout, &sheet_page.slice);
@@ -406,7 +507,214 @@ fn draw_page(
             rect,
         );
     }
+    // Картинки лежат поверх текста и под диаграммами — порядок canvas-пути
+    // (`xlsx::paint::draw_images` вызывается между текстом и диаграммами).
+    ops.extend_from_slice(images);
     draw_charts(ops, registry, fonts, page, sheet_page, charts);
+    if let Some(watermark) = stamp.watermark {
+        if watermark.layer == WatermarkLayer::Over {
+            draw_watermark(ops, fonts, page, watermark);
+        }
+    }
+    // Колонтитулы последними: они живут в поле страницы и рисуются поверх
+    // всего, как в Excel.
+    draw_header_footer(ops, registry, fonts, page, sheet, stamp);
+}
+
+/// Номер страницы и общие для документа части колонтитула — всё, что
+/// [`draw_page`] нужно знать о месте страницы в документе.
+#[derive(Clone, Copy)]
+struct PageStamp<'a> {
+    /// Номер страницы в документе, с 1 (код `&P`).
+    page_no: usize,
+    /// Всего страниц документа (код `&N`).
+    page_count: usize,
+    margins: OverlayMargins,
+    /// `None` — водяного знака нет.
+    watermark: Option<&'a Watermark>,
+}
+
+/// Части колонтитула, не зависящие от страницы: поля и водяной знак.
+#[derive(Clone, Copy)]
+struct StampBase<'a> {
+    margins: OverlayMargins,
+    watermark: Option<&'a Watermark>,
+}
+
+impl<'a> StampBase<'a> {
+    fn from_options(options: &'a PdfOptions) -> Self {
+        let margins = options.page.margins;
+        Self {
+            margins: OverlayMargins::from_mm(
+                margins.top_mm,
+                margins.right_mm,
+                margins.bottom_mm,
+                margins.left_mm,
+            ),
+            watermark: options.overlay.watermark.as_ref(),
+        }
+    }
+
+    /// Страница с её номером; нумерация сквозная по документу — как у Excel.
+    fn page(&self, page_no: usize, page_count: usize) -> PageStamp<'a> {
+        PageStamp {
+            page_no,
+            page_count,
+            margins: self.margins,
+            watermark: self.watermark,
+        }
+    }
+}
+
+/// Колонтитулы листа: заданные в [`PdfOptions::overlay`] перебивают книжные
+/// (`PrintSettings::odd_header`/`odd_footer`), пустая настройка берёт книжную.
+///
+/// `&P`/`&N` здесь ещё не разворачиваются: номера страниц известны только
+/// после пагинации, и подстановку делает [`draw_header_footer`] на каждой
+/// странице.
+fn sheet_overlay<'a>(options: &'a PdfOptions, sheet: &'a Sheet) -> (&'a str, &'a str) {
+    let header = if options.overlay.header.is_empty() {
+        sheet.print.odd_header.as_deref().unwrap_or_default()
+    } else {
+        options.overlay.header.as_str()
+    };
+    let footer = if options.overlay.footer.is_empty() {
+        sheet.print.odd_footer.as_deref().unwrap_or_default()
+    } else {
+        options.overlay.footer.as_str()
+    };
+    (header, footer)
+}
+
+/// Верхний и нижний колонтитулы страницы: три секции Excel в поле между краем
+/// страницы и областью содержимого.
+///
+/// Строки приходят сырыми; `&P`/`&N` разворачиваются здесь, когда номер
+/// страницы и их общее число уже известны.
+fn draw_header_footer(
+    ops: &mut Vec<Op>,
+    registry: &mut FontRegistry,
+    fonts: &EmbeddedFonts,
+    page: &PageGeometry,
+    sheet: SheetFrame<'_>,
+    stamp: PageStamp<'_>,
+) {
+    let ctx = PageContext::new(stamp.page_no, stamp.page_count);
+    let blocks = [
+        (
+            overlay::parse_header_footer(sheet.header, ctx),
+            overlay::header_band(page.width_pt(), page.height_pt(), stamp.margins),
+            true,
+        ),
+        (
+            overlay::parse_header_footer(sheet.footer, ctx),
+            overlay::footer_band(page.width_pt(), stamp.margins),
+            false,
+        ),
+    ];
+    for (parts, band, is_header) in blocks {
+        for (align, text) in [
+            (Align::Left, &parts.left),
+            (Align::Center, &parts.center),
+            (Align::Right, &parts.right),
+        ] {
+            if text.is_empty() {
+                continue;
+            }
+            draw_stamp_text(ops, registry, fonts, text, band, is_header, align);
+        }
+    }
+}
+
+/// Секция колонтитула: выравнивание по полосе и базовая линия кегля.
+fn draw_stamp_text(
+    ops: &mut Vec<Op>,
+    registry: &mut FontRegistry,
+    fonts: &EmbeddedFonts,
+    text: &str,
+    band: overlay::Band,
+    is_header: bool,
+    align: Align,
+) {
+    let width_pt = stamp_text_width_pt(registry, text);
+    let x = overlay::anchor_x(band, align, width_pt);
+    let y = if is_header {
+        overlay::header_baseline(band, STAMP_FONT_SIZE_PT)
+    } else {
+        overlay::footer_baseline(band, STAMP_FONT_SIZE_PT)
+    };
+    let font = fonts.id(Face::Regular).clone();
+    ops.push(Op::SetFillColor {
+        col: to_pdf_color(Color::BLACK),
+    });
+    ops.push(Op::StartTextSection);
+    ops.push(Op::SetTextCursor {
+        pos: Point { x: Pt(x), y: Pt(y) },
+    });
+    ops.push(Op::SetFontSize {
+        size: Pt(STAMP_FONT_SIZE_PT),
+        font: font.clone(),
+    });
+    ops.push(Op::WriteText {
+        items: vec![TextItem::Text(text.to_owned())],
+        font,
+    });
+    ops.push(Op::EndTextSection);
+}
+
+/// Ширина строки колонтитула в точках — метриками того же regular-шрифта, что
+/// рисуется.
+///
+/// У `overlay` метрик нет, и [`overlay::estimate_text_width`] оценивает ширину
+/// средним глифом; painter считает точнее — от ширины зависит выравнивание
+/// центральной и правой секций.
+fn stamp_text_width_pt(registry: &mut FontRegistry, text: &str) -> f32 {
+    let size_px = STAMP_FONT_SIZE_PT * PX_PER_POINT;
+    measure_text(registry, DEFAULT_FONT_ID, size_px, text) / PX_PER_POINT
+}
+
+/// Водяной знак: текст под углом, по центру страницы.
+///
+/// Прозрачность — только через `/GS`: сплошная заливка `opacity` не выражает,
+/// а ресурс зарегистрирован до начала записи ([`watermark_gs_id`]).
+fn draw_watermark(
+    ops: &mut Vec<Op>,
+    fonts: &EmbeddedFonts,
+    page: &PageGeometry,
+    watermark: &Watermark,
+) {
+    let Some(draw) = overlay::watermark_draw(page.width_pt(), page.height_pt(), watermark) else {
+        return;
+    };
+    let font = fonts.id(Face::Regular).clone();
+    ops.push(Op::SaveGraphicsState);
+    if overlay::needs_extgstate(draw.opacity) {
+        ops.push(Op::LoadGraphicsState {
+            gs: watermark_gs_id(),
+        });
+    }
+    ops.push(Op::SetFillColor {
+        col: to_pdf_color(Color::BLACK),
+    });
+    ops.push(Op::StartTextSection);
+    ops.push(Op::SetTextMatrix {
+        matrix: TextMatrix::Raw(draw.matrix),
+    });
+    ops.push(Op::SetFontSize {
+        size: Pt(draw.font_size_pt),
+        font: font.clone(),
+    });
+    ops.push(Op::WriteText {
+        items: vec![TextItem::Text(draw.text)],
+        font,
+    });
+    ops.push(Op::EndTextSection);
+    ops.push(Op::RestoreGraphicsState);
+}
+
+/// Идентификатор `/GS` водяного знака в ресурсах документа.
+fn watermark_gs_id() -> ExtendedGraphicsStateId {
+    ExtendedGraphicsStateId(WATERMARK_GS.to_owned())
 }
 
 /// Диаграммы страницы — поверх остальных слоёв.
@@ -467,6 +775,9 @@ struct PreparedSheet<'a> {
     page: PageGeometry,
     pagination: crate::pagination::SheetPagination<'a>,
     charts: Vec<chart::Layout>,
+    /// Операции картинок по страницам; пусто до регистрации `XObject`'ов в
+    /// ресурсах документа ([`image_ops`]).
+    images: Vec<Vec<Op>>,
 }
 
 /// Подготовить лист к записи: раскладка, геометрия, срезы, диаграммы.
@@ -500,6 +811,7 @@ fn prepare_sheet<'a>(
         page,
         pagination,
         charts,
+        images: Vec::new(),
     })
 }
 
@@ -535,13 +847,15 @@ pub(crate) fn export_book_to<W: Write>(
     } else {
         sheets.to_vec()
     };
-    let prepared = selection
+    let mut prepared = selection
         .iter()
         .map(|&index| prepare_sheet(book, index, options))
         .collect::<Result<Vec<_>, _>>()?;
     // Пустая книга — не «все её листы, которых нет»: у PDF без страниц нет
-    // каталога страниц, и файл невалиден.
-    let first = prepared.first().ok_or(PdfError::NoSheets)?;
+    // каталога страниц, и файл невалиден. Геометрия берётся копией: `prepared`
+    // дальше правится (регистрация картинок), и ссылка на его элемент не
+    // пережила бы эту правку.
+    let first_page_geometry = prepared.first().ok_or(PdfError::NoSheets)?.page;
 
     // Заголовок документа: заданный пользователем, иначе — имя листа, если он
     // один (так же, как в одиночном экспорте). У книги своего имени нет:
@@ -559,6 +873,36 @@ pub(crate) fn export_book_to<W: Write>(
     doc.metadata.info.author.clone_from(&options.author);
     doc.metadata.info.subject.clone_from(&options.subject);
     doc.metadata.info.keywords.clone_from(&options.keywords);
+
+    // Прозрачность колонтитула выражается только extended graphics state:
+    // ресурс обязан лечь в документ до `StreamSession::begin` — глобальный
+    // словарь `/ExtGState` собирается там, а сессия занимает документ
+    // заимствованием и регистрировать после её начала уже некуда.
+    if let Some(watermark) = options.overlay.watermark.as_ref() {
+        if overlay::needs_extgstate(watermark.opacity) && !watermark.text.trim().is_empty() {
+            let alpha = overlay::clamp_opacity(watermark.opacity);
+            doc.resources.extgstates.map.insert(
+                watermark_gs_id(),
+                ExtendedGraphicsState::default()
+                    .with_current_fill_alpha(alpha)
+                    .with_current_stroke_alpha(alpha),
+            );
+        }
+    }
+
+    // Картинки — по той же причине: `Op::UseXobject` переводится по
+    // `pdf.resources.xobjects`, и объекты должны лежать в ресурсах до начала
+    // записи.
+    for sheet in &mut prepared {
+        sheet.images = image_ops(
+            &mut doc.resources,
+            book,
+            sheet.sheet,
+            &sheet.layout,
+            &sheet.page,
+            &sheet.pagination.pages,
+        );
+    }
 
     let mut warnings: Vec<PdfWarnMsg> = Vec::new();
     // Закладка — на лист, и ведёт на его первую страницу. `pages` — длина
@@ -580,33 +924,42 @@ pub(crate) fn export_book_to<W: Write>(
     }
     let embedded = fonts::embed(&mut doc, &mut warnings, faces)?;
 
+    let page_count: usize = prepared
+        .iter()
+        .map(|sheet| sheet.pagination.pages.len())
+        .sum();
     let mut registry = FontRegistry::new(FONT_CACHE);
     let mut glyphs: BTreeMap<FontId, BTreeSet<char>> = BTreeMap::new();
+    // Нумерация зондов та же, что у записи: `&P`/`&N` в колонтитулах обязаны
+    // совпасть, иначе подрезанный шрифт не покроет символы реальной страницы.
+    let mut first_page_no = 1;
     for sheet in &prepared {
+        let (header, footer) = sheet_overlay(options, sheet.sheet);
         collect_glyphs(
             &mut glyphs,
             SheetFrame {
                 book,
                 layout: &sheet.layout,
+                header,
+                footer,
             },
             &sheet.pagination.pages,
             &sheet.page,
             &embedded,
             &mut registry,
             &sheet.charts,
-            options.page.print_grid_lines,
+            options,
+            first_page_no,
+            page_count,
         );
+        first_page_no += sheet.pagination.pages.len();
     }
-    let probe = probe_pages_from(glyphs, &first.page);
+    let probe = probe_pages_from(glyphs, &first_page_geometry);
     let save = PdfSaveOptions {
         // `optimize` у printpdf сжимает потоки — это и есть `compress`.
         optimize: options.compress,
         ..PdfSaveOptions::default()
     };
-    let page_count: usize = prepared
-        .iter()
-        .map(|sheet| sheet.pagination.pages.len())
-        .sum();
     let mut session = StreamSession::begin(
         &doc,
         &probe,
@@ -646,13 +999,28 @@ fn write_pages<W: Write>(
     options: &PdfOptions,
     warnings: &mut Vec<PdfWarnMsg>,
 ) -> Result<(), PdfError> {
+    let page_count: usize = prepared
+        .iter()
+        .map(|sheet| sheet.pagination.pages.len())
+        .sum();
+    let base = StampBase::from_options(options);
+    // Нумерация сквозная по документу: `&P` считает страницы книги целиком, а
+    // не листа — так же нумерует их Excel при печати всей книги.
+    let mut page_no = 0;
     for sheet in prepared {
+        let (header, footer) = sheet_overlay(options, sheet.sheet);
         let frame = SheetFrame {
             book,
             layout: &sheet.layout,
+            header,
+            footer,
         };
-        for sheet_page in &sheet.pagination.pages {
+        for (page_index, sheet_page) in sheet.pagination.pages.iter().enumerate() {
+            page_no += 1;
             let page_geom = sheet.page.with_page_top_px(sheet_page.slice.offset_y);
+            // `image_ops` строит по элементу на страницу; пустой срез —
+            // страховка на случай расхождения, а не рабочий режим.
+            let images = sheet.images.get(page_index).map_or(&[][..], Vec::as_slice);
             let mut ops: Vec<Op> = Vec::new();
             draw_page(
                 &mut ops,
@@ -662,7 +1030,9 @@ fn write_pages<W: Write>(
                 frame,
                 sheet_page,
                 &sheet.charts,
+                images,
                 options.page.print_grid_lines,
+                base.page(page_no, page_count),
             );
             ops.extend(annot::page_annotations(
                 sheet.sheet,
