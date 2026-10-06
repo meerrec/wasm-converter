@@ -3,6 +3,7 @@ import type {
   InMsg,
   OutMsg,
   PaintStats,
+  PdfOptions,
   RenderConfig,
   SheetInfo,
   Viewport,
@@ -38,6 +39,11 @@ export interface XlsxViewerHandle {
   hyperlinkAt(clientX: number, clientY: number): Promise<HyperlinkInfo | null>;
   /** Текущий кадр картинкой PNG — им проверяют, что нарисовалось. */
   exportPng(): Promise<Uint8Array>;
+  /**
+   * Экспорт листа в PDF. Без настроек — весь текущий лист на A4.
+   * `options.sheetIndex` перекрывает показанный лист.
+   */
+  exportPdf(options?: PdfOptions): Promise<Uint8Array>;
   /** Подписка на метрики кадров. */
   onTick(handler: (stats: PaintStats) => void): () => void;
   /** Остановить воркер и убрать за собой разметку. */
@@ -91,6 +97,16 @@ export async function createXlsxViewer(
   scroller.append(spacer, canvas);
   host.append(scroller);
 
+  // Проверяем ровно ту возможность, которой пользуемся: глобального
+  // `OffscreenCanvas` может не быть и там, где холст отдаётся воркеру. Без неё
+  // сообщение должно быть внятным, а не `transferControlToOffscreen is not a
+  // function` из недр разметки.
+  if (typeof canvas.transferControlToOffscreen !== 'function') {
+    throw new Error(
+      'этот браузер не поддерживает OffscreenCanvas (transferControlToOffscreen) — просмотрщик не запустится',
+    );
+  }
+
   const worker = new Worker(
     options.workerUrl ?? new URL('../worker/worker.js', import.meta.url),
     { type: 'module', name: 'doc-converter-xlsx' },
@@ -111,6 +127,10 @@ export async function createXlsxViewer(
   const pendingHit = new Map<number, { resolve: (c: [number, number] | null) => void }>();
   const pendingHyperlink = new Map<number, { resolve: (link: HyperlinkInfo | null) => void }>();
   const pendingPng = new Map<number, (bytes: Uint8Array) => void>();
+  const pendingPdf = new Map<
+    number,
+    { resolve: (bytes: Uint8Array) => void; reject: (e: Error) => void }
+  >();
   let nextRequestId = 1;
 
   worker.addEventListener('message', (ev: MessageEvent<OutMsg>) => {
@@ -141,9 +161,17 @@ export async function createXlsxViewer(
         pendingPng.delete(msg.id);
         break;
       }
+      case 'pdf': {
+        pendingPdf.get(msg.id)?.resolve(msg.bytes);
+        pendingPdf.delete(msg.id);
+        break;
+      }
       case 'error':
         for (const p of pendingOpen.values()) p.reject(new Error(msg.message));
         pendingOpen.clear();
+        // У ошибки нет id: отклоняем все экспорты — незавершённый повис бы навсегда.
+        for (const p of pendingPdf.values()) p.reject(new Error(msg.message));
+        pendingPdf.clear();
         console.error('[xlsx]', msg.message);
         break;
       default:
@@ -353,6 +381,20 @@ export async function createXlsxViewer(
       return new Promise<Uint8Array>((resolve) => {
         pendingPng.set(id, resolve);
         worker.postMessage({ type: 'export-png', id } satisfies InMsg);
+      });
+    },
+
+    exportPdf(options: PdfOptions = {}): Promise<Uint8Array> {
+      const id = nextRequestId++;
+      const sheet = options.sheetIndex ?? sheetIndex;
+      return new Promise<Uint8Array>((resolve, reject) => {
+        pendingPdf.set(id, { resolve, reject });
+        worker.postMessage({
+          type: 'export-pdf',
+          id,
+          sheet,
+          options,
+        } satisfies InMsg);
       });
     },
 
