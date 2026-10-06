@@ -76,10 +76,10 @@ pub struct CellStyle {
     pub vertical: VerticalAlign,
     /// Переносить текст по словам.
     pub wrap: bool,
-    /// Полужирный. TODO (C4): пока подрезанного Bold в бандле нет, флаг не
-    /// влияет на начертание.
+    /// Полужирный: выбирает встраиваемое начертание, но не метрики —
+    /// перенос и «#####» считаются по regular, как в canvas-пути.
     pub bold: bool,
-    /// Курсив. TODO (C4): см. [`CellStyle::bold`].
+    /// Курсив: см. [`CellStyle::bold`].
     pub italic: bool,
     /// Подчёркивание. TODO: PDF не рисует его сам, линию поставит отдельный срез.
     pub underline: bool,

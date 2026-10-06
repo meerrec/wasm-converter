@@ -29,7 +29,16 @@ pub const DEFAULT_FONT_ID: FontId = 0;
 /// согласованной с шириной колонок. Лицензия SIL OFL 1.1 — `fonts/OFL.txt`.
 const DEFAULT_FONT: &[u8] = include_bytes!("fonts/carlito-subset.ttf");
 
-/// Байты шрифта по умолчанию.
+/// Carlito Bold: тот же набор кодпоинтов, что у regular.
+const BOLD_FONT: &[u8] = include_bytes!("fonts/carlito-bold-subset.ttf");
+
+/// Carlito Italic: тот же набор кодпоинтов, что у regular.
+const ITALIC_FONT: &[u8] = include_bytes!("fonts/carlito-italic-subset.ttf");
+
+/// Carlito Bold Italic: тот же набор кодпоинтов, что у regular.
+const BOLD_ITALIC_FONT: &[u8] = include_bytes!("fonts/carlito-bolditalic-subset.ttf");
+
+/// Байты шрифта по умолчанию (regular).
 ///
 /// Нужен потребителям, которые встраивают тот же шрифт в свой формат вывода
 /// (PDF-экспорт, `crates/pdf`): держать вторую копию `include_bytes!` они не
@@ -37,6 +46,32 @@ const DEFAULT_FONT: &[u8] = include_bytes!("fonts/carlito-subset.ttf");
 #[must_use]
 pub fn default_font_bytes() -> &'static [u8] {
     DEFAULT_FONT
+}
+
+/// Байты Carlito Bold.
+///
+/// Аддитивно к [`default_font_bytes`]: начертание выбирается по флагу стиля,
+/// метрики и перенос при этом остаются на regular (одна система ширин на
+/// экран и PDF, ADR-0007).
+#[must_use]
+pub fn bold_font_bytes() -> &'static [u8] {
+    BOLD_FONT
+}
+
+/// Байты Carlito Italic.
+///
+/// См. [`bold_font_bytes`]: аддитивный аксессор для PDF-экспорта.
+#[must_use]
+pub fn italic_font_bytes() -> &'static [u8] {
+    ITALIC_FONT
+}
+
+/// Байты Carlito Bold Italic.
+///
+/// См. [`bold_font_bytes`]: аддитивный аксессор для PDF-экспорта.
+#[must_use]
+pub fn bold_italic_font_bytes() -> &'static [u8] {
+    BOLD_ITALIC_FONT
 }
 
 /// Ключ LRU-кэша: метрика зависит от шрифта, глифа и кегля.
@@ -287,6 +322,23 @@ mod tests {
     const PX_11PT: f32 = 11.0 * 96.0 / 72.0;
     /// Advance «0» в Carlito: 1038/2048 em (эталон снят `hb-shape`).
     const ZERO_11PT: f32 = 1038.0 / 2048.0 * 11.0 * 96.0 / 72.0;
+
+    #[test]
+    fn face_bytes_are_distinct_ttf_subsets() {
+        let faces = [
+            default_font_bytes(),
+            bold_font_bytes(),
+            italic_font_bytes(),
+            bold_italic_font_bytes(),
+        ];
+        for (i, bytes) in faces.iter().enumerate() {
+            assert!(bytes.len() > 1000, "подмножество {i} подозрительно мало");
+            assert_eq!(bytes[..4], [0, 1, 0, 0], "подмножество {i} — не TTF");
+            for (j, other) in faces.iter().enumerate() {
+                assert!(i == j || bytes != other, "начертания {i} и {j} совпали");
+            }
+        }
+    }
 
     #[test]
     fn default_font_is_registered() {

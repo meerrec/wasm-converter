@@ -118,6 +118,166 @@ fn decode_content(content: &[u8], cmap: &HashMap<u16, char>) -> String {
     out
 }
 
+/// Сколько раз подстрока встречается в буфере.
+fn count_occurrences(haystack: &[u8], needle: &[u8]) -> usize {
+    haystack
+        .windows(needle.len())
+        .filter(|window| *window == needle)
+        .count()
+}
+
+/// Карта `ToUnicode` каждого шрифта страницы: имя ресурса → «код → символ».
+fn page_cmaps(doc: &lopdf::Document, page: lopdf::ObjectId) -> HashMap<String, HashMap<u16, char>> {
+    let mut cmaps = HashMap::new();
+    for (name, font) in doc.get_page_fonts(page).expect("шрифты страницы") {
+        let Ok(to_unicode) = font.get(b"ToUnicode") else {
+            continue;
+        };
+        let Ok(id) = to_unicode.as_reference() else {
+            continue;
+        };
+        let Ok(stream) = doc.get_object(id).and_then(lopdf::Object::as_stream) else {
+            continue;
+        };
+        let Ok(content) = stream.get_plain_content() else {
+            continue;
+        };
+        cmaps.insert(
+            String::from_utf8_lossy(&name).into_owned(),
+            parse_bfchar(&String::from_utf8_lossy(&content)),
+        );
+    }
+    cmaps
+}
+
+/// Прогон текста в потоке содержимого: имя ресурса шрифта и строка.
+fn text_runs(doc: &lopdf::Document, page: lopdf::ObjectId) -> Vec<(String, String)> {
+    let cmaps = page_cmaps(doc, page);
+    let content = doc.get_page_content(page).expect("поток содержимого");
+    let text = String::from_utf8_lossy(&content);
+
+    // Операторы `Tf`/`Tj` идут в потоке по порядку; в hex-строке ни `T`, ни
+    // `j` встретиться не могут (это не hex-цифры), поэтому слияние позиций
+    // токенов даёт настоящую последовательность прогонов.
+    let mut events: Vec<(usize, &str)> = Vec::new();
+    events.extend(text.match_indices("Tf"));
+    events.extend(text.match_indices("Tj"));
+    events.sort_by_key(|(at, _)| *at);
+
+    let mut runs = Vec::new();
+    let mut font = String::new();
+    for (at, token) in events {
+        if token == "Tf" {
+            // Перед оператором стоит `/F2 11` — имя ресурса и кегль.
+            if let Some(slash) = text[..at].rfind('/') {
+                font = text[slash + 1..at]
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned();
+            }
+            continue;
+        }
+        // Перед `Tj` стоит hex-строка `<…>`.
+        let Some(open) = text[..at].rfind('<') else {
+            continue;
+        };
+        let Some(close) = text[open..at].find('>') else {
+            continue;
+        };
+        let hex = &text[open + 1..open + close];
+        let mut decoded = String::new();
+        for pair in hex.as_bytes().chunks(4) {
+            let Ok(code) = u16::from_str_radix(&String::from_utf8_lossy(pair), 16) else {
+                continue;
+            };
+            if let Some(ch) = cmaps.get(&font).and_then(|map| map.get(&code)) {
+                decoded.push(*ch);
+            }
+        }
+        runs.push((font.clone(), decoded));
+    }
+    runs
+}
+
+/// Байты встроенного `FontFile2` каждого шрифта страницы: ресурс → программа.
+fn embedded_fonts(doc: &lopdf::Document, page: lopdf::ObjectId) -> HashMap<String, Vec<u8>> {
+    let mut fonts = HashMap::new();
+    for (name, font) in doc.get_page_fonts(page).expect("шрифты страницы") {
+        let Some(bytes) = font_program(doc, font) else {
+            continue;
+        };
+        fonts.insert(String::from_utf8_lossy(&name).into_owned(), bytes);
+    }
+    fonts
+}
+
+/// Программа шрифта: `Type0` → `DescendantFonts[0]` → `FontDescriptor` → `FontFile2`.
+fn font_program(doc: &lopdf::Document, font: &lopdf::Dictionary) -> Option<Vec<u8>> {
+    let descriptor = if let Ok(descendants) = font.get(b"DescendantFonts") {
+        let first = descendants.as_array().ok()?.first()?;
+        // printpdf кладёт потомка встроенным словарём, но ссылку тоже надо
+        // уметь разыменовать.
+        let descendant = match first {
+            lopdf::Object::Reference(id) => doc.get_object(*id).ok()?,
+            other => other,
+        };
+        descendant
+            .as_dict()
+            .ok()?
+            .get(b"FontDescriptor")
+            .ok()?
+            .as_reference()
+            .ok()?
+    } else {
+        font.get(b"FontDescriptor").ok()?.as_reference().ok()?
+    };
+    let descriptor = doc.get_object(descriptor).ok()?.as_dict().ok()?;
+    let file = descriptor.get(b"FontFile2").ok()?.as_reference().ok()?;
+    // `get_plain_content`, а не `decompressed_content`: подмножество шрифта
+    // printpdf пишет без фильтра.
+    doc.get_object(file)
+        .ok()?
+        .as_stream()
+        .ok()?
+        .get_plain_content()
+        .ok()
+}
+
+/// `macStyle` из таблицы `head` встроенного подмножества.
+///
+/// Бит 0 — полужирный, бит 1 — курсив: так начертание видно в самом шрифте,
+/// а не только в имени ресурса.
+fn mac_style(program: &[u8]) -> u16 {
+    let num_tables = u16::from_be_bytes(program[4..6].try_into().expect("заголовок sfnt"));
+    for index in 0..usize::from(num_tables) {
+        let record = 12 + index * 16;
+        if &program[record..record + 4] != b"head" {
+            continue;
+        }
+        let offset = u32::from_be_bytes(
+            program[record + 8..record + 12]
+                .try_into()
+                .expect("смещение таблицы"),
+        ) as usize;
+        return u16::from_be_bytes(
+            program[offset + 44..offset + 46]
+                .try_into()
+                .expect("macStyle"),
+        );
+    }
+    panic!("во встроенном шрифте нет таблицы head");
+}
+
+/// Прогон шрифта, которым набрана строка `needle`.
+fn font_of_run(runs: &[(String, String)], needle: &str) -> String {
+    runs.iter()
+        .find(|(_, text)| text == needle)
+        .unwrap_or_else(|| panic!("в потоке нет прогона {needle:?}: {runs:?}"))
+        .0
+        .clone()
+}
+
 #[test]
 fn sheet_becomes_single_page_pdf() {
     let bytes = export("content-mixed-types.xlsx", 0);
@@ -144,6 +304,66 @@ fn sheet_becomes_single_page_pdf() {
         content.contains("Tj") || content.contains("TJ"),
         "в потоке нет операторов вывода текста"
     );
+}
+
+#[test]
+fn bold_and_italic_cells_use_their_own_faces() {
+    // В фикстуре заняты все четыре начертания: Bold Italic, обычное, Bold,
+    // Italic — значит, в PDF должны лежать четыре разных FontFile2.
+    let bytes = export("styles-bold-italic.xlsx", 0);
+    assert_eq!(
+        count_occurrences(&bytes, b"FontFile2"),
+        4,
+        "встроены не все использованные начертания"
+    );
+
+    let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
+    let page = *doc.get_pages().values().next().expect("страница есть");
+    let fonts = embedded_fonts(&doc, page);
+    let runs = text_runs(&doc, page);
+
+    // Строки фикстуры: 0 — жирный курсив, 1 — обычная, 2 — жирная,
+    // 3 — курсив, 4 — жирная.
+    let regular = font_of_run(&runs, "строка 1");
+    let bold = font_of_run(&runs, "строка 2");
+    let italic = font_of_run(&runs, "строка 3");
+    let bold_italic = font_of_run(&runs, "строка 0");
+
+    assert_ne!(bold, regular, "жирная ячейка набрана тем же шрифтом");
+    assert_ne!(italic, regular, "курсивная ячейка набрана тем же шрифтом");
+    assert_ne!(bold_italic, regular, "жирный курсив — тем же шрифтом");
+
+    let style = |name: &String| mac_style(fonts.get(name).expect("шрифт встроен"));
+    assert_eq!(
+        style(&regular) & 0b11,
+        0,
+        "обычная ячейка набрана не regular"
+    );
+    assert_eq!(style(&bold) & 0b11, 0b01, "жирная ячейка набрана не Bold");
+    assert_eq!(style(&italic) & 0b11, 0b10, "курсивная набрана не Italic");
+    assert_eq!(
+        style(&bold_italic) & 0b11,
+        0b11,
+        "жирный курсив набран не Bold Italic"
+    );
+}
+
+#[test]
+fn unused_faces_are_not_embedded() {
+    // В книге нет выделенного текста: лишние подмножества — лишние ~90 КБ.
+    let bytes = export("content-single-cell.xlsx", 0);
+
+    assert_eq!(
+        count_occurrences(&bytes, b"FontFile2"),
+        1,
+        "в PDF попало неиспользованное начертание"
+    );
+    let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
+    let page = *doc.get_pages().values().next().expect("страница есть");
+    let fonts = embedded_fonts(&doc, page);
+    let program = fonts.values().next().expect("шрифт встроен");
+
+    assert_eq!(mac_style(program) & 0b11, 0, "встроено не regular");
 }
 
 #[test]
