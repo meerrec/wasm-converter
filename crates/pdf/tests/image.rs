@@ -276,11 +276,12 @@ fn one_media_part_in_five_anchors_gives_one_xobject() {
 }
 
 #[test]
-fn image_is_cropped_to_the_anchor_not_stretched() {
-    // Исходник 16x4 px (4:1), якорь 40x40 pt (1:1): растягивание исказило бы
-    // пропорции, обрезка — нет.
+fn image_is_stretched_to_the_anchor_and_clipped() {
+    // Паритет с canvas: `drawImage(bitmap, dx, dy, dw, dh)` заполняет
+    // прямоугольник назначения, не сохраняя пропорции. Исходник 16x4 px (4:1)
+    // растягивается на якорь 40x40 pt (1:1) масштабами 2.5 и 10.
     let bytes = png(16, 4);
-    let mut doc = PdfDocument::new("image-crop");
+    let mut doc = PdfDocument::new("image-stretch");
     let ops = place(
         &mut doc.resources,
         "image/png",
@@ -301,20 +302,33 @@ fn image_is_cropped_to_the_anchor_not_stretched() {
     assert_eq!(cm.operator, "cm", "перед `Do` — матрица трансформа");
     let matrix: Vec<f32> = cm.operands.iter().map(number).collect();
     assert_eq!(matrix.len(), 6);
-    // cover: k = max(40/16, 40/4) = 10 pt/px; картинка 160x40 pt, центр по x.
-    assert!((matrix[0] - 160.0).abs() < 1e-3, "ширина: {}", matrix[0]);
+    // Ширина и высота матрицы равны сторонам якоря: картинка заполняет его
+    // целиком.
+    assert!((matrix[0] - 40.0).abs() < 1e-3, "ширина: {}", matrix[0]);
     assert!((matrix[3] - 40.0).abs() < 1e-3, "высота: {}", matrix[3]);
-    assert!((matrix[4] + 50.0).abs() < 1e-3, "сдвиг x: {}", matrix[4]);
+    assert!((matrix[4] - 10.0).abs() < 1e-3, "сдвиг x: {}", matrix[4]);
     assert!((matrix[5] - 20.0).abs() < 1e-3, "сдвиг y: {}", matrix[5]);
-    let aspect = matrix[0] / matrix[3];
+    // Масштабы по осям независимы: 40/16 = 2.5 и 40/4 = 10 pt/px.
+    let scale_x = matrix[0] / 16.0;
+    let scale_y = matrix[3] / 4.0;
     assert!(
-        (aspect - 4.0).abs() < 1e-3,
-        "пропорции исходника сохранены: {aspect}"
+        (scale_x - scale_y).abs() > 1.0,
+        "масштабы по осям независимы: {scale_x} и {scale_y}"
+    );
+    let source_aspect = 16.0 / 4.0;
+    let drawn_aspect = matrix[0] / matrix[3];
+    assert!(
+        (drawn_aspect - source_aspect).abs() > 1.0,
+        "пропорции исходника не сохраняются: {drawn_aspect} против {source_aspect}"
+    );
+    assert!(
+        (drawn_aspect - 1.0).abs() < 1e-3,
+        "нарисованное соотношение сторон — соотношение якоря: {drawn_aspect}"
     );
     assert_eq!(
         clip_path(&content),
         vec![(10.0, 20.0), (50.0, 20.0), (50.0, 60.0), (10.0, 60.0)],
-        "выступающий за якорь излишек срезается отсечением"
+        "клип по прямоугольнику якоря остаётся"
     );
 }
 

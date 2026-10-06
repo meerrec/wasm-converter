@@ -13,12 +13,13 @@
 //! возвращает ошибку про одно изображение, а [`place_all`] собирает ошибки
 //! всех в отчёт и отдаёт операции уцелевших.
 //!
-//! Картинка вписывается в прямоугольник якоря по принципу «заполнить»
-//! (`cover`): масштаб одинаков по обеим осям, поэтому пропорции исходника
-//! сохраняются, а излишек по длинной стороне выступает за якорь и срезается
-//! отсечением (`W n`). У Image-`XObject` нет ни `/BBox`, ни `/Rect`, которыми
-//! можно было бы обрезать пиксели, — обрезка выражается матрицей и клипом,
-//! что и делает [`placement_ops`].
+//! Картинка растягивается на весь прямоугольник якоря: так же её кладёт
+//! canvas-путь (`drawImage` с явными `dw`/`dh`), и так устроен OOXML без
+//! `a:srcRect` — умолчание `a:stretch` заполняет якорь, не сохраняя пропорций.
+//! Отсечение по якорю (`W n`) остаётся: пиксели не имеют права выезжать за
+//! него ни при каких обстоятельствах. Настоящая обрезка появится, когда
+//! парсер начнёт читать `a:srcRect`: тогда вписывание станет обрезкой по
+//! данным файла, а не по несовпадению пропорций.
 //!
 //! Повторно вставленная media-часть не заводит второй `XObject`: имя выводится
 //! из отпечатка байтов, и [`register`] переиспользует уже собранное
@@ -35,7 +36,7 @@ use printpdf::{
 
 /// DPI, при котором первый масштаб из `XObjectTransform::get_ctms` —
 /// тождественный (1 px = 1 pt). Дальше размер картинки на странице задают
-/// только `scale_x`/`scale_y`, то есть вписывание в прямоугольник якоря.
+/// только `scale_x`/`scale_y`, то есть растягивание на прямоугольник якоря.
 const DPI: f32 = 72.0;
 
 /// Ошибка размещения изображения.
@@ -92,8 +93,8 @@ pub fn decode(mime: &str, bytes: &[u8]) -> Result<RawImage, DecodeError> {
 /// страницы.
 ///
 /// `rect` — прямоугольник в точках с началом координат в левом нижнем углу
-/// страницы: то же, что отдаёт `RectPt::to_pdf`. Картинка заполняет его целиком
-/// с сохранением пропорций (обрезка излишка — [`placement_ops`]).
+/// страницы: то же, что отдаёт `RectPt::to_pdf`. Картинка растягивается на
+/// него целиком и отсекается по нему же (подробности — [`placement_ops`]).
 ///
 /// Повторный вызов с теми же байтами переиспользует `XObject` первого вызова.
 ///
@@ -238,25 +239,21 @@ fn xobject_id(bytes: &[u8]) -> XObjectId {
 
 /// Операции отрисовки зарегистрированного `XObject`: `q`, отсечение, `Do`, `Q`.
 ///
-/// Вписывание — «cover»: масштаб `k` — больший из отношений сторон якоря
-/// к сторонам исходника, поэтому пропорции не искажаются (в отличие от
-/// растягивания), а излишек выступает за якорь и срезается клипом. Обрезка
-/// центрированная: `srcRect` в модель листа не приезжает, и центр — нейтральная
-/// точка, равно далёкая от обоих краёв.
+/// Картинка растягивается на `rect` независимыми масштабами по осям — так же,
+/// как её кладёт canvas-путь; пропорции исходника при этом не сохраняются.
+/// Отсечение по прямоугольнику якоря остаётся: у Image-`XObject` нет ни
+/// `/BBox`, ни `/Rect`, зато клип гарантирует, что пиксели не выйдут за якорь
+/// ни при каких обстоятельствах.
 ///
 /// `rect` проверен [`check_rect`], поэтому деления на нулевую сторону нет.
 fn placement_ops(id: &XObjectId, width_px: usize, height_px: usize, rect: &Rect) -> Vec<Op> {
-    let scale = (rect.width.0 / px_to_pt(width_px)).max(rect.height.0 / px_to_pt(height_px));
-    // Свес — на сколько картинка выходит за якорь с каждой стороны; он и есть
-    // обрезка, которую снимает клип.
-    let overhang_x = (px_to_pt(width_px) * scale - rect.width.0) / 2.0;
-    let overhang_y = (px_to_pt(height_px) * scale - rect.height.0) / 2.0;
     let transform = XObjectTransform {
         dpi: Some(DPI),
-        scale_x: Some(scale),
-        scale_y: Some(scale),
-        translate_x: Some(Pt(rect.x.0 - overhang_x)),
-        translate_y: Some(Pt(rect.y.0 - overhang_y)),
+        // Растягивание точно на якорь: так же картинку кладёт canvas-путь.
+        scale_x: Some(rect.width.0 / px_to_pt(width_px)),
+        scale_y: Some(rect.height.0 / px_to_pt(height_px)),
+        translate_x: Some(rect.x),
+        translate_y: Some(rect.y),
         rotate: None,
     };
     vec![
@@ -456,32 +453,40 @@ mod tests {
     }
 
     #[test]
-    fn wide_image_is_cropped_centered_in_a_square_anchor() {
+    fn wide_image_is_stretched_to_the_anchor() {
         let id = XObjectId("test".to_owned());
-        // 16x4 px в квадрат 40x40 pt: cover k = 10 pt/px, излишек 120 pt по
-        // ширине делится пополам и срезается клипом.
+        // 16x4 px в якорь 40x40 pt: масштабы по осям независимы (2.5 и 10),
+        // пропорции исходника не сохраняются — паритет с canvas-путём.
         let ops = placement_ops(&id, 16, 4, &rect(10.0, 20.0, 40.0, 40.0));
         let Some(Op::UseXobject { transform, .. }) = ops.get(2) else {
             panic!("ожидался XObject");
         };
-        assert_eq!(transform.scale_x, Some(10.0));
-        assert_eq!(transform.scale_y, Some(10.0), "масштаб одинаков по осям");
-        assert_eq!(transform.translate_x, Some(Pt(-50.0)));
+        assert_eq!(
+            transform.scale_x,
+            Some(2.5),
+            "ширина якоря / ширина исходника"
+        );
+        assert_eq!(
+            transform.scale_y,
+            Some(10.0),
+            "высота якоря / высота исходника"
+        );
+        assert_eq!(transform.translate_x, Some(Pt(10.0)));
         assert_eq!(transform.translate_y, Some(Pt(20.0)));
     }
 
     #[test]
-    fn tall_image_is_cropped_centered_in_a_square_anchor() {
+    fn tall_image_is_stretched_to_the_anchor() {
         let id = XObjectId("test".to_owned());
-        // 4x16 px в квадрат 40x40 pt: cover k = 10 pt/px, излишек по высоте.
+        // 4x16 px в якорь 40x40 pt: 10 по x и 2.5 по y.
         let ops = placement_ops(&id, 4, 16, &rect(10.0, 20.0, 40.0, 40.0));
         let Some(Op::UseXobject { transform, .. }) = ops.get(2) else {
             panic!("ожидался XObject");
         };
         assert_eq!(transform.scale_x, Some(10.0));
-        assert_eq!(transform.scale_y, Some(10.0));
+        assert_eq!(transform.scale_y, Some(2.5));
         assert_eq!(transform.translate_x, Some(Pt(10.0)));
-        assert_eq!(transform.translate_y, Some(Pt(-40.0)));
+        assert_eq!(transform.translate_y, Some(Pt(20.0)));
     }
 
     #[test]
