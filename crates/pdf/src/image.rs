@@ -13,19 +13,29 @@
 //! возвращает ошибку про одно изображение, а [`place_all`] собирает ошибки
 //! всех в отчёт и отдаёт операции уцелевших.
 //!
-//! Картинка растягивается на весь прямоугольник якоря (как
-//! `DrawCommand::Image` в canvas-пути) и дополнительно отсекается по нему
-//! (`W n`): дробные точки координат и будущий `srcRect` не выпустят пиксели
-//! за границы якоря.
+//! Картинка вписывается в прямоугольник якоря по принципу «заполнить»
+//! (`cover`): масштаб одинаков по обеим осям, поэтому пропорции исходника
+//! сохраняются, а излишек по длинной стороне выступает за якорь и срезается
+//! отсечением (`W n`). У Image-`XObject` нет ни `/BBox`, ни `/Rect`, которыми
+//! можно было бы обрезать пиксели, — обрезка выражается матрицей и клипом,
+//! что и делает [`placement_ops`].
+//!
+//! Повторно вставленная media-часть не заводит второй `XObject`: имя выводится
+//! из отпечатка байтов, и [`register`] переиспользует уже собранное
+//! изображение. Это и место, и процессор: книга с одной картинкой в сотне
+//! ячеек декодирует её один раз.
+
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use printpdf::{
-    LinePoint, Op, PaintMode, PdfResources, Point, Polygon, PolygonRing, Pt, RawImage, Rect,
+    LinePoint, Op, PaintMode, PdfResources, Point, Polygon, PolygonRing, Pt, Px, RawImage, Rect,
     WindingOrder, XObject, XObjectId, XObjectTransform,
 };
 
 /// DPI, при котором первый масштаб из `XObjectTransform::get_ctms` —
 /// тождественный (1 px = 1 pt). Дальше размер картинки на странице задают
-/// только `scale_x`/`scale_y`, то есть прямоугольник якоря.
+/// только `scale_x`/`scale_y`, то есть вписывание в прямоугольник якоря.
 const DPI: f32 = 72.0;
 
 /// Ошибка размещения изображения.
@@ -82,8 +92,10 @@ pub fn decode(mime: &str, bytes: &[u8]) -> Result<RawImage, DecodeError> {
 /// страницы.
 ///
 /// `rect` — прямоугольник в точках с началом координат в левом нижнем углу
-/// страницы: то же, что отдаёт `RectPt::to_pdf`. Картинка растягивается на
-/// него целиком и отсекается по нему же.
+/// страницы: то же, что отдаёт `RectPt::to_pdf`. Картинка заполняет его целиком
+/// с сохранением пропорций (обрезка излишка — [`placement_ops`]).
+///
+/// Повторный вызов с теми же байтами переиспользует `XObject` первого вызова.
 ///
 /// # Errors
 /// Те же, что у [`decode`], плюс [`DecodeError::DegenerateRect`] — проверяется
@@ -95,9 +107,7 @@ pub fn place(
     rect: &Rect,
 ) -> Result<Vec<Op>, DecodeError> {
     check_rect(rect)?;
-    let image = decode(mime, bytes)?;
-    let (width_px, height_px) = (image.width, image.height);
-    let id = register(resources, image);
+    let (id, width_px, height_px) = register(resources, mime, bytes)?;
     Ok(placement_ops(&id, width_px, height_px, rect))
 }
 
@@ -105,7 +115,9 @@ pub fn place(
 #[derive(Debug, Clone)]
 pub struct Placement<'a> {
     /// Идентификатор media-части (`xl/media/image1.png`) — попадает в отчёт
-    /// о пропуске, чтобы было видно, какую картинку потеряли.
+    /// о пропуске, чтобы было видно, какую картинку потеряли. Дедупликация
+    /// на него не опирается: ключ — байты ([`register`]), так что разные id
+    /// с одинаковым содержимым дают один `XObject`.
     pub id: &'a str,
     /// Mime-тип из `[Content_Types].xml`.
     pub mime: &'a str,
@@ -176,30 +188,75 @@ fn check_rect(rect: &Rect) -> Result<(), DecodeError> {
     })
 }
 
-/// Кладёт изображение в ресурсы под новым именем `XObject`.
+/// Кладёт изображение в ресурсы или находит уже собранный `XObject`.
 ///
-/// [`RawImage`] переезжает по владению: пиксели больших картинок незачем
-/// копировать (у printpdf `PdfDocument::add_image` клонирует, здесь — нет).
-fn register(resources: &mut PdfResources, image: RawImage) -> XObjectId {
-    let id = XObjectId::new();
+/// Возвращает имя `XObject` и размеры исходника в пикселях. Имя выводится из
+/// содержимого, поэтому одинаковые байты попадают в одну запись ресурсов:
+/// [`RawImage`] переезжает по владению только при первом размещении, повторы
+/// декодирования не требуют. Ключ — именно байты, а не id media-части из
+/// модели: [`place`] никакого id не получает, а строка [`Placement::id`]
+/// приходит от вызывающего и ничем не подтверждена — отпечаток байтов честнее
+/// и вдобавок склеивает одинаковые копии, разложенные по разным частям пакета.
+///
+/// # Errors
+/// [`DecodeError`] от [`decode`] — если такой картинки в ресурсах ещё нет.
+fn register(
+    resources: &mut PdfResources,
+    mime: &str,
+    bytes: &[u8],
+) -> Result<(XObjectId, usize, usize), DecodeError> {
+    let id = xobject_id(bytes);
+    if let Some((Px(width), Px(height))) = resources
+        .xobjects
+        .map
+        .get(&id)
+        .and_then(XObject::get_width_height)
+    {
+        return Ok((id, width, height));
+    }
+    let image = decode(mime, bytes)?;
+    let (width, height) = (image.width, image.height);
     resources
         .xobjects
         .map
         .insert(id.clone(), XObject::Image(image));
-    id
+    Ok((id, width, height))
+}
+
+/// Имя `XObject` по содержимому media-части — ключ дедупликации.
+///
+/// `DefaultHasher` (SipHash-1-3) — 64 бита: на сотнях картинок книги коллизия
+/// пренебрежимо маловероятна, а имя живёт только внутри одного сеанса сборки
+/// PDF, поэтому межзапусковая стабильность хеша не нужна. Строка имени — из
+/// одних hex-цифр: она становится именем ресурса в `/XObject`, и экранирование
+/// спецсимволов пути media-части тут ни к чему.
+fn xobject_id(bytes: &[u8]) -> XObjectId {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    XObjectId(format!("img{:016x}", hasher.finish()))
 }
 
 /// Операции отрисовки зарегистрированного `XObject`: `q`, отсечение, `Do`, `Q`.
 ///
+/// Вписывание — «cover»: масштаб `k` — больший из отношений сторон якоря
+/// к сторонам исходника, поэтому пропорции не искажаются (в отличие от
+/// растягивания), а излишек выступает за якорь и срезается клипом. Обрезка
+/// центрированная: `srcRect` в модель листа не приезжает, и центр — нейтральная
+/// точка, равно далёкая от обоих краёв.
+///
 /// `rect` проверен [`check_rect`], поэтому деления на нулевую сторону нет.
 fn placement_ops(id: &XObjectId, width_px: usize, height_px: usize, rect: &Rect) -> Vec<Op> {
+    let scale = (rect.width.0 / px_to_pt(width_px)).max(rect.height.0 / px_to_pt(height_px));
+    // Свес — на сколько картинка выходит за якорь с каждой стороны; он и есть
+    // обрезка, которую снимает клип.
+    let overhang_x = (px_to_pt(width_px) * scale - rect.width.0) / 2.0;
+    let overhang_y = (px_to_pt(height_px) * scale - rect.height.0) / 2.0;
     let transform = XObjectTransform {
         dpi: Some(DPI),
-        // Картинка растягивается точно на якорь, как её рисует canvas-путь.
-        scale_x: Some(rect.width.0 / px_to_pt(width_px)),
-        scale_y: Some(rect.height.0 / px_to_pt(height_px)),
-        translate_x: Some(rect.x),
-        translate_y: Some(rect.y),
+        scale_x: Some(scale),
+        scale_y: Some(scale),
+        translate_x: Some(Pt(rect.x.0 - overhang_x)),
+        translate_y: Some(Pt(rect.y.0 - overhang_y)),
         rotate: None,
     };
     vec![
@@ -283,6 +340,14 @@ mod tests {
         }
     }
 
+    /// Имя `XObject` из операций размещения (`q`, клип, `Do`, `Q`).
+    fn placed_id(ops: &[Op]) -> XObjectId {
+        match ops.get(2) {
+            Some(Op::UseXobject { id, .. }) => id.clone(),
+            other => panic!("ожидался UseXobject, пришло {other:?}"),
+        }
+    }
+
     #[test]
     fn png_is_decoded_pixel_to_pixel() {
         let image = decode("image/png", &encoded(OutputImageFormat::Png)).expect("PNG разбирается");
@@ -337,7 +402,90 @@ mod tests {
     }
 
     #[test]
-    fn ops_clip_the_rect_and_stretch_the_image() {
+    fn repeated_bytes_reuse_one_xobject() {
+        let bytes = encoded(OutputImageFormat::Png);
+        let mut resources = PdfResources::default();
+        let first = place(
+            &mut resources,
+            "image/png",
+            &bytes,
+            &rect(0.0, 0.0, 20.0, 10.0),
+        )
+        .expect("первое размещение");
+        let second = place(
+            &mut resources,
+            "image/png",
+            &bytes,
+            &rect(0.0, 40.0, 40.0, 40.0),
+        )
+        .expect("повтор размещается без декодирования");
+        assert_eq!(resources.xobjects.map.len(), 1, "одна запись ресурсов");
+        assert_eq!(placed_id(&first), placed_id(&second), "то же имя `XObject`");
+    }
+
+    #[test]
+    fn different_bytes_get_different_xobjects() {
+        let mut resources = PdfResources::default();
+        let red = encoded(OutputImageFormat::Png);
+        let other = RawImage {
+            pixels: RawImageData::U8(vec![0, 255, 0, 0, 0, 0]),
+            width: 2,
+            height: 1,
+            data_format: RawImageFormat::RGB8,
+            tag: Vec::new(),
+        }
+        .encode_to_bytes(&[OutputImageFormat::Png])
+        .expect("картинка кодируется")
+        .0;
+        let first = place(
+            &mut resources,
+            "image/png",
+            &red,
+            &rect(0.0, 0.0, 20.0, 10.0),
+        )
+        .expect("первая картинка");
+        let second = place(
+            &mut resources,
+            "image/png",
+            &other,
+            &rect(0.0, 40.0, 20.0, 10.0),
+        )
+        .expect("вторая картинка");
+        assert_eq!(resources.xobjects.map.len(), 2);
+        assert_ne!(placed_id(&first), placed_id(&second));
+    }
+
+    #[test]
+    fn wide_image_is_cropped_centered_in_a_square_anchor() {
+        let id = XObjectId("test".to_owned());
+        // 16x4 px в квадрат 40x40 pt: cover k = 10 pt/px, излишек 120 pt по
+        // ширине делится пополам и срезается клипом.
+        let ops = placement_ops(&id, 16, 4, &rect(10.0, 20.0, 40.0, 40.0));
+        let Some(Op::UseXobject { transform, .. }) = ops.get(2) else {
+            panic!("ожидался XObject");
+        };
+        assert_eq!(transform.scale_x, Some(10.0));
+        assert_eq!(transform.scale_y, Some(10.0), "масштаб одинаков по осям");
+        assert_eq!(transform.translate_x, Some(Pt(-50.0)));
+        assert_eq!(transform.translate_y, Some(Pt(20.0)));
+    }
+
+    #[test]
+    fn tall_image_is_cropped_centered_in_a_square_anchor() {
+        let id = XObjectId("test".to_owned());
+        // 4x16 px в квадрат 40x40 pt: cover k = 10 pt/px, излишек по высоте.
+        let ops = placement_ops(&id, 4, 16, &rect(10.0, 20.0, 40.0, 40.0));
+        let Some(Op::UseXobject { transform, .. }) = ops.get(2) else {
+            panic!("ожидался XObject");
+        };
+        assert_eq!(transform.scale_x, Some(10.0));
+        assert_eq!(transform.scale_y, Some(10.0));
+        assert_eq!(transform.translate_x, Some(Pt(10.0)));
+        assert_eq!(transform.translate_y, Some(Pt(-40.0)));
+    }
+
+    #[test]
+    fn ops_clip_the_rect_and_fit_the_image() {
         let id = XObjectId("test".to_owned());
         let ops = placement_ops(&id, 96, 48, &rect(10.0, 20.0, 48.0, 24.0));
         assert_eq!(ops.len(), 4, "q, отсечение, Do, Q");

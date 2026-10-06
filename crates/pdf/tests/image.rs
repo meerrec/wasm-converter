@@ -105,6 +105,40 @@ fn number(object: &Object) -> f32 {
     }
 }
 
+/// Имена `XObject`'ов страницы в порядке `Do`-операций.
+fn do_names(content: &Content) -> Vec<Vec<u8>> {
+    content
+        .operations
+        .iter()
+        .filter(|op| op.operator == "Do")
+        .filter_map(|op| {
+            op.operands
+                .first()
+                .and_then(|operand| operand.as_name().ok())
+                .map(<[u8]>::to_vec)
+        })
+        .collect()
+}
+
+/// Вершины пути отсечения страницы: `m`/`l` перед `W`.
+fn clip_path(content: &Content) -> Vec<(f32, f32)> {
+    let clip_index = content
+        .operations
+        .iter()
+        .position(|op| op.operator == "W")
+        .expect("отсечение есть");
+    assert_eq!(
+        content.operations[clip_index + 1].operator,
+        "n",
+        "путь отсечения завершается без заливки"
+    );
+    content.operations[..clip_index]
+        .iter()
+        .filter(|op| op.operator == "m" || op.operator == "l")
+        .map(|op| (number(&op.operands[0]), number(&op.operands[1])))
+        .collect()
+}
+
 /// Именованный `XObject`-поток страницы и имя, под которым он лежит в ресурсах.
 fn image_xobject(doc: &Document, page_id: ObjectId) -> (Vec<u8>, &lopdf::Stream) {
     let resources = resources(doc, page_id);
@@ -198,21 +232,89 @@ fn placement_matrix_and_clip_match_the_anchor() {
     assert!((matrix[4] - 10.0).abs() < 1e-3, "x: {}", matrix[4]);
     assert!((matrix[5] - 20.0).abs() < 1e-3, "y: {}", matrix[5]);
 
-    let clip_index = operations
-        .iter()
-        .position(|op| op.operator == "W")
-        .expect("отсечение есть");
-    assert!(clip_index < do_index, "отсечение ставится до картинки");
-    assert_eq!(operations[clip_index + 1].operator, "n");
-    let path: Vec<(f32, f32)> = operations[..clip_index]
-        .iter()
-        .filter(|op| op.operator == "m" || op.operator == "l")
-        .map(|op| (number(&op.operands[0]), number(&op.operands[1])))
-        .collect();
+    assert!(
+        operations
+            .iter()
+            .position(|op| op.operator == "W")
+            .expect("отсечение есть")
+            < do_index,
+        "отсечение ставится до картинки"
+    );
     assert_eq!(
-        path,
+        clip_path(&content),
         vec![(10.0, 20.0), (90.0, 20.0), (90.0, 60.0), (10.0, 60.0)],
         "путь отсечения — прямоугольник якоря"
+    );
+}
+
+#[test]
+fn one_media_part_in_five_anchors_gives_one_xobject() {
+    let bytes = png(8, 4);
+    let mut doc = PdfDocument::new("image-dedup");
+    let placements: Vec<Placement<'_>> = (0..5u8)
+        .map(|index| Placement {
+            id: "xl/media/image1.png",
+            mime: "image/png",
+            bytes: &bytes,
+            rect: rect(10.0, 10.0 + f32::from(index) * 30.0, 80.0, 20.0),
+        })
+        .collect();
+    let batch = place_all(&mut doc.resources, &placements);
+    assert!(batch.skipped.is_empty(), "все пять якорей размещаются");
+    doc.with_pages(vec![page(batch.ops)]);
+
+    let parsed = Document::load_mem(&save(&doc)).expect("PDF разбирается lopdf");
+    let page_id = *parsed.get_pages().values().next().expect("страница есть");
+    // `image_xobject` паникует, если в ресурсах не ровно один XObject.
+    let (name, _) = image_xobject(&parsed, page_id);
+    let names = do_names(&page_ops(&parsed));
+    assert_eq!(names.len(), 5, "пять якорей выводят картинку пять раз");
+    assert!(
+        names.iter().all(|do_name| do_name == &name),
+        "все `Do` ссылаются на один и тот же XObject"
+    );
+}
+
+#[test]
+fn image_is_cropped_to_the_anchor_not_stretched() {
+    // Исходник 16x4 px (4:1), якорь 40x40 pt (1:1): растягивание исказило бы
+    // пропорции, обрезка — нет.
+    let bytes = png(16, 4);
+    let mut doc = PdfDocument::new("image-crop");
+    let ops = place(
+        &mut doc.resources,
+        "image/png",
+        &bytes,
+        &rect(10.0, 20.0, 40.0, 40.0),
+    )
+    .expect("картинка размещается");
+    doc.with_pages(vec![page(ops)]);
+
+    let parsed = Document::load_mem(&save(&doc)).expect("PDF разбирается lopdf");
+    let content = page_ops(&parsed);
+    let do_index = content
+        .operations
+        .iter()
+        .position(|op| op.operator == "Do")
+        .expect("`Do` есть");
+    let cm = &content.operations[do_index - 1];
+    assert_eq!(cm.operator, "cm", "перед `Do` — матрица трансформа");
+    let matrix: Vec<f32> = cm.operands.iter().map(number).collect();
+    assert_eq!(matrix.len(), 6);
+    // cover: k = max(40/16, 40/4) = 10 pt/px; картинка 160x40 pt, центр по x.
+    assert!((matrix[0] - 160.0).abs() < 1e-3, "ширина: {}", matrix[0]);
+    assert!((matrix[3] - 40.0).abs() < 1e-3, "высота: {}", matrix[3]);
+    assert!((matrix[4] + 50.0).abs() < 1e-3, "сдвиг x: {}", matrix[4]);
+    assert!((matrix[5] - 20.0).abs() < 1e-3, "сдвиг y: {}", matrix[5]);
+    let aspect = matrix[0] / matrix[3];
+    assert!(
+        (aspect - 4.0).abs() < 1e-3,
+        "пропорции исходника сохранены: {aspect}"
+    );
+    assert_eq!(
+        clip_path(&content),
+        vec![(10.0, 20.0), (50.0, 20.0), (50.0, 60.0), (10.0, 60.0)],
+        "выступающий за якорь излишек срезается отсечением"
     );
 }
 
