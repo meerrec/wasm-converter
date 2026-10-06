@@ -10,7 +10,10 @@
 //! масштаб печати) — как в `text.rs`: один множитель на всю диаграмму, поэтому
 //! геометрия, кегль и толщины линий масштабируются вместе (ADR-0011 §2).
 
+use std::f64::consts::{FRAC_PI_2, TAU};
+
 use doc_converter_render::chart::{layout, ChartData, ChartPrim, TextAlign};
+use doc_converter_render::display_list::Color;
 use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
 use doc_converter_render::geometry::Rect;
 use printpdf::{
@@ -69,16 +72,15 @@ fn draw_prim(
 ) {
     match prim {
         ChartPrim::Rect { x, y, w, h, fill } => {
-            ops.push(Op::SetFillColor {
-                col: to_pdf_color(*fill),
-            });
-            ops.push(Op::DrawPolygon {
-                polygon: rect_polygon(
+            fill_shape(
+                ops,
+                *fill,
+                rect_polygon(
                     page,
                     RectPx::new(to_f32(*x), to_f32(*y), to_f32(*w), to_f32(*h)),
                     PaintMode::Fill,
                 ),
-            });
+            );
         }
         ChartPrim::Polyline {
             points,
@@ -106,12 +108,7 @@ fn draw_prim(
             if points.is_empty() {
                 return;
             }
-            ops.push(Op::SetFillColor {
-                col: to_pdf_color(*fill),
-            });
-            ops.push(Op::DrawPolygon {
-                polygon: filled_polygon(line_points(page, points)),
-            });
+            fill_shape(ops, *fill, filled_polygon(line_points(page, points)));
         }
         ChartPrim::Circle { cx, cy, r, fill } => {
             // Отрицательный радиус canvas отвергает и заливает пустой путь —
@@ -119,16 +116,20 @@ fn draw_prim(
             if *r <= 0.0 {
                 return;
             }
-            ops.push(Op::SetFillColor {
-                col: to_pdf_color(*fill),
-            });
-            ops.push(Op::DrawPolygon {
-                polygon: filled_polygon(circle_ring(page, *cx, *cy, *r)),
-            });
+            fill_shape(ops, *fill, filled_polygon(circle_ring(page, *cx, *cy, *r)));
         }
-        // Секторы круговой диаграммы — слайс C4: примитив пропускается, а не
-        // рисуется приблизительно.
-        ChartPrim::Sector { .. } => {}
+        ChartPrim::Sector {
+            cx,
+            cy,
+            r,
+            from,
+            to,
+            fill,
+        } => {
+            if let Some(ring) = sector_ring(page, *cx, *cy, *r, *from, *to) {
+                fill_shape(ops, *fill, filled_polygon(ring));
+            }
+        }
         ChartPrim::Text {
             x,
             y,
@@ -194,6 +195,15 @@ fn line_points(page: &PageGeometry, points: &[(f64, f64)]) -> Vec<LinePoint> {
         .collect()
 }
 
+/// Залить контур: цвет и путь — неразлучная пара, как `fillStyle` и `fill()`
+/// в canvas-бэкенде.
+fn fill_shape(ops: &mut Vec<Op>, color: Color, polygon: Polygon) {
+    ops.push(Op::SetFillColor {
+        col: to_pdf_color(color),
+    });
+    ops.push(Op::DrawPolygon { polygon });
+}
+
 /// Замкнутый залитый контур: canvas заливает `Polygon` неявным замыканием,
 /// printpdf замыкает путь сам (`h`) перед заливкой.
 fn filled_polygon(points: Vec<LinePoint>) -> Polygon {
@@ -241,28 +251,28 @@ fn circle_ring(page: &PageGeometry, cx: f64, cy: f64, r: f64) -> Vec<LinePoint> 
         p: to_pdf_point(page, cx + r, cy),
         bezier: false,
     }];
-    push_quarter_arc(
+    push_arc_segment(
         &mut ring,
         page,
         (cx + r, cy + k),
         (cx + k, cy + r),
         (cx, cy + r),
     );
-    push_quarter_arc(
+    push_arc_segment(
         &mut ring,
         page,
         (cx - k, cy + r),
         (cx - r, cy + k),
         (cx - r, cy),
     );
-    push_quarter_arc(
+    push_arc_segment(
         &mut ring,
         page,
         (cx - r, cy - k),
         (cx - k, cy - r),
         (cx, cy - r),
     );
-    push_quarter_arc(
+    push_arc_segment(
         &mut ring,
         page,
         (cx + k, cy - r),
@@ -273,7 +283,7 @@ fn circle_ring(page: &PageGeometry, cx: f64, cy: f64, r: f64) -> Vec<LinePoint> 
 }
 
 /// Добавить дугу Безье: две управляющие точки и конец.
-fn push_quarter_arc(
+fn push_arc_segment(
     ring: &mut Vec<LinePoint>,
     page: &PageGeometry,
     c1: (f64, f64),
@@ -286,6 +296,77 @@ fn push_quarter_arc(
             bezier,
         });
     }
+}
+
+/// Контур сектора: центр, затем дуга от `from` до `to`; замыкает контур
+/// сериализатор полигона (`h` перед заливкой) — то же, что `closePath` после
+/// `moveTo(центр); arc(...)` в canvas.
+///
+/// Дуга режется на сегменты не длиннее 90°: точность кубической Безье падает
+/// с ростом углового размера сегмента, а на четверти окружности её отклонение
+/// от истинной дуги — 0.03% радиуса, предел, за которым излом виден глазом.
+///
+/// `None` — вырожденные данные, которые не рисуют ничего (паритет с canvas):
+/// неположительный радиус он отвергает ошибкой DOM, доля с неположительным
+/// размахом не заметает площади, а NaN и бесконечности дали бы в потоке
+/// страницы нечисловые координаты.
+fn sector_ring(
+    page: &PageGeometry,
+    cx: f64,
+    cy: f64,
+    r: f64,
+    from: f64,
+    to: f64,
+) -> Option<Vec<LinePoint>> {
+    if !(cx.is_finite() && cy.is_finite() && r.is_finite() && from.is_finite() && to.is_finite()) {
+        return None;
+    }
+    // Размах больше оборота `layout` не даёт: это защита от испорченного
+    // ввода, лишний оборот дорисовать всё равно нечем.
+    let sweep = (to - from).min(TAU);
+    if r <= 0.0 || sweep <= 0.0 {
+        return None;
+    }
+
+    let segment_count = (sweep / FRAC_PI_2).ceil();
+    let step = sweep / segment_count;
+    // Размах зажат в TAU, поэтому сегментов от одного до четырёх: приведение
+    // к счётчику цикла ничего не теряет.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let segments = segment_count as usize;
+    // Длина касательной к радиусу для дуги θ: `4/3 * tan(θ/4)` — на четверти
+    // окружности это KAPPA.
+    let k = r * 4.0 / 3.0 * (step / 4.0).tan();
+
+    let mut ring = vec![
+        LinePoint {
+            p: to_pdf_point(page, cx, cy),
+            bezier: false,
+        },
+        // Начало дуги — вершина: без неё первая кривая начнётся в центре,
+        // потому что `c` в PDF продолжает путь от текущей точки.
+        LinePoint {
+            p: to_pdf_point(page, cx + r * from.cos(), cy + r * from.sin()),
+            bezier: false,
+        },
+    ];
+    let mut angle = from;
+    for _ in 0..segments {
+        let end_angle = angle + step;
+        let (sin_a, cos_a) = angle.sin_cos();
+        let (sin_b, cos_b) = end_angle.sin_cos();
+        push_arc_segment(
+            &mut ring,
+            page,
+            // Касательные в экранной системе (`y` вниз): в начале дуги
+            // `(-sin, cos)`, в конце — тот же вектор, отложенный назад.
+            (cx + r * cos_a - k * sin_a, cy + r * sin_a + k * cos_a),
+            (cx + r * cos_b + k * sin_b, cy + r * sin_b - k * cos_b),
+            (cx + r * cos_b, cy + r * sin_b),
+        );
+        angle = end_angle;
+    }
+    Some(ring)
 }
 
 /// `f64`-геометрия `layout` в `f32`-единицы printpdf: сторона страницы
@@ -553,8 +634,8 @@ mod tests {
         close(ring[12].p.y.0, ring[0].p.y.0);
     }
 
-    #[test]
-    fn sector_is_skipped_until_c4() {
+    /// Кольцо сектора: последняя операция примитива — заливка полигоном.
+    fn sector_ring_of(from: f64, to: f64) -> Vec<LinePoint> {
         let mut registry = FontRegistry::new(16);
         let ops = prim_ops(
             &mut registry,
@@ -562,12 +643,240 @@ mod tests {
                 cx: 50.0,
                 cy: 50.0,
                 r: 10.0,
-                from: 0.0,
-                to: std::f64::consts::FRAC_PI_2,
+                from,
+                to,
                 fill: Color::BLACK,
             },
         );
-        assert!(ops.is_empty());
+        let Some(Op::DrawPolygon { polygon }) = ops.last() else {
+            panic!("ожидалась заливка полигоном");
+        };
+        polygon.rings[0].points.clone()
+    }
+
+    /// Число безье-сегментов дуги: управляющие обязаны ходить парами.
+    fn arc_segments(ring: &[LinePoint]) -> usize {
+        ring.iter().filter(|point| point.bezier).count() / 2
+    }
+
+    /// Точка кубической кривой Безье при параметре `t`.
+    fn bezier_point(p0: Point, c1: Point, c2: Point, p3: Point, t: f64) -> (f64, f64) {
+        let u = 1.0 - t;
+        // Веса полиномов Бернштейна.
+        let (w0, w1, w2, w3) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+        let x = w0 * f64::from(p0.x.0)
+            + w1 * f64::from(c1.x.0)
+            + w2 * f64::from(c2.x.0)
+            + w3 * f64::from(p3.x.0);
+        let y = w0 * f64::from(p0.y.0)
+            + w1 * f64::from(c1.y.0)
+            + w2 * f64::from(c2.y.0)
+            + w3 * f64::from(p3.y.0);
+        (x, y)
+    }
+
+    /// Развёрнутый угол, пройденный концами сегментов вокруг центра (`y` в pdf
+    /// развёрнута, поэтому ненулевые шаги идут в минус — берём модуль).
+    fn swept_angle(ring: &[LinePoint], cx: f64, cy: f64) -> f64 {
+        let center = to_pdf_point(&page(), cx, cy);
+        let mut total = 0.0;
+        let mut previous: Option<f64> = None;
+        for point in ring.iter().skip(1).filter(|point| !point.bezier) {
+            let angle =
+                f64::from(point.p.y.0 - center.y.0).atan2(f64::from(point.p.x.0 - center.x.0));
+            if let Some(prev) = previous {
+                let mut delta = angle - prev;
+                while delta > std::f64::consts::PI {
+                    delta -= TAU;
+                }
+                while delta < -std::f64::consts::PI {
+                    delta += TAU;
+                }
+                total += delta;
+            }
+            previous = Some(angle);
+        }
+        total.abs()
+    }
+
+    fn close_f64(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < f64::from(EPS),
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn sector_fills_bezier_ring() {
+        let mut registry = FontRegistry::new(16);
+        let color = Color::rgba(0x11, 0x22, 0x33, 0xFF);
+        let ops = prim_ops(
+            &mut registry,
+            &ChartPrim::Sector {
+                cx: 50.0,
+                cy: 50.0,
+                r: 10.0,
+                from: 0.0,
+                to: FRAC_PI_2,
+                fill: color,
+            },
+        );
+
+        assert_eq!(ops.len(), 2);
+        assert_eq!(
+            ops[0],
+            Op::SetFillColor {
+                col: to_pdf_color(color)
+            }
+        );
+        let Some(Op::DrawPolygon { polygon }) = ops.get(1) else {
+            panic!("ожидалась заливка полигоном");
+        };
+        assert_eq!(polygon.mode, PaintMode::Fill);
+        assert_eq!(polygon.winding_order, WindingOrder::NonZero);
+        let ring = &polygon.rings[0].points;
+        // Центр, начало дуги и один сегмент: две управляющих и конец.
+        assert_eq!(ring.len(), 5);
+        let flags: Vec<bool> = ring.iter().map(|point| point.bezier).collect();
+        assert_eq!(flags, vec![false, false, true, true, false]);
+        // Центр и начало дуги `from = 0` — справа от него; конец 90° — под ним
+        // (ось `y` вниз).
+        close(ring[0].p.x.0, ORIGIN_X_PT + hand_pt(50.0));
+        close(ring[0].p.y.0, PAGE_H_PT - ORIGIN_Y_PT - hand_pt(50.0));
+        close(ring[1].p.x.0, ORIGIN_X_PT + hand_pt(60.0));
+        close(ring[1].p.y.0, PAGE_H_PT - ORIGIN_Y_PT - hand_pt(50.0));
+        close(ring[4].p.x.0, ORIGIN_X_PT + hand_pt(50.0));
+        close(ring[4].p.y.0, PAGE_H_PT - ORIGIN_Y_PT - hand_pt(60.0));
+    }
+
+    #[test]
+    fn sector_splits_the_arc_into_quarter_segments() {
+        for (sweep, expected) in [
+            (FRAC_PI_2, 1),
+            // Чуть больше четверти — сегмент обязан разбиться надвое.
+            (FRAC_PI_2 + 1e-9, 2),
+            (std::f64::consts::PI, 2),
+            (3.0 * FRAC_PI_2, 3),
+            (TAU, 4),
+        ] {
+            let ring = sector_ring_of(0.0, sweep);
+            assert_eq!(arc_segments(&ring), expected, "размах {sweep}");
+            assert_eq!(ring.len(), 2 + 3 * expected, "размах {sweep}");
+            close_f64(swept_angle(&ring, 50.0, 50.0), sweep);
+        }
+    }
+
+    #[test]
+    fn full_turn_closes_the_ring() {
+        let from = -FRAC_PI_2;
+        let ring = sector_ring_of(from, from + TAU);
+
+        assert_eq!(
+            ring.len(),
+            14,
+            "центр, начало дуги и 4 x (2 управляющих + конец)"
+        );
+        assert_eq!(arc_segments(&ring), 4);
+        // Конец последнего сегмента совпадает с началом дуги: круг сомкнулся,
+        // а не выродился в пустой путь.
+        close(ring[1].p.x.0, ring[13].p.x.0);
+        close(ring[1].p.y.0, ring[13].p.y.0);
+        // `from = -90°` в экранной системе — верхняя точка окружности.
+        close(ring[1].p.x.0, ORIGIN_X_PT + hand_pt(50.0));
+        close(ring[1].p.y.0, PAGE_H_PT - ORIGIN_Y_PT - hand_pt(40.0));
+        close_f64(swept_angle(&ring, 50.0, 50.0), TAU);
+    }
+
+    #[test]
+    fn sector_control_points_always_come_in_pairs() {
+        for sweep in [FRAC_PI_2, std::f64::consts::PI, 3.0 * FRAC_PI_2, TAU, 2.5] {
+            let ring = sector_ring_of(0.0, sweep);
+            let flags: Vec<bool> = ring.iter().map(|point| point.bezier).collect();
+            assert!(!flags[0], "центр — вершина");
+            assert!(!flags[1], "начало дуги — тоже вершина");
+            // Ловушка printpdf: одиночная управляющая молча вырождается в
+            // прямую, поэтому пара управляющих всегда замыкается вершиной.
+            let mut index = 2;
+            let mut pairs = 0;
+            while index < flags.len() {
+                assert_eq!(
+                    (flags[index], flags[index + 1], flags[index + 2]),
+                    (true, true, false),
+                    "размах {sweep}: управляющие обязаны ходить парами"
+                );
+                pairs += 1;
+                index += 3;
+            }
+            assert_eq!(pairs, arc_segments(&ring));
+            assert_eq!(
+                ring.iter().filter(|point| point.bezier).count(),
+                2 * pairs,
+                "размах {sweep}"
+            );
+        }
+    }
+
+    /// Кубическая Безье для четверти окружности отступает от неё на 0.027%
+    /// радиуса; запас до 0.1% и есть выбор сегмента в 90°.
+    #[test]
+    fn quarter_arc_stays_within_a_tenth_of_a_percent_of_the_radius() {
+        let ring = sector_ring_of(0.0, FRAC_PI_2);
+        let center = to_pdf_point(&page(), 50.0, 50.0);
+        let radius_pt = f64::from(page().px_to_pt(10.0));
+
+        for t in [0.1, 0.25, 0.5, 0.75, 0.9] {
+            let (x, y) = bezier_point(ring[1].p, ring[2].p, ring[3].p, ring[4].p, t);
+            let distance =
+                ((x - f64::from(center.x.0)).powi(2) + (y - f64::from(center.y.0)).powi(2)).sqrt();
+            let deviation = (distance - radius_pt).abs() / radius_pt;
+            assert!(deviation <= 1e-3, "t = {t}: отклонение {deviation} радиуса");
+        }
+    }
+
+    #[test]
+    fn sweep_beyond_a_full_turn_is_clamped() {
+        let ring = sector_ring_of(0.0, TAU + 1.0);
+
+        assert_eq!(arc_segments(&ring), 4, "лишний оборот рисовать нечем");
+        close_f64(swept_angle(&ring, 50.0, 50.0), TAU);
+    }
+
+    #[test]
+    fn degenerate_sectors_emit_nothing() {
+        let mut registry = FontRegistry::new(16);
+        let sector = |cx: f64, cy: f64, r: f64, from: f64, to: f64| ChartPrim::Sector {
+            cx,
+            cy,
+            r,
+            from,
+            to,
+            fill: Color::BLACK,
+        };
+        for (name, prim) in [
+            ("нулевой радиус", sector(50.0, 50.0, 0.0, 0.0, FRAC_PI_2)),
+            (
+                "отрицательный радиус",
+                sector(50.0, 50.0, -10.0, 0.0, FRAC_PI_2),
+            ),
+            ("пустой размах", sector(50.0, 50.0, 10.0, 1.0, 1.0)),
+            ("размах назад", sector(50.0, 50.0, 10.0, 1.0, 0.5)),
+            ("NaN в cx", sector(f64::NAN, 50.0, 10.0, 0.0, 1.0)),
+            ("NaN в cy", sector(50.0, f64::NAN, 10.0, 0.0, 1.0)),
+            ("NaN в r", sector(50.0, 50.0, f64::NAN, 0.0, 1.0)),
+            ("NaN в from", sector(50.0, 50.0, 10.0, f64::NAN, 1.0)),
+            ("NaN в to", sector(50.0, 50.0, 10.0, 0.0, f64::NAN)),
+            (
+                "бесконечный радиус",
+                sector(50.0, 50.0, f64::INFINITY, 0.0, 1.0),
+            ),
+            (
+                "бесконечный from",
+                sector(50.0, 50.0, 10.0, f64::NEG_INFINITY, 1.0),
+            ),
+        ] {
+            let ops = prim_ops(&mut registry, &prim);
+            assert!(ops.is_empty(), "{name}: сектор не должен рисоваться");
+        }
     }
 
     #[test]
