@@ -1,0 +1,62 @@
+# Эталонный оракул: наш PDF-экспорт XLSX против PDF от LibreOffice, постраничный
+# SSIM (scripts/oracle-ssim.sh). Отдельный workflow, а не джоба ci.yml: нужен
+# LibreOffice с шрифтами, прогон длинный, и красный оракул не должен блокировать
+# правки, не касающиеся рендера листа.
+#
+# Ночной запуск сдвинут с :00 — расписание GitHub на круглый час попадает в пик
+# нагрузки и стартует с задержкой.
+name: Oracle (LibreOffice SSIM)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+  pull_request:
+    paths:
+      - 'scripts/oracle-ssim.sh'
+      - '.github/workflows/oracle.yml'
+      - 'crates/pdf/**'
+      - 'crates/xlsx/**'
+
+jobs:
+  ssim:
+    name: LibreOffice SSIM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Свой ключ: кэш mem_probe не должен зависеть от сборок других джоб.
+          shared-key: rust-oracle
+
+      # fonts-crosextra-carlito — метрически совместимая замена Calibri: в
+      # фикстурах разметка задана под неё, а без замены LibreOffice подставит
+      # первый попавшийся шрифт и разъедется по метрикам сразу во всех книгах —
+      # SSIM упадёт систематически, и различить это от ошибок рендера будет
+      # нельзя.
+      - name: system tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice-calc fonts-crosextra-carlito poppler-utils imagemagick unzip
+
+      - name: build mem_probe
+        run: cargo build --release -p doc-converter-pdf --example mem_probe
+
+      # Фикстуры для оракула берутся из git (test-fixtures/xlsx): тяжёлые книги
+      # из `pnpm gen:fixtures` нужны бенчу и замеру памяти, а не эталонному
+      # сравнению, поэтому node/pnpm здесь не ставится.
+      - name: compare with LibreOffice
+        run: bash scripts/oracle-ssim.sh target/release/examples/mem_probe test-fixtures/xlsx oracle-out
+
+      # Отчёт нужен и после падения прогона: по нему видно, что именно разъехалось.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: oracle-report
+          path: oracle-out/report.md
