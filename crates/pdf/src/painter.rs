@@ -18,6 +18,7 @@ use doc_converter_xlsx::paint::display_text;
 use doc_converter_xlsx::{Cell, CellRef, CellValue, Sheet, Workbook};
 use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg, Pt};
 
+use crate::fonts::{EmbeddedFonts, Face, FaceSet};
 use crate::layout::{PageGeometry, RectPx};
 use crate::options::PdfOptions;
 use crate::styles::{self, CellStyle};
@@ -38,6 +39,12 @@ struct SheetPage<'a> {
     /// Верх страницы в координатах листа; вычитается при записи операций.
     top_px: f32,
     cells: Vec<PaintedCell<'a>>,
+}
+
+/// Лист, разбитый на страницы, и начертания, которые на них встретились.
+struct SheetPagination<'a> {
+    faces: FaceSet,
+    pages: Vec<SheetPage<'a>>,
 }
 
 /// Открыть лист книги и собрать PDF всеми его страницами.
@@ -68,16 +75,17 @@ pub fn export(
     doc.metadata.info.keywords.clone_from(&options.keywords);
 
     let mut warnings: Vec<PdfWarnMsg> = Vec::new();
-    let font = fonts::embed_default(&mut doc, &mut warnings)?;
+    let pagination = paginate(book, sheet, &layout, &page);
+    let fonts = fonts::embed(&mut doc, &mut warnings, pagination.faces)?;
     let mut registry = FontRegistry::new(FONT_CACHE);
 
-    for sheet_page in paginate(book, sheet, &layout, &page) {
+    for sheet_page in &pagination.pages {
         let page_geom = page.with_page_top_px(sheet_page.top_px);
         let mut ops: Vec<Op> = Vec::new();
         draw_page(
             &mut ops,
             &mut registry,
-            font.id(),
+            &fonts,
             &page_geom,
             book,
             &sheet_page.cells,
@@ -98,10 +106,13 @@ pub fn export(
 }
 
 /// Записать ячейки страницы в её операции.
+///
+/// Начертание выбирается по стилю ячейки, но лишь для записи текста: кегль и
+/// перенос считает regular, как canvas-путь.
 fn draw_page(
     ops: &mut Vec<Op>,
     registry: &mut FontRegistry,
-    pdf_font: &printpdf::FontId,
+    fonts: &EmbeddedFonts,
     page: &PageGeometry,
     book: &Workbook,
     cells: &[PaintedCell<'_>],
@@ -142,7 +153,7 @@ fn draw_page(
         text::draw_cell_text(
             ops,
             registry,
-            pdf_font,
+            fonts.id(Face::of(painted.style.bold, painted.style.italic)),
             page,
             &value,
             &painted.style,
@@ -151,7 +162,7 @@ fn draw_page(
     }
 }
 
-/// Разбить ячейки листа на страницы по строкам.
+/// Разбить ячейки листа на страницы по строкам и собрать нужные начертания.
 ///
 /// Строка не разрывается между страницами: как только её низ выходит за
 /// границу области содержимого, начинается новая страница — с этой строки.
@@ -167,8 +178,9 @@ fn paginate<'a>(
     sheet: &'a Sheet,
     layout: &SheetLayout,
     page: &PageGeometry,
-) -> Vec<SheetPage<'a>> {
+) -> SheetPagination<'a> {
     let (max_x, max_h_px) = page.content_px();
+    let mut faces = FaceSet::default();
     let mut pages: Vec<SheetPage<'a>> = Vec::new();
     for (row, row_cells) in sheet.cells.rows() {
         let top_px = layout.row_y(row);
@@ -197,11 +209,9 @@ fn paginate<'a>(
             if rect.x >= max_x {
                 continue;
             }
-            current.cells.push(PaintedCell {
-                cell,
-                rect,
-                style: styles::resolve(book, cell),
-            });
+            let style = styles::resolve(book, cell);
+            faces.insert(Face::of(style.bold, style.italic));
+            current.cells.push(PaintedCell { cell, rect, style });
         }
     }
     if pages.is_empty() {
@@ -210,7 +220,7 @@ fn paginate<'a>(
             cells: Vec::new(),
         });
     }
-    pages
+    SheetPagination { faces, pages }
 }
 
 /// Прямоугольник ячейки в пикселях раскладки; `None` — ячейку закрывает
