@@ -1802,7 +1802,12 @@ impl FontMetrics {
     }
 }
 
-#[cfg(test)]
+// Кодогенератор defaultfonts: требует ttf/woff2 из upstream-каталога
+// `examples/assets/fonts`, который не попадает в .crate-архив (`exclude` в
+// Cargo.toml) и потому отсутствует в вендоре. Гейтим фичей, а не удаляем:
+// с активацией `example-fonts` и положенными на место ассетами тест работает,
+// но в CI он не гоняется — ассеты не вендорены.
+#[cfg(all(test, feature = "example-fonts"))]
 mod test {
     use std::collections::BTreeMap;
 
