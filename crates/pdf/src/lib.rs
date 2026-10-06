@@ -12,6 +12,7 @@ mod annot;
 mod background;
 mod border;
 mod fonts;
+pub mod image;
 mod layout;
 mod options;
 mod pagination;
@@ -20,6 +21,8 @@ mod styles;
 mod text;
 
 pub use options::*;
+
+use std::io::Write;
 
 use doc_converter_core::Result;
 
@@ -66,5 +69,32 @@ impl PdfExporter {
     ) -> Result<Vec<u8>> {
         painter::export(wb, sheet, &self.opts)
             .map_err(|err| doc_converter_core::Error::Export(format!("pdf: {err}")))
+    }
+
+    /// Экспортировать лист книги в приёмник байтов: файл, `Vec<u8>`, чанковый
+    /// поток.
+    ///
+    /// Форма — writer ([`Write`]), а не колбэк или чанки: стриминговый
+    /// сериализатор форка (`printpdf::StreamSession`) уже обобщён по `Write`,
+    /// приёмнику не нужен seek (xref пишется одной секцией в конце), а колбэк
+    /// и чанки выражаются адаптером над `write`, не наоборот.
+    ///
+    /// TODO (B2b-2): потоковая сборка страниц (`StreamSession::write_page`) —
+    /// в `painter`; сюда она встанет на место делегирования. Пока painter
+    /// собирает документ целиком, sink получает готовый файл одним куском:
+    /// поведение то же, что у [`PdfExporter::export_xlsx_sheet`].
+    ///
+    /// # Errors
+    /// [`doc_converter_core::Error::Export`], если листа с таким индексом нет,
+    /// printpdf не смог собрать документ или приёмник вернул ошибку записи.
+    pub fn export_xlsx_sheet_to<W: Write>(
+        &mut self,
+        wb: &doc_converter_xlsx::Workbook,
+        sheet: usize,
+        out: &mut W,
+    ) -> Result<()> {
+        let bytes = self.export_xlsx_sheet(wb, sheet)?;
+        out.write_all(&bytes)
+            .map_err(|err| doc_converter_core::Error::Export(format!("pdf sink: {err}")))
     }
 }
