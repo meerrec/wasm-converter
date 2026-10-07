@@ -22,24 +22,23 @@ jobs:
   ssim:
     name: LibreOffice SSIM
     runs-on: ubuntu-latest
-    # Формат бумаги LibreOffice по умолчанию берёт из локали, а наш экспорт —
-    # A4. C.UTF-8 (как и en_US) даёт Letter: первый прогон оракула не снял ни
-    # одного SSIM именно поэтому — 1275x1650 px у эталона против 1240x1755 у
-    # нас. ru_RU.UTF-8 даёт A4, а заодно совпадает с языковым контекстом
-    # фикстур (formats-date-ru, text-cyrillic-wrap).
-    #
-    # Локаль влияет и на форматирование дат в эталоне: если SSIM на фикстурах с
-    # форматами окажется заметно ниже остальных — первая гипотеза эта.
+    # Бумага LibreOffice: он смотрит /etc/papersize (paperconf), затем LC_*,
+    # затем падает на en-US → Letter. Прогон 37538750822 это подтвердил: одна
+    # локаль ru_RU.UTF-8 бумагу не меняет — файл papersize перекрывает её.
+    # Пишем a4 в файл, а локаль держим нейтральной: она управляет ещё и
+    # локализованным форматированием дат в эталоне, а наш рендер форматирует
+    # по кодам формата из книги, и русские названия месяцев разошлись бы с ним
+    # не из-за ошибки рендера.
     env:
-      LANG: ru_RU.UTF-8
-      LC_ALL: ru_RU.UTF-8
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
     steps:
       - uses: actions/checkout@v4
 
-      # Без генерации локали LANG=ru_RU.UTF-8 остаётся несуществующей локалью,
-      # и LibreOffice снова уходит на Letter.
-      - name: ru_RU locale (LibreOffice A4)
-        run: sudo locale-gen ru_RU.UTF-8
+      # Наш экспорт по умолчанию A4, и фикстуры paperSize не задают (exceljs
+      # его не пишет) — обе стороны берут дефолт, и дефолты обязаны совпасть.
+      - name: A4 paper for LibreOffice
+        run: echo a4 | sudo tee /etc/papersize
 
       - uses: dtolnay/rust-toolchain@master
         with:
