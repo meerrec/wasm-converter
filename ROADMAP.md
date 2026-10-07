@@ -372,12 +372,20 @@ PDF/PNG transfer) работают без SAB с приемлемой произ
 |---|---|---|
 | 1 | Вставлен **Спринт 5.5** (1 неделя) между Спринтами 5 и 6 | Закрыть метрики текста и границу `render` до PDF |
 | 2 | **ADR-0002** (шрифты) и **ADR-0003** (граница `render`) принимаются до Спринта 5.5 | Блокеры, а не «решим в Фазе 4» |
-| 3 | Спринт 8 (DOCX) начинается с fuzz-настройки | Парсер чужого XML — fuzz с первого дня |
+| 3 | Спринт 8 (DOCX) переработан: fuzz первым делом, дифференциальный тест vs mammoth, ADR 0013–0020, бюджеты памяти, лимиты ZIP, `NodeId` | Парсер чужого XML — fuzz с первого дня; DoD должен быть проверяемым; модель должна быть пригодна для Спринта 9 |
 | 4 | §3.4 и §11 переписаны: SAB — ускорение, не обязательное условие | Embed-сценарий — основной, не edge case |
 | 5 | Бюджет `@doc-converter/core` снижен 200 КБ → 30 КБ | Бюджет, который не может провалиться, бесполезен |
 | 6 | Playwright расширен на Firefox + WebKit с Спринта 6 | Заявлена поддержка трёх браузеров — тестируем три |
 | 7 | `insta` вводится с Спринта 5.5 | Snapshot DisplayList — дешёвый регресс-тест |
 | 8 | CI-замер времени введён с Спринта 5 | 181 тест + 100 фикстур — уже не «< 5 мин» |
+| 9 | ADR-0013 (каскад стилей DOCX) — принят до Спринта 8 | Блокер: без него модель не спроектировать |
+| 10 | ADR-0014 (mc:AlternateContent) — принят до Спринта 8 | Блокер: без него часть DOCX парсится неверно |
+| 11 | ADR-0015 (лимиты ZIP) — принят до Спринта 8 | Безопасность: zip bomb, zip slip |
+| 12 | ADR-0016 (политика ошибок) — принят до Спринта 8 | Recover-and-continue вместо fail-fast |
+| 13 | ADR-0017 (Strict vs Transitional) — принят до Спринта 8 | Non-goal: Strict OOXML |
+| 14 | ADR-0018 (границы редактирования) — принят | v1 — read-only, модель только в Rust, Jotai — view state |
+| 15 | ADR-0019 (NodeId) — принят до Спринта 8 | Hit-test, snapshot-тесты, отладка |
+| 16 | ADR-0020 (парсер/writer) — принят до Спринта 8 | Writer в DOCX — non-goal v1 |
 
 ### Накопленные долги после Спринта 4
 
@@ -717,28 +725,119 @@ PDF/PNG transfer) работают без SAB с приемлемой произ
 
 ### Спринт 8 (недели 16–17): Парсинг DOCX + fuzz
 
-**Цель:** разобрать DOCX в модель целиком и поставить fuzz на парсеры чужих XML с первого дня.
+**Цель:** разобрать DOCX в нормализованную модель, пригодную для layout в Спринте 9, с fuzz-инфраструктурой с первого дня, дифференциальной проверкой против mammoth.js и зафиксированными ADR по каскаду стилей, лимитам ZIP, политике ошибок и стабильным идентификаторам узлов.
+
+**Definition of Ready (до старта):**
+
+- ADR 0013, 0014, 0015, 0016, 0017, 0019, 0020 — приняты и лежат в `docs/adr/`.
+- `cargo-fuzz`, `cargo-llvm-cov`, `cargo-deny`, `cargo-audit` — в CI.
+- `mammoth` — dev-зависимость.
+- `scripts/diff-mammoth.ts` — заготовка.
+- `test-fixtures/docx/` — 75+ новых фикстур (базовые, стили, нумерация, таблицы, изображения, mc:AlternateContent, track changes, поля, RTL, CJK, колонтитулы, сноски, комментарии, битые, большие).
 
 **Задачи:**
 
 1. **Fuzz-инфраструктура — первым делом:**
-   - `cargo-fuzz` на `core::XmlReader`, `docx::document`, `xlsx::worksheet`;
-   - 15 мин ночью в CI;
-   - `fuzz.yml` workflow.
-2. Модель: `Document`, `Body`, `Paragraph`, `Run`, `Text`, `Table`, `Row`,
-   `Cell`, `Style`, `Numbering`, `Section`, `HeaderFooter`, `Image`,
-   `Hyperlink`, `Footnote`, `Comment`, `Bookmark`.
-3. Парсеры: `document.rs`, `styles.rs`, `numbering.rs`, `settings.rs`,
-   `rels.rs`, `footnotes.rs`, `comments.rs`.
-4. Resolve стилей: paragraph → character → direct.
-5. Тесты: 100 фикстур → 100%.
+   - `crates/fuzz/` — крейт, `cargo-fuzz`;
+   - цели: `core_zip`, `core_xml_reader`, `core_rels`, `docx_document`, `docx_styles`, `docx_numbering`, `docx_rels`, `xlsx_worksheet`;
+   - corpus: 100 фикстур + 20 реальных документов;
+   - `fuzz.yml`: ночной прогон 15 мин на цель;
+   - проверки: падение, OOM, зависание > 30 с, превышение лимитов ZIP.
+2. **Модель** (см. §3 `docs/sprint-8/plan.md`):
+   - `Document`, `Body`, `BlockItem`, `Paragraph`, `Inline`, `Run`, `RunContent`, `InlineOrAnchor`, `Anchor`, `Table`, `Row`, `Cell`, `Section`, `StyleTable`, `NumberingTable`, `Settings`;
+   - `RawPPr`, `RawRPr` — сырые свойства, не нормализованные;
+   - `Toggle` — тринстейт (`On`/`Off`/`Inherit`);
+   - `NodeId(u64)` — на всех узлах, присваивается монотонным аллокатором при парсинге;
+   - `#[derive(Serialize, Deserialize)]` на модели;
+   - round-trip `Model → JSON → Model` lossless.
+3. **`core`:**
+   - `OoxmlArchive::open_with_limits` — лимиты из ADR-0015 (per-part 64 МиБ, per-archive 256 МиБ, ratio ≤ 200:1, запрет path traversal);
+   - `OoxmlArchive::rels_for(part_name)` — rels конкретной части;
+   - `XmlReader` — namespace-aware, BOM, DTD, `mc:AlternateContent`;
+   - `NodeIdAllocator`.
+4. **`docx`:**
+   - `document.rs`, `styles.rs`, `numbering.rs`, `settings.rs`, `rels.rs`, `footnotes.rs`, `comments.rs`;
+   - полный разбор `w:body`, `w:p`, `w:r`, `w:tbl`, `w:sectPr`, `w:drawing`, `w:hyperlink`, `w:bookmarkStart/End`, `w:fldSimple`, `w:instrText`, `w:fldChar`, `w:ins`, `w:del`;
+   - `styles.rs` — `docDefaults`, paragraph/character/table/numbering, `basedOn`, `next`, `link`, `default`;
+   - `numbering.rs` — `abstractNum`, `num`, `lvl`, `lvlOverride`, `startOverride`, `lvlText`, `numFmt`, `suff`, `picBullet`;
+   - защита от циклического `basedOn` (глубина ≤ 32, warning);
+   - resolve стилей — только валидация ссылок, полный каскад в Спринте 9 (ADR-0013).
+5. **Дифференциальный тест vs mammoth:**
+   - `scripts/diff-mammoth.ts`;
+   - 50 фикстур через mammoth.js;
+   - сравнение: плоский текст, структура абзацев, списки, таблицы, гиперссылки;
+   - расхождения: классификация (`expected`/`bug`/`non-goal`);
+   - порог: ≥ 95% совпадений;
+   - отчёт: `docs/sprint-8/diff-report.md`.
+6. **Бюджеты памяти:**
+   - `test_paragraph_stays_small` — ≤ 256 байт;
+   - `test_run_stays_small` — ≤ 128 байт;
+   - `test_cell_stays_small` — ≤ 192 байт;
+   - пиковая память на 50 МБ DOCX с изображениями ≤ 200 МиБ.
+7. **Покрытие:**
+   - `cargo-llvm-cov` в CI;
+   - ≥ 85% для `crates/docx`, ≥ 80% для нового кода `crates/core`;
+   - gate в CI.
 
 **DoD:**
-- ✅ 100/100 фикстур.
-- ✅ 50 МБ DOCX < 1.5 с.
-- ✅ Покрытие ≥ 85% (замер `cargo-llvm-cov`).
-- ✅ Fuzz 24 ч без находок критичного уровня.
+
+- ✅ 100/100 фикстур парсятся без фатальных ошибок.
+- ✅ 50 из них — дифференциальный тест vs mammoth ≥ 95%; расхождения задокументированы в `docs/sprint-8/diff-report.md`.
+- ✅ 50 МБ DOCX < 1,5 с native на профиле: 100k абзацев, 500 таблиц, 50 изображений, без вложений (`docs/sprint-8/bench-profile.md`).
+- ✅ Покрытие ≥ 85% для `crates/docx`, ≥ 80% для нового кода `crates/core` — gate в CI.
+- ✅ Fuzz 24 ч без падений, OOM, зависаний > 30 с. OSS-Fuzz подключён или обоснован отказ (`docs/sprint-8/fuzz-report.md`).
+- ✅ ZIP-лимиты из ADR-0015 покрыты тестами: zip bomb, zip slip, битый central directory, превышение ratio.
+- ✅ Политика ошибок из ADR-0016 покрыта тестами: битый rels, циклический `basedOn`, отсутствующий `abstractNum`, отсутствующий `style_ref` — warning, не падение.
+- ✅ ADR 0013–0020 в `docs/adr/`.
 - ✅ `cargo-deny` + `cargo-audit` — чисто.
+- ✅ Модель расширена: `Break`, `Tab`, `Symbol`, `Field`, `Anchor`, `Unknown`, `TableLook`, `Section`, `RawPPr`, `RawRPr`, `NodeId`.
+- ✅ `Inline` — enum, не «run с флагами».
+- ✅ `Toggle` — тринстейт, покрыт тестами.
+- ✅ `NodeId` детерминирован, не выставляется в публичный API.
+- ✅ Round-trip `Model → JSON → Model` lossless на 100 фикстурах.
+- ✅ Writer в DOCX не реализуется (ADR-0020).
+
+**Non-goals:**
+
+- Strict OOXML — только Transitional (ADR-0017).
+- Track changes — парсятся как `Unknown`.
+- VML — только `mc:Choice`, `mc:Fallback` игнорируется.
+- TOC — поле парсится, содержимое не генерируется.
+- Уравнения OMML, SmartArt, embedded OLE — `Unknown`.
+- Encrypted DOCX, `.docm`, `.doc` — ошибка.
+- Writer в DOCX — ADR-0020.
+- Command API, undo/redo, diff/patch — ADR-0018.
+- Резолвинг каскада стилей — Спринт 9.
+- Layout, pagination — Спринт 9.
+
+**Бюджеты:**
+
+| Метрика | Бюджет |
+|---|---|
+| `openDocx` 50 МБ (native) | < 1,5 с |
+| `openDocx` 50 МБ (wasm) | < 4 с |
+| Память на абзац | ≤ 256 байт |
+| Память на run | ≤ 128 байт |
+| Память на ячейку таблицы | ≤ 192 байт |
+| Пиковая память на 50 МБ DOCX | ≤ 200 МиБ |
+| Покрытие `crates/docx` | ≥ 85% |
+| Покрытие нового кода `crates/core` | ≥ 80% |
+| Fuzz | 24 ч без падений |
+| Differential vs mammoth | ≥ 95% |
+
+**Риски:**
+
+| Риск | Митигация |
+|---|---|
+| Модель недостаточна для Спринта 9 | ADR-0013 фиксирует каскад; `RawPPr`/`RawRPr` дают манёвр |
+| `numbering.xml` сложнее ожидаемого | 5 фикстур; R2 фокусируется в день 5 |
+| Fuzz найдёт падения в `quick-xml` | upstream fix или workaround |
+| Differential < 95% | классификация расхождений; часть — `expected` |
+| ZIP-лимиты слишком строгие | конфигурируемы; override через API |
+| Не хватит 2 недель | резерв 2 дня; вынос `footnotes`/`comments` в Спринт 9 при перерасходе |
+| `mc:AlternateContent` — неожиданные ветки | 5 фикстур; политика `Unknown` |
+
+**Артефакты:** см. `docs/sprint-8/plan.md`.
 
 ---
 
@@ -951,11 +1050,11 @@ CI-гейт: `pnpm size-limit` (шаг на Node 20) блокирует merge п
 | Unit Rust | `cargo test` | 1 | 291 тест |
 | Property | `proptest` | 1 | `cellref`, `strings`, `model` |
 | **Snapshot** | **`insta`** | **5.5** | **20 фикстур** |
-| **Fuzz** | **`cargo-fuzz`** | **8** | **не введён** |
+| **Fuzz** | **`cargo-fuzz`** | **8** | **вводится** |
 | WASM | `wasm-bindgen-test` | 5.5 | painter пока не покрыт |
 | **E2E** | **Playwright** | 6 | **5 тестов, только Chromium, по пикселям; расширяется на 3 браузера** |
 | Stress | 1M ячеек, 30 мин scroll | 5.5 | вводится |
-| Differential | exceljs (XLSX), MS Word (DOCX) | 4 / 9 | 110 фикстур против exceljs |
+| Differential | mammoth (DOCX), exceljs (XLSX) | 8 / 4 | 110 фикстур XLSX; DOCX — вводится |
 | Размер | `size-limit` | 5.5 | 3 бюджета, включая `wasm (viewer)` |
 | Производительность | `criterion` | 3 | открытие книги |
 | **Покрытие** | **`cargo-llvm-cov` + TS** | **8** | **вводится** |
@@ -1041,6 +1140,14 @@ CI-гейт: `pnpm size-limit` (шаг на Node 20) блокирует merge п
 | 0004 | SAB как ускорение | Путь без SAB — first-class, оба пути в CI | `docs/adr/0004-sab-acceleration.md` |
 | 0005 | Метрики текста | `skrifa` + таблицы шрифта + LRU-кэш; API `render::text_measure` | `docs/adr/0005-text-metrics.md` |
 | 0006 | Раскладка DOCX и перенос текста | чужая работа, в план v2 не входит | `docs/adr/0006-docx-layout-and-text-wrapping.md` |
+| 0013 | Каскад стилей DOCX | Каскад резолвится на layout (Спринт 9), модель несёт `RawPPr`/`RawRPr` + ссылки; полный порядок из ECMA-376 §17.7 | `docs/adr/0013-docx-style-cascade.md` |
+| 0014 | `mc:AlternateContent` | Берём `mc:Choice` (первая поддержанная ветка), `mc:Fallback` игнорируем; неподдержанное — `Unknown` с XML | `docs/adr/0014-alternate-content.md` |
+| 0015 | Лимиты ZIP для OOXML | Per-part 64 МиБ, per-archive 256 МиБ, ratio ≤ 200:1, запрет path traversal | `docs/adr/0015-ooxml-zip-limits.md` |
+| 0016 | Политика ошибок DOCX | Recover-and-continue: `Vec<ParseWarning>`, частичная модель; фатально только ZIP и отсутствие `document.xml` | `docs/adr/0016-docx-error-policy.md` |
+| 0017 | Strict vs Transitional OOXML | Transitional — единственный поддерживаемый; Strict — non-goal v1 | `docs/adr/0017-strict-vs-transitional.md` |
+| 0018 | Границы редактирования в v1 | v1 — read-only; модель только в Rust/WASM; Jotai — только view state; `NodeId` без editing-инфраструктуры | `docs/adr/0018-editing-boundaries.md` |
+| 0019 | NodeId | `NodeId(u64)`, присваивается при парсинге, детерминирован, не переживает переоткрытие, не публичный API | `docs/adr/0019-node-id.md` |
+| 0020 | Границы парсера и writer | Парсер = десериализатор; `serde` в JSON — да; writer в DOCX — non-goal v1 | `docs/adr/0020-parser-writer-boundary.md` |
 
 ADR 0002–0005 приняты 05.10.2026 (0002 пересмотрен на `skrifa`). Реализация
 0002, 0003 и 0005 — Спринт 5.5, 0004 — Спринт 11. ADR-0006 — чужая работа про
@@ -1082,6 +1189,13 @@ ADR 0002–0005 приняты 05.10.2026 (0002 пересмотрен на `skr
 - [ ] Аудит безопасности чистый.
 - [ ] Chrome 90+, Firefox 96+, Safari 16.4+; fallback везде.
 - [ ] **Примеры работают в 3 браузерах (Playwright Chromium + Firefox + WebKit)**.
+- [ ] Модель DOCX несёт `RawPPr`/`RawRPr` + ссылки; каскад резолвится в layout (ADR-0013).
+- [ ] `NodeId` на всех узлах модели, детерминирован, не публичный (ADR-0019).
+- [ ] ZIP-лимиты из ADR-0015 покрыты тестами.
+- [ ] Политика ошибок из ADR-0016 покрыта тестами.
+- [ ] Differential vs mammoth ≥ 95% на 50 фикстурах DOCX.
+- [ ] Round-trip `Model → JSON → Model` lossless.
+- [ ] Writer в DOCX не реализован (ADR-0020).
 - [ ] Все ADR в `docs/adr/`.
 - [ ] Опубликовано в npm + crates.io под Apache-2.0.
 
