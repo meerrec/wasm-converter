@@ -25,10 +25,13 @@
 # (`PdfOptions::sheet_index` уже есть): тогда пары «лист книги ↔ страницы
 # эталона» станут осмысленными.
 #
-# Формат бумаги LibreOffice берёт из умолчаний локали (Letter в C.UTF-8 и en_US,
-# A4 в ru_RU и de_DE), а наш экспорт всегда A4; поэтому размеры страниц
-# сверяются до SSIM. Локаль эталона скрипт не переключает — её задаёт workflow
-# (ru_RU.UTF-8): иначе числа зависели бы от машины, а не от рендера.
+# Бумага: у фикстур не задан `paperSize`, поэтому эталон печатает дефолт
+# LibreOffice, а тот берётся из локали его профиля (см. заведение профиля
+# ниже), а не из LANG и не из /etc/papersize — проверено прогонами 37538750822
+# и 37560908632. Профиль прописывает метрическую локаль, чтобы дефолт стал A4,
+# как у нашего экспорта. Размеры страниц всё равно сверяются до SSIM:
+# расхождение означает разные бумагу или масштаб, и число по таким страницам
+# ничего не значило бы.
 #
 # Внешние утилиты есть в CI (см. .github/workflows/oracle.yml); там же прогон и
 # живёт. Локально без них скрипт штатно скипается кодом 3.
@@ -115,6 +118,21 @@ workdir=$(cd "$workdir" && pwd)
 fixtures_dir=$(cd "$fixtures_dir" && pwd)
 mkdir -p "$workdir/ref" "$workdir/our" "$workdir/pages/lo" "$workdir/pages/our" \
   "$workdir/diff" "$workdir/crop" "$workdir/log" "$workdir/ssim"
+
+# LibreOffice берёт бумагу документа, у которого не задан `paperSize`, из локали
+# своего профиля: у свежего headless-профиля `ooSetupSystemLocale` пуст, и он
+# уходит на en-US → Letter. Ни `LANG`/`LC_ALL` (прогон 37538750822), ни
+# `/etc/papersize` (37560908632) на это не влияют. Заводим профиль заранее и
+# прописываем метрическую локаль — дефолт становится A4 и совпадает с нашим
+# экспортом; LibreOffice этот файл дополняет, а не перезаписывает.
+lo_profile=$workdir/louser
+mkdir -p "$lo_profile/user"
+cat >"$lo_profile/user/registrymodifications.xcu" <<'XCU'
+<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+ <item oor:path="/org.openoffice.Setup/L10N"><prop oor:name="ooSetupSystemLocale" oor:op="fuse"><value>ru_RU</value></prop></item>
+</oor:items>
+XCU
 
 # Прогон без ограничения по времени рискует зависнуть до лимита джобы, поэтому
 # soffice идёт под timeout(1). В macOS его нет без coreutils — тогда запускаем
