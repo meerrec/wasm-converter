@@ -173,7 +173,7 @@ fn read_note_prop(
     let attrs = attributes(element, part)?;
     match local_name(element.name().as_ref()) {
         b"pos" => props.pos = find(&attrs, "val").map(str::to_owned),
-        b"numFmt" => props.num_fmt = find(&attrs, "val").map(num_fmt),
+        b"numFmt" => props.num_fmt = find(&attrs, "val").map(NumFmt::from_ooxml),
         b"numStart" => props.num_start = attr_u32(&attrs, "val", ctx, part)?,
         b"numRestart" => props.num_restart = find(&attrs, "val").map(num_restart),
         _ => {}
@@ -347,79 +347,6 @@ fn num_restart(raw: &str) -> NumRestart {
         "eachSect" => NumRestart::EachSection,
         "eachPage" => NumRestart::EachPage,
         other => NumRestart::Other(other.to_owned()),
-    }
-}
-
-/// Формат номера (`ST_NumberFormat`); незнакомое значение сохраняется в [`NumFmt::Other`].
-///
-/// Таблица повторяет перечень значений стандарта: модель хранит варианты
-/// поимённо, а в XML они записаны `camelCase`.
-fn num_fmt(raw: &str) -> NumFmt {
-    match raw {
-        "decimal" => NumFmt::Decimal,
-        "upperRoman" => NumFmt::UpperRoman,
-        "lowerRoman" => NumFmt::LowerRoman,
-        "upperLetter" => NumFmt::UpperLetter,
-        "lowerLetter" => NumFmt::LowerLetter,
-        "ordinal" => NumFmt::Ordinal,
-        "cardinalText" => NumFmt::CardinalText,
-        "ordinalText" => NumFmt::OrdinalText,
-        "hex" => NumFmt::Hex,
-        "chicago" => NumFmt::Chicago,
-        "ideographDigital" => NumFmt::IdeographDigital,
-        "japaneseCounting" => NumFmt::JapaneseCounting,
-        "aiueo" => NumFmt::Aiueo,
-        "iroha" => NumFmt::Iroha,
-        "decimalFullWidth" => NumFmt::DecimalFullWidth,
-        "decimalHalfWidth" => NumFmt::DecimalHalfWidth,
-        "japaneseLegal" => NumFmt::JapaneseLegal,
-        "japaneseDigitalTenThousand" => NumFmt::JapaneseDigitalTenThousand,
-        "decimalEnclosedCircle" => NumFmt::DecimalEnclosedCircle,
-        "decimalFullWidth2" => NumFmt::DecimalFullWidth2,
-        "aiueoFullWidth" => NumFmt::AiueoFullWidth,
-        "irohaFullWidth" => NumFmt::IrohaFullWidth,
-        "decimalZero" => NumFmt::DecimalZero,
-        "bullet" => NumFmt::Bullet,
-        "ganada" => NumFmt::Ganada,
-        "chosung" => NumFmt::Chosung,
-        "decimalEnclosedFullstop" => NumFmt::DecimalEnclosedFullstop,
-        "decimalEnclosedParen" => NumFmt::DecimalEnclosedParen,
-        "decimalEnclosedCircleChinese" => NumFmt::DecimalEnclosedCircleChinese,
-        "ideographEnclosedCircle" => NumFmt::IdeographEnclosedCircle,
-        "ideographTraditional" => NumFmt::IdeographTraditional,
-        "ideographZodiac" => NumFmt::IdeographZodiac,
-        "ideographZodiacTraditional" => NumFmt::IdeographZodiacTraditional,
-        "taiwaneseCounting" => NumFmt::TaiwaneseCounting,
-        "ideographLegalTraditional" => NumFmt::IdeographLegalTraditional,
-        "taiwaneseCountingThousand" => NumFmt::TaiwaneseCountingThousand,
-        "taiwaneseDigital" => NumFmt::TaiwaneseDigital,
-        "chineseCounting" => NumFmt::ChineseCounting,
-        "chineseLegalSimplified" => NumFmt::ChineseLegalSimplified,
-        "chineseCountingThousand" => NumFmt::ChineseCountingThousand,
-        "koreanDigital" => NumFmt::KoreanDigital,
-        "koreanCounting" => NumFmt::KoreanCounting,
-        "koreanLegal" => NumFmt::KoreanLegal,
-        "koreanDigital2" => NumFmt::KoreanDigital2,
-        "vietnameseCounting" => NumFmt::VietnameseCounting,
-        "russianLower" => NumFmt::RussianLower,
-        "russianUpper" => NumFmt::RussianUpper,
-        "none" => NumFmt::None,
-        "numberInDash" => NumFmt::NumberInDash,
-        "hebrew1" => NumFmt::Hebrew1,
-        "hebrew2" => NumFmt::Hebrew2,
-        "arabicAlpha" => NumFmt::ArabicAlpha,
-        "arabicAbjad" => NumFmt::ArabicAbjad,
-        "hindiVowels" => NumFmt::HindiVowels,
-        "hindiConsonants" => NumFmt::HindiConsonants,
-        "hindiNumbers" => NumFmt::HindiNumbers,
-        "hindiCounting" => NumFmt::HindiCounting,
-        "thaiLetters" => NumFmt::ThaiLetters,
-        "thaiNumbers" => NumFmt::ThaiNumbers,
-        "thaiCounting" => NumFmt::ThaiCounting,
-        "bahtText" => NumFmt::BahtText,
-        "dollarText" => NumFmt::DollarText,
-        "custom" => NumFmt::Custom,
-        other => NumFmt::Other(other.to_owned()),
     }
 }
 

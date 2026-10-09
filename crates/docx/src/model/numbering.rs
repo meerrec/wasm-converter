@@ -300,6 +300,81 @@ pub enum NumFmt {
 }
 
 impl NumFmt {
+    /// Разбирает значение `w:numFmt` (`ST_NumberFormat`).
+    ///
+    /// Написание — имя варианта со строчной первой буквой (`upperRoman`); незнакомое
+    /// значение сохраняется в [`NumFmt::Other`]. Единственная таблица соответствия
+    /// в крейте: и `numbering.xml`, и `settings.xml` разбирают через неё.
+    #[must_use]
+    pub fn from_ooxml(value: &str) -> Self {
+        match value.trim() {
+            "decimal" => Self::Decimal,
+            "upperRoman" => Self::UpperRoman,
+            "lowerRoman" => Self::LowerRoman,
+            "upperLetter" => Self::UpperLetter,
+            "lowerLetter" => Self::LowerLetter,
+            "ordinal" => Self::Ordinal,
+            "cardinalText" => Self::CardinalText,
+            "ordinalText" => Self::OrdinalText,
+            "hex" => Self::Hex,
+            "chicago" => Self::Chicago,
+            "ideographDigital" => Self::IdeographDigital,
+            "japaneseCounting" => Self::JapaneseCounting,
+            "aiueo" => Self::Aiueo,
+            "iroha" => Self::Iroha,
+            "decimalFullWidth" => Self::DecimalFullWidth,
+            "decimalHalfWidth" => Self::DecimalHalfWidth,
+            "japaneseLegal" => Self::JapaneseLegal,
+            "japaneseDigitalTenThousand" => Self::JapaneseDigitalTenThousand,
+            "decimalEnclosedCircle" => Self::DecimalEnclosedCircle,
+            "decimalFullWidth2" => Self::DecimalFullWidth2,
+            "aiueoFullWidth" => Self::AiueoFullWidth,
+            "irohaFullWidth" => Self::IrohaFullWidth,
+            "decimalZero" => Self::DecimalZero,
+            "bullet" => Self::Bullet,
+            "ganada" => Self::Ganada,
+            "chosung" => Self::Chosung,
+            "decimalEnclosedFullstop" => Self::DecimalEnclosedFullstop,
+            "decimalEnclosedParen" => Self::DecimalEnclosedParen,
+            "decimalEnclosedCircleChinese" => Self::DecimalEnclosedCircleChinese,
+            "ideographEnclosedCircle" => Self::IdeographEnclosedCircle,
+            "ideographTraditional" => Self::IdeographTraditional,
+            "ideographZodiac" => Self::IdeographZodiac,
+            "ideographZodiacTraditional" => Self::IdeographZodiacTraditional,
+            "taiwaneseCounting" => Self::TaiwaneseCounting,
+            "ideographLegalTraditional" => Self::IdeographLegalTraditional,
+            "taiwaneseCountingThousand" => Self::TaiwaneseCountingThousand,
+            "taiwaneseDigital" => Self::TaiwaneseDigital,
+            "chineseCounting" => Self::ChineseCounting,
+            "chineseLegalSimplified" => Self::ChineseLegalSimplified,
+            "chineseCountingThousand" => Self::ChineseCountingThousand,
+            "koreanDigital" => Self::KoreanDigital,
+            "koreanCounting" => Self::KoreanCounting,
+            "koreanLegal" => Self::KoreanLegal,
+            "koreanDigital2" => Self::KoreanDigital2,
+            "vietnameseCounting" => Self::VietnameseCounting,
+            "russianLower" => Self::RussianLower,
+            "russianUpper" => Self::RussianUpper,
+            "none" => Self::None,
+            "numberInDash" => Self::NumberInDash,
+            "hebrew1" => Self::Hebrew1,
+            "hebrew2" => Self::Hebrew2,
+            "arabicAlpha" => Self::ArabicAlpha,
+            "arabicAbjad" => Self::ArabicAbjad,
+            "hindiVowels" => Self::HindiVowels,
+            "hindiConsonants" => Self::HindiConsonants,
+            "hindiNumbers" => Self::HindiNumbers,
+            "hindiCounting" => Self::HindiCounting,
+            "thaiLetters" => Self::ThaiLetters,
+            "thaiNumbers" => Self::ThaiNumbers,
+            "thaiCounting" => Self::ThaiCounting,
+            "bahtText" => Self::BahtText,
+            "dollarText" => Self::DollarText,
+            "custom" => Self::Custom,
+            other => Self::Other(other.to_owned()),
+        }
+    }
+
     /// Все варианты без payload — перечень полон, `Other` вне списка.
     ///
     /// Нужен round-trip-тесту: он прогоняет через serde каждый формат.
