@@ -36,6 +36,20 @@ fn paragraph_stays_within_budget() {
     );
 }
 
+/// `Run` укладывается в бюджет ROADMAP §9 «≤ 128 байт на run».
+///
+/// Бюджет держится тем, что `RawRPr` лежит по указателю: по значению он вдвое тяжелее бюджета,
+/// а run'ов в документе много.
+#[test]
+fn run_stays_within_budget() {
+    let size = bytes::<Run>();
+    println!("size_of::<Run>() = {size} байт");
+    assert!(
+        size <= 128,
+        "Run занимает {size} байт, бюджет ROADMAP §9 — 128"
+    );
+}
+
 /// Размеры соседних типов модели — для следующих слайсов, бюджет пока не проверяется.
 #[test]
 fn reports_neighbouring_sizes() {
