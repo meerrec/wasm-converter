@@ -1,0 +1,127 @@
+---
+source: crates/docx/src/document.rs
+expression: body
+---
+{
+  "id": 1,
+  "items": [
+    {
+      "paragraph": {
+        "id": 2,
+        "ppr": {
+          "style": null,
+          "num_pr": null,
+          "spacing": null,
+          "ind": null,
+          "jc": "both",
+          "keep_next": null,
+          "keep_lines": null,
+          "page_break_before": null,
+          "widow_control": null,
+          "outline_lvl": null,
+          "p_bdr": null,
+          "shd": null,
+          "tabs": [],
+          "r_pr": null,
+          "sect_pr": null,
+          "unknown": [
+            [
+              "contextualSpacing",
+              "<w:contextualSpacing/>"
+            ]
+          ]
+        },
+        "mark_rpr": {
+          "style": null,
+          "r_fonts": null,
+          "b": null,
+          "i": null,
+          "caps": null,
+          "small_caps": null,
+          "strike": null,
+          "dstrike": null,
+          "vanish": null,
+          "outline": null,
+          "shadow": null,
+          "emboss": null,
+          "imprint": null,
+          "color": null,
+          "sz": null,
+          "sz_cs": null,
+          "highlight": null,
+          "u": null,
+          "vert_align": null,
+          "spacing": null,
+          "position": null,
+          "unknown": []
+        },
+        "runs": [
+          {
+            "run": {
+              "id": 3,
+              "rpr": {
+                "style": null,
+                "r_fonts": null,
+                "b": null,
+                "i": null,
+                "caps": null,
+                "small_caps": null,
+                "strike": null,
+                "dstrike": null,
+                "vanish": null,
+                "outline": null,
+                "shadow": null,
+                "emboss": null,
+                "imprint": null,
+                "color": null,
+                "sz": null,
+                "sz_cs": null,
+                "highlight": null,
+                "u": "single",
+                "vert_align": null,
+                "spacing": null,
+                "position": null,
+                "unknown": []
+              },
+              "style_ref": null,
+              "content": [
+                {
+                  "text": "one"
+                },
+                {
+                  "break": "page"
+                },
+                {
+                  "text": "‑"
+                },
+                {
+                  "text": "­"
+                },
+                {
+                  "symbol": {
+                    "font": "Wingdings",
+                    "char": ""
+                  }
+                },
+                "tab",
+                {
+                  "text": "choice"
+                },
+                {
+                  "unknown": {
+                    "id": 4,
+                    "xml": "<w:drawing/>"
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "style_ref": null,
+        "numbering_ref": null,
+        "section_break": null
+      }
+    }
+  ],
+  "sections": []
+}
