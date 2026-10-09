@@ -13,6 +13,7 @@ on:
     paths:
       - 'crates/core/**'
       - 'crates/xlsx/**'
+      - 'crates/docx/**'
       - 'crates/fuzz/**'
 
 env:
@@ -29,7 +30,17 @@ jobs:
       # Одна упавшая цель не должна отменять остальные: падения независимы.
       fail-fast: false
       matrix:
-        target: [core_zip, core_xml_reader, core_rels, xlsx_worksheet]
+        target:
+          [
+            core_zip,
+            core_xml_reader,
+            core_rels,
+            xlsx_worksheet,
+            docx_document,
+            docx_styles,
+            docx_numbering,
+            docx_rels,
+          ]
     concurrency:
       group: fuzz-${{ matrix.target }}-${{ github.ref }}
       cancel-in-progress: true
@@ -92,15 +103,29 @@ jobs:
               ;;
             core_xml_reader)
               # Цели нужен XML, а не ZIP: распаковываем `word/document.xml`.
-              # Пустой корпус — не ошибка: тогда сидируем сырыми .docx.
               extract 'word/document.xml' || copy_docs
-              if [ -z "$(ls -A "$dir")" ]; then copy_docs; fi
               ;;
             core_rels)
               extract '*.rels' || copy_docs
-              if [ -z "$(ls -A "$dir")" ]; then copy_docs; fi
+              ;;
+            docx_document)
+              # docx-цель подставляет сид в свою часть пакета, поэтому и корпус
+              # ей нужен не пакетом, а распакованной частью.
+              extract 'word/document.xml' || copy_docs
+              ;;
+            docx_styles)
+              extract 'word/styles.xml' || copy_docs
+              ;;
+            docx_numbering)
+              extract 'word/numbering.xml' || copy_docs
+              ;;
+            docx_rels)
+              extract 'word/_rels/document.xml.rels' || copy_docs
               ;;
           esac
+          # Пустой корпус — не ошибка (`extract` может не найти ни одной части
+          # или не найтись `unzip`): тогда сидируем сырыми .docx.
+          if [ -z "$(ls -A "$dir")" ]; then copy_docs; fi
           # `head` тут не годится: на корпусе в пару сотен файлов `ls` ловит
           # SIGPIPE, а с `-o pipefail` это уронило бы шаг.
           echo "seeded $(find "$dir" -type f | wc -l) files into $dir"

@@ -10,7 +10,12 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 doc-converter-core = { path = "../core" }
+doc-converter-docx = { path = "../docx" }
 doc-converter-xlsx = { path = "../xlsx" }
+# Мусорные байты подставляются в часть валидного пакета DOCX, для чего цели
+# собирают ZIP в памяти. Записи кладутся `Stored`, но `deflate` включён: он же
+# включён у `doc-converter-core`, и раскладка фич не должна зависеть от цели.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Отдельный workspace: nightly и sanitizer не должны попадать в сборку
 # монорепозитория (в корневом Cargo.toml крейт в `exclude`, как vendor/printpdf).
@@ -40,6 +45,34 @@ bench = false
 [[bin]]
 name = "xlsx_worksheet"
 path = "fuzz_targets/xlsx_worksheet.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "docx_document"
+path = "fuzz_targets/docx_document.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "docx_numbering"
+path = "fuzz_targets/docx_numbering.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "docx_rels"
+path = "fuzz_targets/docx_rels.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "docx_styles"
+path = "fuzz_targets/docx_styles.rs"
 test = false
 doc = false
 bench = false
