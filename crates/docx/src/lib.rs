@@ -14,6 +14,7 @@
 #![allow(clippy::struct_excessive_bools)]
 
 pub mod error;
+pub mod layout;
 pub mod model;
 
 // Парсеры частей пакета и общий контекст разбора.
@@ -34,6 +35,10 @@ pub use error::{Error, Result};
 // глоб затенял бы `model::numbering`/`model::settings` приватными модулями
 // парсеров с теми же именами (`hidden_glob_reexports`). Типы наружу при этом
 // попадают все — как в `doc-converter-xlsx`.
+pub use layout::{
+    FloatElement, FloatKind, FloatLayoutContext, LayoutError, LayoutOptions, LayoutState,
+    LineBreaker, Page, PageLayout, Paginator, Rect, VAlign,
+};
 pub use model::annotation::{Comment, Footnote, NoteKind};
 pub use model::drawing::{
     AlignH, AlignV, Anchor, Extent, InlineImage, InlineOrAnchor, PositionH, PositionV, RelFromH,
