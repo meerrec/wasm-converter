@@ -1,0 +1,778 @@
+---
+source: crates/docx/src/document.rs
+expression: body
+---
+{
+  "id": 1,
+  "items": [
+    {
+      "table": {
+        "id": 2,
+        "style_ref": null,
+        "grid": [
+          {
+            "width": 4500
+          },
+          {
+            "width": 4500
+          }
+        ],
+        "rows": [
+          {
+            "id": 3,
+            "cells": [
+              {
+                "id": 4,
+                "grid_span": 1,
+                "v_merge": "restart",
+                "width": {
+                  "dxa": 4500
+                },
+                "margins": {
+                  "top": null,
+                  "left": null,
+                  "bottom": null,
+                  "right": null
+                },
+                "v_align": "top",
+                "borders": {
+                  "top": null,
+                  "left": null,
+                  "bottom": null,
+                  "right": null
+                },
+                "shading": null,
+                "items": [
+                  {
+                    "paragraph": {
+                      "id": 5,
+                      "ppr": {
+                        "style": null,
+                        "num_pr": null,
+                        "spacing": null,
+                        "ind": null,
+                        "jc": null,
+                        "keep_next": null,
+                        "keep_lines": null,
+                        "page_break_before": null,
+                        "widow_control": null,
+                        "outline_lvl": null,
+                        "p_bdr": null,
+                        "shd": null,
+                        "tabs": [],
+                        "r_pr": null,
+                        "sect_pr": null,
+                        "unknown": []
+                      },
+                      "mark_rpr": {
+                        "style": null,
+                        "r_fonts": null,
+                        "b": null,
+                        "i": null,
+                        "caps": null,
+                        "small_caps": null,
+                        "strike": null,
+                        "dstrike": null,
+                        "vanish": null,
+                        "outline": null,
+                        "shadow": null,
+                        "emboss": null,
+                        "imprint": null,
+                        "color": null,
+                        "sz": null,
+                        "sz_cs": null,
+                        "highlight": null,
+                        "u": null,
+                        "vert_align": null,
+                        "spacing": null,
+                        "position": null,
+                        "unknown": []
+                      },
+                      "runs": [
+                        {
+                          "run": {
+                            "id": 6,
+                            "rpr": {
+                              "style": null,
+                              "r_fonts": null,
+                              "b": null,
+                              "i": null,
+                              "caps": null,
+                              "small_caps": null,
+                              "strike": null,
+                              "dstrike": null,
+                              "vanish": null,
+                              "outline": null,
+                              "shadow": null,
+                              "emboss": null,
+                              "imprint": null,
+                              "color": null,
+                              "sz": null,
+                              "sz_cs": null,
+                              "highlight": null,
+                              "u": null,
+                              "vert_align": null,
+                              "spacing": null,
+                              "position": null,
+                              "unknown": []
+                            },
+                            "style_ref": null,
+                            "content": [
+                              {
+                                "text": "Объединено по вертикали"
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "style_ref": null,
+                      "numbering_ref": null,
+                      "section_break": null
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 7,
+                "grid_span": 1,
+                "v_merge": null,
+                "width": {
+                  "dxa": 4500
+                },
+                "margins": {
+                  "top": null,
+                  "left": null,
+                  "bottom": null,
+                  "right": null
+                },
+                "v_align": "top",
+                "borders": {
+                  "top": null,
+                  "left": null,
+                  "bottom": null,
+                  "right": null
+                },
+                "shading": null,
+                "items": [
+                  {
+                    "paragraph": {
+                      "id": 8,
+                      "ppr": {
+                        "style": null,
+                        "num_pr": null,
+                        "spacing": null,
+                        "ind": null,
+                        "jc": null,
+                        "keep_next": null,
+                        "keep_lines": null,
+                        "page_break_before": null,
+                        "widow_control": null,
+                        "outline_lvl": null,
+                        "p_bdr": null,
+                        "shd": null,
+                        "tabs": [],
+                        "r_pr": null,
+                        "sect_pr": null,
+                        "unknown": []
+                      },
+                      "mark_rpr": {
+                        "style": null,
+                        "r_fonts": null,
+                        "b": null,
+                        "i": null,
+                        "caps": null,
+                        "small_caps": null,
+                        "strike": null,
+                        "dstrike": null,
+                        "vanish": null,
+                        "outline": null,
+                        "shadow": null,
+                        "emboss": null,
+                        "imprint": null,
+                        "color": null,
+                        "sz": null,
+                        "sz_cs": null,
+                        "highlight": null,
+                        "u": null,
+                        "vert_align": null,
+                        "spacing": null,
+                        "position": null,
+                        "unknown": []
+                      },
+                      "runs": [
+                        {
+                          "run": {
+                            "id": 9,
+                            "rpr": {
+                              "style": null,
+                              "r_fonts": null,
+                              "b": null,
+                              "i": null,
+                              "caps": null,
+                              "small_caps": null,
+                              "strike": null,
+                              "dstrike": null,
+                              "vanish": null,
+                              "outline": null,
+                              "shadow": null,
+                              "emboss": null,
+                              "imprint": null,
+                              "color": null,
+                              "sz": null,
+                              "sz_cs": null,
+                              "highlight": null,
+                              "u": null,
+                              "vert_align": null,
+                              "spacing": null,
+                              "position": null,
+                              "unknown": []
+                            },
+                            "style_ref": null,
+                            "content": [
+                              {
+                                "text": "Строка 1"
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "style_ref": null,
+                      "numbering_ref": null,
+                      "section_break": null
+                    }
+                  }
+                ]
+              }
+            ],
+            "height": null,
+            "cant_split": false,
+            "header": false
+          },
+          {
+            "id": 10,
+            "cells": [
+              {
+                "id": 11,
+                "grid_span": 1,
+                "v_merge": "continue",
+                "width": {
+                  "dxa": 4500
+                },
+                "margins": {
+                  "top": null,
+                  "left": null,
+                  "bottom": null,
+                  "right": null
+                },
+                "v_align": "top",
+                "borders": {
+                  "top": null,
+                  "left": null,
+                  "bottom": null,
+                  "right": null
+                },
+                "shading": null,
+                "items": [
+                  {
+                    "paragraph": {
+                      "id": 12,
+                      "ppr": {
+                        "style": null,
+                        "num_pr": null,
+                        "spacing": null,
+                        "ind": null,
+                        "jc": null,
+                        "keep_next": null,
+                        "keep_lines": null,
+                        "page_break_before": null,
+                        "widow_control": null,
+                        "outline_lvl": null,
+                        "p_bdr": null,
+                        "shd": null,
+                        "tabs": [],
+                        "r_pr": null,
+                        "sect_pr": null,
+                        "unknown": []
+                      },
+                      "mark_rpr": {
+                        "style": null,
+                        "r_fonts": null,
+                        "b": null,
+                        "i": null,
+                        "caps": null,
+                        "small_caps": null,
+                        "strike": null,
+                        "dstrike": null,
+                        "vanish": null,
+                        "outline": null,
+                        "shadow": null,
+                        "emboss": null,
+                        "imprint": null,
+                        "color": null,
+                        "sz": null,
+                        "sz_cs": null,
+                        "highlight": null,
+                        "u": null,
+                        "vert_align": null,
+                        "spacing": null,
+                        "position": null,
+                        "unknown": []
+                      },
+                      "runs": [
+                        {
+                          "run": {
+                            "id": 13,
+                            "rpr": {
+                              "style": null,
+                              "r_fonts": null,
+                              "b": null,
+                              "i": null,
+                              "caps": null,
+                              "small_caps": null,
+                              "strike": null,
+                              "dstrike": null,
+                              "vanish": null,
+                              "outline": null,
+                              "shadow": null,
+                              "emboss": null,
+                              "imprint": null,
+                              "color": null,
+                              "sz": null,
+                              "sz_cs": null,
+                              "highlight": null,
+                              "u": null,
+                              "vert_align": null,
+                              "spacing": null,
+                              "position": null,
+                              "unknown": []
+                            },
+                            "style_ref": null,
+                            "content": [
+                              {
+                                "text": ""
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "style_ref": null,
+                      "numbering_ref": null,
+                      "section_break": null
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 14,
+                "grid_span": 1,
+                "v_merge": null,
+                "width": {
+                  "dxa": 4500
+                },
+                "margins": {
+                  "top": null,
+                  "left": null,
+                  "bottom": null,
+                  "right": null
+                },
+                "v_align": "top",
+                "borders": {
+                  "top": null,
+                  "left": null,
+                  "bottom": null,
+                  "right": null
+                },
+                "shading": null,
+                "items": [
+                  {
+                    "paragraph": {
+                      "id": 15,
+                      "ppr": {
+                        "style": null,
+                        "num_pr": null,
+                        "spacing": null,
+                        "ind": null,
+                        "jc": null,
+                        "keep_next": null,
+                        "keep_lines": null,
+                        "page_break_before": null,
+                        "widow_control": null,
+                        "outline_lvl": null,
+                        "p_bdr": null,
+                        "shd": null,
+                        "tabs": [],
+                        "r_pr": null,
+                        "sect_pr": null,
+                        "unknown": []
+                      },
+                      "mark_rpr": {
+                        "style": null,
+                        "r_fonts": null,
+                        "b": null,
+                        "i": null,
+                        "caps": null,
+                        "small_caps": null,
+                        "strike": null,
+                        "dstrike": null,
+                        "vanish": null,
+                        "outline": null,
+                        "shadow": null,
+                        "emboss": null,
+                        "imprint": null,
+                        "color": null,
+                        "sz": null,
+                        "sz_cs": null,
+                        "highlight": null,
+                        "u": null,
+                        "vert_align": null,
+                        "spacing": null,
+                        "position": null,
+                        "unknown": []
+                      },
+                      "runs": [
+                        {
+                          "run": {
+                            "id": 16,
+                            "rpr": {
+                              "style": null,
+                              "r_fonts": null,
+                              "b": null,
+                              "i": null,
+                              "caps": null,
+                              "small_caps": null,
+                              "strike": null,
+                              "dstrike": null,
+                              "vanish": null,
+                              "outline": null,
+                              "shadow": null,
+                              "emboss": null,
+                              "imprint": null,
+                              "color": null,
+                              "sz": null,
+                              "sz_cs": null,
+                              "highlight": null,
+                              "u": null,
+                              "vert_align": null,
+                              "spacing": null,
+                              "position": null,
+                              "unknown": []
+                            },
+                            "style_ref": null,
+                            "content": [
+                              {
+                                "text": "Строка 2"
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "style_ref": null,
+                      "numbering_ref": null,
+                      "section_break": null
+                    }
+                  }
+                ]
+              }
+            ],
+            "height": null,
+            "cant_split": false,
+            "header": false
+          },
+          {
+            "id": 17,
+            "cells": [
+              {
+                "id": 18,
+                "grid_span": 1,
+                "v_merge": "continue",
+                "width": {
+                  "dxa": 4500
+                },
+                "margins": {
+                  "top": null,
+                  "left": null,
+                  "bottom": null,
+                  "right": null
+                },
+                "v_align": "top",
+                "borders": {
+                  "top": null,
+                  "left": null,
+                  "bottom": null,
+                  "right": null
+                },
+                "shading": null,
+                "items": [
+                  {
+                    "paragraph": {
+                      "id": 19,
+                      "ppr": {
+                        "style": null,
+                        "num_pr": null,
+                        "spacing": null,
+                        "ind": null,
+                        "jc": null,
+                        "keep_next": null,
+                        "keep_lines": null,
+                        "page_break_before": null,
+                        "widow_control": null,
+                        "outline_lvl": null,
+                        "p_bdr": null,
+                        "shd": null,
+                        "tabs": [],
+                        "r_pr": null,
+                        "sect_pr": null,
+                        "unknown": []
+                      },
+                      "mark_rpr": {
+                        "style": null,
+                        "r_fonts": null,
+                        "b": null,
+                        "i": null,
+                        "caps": null,
+                        "small_caps": null,
+                        "strike": null,
+                        "dstrike": null,
+                        "vanish": null,
+                        "outline": null,
+                        "shadow": null,
+                        "emboss": null,
+                        "imprint": null,
+                        "color": null,
+                        "sz": null,
+                        "sz_cs": null,
+                        "highlight": null,
+                        "u": null,
+                        "vert_align": null,
+                        "spacing": null,
+                        "position": null,
+                        "unknown": []
+                      },
+                      "runs": [
+                        {
+                          "run": {
+                            "id": 20,
+                            "rpr": {
+                              "style": null,
+                              "r_fonts": null,
+                              "b": null,
+                              "i": null,
+                              "caps": null,
+                              "small_caps": null,
+                              "strike": null,
+                              "dstrike": null,
+                              "vanish": null,
+                              "outline": null,
+                              "shadow": null,
+                              "emboss": null,
+                              "imprint": null,
+                              "color": null,
+                              "sz": null,
+                              "sz_cs": null,
+                              "highlight": null,
+                              "u": null,
+                              "vert_align": null,
+                              "spacing": null,
+                              "position": null,
+                              "unknown": []
+                            },
+                            "style_ref": null,
+                            "content": [
+                              {
+                                "text": ""
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "style_ref": null,
+                      "numbering_ref": null,
+                      "section_break": null
+                    }
+                  }
+                ]
+              },
+              {
+                "id": 21,
+                "grid_span": 1,
+                "v_merge": null,
+                "width": {
+                  "dxa": 4500
+                },
+                "margins": {
+                  "top": null,
+                  "left": null,
+                  "bottom": null,
+                  "right": null
+                },
+                "v_align": "top",
+                "borders": {
+                  "top": null,
+                  "left": null,
+                  "bottom": null,
+                  "right": null
+                },
+                "shading": null,
+                "items": [
+                  {
+                    "paragraph": {
+                      "id": 22,
+                      "ppr": {
+                        "style": null,
+                        "num_pr": null,
+                        "spacing": null,
+                        "ind": null,
+                        "jc": null,
+                        "keep_next": null,
+                        "keep_lines": null,
+                        "page_break_before": null,
+                        "widow_control": null,
+                        "outline_lvl": null,
+                        "p_bdr": null,
+                        "shd": null,
+                        "tabs": [],
+                        "r_pr": null,
+                        "sect_pr": null,
+                        "unknown": []
+                      },
+                      "mark_rpr": {
+                        "style": null,
+                        "r_fonts": null,
+                        "b": null,
+                        "i": null,
+                        "caps": null,
+                        "small_caps": null,
+                        "strike": null,
+                        "dstrike": null,
+                        "vanish": null,
+                        "outline": null,
+                        "shadow": null,
+                        "emboss": null,
+                        "imprint": null,
+                        "color": null,
+                        "sz": null,
+                        "sz_cs": null,
+                        "highlight": null,
+                        "u": null,
+                        "vert_align": null,
+                        "spacing": null,
+                        "position": null,
+                        "unknown": []
+                      },
+                      "runs": [
+                        {
+                          "run": {
+                            "id": 23,
+                            "rpr": {
+                              "style": null,
+                              "r_fonts": null,
+                              "b": null,
+                              "i": null,
+                              "caps": null,
+                              "small_caps": null,
+                              "strike": null,
+                              "dstrike": null,
+                              "vanish": null,
+                              "outline": null,
+                              "shadow": null,
+                              "emboss": null,
+                              "imprint": null,
+                              "color": null,
+                              "sz": null,
+                              "sz_cs": null,
+                              "highlight": null,
+                              "u": null,
+                              "vert_align": null,
+                              "spacing": null,
+                              "position": null,
+                              "unknown": []
+                            },
+                            "style_ref": null,
+                            "content": [
+                              {
+                                "text": "Строка 3"
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "style_ref": null,
+                      "numbering_ref": null,
+                      "section_break": null
+                    }
+                  }
+                ]
+              }
+            ],
+            "height": null,
+            "cant_split": false,
+            "header": false
+          }
+        ],
+        "layout": "autofit",
+        "width": "auto",
+        "borders": {
+          "top": {
+            "val": "single",
+            "sz": 4,
+            "space": 0,
+            "color": "auto"
+          },
+          "left": {
+            "val": "single",
+            "sz": 4,
+            "space": 0,
+            "color": "auto"
+          },
+          "bottom": {
+            "val": "single",
+            "sz": 4,
+            "space": 0,
+            "color": "auto"
+          },
+          "right": {
+            "val": "single",
+            "sz": 4,
+            "space": 0,
+            "color": "auto"
+          },
+          "inside_h": {
+            "val": "single",
+            "sz": 4,
+            "space": 0,
+            "color": "auto"
+          },
+          "inside_v": {
+            "val": "single",
+            "sz": 4,
+            "space": 0,
+            "color": "auto"
+          }
+        },
+        "look": {
+          "first_row": false,
+          "last_row": false,
+          "first_column": false,
+          "last_column": false,
+          "no_h_band": false,
+          "no_v_band": false
+        },
+        "jc": null,
+        "indent": null,
+        "cell_margins": {
+          "top": null,
+          "left": null,
+          "bottom": null,
+          "right": null
+        }
+      }
+    },
+    {
+      "unknown": {
+        "id": 24,
+        "xml": "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1134\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\" w:header=\"709\" w:footer=\"709\" w:gutter=\"0\"/><w:cols w:space=\"708\"/><w:docGrid w:linePitch=\"360\"/></w:sectPr>"
+      }
+    }
+  ],
+  "sections": []
+}
