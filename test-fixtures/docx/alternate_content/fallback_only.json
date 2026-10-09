@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "name": "alternate_content/fallback_only",
+    "category": "alternate_content",
+    "description": "AlternateContent без Choice: только Fallback",
+    "docTitle": "AlternateContent без Choice: только Fallback",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [
+      "UnknownElement"
+    ]
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": ""
+      }
+    ],
+    "alternateContent": [
+      {
+        "choices": [],
+        "fallback": "vml"
+      }
+    ],
+    "notes": "Ни одной поддерживаемой ветки Choice нет — блок сохраняется как Unknown"
+  }
+}

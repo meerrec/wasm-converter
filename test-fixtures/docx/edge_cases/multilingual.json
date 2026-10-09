@@ -1,8 +1,13 @@
 {
   "metadata": {
     "name": "edge_cases/multilingual",
+    "category": "edge_cases",
     "description": "Разные языки",
-    "expectedParagraphs": 3
+    "docTitle": "Разные языки",
+    "expectedParagraphs": 3,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
   },
   "content": {
     "paragraphs": [
@@ -16,6 +21,7 @@
         "text": "中文"
       }
     ],
-    "tables": []
+    "tables": [],
+    "images": []
   }
 }

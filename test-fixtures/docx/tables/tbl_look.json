@@ -1,0 +1,60 @@
+{
+  "metadata": {
+    "name": "tables/tbl_look",
+    "category": "tables",
+    "description": "w:tblLook с флагами первой строки, последней строки и первого столбца",
+    "docTitle": "w:tblLook с флагами первой строки, последней строки и первого столбца",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [],
+    "tables": [
+      {
+        "rows": 2,
+        "cols": 2,
+        "style": "TableGrid",
+        "headerRows": 1,
+        "tblLook": {
+          "val": "04A0",
+          "firstRow": true,
+          "lastRow": false,
+          "firstColumn": true,
+          "lastColumn": false,
+          "noHBand": false,
+          "noVBand": true
+        },
+        "cells": [
+          [
+            "Заголовок A",
+            "Заголовок B"
+          ],
+          [
+            "A2",
+            "B2"
+          ]
+        ]
+      }
+    ],
+    "images": [],
+    "styles": [
+      {
+        "id": "TableNormal",
+        "type": "table",
+        "default": true
+      },
+      {
+        "id": "TableGrid",
+        "type": "table",
+        "basedOn": "TableNormal",
+        "borders": {
+          "val": "single",
+          "sz": 4,
+          "color": "auto"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "metadata": {
+    "name": "cjk/japanese",
+    "category": "cjk",
+    "description": "Японский: lang eastAsia=\"ja-JP\" и правила кинсоку в настройках",
+    "docTitle": "Японский: lang eastAsia=\"ja-JP\" и правила кинсоку в настройках",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "日本語のテスト。漢字とかなの混在。",
+        "runs": [
+          {
+            "text": "日本語のテスト。漢字とかなの混在。",
+            "font": "MS Mincho",
+            "eastAsia": "ja-JP"
+          }
+        ]
+      }
+    ],
+    "settings": {
+      "kinsoku": true,
+      "overflowPunct": true
+    }
+  }
+}

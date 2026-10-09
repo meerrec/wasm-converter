@@ -1,0 +1,58 @@
+{
+  "metadata": {
+    "name": "numbering/start_override",
+    "category": "numbering",
+    "description": "lvlOverride со startOverride сдвигает начало списка на 5",
+    "docTitle": "lvlOverride со startOverride сдвигает начало списка на 5",
+    "expectedParagraphs": 3,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Пункт с номером 5",
+        "numId": 1,
+        "ilvl": 0,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Пункт с номером 6",
+        "numId": 1,
+        "ilvl": 0,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Пункт с номером 7",
+        "numId": 1,
+        "ilvl": 0,
+        "style": "ListParagraph"
+      }
+    ],
+    "tables": [],
+    "images": [],
+    "numbering": [
+      {
+        "numId": 1,
+        "abstractNumId": 0,
+        "levels": [
+          {
+            "ilvl": 0,
+            "numFmt": "decimal",
+            "lvlText": "%1.",
+            "start": 1,
+            "startOverride": 5
+          }
+        ]
+      }
+    ],
+    "styles": [
+      {
+        "id": "ListParagraph",
+        "type": "paragraph",
+        "basedOn": "Normal"
+      }
+    ]
+  }
+}

@@ -1,8 +1,13 @@
 {
   "metadata": {
     "name": "formatting/bold",
+    "category": "formatting",
     "description": "Жирный текст",
-    "expectedParagraphs": 1
+    "docTitle": "Жирный текст",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
   },
   "content": {
     "paragraphs": [
@@ -11,6 +16,7 @@
         "bold": true
       }
     ],
-    "tables": []
+    "tables": [],
+    "images": []
   }
 }

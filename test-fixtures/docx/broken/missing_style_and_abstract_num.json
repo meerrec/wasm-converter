@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "name": "broken/missing_style_and_abstract_num",
+    "category": "broken",
+    "description": "Ссылка на несуществующий стиль и numId без abstractNum",
+    "docTitle": "Ссылка на несуществующий стиль и numId без abstractNum",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [
+      "MissingStyleRef",
+      "MissingAbstractNum"
+    ]
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Paragraph with missing style",
+        "style": "NoSuchStyle"
+      },
+      {
+        "text": "Paragraph with broken numbering",
+        "numId": 7
+      }
+    ]
+  }
+}

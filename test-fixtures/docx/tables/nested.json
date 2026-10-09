@@ -1,0 +1,50 @@
+{
+  "metadata": {
+    "name": "tables/nested",
+    "category": "tables",
+    "description": "Таблица внутри ячейки внешней таблицы",
+    "docTitle": "Таблица внутри ячейки внешней таблицы",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [],
+    "tables": [
+      {
+        "rows": 2,
+        "cols": 2,
+        "cells": [
+          [
+            "Внешняя A1",
+            "Внешняя B1"
+          ],
+          [
+            "Текст до вложенной Текст после вложенной",
+            "Внешняя B2"
+          ]
+        ],
+        "nested": {
+          "rows": 2,
+          "cols": 2,
+          "at": {
+            "row": 1,
+            "col": 0
+          },
+          "cells": [
+            [
+              "Внутренняя A1",
+              "Внутренняя B1"
+            ],
+            [
+              "Внутренняя A2",
+              "Внутренняя B2"
+            ]
+          ]
+        }
+      }
+    ],
+    "images": []
+  }
+}

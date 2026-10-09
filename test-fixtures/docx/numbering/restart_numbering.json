@@ -1,0 +1,76 @@
+{
+  "metadata": {
+    "name": "numbering/restart_numbering",
+    "category": "numbering",
+    "description": "Два num на одном abstractNum: второй перезапускает нумерацию через startOverride",
+    "docTitle": "Два num на одном abstractNum: второй перезапускает нумерацию через startOverride",
+    "expectedParagraphs": 4,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Первый список, пункт 1",
+        "numId": 1,
+        "ilvl": 0,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Первый список, пункт 2",
+        "numId": 1,
+        "ilvl": 0,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Второй список, пункт 1",
+        "numId": 2,
+        "ilvl": 0,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Второй список, пункт 2",
+        "numId": 2,
+        "ilvl": 0,
+        "style": "ListParagraph"
+      }
+    ],
+    "tables": [],
+    "images": [],
+    "numbering": [
+      {
+        "numId": 1,
+        "abstractNumId": 0,
+        "levels": [
+          {
+            "ilvl": 0,
+            "numFmt": "decimal",
+            "lvlText": "%1.",
+            "start": 1
+          }
+        ]
+      },
+      {
+        "numId": 2,
+        "abstractNumId": 0,
+        "levels": [
+          {
+            "ilvl": 0,
+            "numFmt": "decimal",
+            "lvlText": "%1.",
+            "start": 1,
+            "startOverride": 1
+          }
+        ]
+      }
+    ],
+    "styles": [
+      {
+        "id": "ListParagraph",
+        "type": "paragraph",
+        "basedOn": "Normal"
+      }
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "metadata": {
+    "name": "basic/paragraph_alignment",
+    "category": "basic",
+    "description": "Выравнивание абзацев: left, center, right, both",
+    "docTitle": "Выравнивание абзацев: left, center, right, both",
+    "expectedParagraphs": 4,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Aligned left",
+        "jc": "left"
+      },
+      {
+        "text": "Aligned center",
+        "jc": "center"
+      },
+      {
+        "text": "Aligned right",
+        "jc": "right"
+      },
+      {
+        "text": "Aligned both",
+        "jc": "both"
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

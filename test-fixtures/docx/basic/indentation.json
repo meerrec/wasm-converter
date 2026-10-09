@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "name": "basic/indentation",
+    "category": "basic",
+    "description": "Отступы абзацев: left, right, firstLine, hanging",
+    "docTitle": "Отступы абзацев: left, right, firstLine, hanging",
+    "expectedParagraphs": 4,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Left indent 720",
+        "ind": {
+          "left": 720
+        }
+      },
+      {
+        "text": "Right indent 720",
+        "ind": {
+          "right": 720
+        }
+      },
+      {
+        "text": "First line indent 720",
+        "ind": {
+          "firstLine": 720
+        }
+      },
+      {
+        "text": "Left 1440 with hanging 360",
+        "ind": {
+          "left": 1440,
+          "hanging": 360
+        }
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

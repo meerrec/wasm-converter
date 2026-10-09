@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "name": "broken/cyclic_based_on",
+    "category": "broken",
+    "description": "Циклический basedOn: StyleA → StyleB → StyleA",
+    "docTitle": "Циклический basedOn: StyleA → StyleB → StyleA",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [
+      "CyclicBasedOn"
+    ]
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Paragraph with cyclic style",
+        "style": "StyleA"
+      }
+    ],
+    "styles": [
+      "StyleA",
+      "StyleB"
+    ]
+  }
+}

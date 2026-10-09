@@ -1,0 +1,31 @@
+{
+  "metadata": {
+    "name": "rtl/mixed_direction",
+    "category": "rtl",
+    "description": "Смешанное направление: арабский и английский в одном абзаце",
+    "docTitle": "Смешанное направление: арабский и английский в одном абзаце",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "direction": "rtl",
+    "paragraphs": [
+      {
+        "text": "مرحبا Hello World",
+        "bidi": true,
+        "runs": [
+          {
+            "text": "مرحبا",
+            "rtl": true
+          },
+          {
+            "text": " Hello World",
+            "rtl": false
+          }
+        ]
+      }
+    ]
+  }
+}

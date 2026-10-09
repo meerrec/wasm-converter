@@ -1,0 +1,22 @@
+{
+  "metadata": {
+    "name": "track_changes/deleted_run",
+    "category": "track_changes",
+    "description": "Удалённый прогон (w:delText, не w:t)",
+    "docTitle": "Удалённый прогон (w:delText, не w:t)",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "revisions": [
+      {
+        "type": "del",
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z",
+        "text": "Deleted text"
+      }
+    ]
+  }
+}

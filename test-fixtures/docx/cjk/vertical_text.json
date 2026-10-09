@@ -1,0 +1,23 @@
+{
+  "metadata": {
+    "name": "cjk/vertical_text",
+    "category": "cjk",
+    "description": "Вертикальное письмо: textDirection tbRl в sectPr",
+    "docTitle": "Вертикальное письмо: textDirection tbRl в sectPr",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "縦書きのテキストです。",
+        "textDirection": "tbRl"
+      }
+    ],
+    "section": {
+      "textDirection": "tbRl"
+    }
+  }
+}

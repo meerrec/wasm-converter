@@ -1,0 +1,38 @@
+{
+  "metadata": {
+    "name": "track_changes/move_and_format_change",
+    "category": "track_changes",
+    "description": "Перемещение (w:moveFrom/w:moveTo) и изменения форматирования",
+    "docTitle": "Перемещение (w:moveFrom/w:moveTo) и изменения форматирования",
+    "expectedParagraphs": 3,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "revisions": [
+      {
+        "type": "moveFrom",
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z",
+        "text": "Moved away"
+      },
+      {
+        "type": "moveTo",
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z",
+        "text": "Moved here"
+      },
+      {
+        "type": "pPrChange",
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z"
+      },
+      {
+        "type": "rPrChange",
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z"
+      }
+    ]
+  }
+}

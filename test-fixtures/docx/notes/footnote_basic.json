@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "name": "notes/footnote_basic",
+    "category": "notes",
+    "description": "Сноска в конце абзаца (footnotes.xml + w:footnoteReference)",
+    "docTitle": "Сноска в конце абзаца (footnotes.xml + w:footnoteReference)",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "footnotes": [
+      {
+        "id": 1,
+        "text": "Footnote text."
+      }
+    ]
+  }
+}

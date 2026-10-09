@@ -1,0 +1,33 @@
+{
+  "metadata": {
+    "name": "notes/footnote_in_table",
+    "category": "notes",
+    "description": "Сноска внутри ячейки таблицы",
+    "docTitle": "Сноска внутри ячейки таблицы",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "tables": [
+      {
+        "rows": 1,
+        "cols": 2,
+        "cells": [
+          [
+            "Cell with note",
+            "Plain cell"
+          ]
+        ]
+      }
+    ],
+    "footnotes": [
+      {
+        "id": 1,
+        "text": "Footnote from a table cell.",
+        "inTable": true
+      }
+    ]
+  }
+}

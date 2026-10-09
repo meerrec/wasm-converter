@@ -1,0 +1,40 @@
+{
+  "metadata": {
+    "name": "rtl/rtl_numbered_list",
+    "category": "rtl",
+    "description": "RTL-список с нумерацией: два уровня",
+    "docTitle": "RTL-список с нумерацией: два уровня",
+    "expectedParagraphs": 3,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "direction": "rtl",
+    "paragraphs": [
+      {
+        "text": "العنصر الأول",
+        "numId": 1,
+        "ilvl": 0,
+        "bidi": true
+      },
+      {
+        "text": "العنصر الثاني",
+        "numId": 1,
+        "ilvl": 0,
+        "bidi": true
+      },
+      {
+        "text": "العنصر الفرعي",
+        "numId": 1,
+        "ilvl": 1,
+        "bidi": true
+      }
+    ],
+    "numbering": {
+      "numId": 1,
+      "abstractNumId": 0,
+      "levels": 2
+    }
+  }
+}

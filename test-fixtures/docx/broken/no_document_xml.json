@@ -1,0 +1,14 @@
+{
+  "metadata": {
+    "name": "broken/no_document_xml",
+    "category": "broken",
+    "description": "Нет word/document.xml — разбирать нечего",
+    "docTitle": "Нет word/document.xml — разбирать нечего",
+    "expectedParagraphs": 0,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [],
+    "fatal": "MissingDocumentXml"
+  },
+  "content": {}
+}

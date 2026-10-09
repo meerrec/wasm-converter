@@ -1,0 +1,24 @@
+{
+  "metadata": {
+    "name": "basic/whitespace_preserve",
+    "category": "basic",
+    "description": "Значимые пробелы: ведущие, замыкающие и двойные внутри",
+    "docTitle": "Значимые пробелы: ведущие, замыкающие и двойные внутри",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "   leading and trailing   "
+      },
+      {
+        "text": "double  spaces   between  words"
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

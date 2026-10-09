@@ -1,0 +1,51 @@
+{
+  "metadata": {
+    "name": "styles/table_style",
+    "category": "styles",
+    "description": "Табличный стиль с tblPr (рамки) применяется таблицей через w:tblStyle",
+    "docTitle": "Табличный стиль с tblPr (рамки) применяется таблицей через w:tblStyle",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [],
+    "tables": [
+      {
+        "rows": 2,
+        "cols": 2,
+        "style": "BandedGrid",
+        "cells": [
+          [
+            "Заголовок 1",
+            "Заголовок 2"
+          ],
+          [
+            "Ячейка 1",
+            "Ячейка 2"
+          ]
+        ]
+      }
+    ],
+    "images": [],
+    "styles": [
+      {
+        "id": "TableNormal",
+        "type": "table",
+        "default": true
+      },
+      {
+        "id": "BandedGrid",
+        "type": "table",
+        "basedOn": "TableNormal",
+        "borders": {
+          "val": "single",
+          "sz": 4,
+          "color": "7F7F7F",
+          "sides": "all"
+        }
+      }
+    ]
+  }
+}

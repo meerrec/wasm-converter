@@ -1,0 +1,48 @@
+{
+  "metadata": {
+    "name": "images/multiple_sizes",
+    "category": "images",
+    "description": "Три рисунка разных размеров",
+    "docTitle": "Три рисунка разных размеров",
+    "expectedParagraphs": 3,
+    "expectedTables": 0,
+    "expectedImages": 3,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": ""
+      },
+      {
+        "text": ""
+      },
+      {
+        "text": ""
+      }
+    ],
+    "images": [
+      {
+        "relId": "rIdImg1",
+        "file": "small.png",
+        "kind": "inline",
+        "cx": 457200,
+        "cy": 457200
+      },
+      {
+        "relId": "rIdImg2",
+        "file": "wide.png",
+        "kind": "inline",
+        "cx": 1371600,
+        "cy": 685800
+      },
+      {
+        "relId": "rIdImg3",
+        "file": "tall.png",
+        "kind": "inline",
+        "cx": 685800,
+        "cy": 1371600
+      }
+    ]
+  }
+}

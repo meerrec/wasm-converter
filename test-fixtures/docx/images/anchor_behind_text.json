@@ -1,0 +1,30 @@
+{
+  "metadata": {
+    "name": "images/anchor_behind_text",
+    "category": "images",
+    "description": "Рисунок за текстом (behindDoc) без обтекания",
+    "docTitle": "Рисунок за текстом (behindDoc) без обтекания",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 1,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Текст поверх рисунка"
+      }
+    ],
+    "images": [
+      {
+        "relId": "rIdImg1",
+        "file": "behind.png",
+        "kind": "anchor",
+        "wrap": "none",
+        "behindDoc": true,
+        "cx": 1371600,
+        "cy": 914400
+      }
+    ]
+  }
+}

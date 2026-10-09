@@ -1,0 +1,71 @@
+{
+  "metadata": {
+    "name": "tables/borders_shading",
+    "category": "tables",
+    "description": "Рамки таблицы (w:tblBorders), рамки ячейки (w:tcBorders) и заливка (w:shd)",
+    "docTitle": "Рамки таблицы (w:tblBorders), рамки ячейки (w:tcBorders) и заливка (w:shd)",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [],
+    "tables": [
+      {
+        "rows": 2,
+        "cols": 2,
+        "borders": {
+          "val": "single",
+          "sz": 8,
+          "color": "2F5496",
+          "sides": "all"
+        },
+        "cells": [
+          [
+            "Шапка A",
+            "Шапка B"
+          ],
+          [
+            "Ячейка A2",
+            "Ячейка B2"
+          ]
+        ],
+        "shading": [
+          {
+            "row": 0,
+            "col": 0,
+            "fill": "2F5496"
+          },
+          {
+            "row": 0,
+            "col": 1,
+            "fill": "2F5496"
+          },
+          {
+            "row": 1,
+            "col": 0,
+            "fill": "DEEAF6"
+          },
+          {
+            "row": 1,
+            "col": 1,
+            "fill": "FFFFFF"
+          }
+        ],
+        "cellBorders": [
+          {
+            "row": 1,
+            "col": 0,
+            "bottom": {
+              "val": "double",
+              "sz": 6,
+              "color": "C00000"
+            }
+          }
+        ]
+      }
+    ],
+    "images": []
+  }
+}

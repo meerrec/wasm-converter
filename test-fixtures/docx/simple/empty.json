@@ -1,9 +1,13 @@
 {
   "metadata": {
     "name": "simple/empty",
+    "category": "simple",
     "description": "Пустой документ",
+    "docTitle": "Пустой документ",
     "expectedParagraphs": 0,
-    "expectedTables": 0
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
   },
   "content": {
     "paragraphs": [],

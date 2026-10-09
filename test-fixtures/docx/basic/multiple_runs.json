@@ -1,0 +1,50 @@
+{
+  "metadata": {
+    "name": "basic/multiple_runs",
+    "category": "basic",
+    "description": "Несколько прогонов с разным форматированием в одном абзаце",
+    "docTitle": "Несколько прогонов с разным форматированием в одном абзаце",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Plain bold italic underlined colored sized emphasized",
+        "runs": [
+          {
+            "text": "Plain "
+          },
+          {
+            "text": "bold ",
+            "bold": true
+          },
+          {
+            "text": "italic ",
+            "italic": true
+          },
+          {
+            "text": "underlined ",
+            "underline": true
+          },
+          {
+            "text": "colored ",
+            "color": "FF0000"
+          },
+          {
+            "text": "sized",
+            "size": 32
+          },
+          {
+            "text": " emphasized",
+            "style": "Emphasis"
+          }
+        ]
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

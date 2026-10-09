@@ -1,0 +1,53 @@
+{
+  "metadata": {
+    "name": "tables/v_merge",
+    "category": "tables",
+    "description": "Вертикальное объединение: w:vMerge restart и продолжения без w:val",
+    "docTitle": "Вертикальное объединение: w:vMerge restart и продолжения без w:val",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [],
+    "tables": [
+      {
+        "rows": 3,
+        "cols": 2,
+        "vMerge": [
+          {
+            "row": 0,
+            "col": 0,
+            "val": "restart"
+          },
+          {
+            "row": 1,
+            "col": 0,
+            "val": "continue"
+          },
+          {
+            "row": 2,
+            "col": 0,
+            "val": "continue"
+          }
+        ],
+        "cells": [
+          [
+            "Объединено по вертикали",
+            "Строка 1"
+          ],
+          [
+            "",
+            "Строка 2"
+          ],
+          [
+            "",
+            "Строка 3"
+          ]
+        ]
+      }
+    ],
+    "images": []
+  }
+}

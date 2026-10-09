@@ -1,0 +1,48 @@
+{
+  "metadata": {
+    "name": "tables/grid_span",
+    "category": "tables",
+    "description": "Горизонтальное объединение ячеек через w:gridSpan",
+    "docTitle": "Горизонтальное объединение ячеек через w:gridSpan",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [],
+    "tables": [
+      {
+        "rows": 3,
+        "cols": 3,
+        "gridSpan": [
+          {
+            "row": 0,
+            "col": 0,
+            "span": 3
+          },
+          {
+            "row": 1,
+            "col": 0,
+            "span": 2
+          }
+        ],
+        "cells": [
+          [
+            "Строка во всю ширину"
+          ],
+          [
+            "Две ячейки",
+            "C2"
+          ],
+          [
+            "A3",
+            "B3",
+            "C3"
+          ]
+        ]
+      }
+    ],
+    "images": []
+  }
+}

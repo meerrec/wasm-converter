@@ -1,0 +1,46 @@
+{
+  "metadata": {
+    "name": "styles/linked_character",
+    "category": "styles",
+    "description": "Параграфный стиль с w:link на character-стиль; абзац и прогон со связанными стилями",
+    "docTitle": "Параграфный стиль с w:link на character-стиль; абзац и прогон со связанными стилями",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Заголовок с linked-прогоном",
+        "style": "Heading1",
+        "runs": [
+          {
+            "text": "Заголовок с "
+          },
+          {
+            "text": "linked-прогоном",
+            "style": "Heading1Char"
+          }
+        ]
+      }
+    ],
+    "tables": [],
+    "images": [],
+    "styles": [
+      {
+        "id": "Heading1",
+        "type": "paragraph",
+        "link": "Heading1Char",
+        "bold": true,
+        "color": "2F5496"
+      },
+      {
+        "id": "Heading1Char",
+        "type": "character",
+        "link": "Heading1",
+        "basedOn": "DefaultParagraphFont"
+      }
+    ]
+  }
+}

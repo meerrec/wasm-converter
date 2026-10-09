@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "name": "basic/empty_body",
+    "category": "basic",
+    "description": "Пустое тело: только sectPr, абзацев нет",
+    "docTitle": "Пустое тело: только sectPr, абзацев нет",
+    "expectedParagraphs": 0,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [],
+    "tables": [],
+    "images": []
+  }
+}

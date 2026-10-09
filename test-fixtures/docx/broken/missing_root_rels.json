@@ -1,0 +1,24 @@
+{
+  "metadata": {
+    "name": "broken/missing_root_rels",
+    "category": "broken",
+    "description": "Нет _rels/.rels: содержимое восстанавливается по стандартному пути",
+    "docTitle": "Нет _rels/.rels: содержимое восстанавливается по стандартному пути",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [
+      "MissingRels"
+    ]
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "First paragraph"
+      },
+      {
+        "text": "Second paragraph"
+      }
+    ]
+  }
+}

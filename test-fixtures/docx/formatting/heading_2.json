@@ -1,8 +1,13 @@
 {
   "metadata": {
     "name": "formatting/heading_2",
+    "category": "formatting",
     "description": "Заголовок уровня 2",
-    "expectedParagraphs": 1
+    "docTitle": "Заголовок уровня 2",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
   },
   "content": {
     "paragraphs": [
@@ -11,6 +16,7 @@
         "style": "Heading2"
       }
     ],
-    "tables": []
+    "tables": [],
+    "images": []
   }
 }

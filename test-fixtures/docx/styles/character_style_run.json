@@ -1,0 +1,50 @@
+{
+  "metadata": {
+    "name": "styles/character_style_run",
+    "category": "styles",
+    "description": "Кастомный character-стиль применяется к прогону через w:rStyle",
+    "docTitle": "Кастомный character-стиль применяется к прогону через w:rStyle",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Обычный текст, жирный красный и подчёркнутый по наследству",
+        "runs": [
+          {
+            "text": "Обычный текст, "
+          },
+          {
+            "text": "жирный красный",
+            "style": "StrongRed"
+          },
+          {
+            "text": " и подчёркнутый по наследству",
+            "style": "StrongRedUnderline"
+          }
+        ]
+      }
+    ],
+    "tables": [],
+    "images": [],
+    "styles": [
+      {
+        "id": "StrongRed",
+        "type": "character",
+        "basedOn": "DefaultParagraphFont",
+        "bold": true,
+        "color": "C00000",
+        "sizeHalfPoints": 26
+      },
+      {
+        "id": "StrongRedUnderline",
+        "type": "character",
+        "basedOn": "StrongRed",
+        "underline": true
+      }
+    ]
+  }
+}

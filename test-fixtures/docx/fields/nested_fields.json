@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "name": "fields/nested_fields",
+    "category": "fields",
+    "description": "Вложенное поле: PAGE внутри инструкции IF",
+    "docTitle": "Вложенное поле: PAGE внутри инструкции IF",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "yes"
+      }
+    ],
+    "fields": [
+      {
+        "instruction": " IF 1 > 0 \"yes\" \"no\" ",
+        "type": "if",
+        "cached": "yes",
+        "form": "fldChar",
+        "children": [
+          {
+            "instruction": " PAGE ",
+            "type": "page",
+            "cached": "1",
+            "form": "fldChar"
+          }
+        ]
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

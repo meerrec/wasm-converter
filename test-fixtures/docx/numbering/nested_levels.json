@@ -1,0 +1,76 @@
+{
+  "metadata": {
+    "name": "numbering/nested_levels",
+    "category": "numbering",
+    "description": "Абзацы на ilvl 0, 1 и 2 с lvlRestart на вложенных уровнях",
+    "docTitle": "Абзацы на ilvl 0, 1 и 2 с lvlRestart на вложенных уровнях",
+    "expectedParagraphs": 4,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Верхний уровень",
+        "numId": 1,
+        "ilvl": 0,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Вложенный уровень 1",
+        "numId": 1,
+        "ilvl": 1,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Вложенный уровень 2",
+        "numId": 1,
+        "ilvl": 2,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Возврат на уровень 1",
+        "numId": 1,
+        "ilvl": 1,
+        "style": "ListParagraph"
+      }
+    ],
+    "tables": [],
+    "images": [],
+    "numbering": [
+      {
+        "numId": 1,
+        "abstractNumId": 0,
+        "levels": [
+          {
+            "ilvl": 0,
+            "numFmt": "decimal",
+            "lvlText": "%1.",
+            "start": 1
+          },
+          {
+            "ilvl": 1,
+            "numFmt": "decimal",
+            "lvlText": "%2.",
+            "start": 1,
+            "lvlRestart": 0
+          },
+          {
+            "ilvl": 2,
+            "numFmt": "decimal",
+            "lvlText": "%3.",
+            "start": 1
+          }
+        ]
+      }
+    ],
+    "styles": [
+      {
+        "id": "ListParagraph",
+        "type": "paragraph",
+        "basedOn": "Normal"
+      }
+    ]
+  }
+}

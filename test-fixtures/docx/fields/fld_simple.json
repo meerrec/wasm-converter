@@ -1,0 +1,44 @@
+{
+  "metadata": {
+    "name": "fields/fld_simple",
+    "category": "fields",
+    "description": "Поля через w:fldSimple с кэшированным результатом",
+    "docTitle": "Поля через w:fldSimple с кэшированным результатом",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Page 1 of 12"
+      },
+      {
+        "text": "Page (fldChar): 1"
+      }
+    ],
+    "fields": [
+      {
+        "instruction": " PAGE ",
+        "type": "page",
+        "cached": "1",
+        "form": "fldSimple"
+      },
+      {
+        "instruction": " NUMPAGES ",
+        "type": "numpages",
+        "cached": "12",
+        "form": "fldSimple"
+      },
+      {
+        "instruction": " PAGE ",
+        "type": "page",
+        "cached": "1",
+        "form": "fldChar"
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

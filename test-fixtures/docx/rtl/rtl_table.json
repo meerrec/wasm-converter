@@ -1,0 +1,33 @@
+{
+  "metadata": {
+    "name": "rtl/rtl_table",
+    "category": "rtl",
+    "description": "Таблица с bidiVisual и RTL-текстом в ячейках",
+    "docTitle": "Таблица с bidiVisual и RTL-текстом в ячейках",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "direction": "rtl",
+    "paragraphs": [],
+    "tables": [
+      {
+        "rows": 2,
+        "cols": 2,
+        "bidiVisual": true,
+        "cells": [
+          [
+            "الخلية أ١",
+            "الخلية ب١"
+          ],
+          [
+            "الخلية أ٢",
+            "الخلية ب٢"
+          ]
+        ]
+      }
+    ]
+  }
+}

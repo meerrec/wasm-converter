@@ -1,0 +1,41 @@
+{
+  "metadata": {
+    "name": "styles/default_paragraph",
+    "category": "styles",
+    "description": "Абзац без pStyle резолвится в стиль Normal с w:default=\"1\"",
+    "docTitle": "Абзац без pStyle резолвится в стиль Normal с w:default=\"1\"",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Абзац без pStyle наследует Normal",
+        "style": "Normal"
+      }
+    ],
+    "tables": [],
+    "images": [],
+    "styles": [
+      {
+        "id": "Normal",
+        "type": "paragraph",
+        "default": true,
+        "qFormat": true
+      },
+      {
+        "id": "DefaultParagraphFont",
+        "type": "character",
+        "default": true
+      },
+      {
+        "id": "BodyText",
+        "type": "paragraph",
+        "default": false,
+        "basedOn": "Normal"
+      }
+    ]
+  }
+}

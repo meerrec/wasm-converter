@@ -1,0 +1,32 @@
+{
+  "metadata": {
+    "name": "headers_footers/even_odd",
+    "category": "headers_footers",
+    "description": "Разные колонтитулы чётных и нечётных страниц (w:evenAndOddHeaders)",
+    "docTitle": "Разные колонтитулы чётных и нечётных страниц (w:evenAndOddHeaders)",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "headers": [
+      {
+        "type": "default",
+        "part": "word/header1.xml",
+        "text": "Default header"
+      },
+      {
+        "type": "first",
+        "part": "word/header2.xml",
+        "text": "First page header"
+      },
+      {
+        "type": "even",
+        "part": "word/header3.xml",
+        "text": "Even page header"
+      }
+    ],
+    "evenAndOddHeaders": true
+  }
+}

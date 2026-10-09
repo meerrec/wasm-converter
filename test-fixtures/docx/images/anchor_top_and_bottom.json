@@ -1,0 +1,32 @@
+{
+  "metadata": {
+    "name": "images/anchor_top_and_bottom",
+    "category": "images",
+    "description": "Плавающий рисунок с обтеканием сверху и снизу, привязка к странице",
+    "docTitle": "Плавающий рисунок с обтеканием сверху и снизу, привязка к странице",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 1,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": ""
+      }
+    ],
+    "images": [
+      {
+        "relId": "rIdImg1",
+        "file": "topbottom.png",
+        "kind": "anchor",
+        "wrap": "topAndBottom",
+        "hRelative": "page",
+        "posX": 914400,
+        "posY": 0,
+        "cx": 2743200,
+        "cy": 685800
+      }
+    ]
+  }
+}

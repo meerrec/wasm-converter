@@ -1,0 +1,40 @@
+{
+  "metadata": {
+    "name": "fields/date_field",
+    "category": "fields",
+    "description": "Поле DATE с форматом вывода и кэшированным результатом",
+    "docTitle": "Поле DATE с форматом вывода и кэшированным результатом",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Date: 01.01.2026"
+      },
+      {
+        "text": "Date (fldSimple): 01.01.2026"
+      }
+    ],
+    "fields": [
+      {
+        "instruction": " DATE \\@ \"dd.MM.yyyy\" ",
+        "type": "date",
+        "format": "dd.MM.yyyy",
+        "cached": "01.01.2026",
+        "form": "fldChar"
+      },
+      {
+        "instruction": " DATE \\@ \"dd.MM.yyyy\" ",
+        "type": "date",
+        "format": "dd.MM.yyyy",
+        "cached": "01.01.2026",
+        "form": "fldSimple"
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "metadata": {
+    "name": "numbering/multilevel",
+    "category": "numbering",
+    "description": "Три уровня одного списка с составным lvlText %1.%2.%3",
+    "docTitle": "Три уровня одного списка с составным lvlText %1.%2.%3",
+    "expectedParagraphs": 5,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Раздел первый",
+        "numId": 1,
+        "ilvl": 0,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Подраздел 1.1",
+        "numId": 1,
+        "ilvl": 1,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Пункт 1.1.1",
+        "numId": 1,
+        "ilvl": 2,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Подраздел 1.2",
+        "numId": 1,
+        "ilvl": 1,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Раздел второй",
+        "numId": 1,
+        "ilvl": 0,
+        "style": "ListParagraph"
+      }
+    ],
+    "tables": [],
+    "images": [],
+    "numbering": [
+      {
+        "numId": 1,
+        "abstractNumId": 0,
+        "levels": [
+          {
+            "ilvl": 0,
+            "numFmt": "decimal",
+            "lvlText": "%1.",
+            "start": 1
+          },
+          {
+            "ilvl": 1,
+            "numFmt": "decimal",
+            "lvlText": "%1.%2.",
+            "start": 1
+          },
+          {
+            "ilvl": 2,
+            "numFmt": "decimal",
+            "lvlText": "%1.%2.%3.",
+            "start": 1
+          }
+        ]
+      }
+    ],
+    "styles": [
+      {
+        "id": "ListParagraph",
+        "type": "paragraph",
+        "basedOn": "Normal"
+      }
+    ]
+  }
+}

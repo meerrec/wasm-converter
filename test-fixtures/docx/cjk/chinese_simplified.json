@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "name": "cjk/chinese_simplified",
+    "category": "cjk",
+    "description": "Упрощённый китайский: eastAsia-шрифт SimSun и полноширинные знаки",
+    "docTitle": "Упрощённый китайский: eastAsia-шрифт SimSun и полноширинные знаки",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "简体中文测试：汉字、标点，句号。",
+        "runs": [
+          {
+            "text": "简体中文测试：汉字、标点，句号。",
+            "font": "SimSun",
+            "eastAsia": "zh-CN"
+          }
+        ]
+      }
+    ]
+  }
+}
