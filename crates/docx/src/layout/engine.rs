@@ -190,33 +190,36 @@ pub struct PageLayout {
     pub total_height: f32,
 }
 
-/// Состояние раскладки: текущая позиция и контекст.
+/// Состояние раскладки: колонка и текущая позиция в ней.
 #[derive(Debug, Clone)]
 pub struct LayoutState {
-    /// Текущая позиция X в пикселях (от левого поля).
+    /// Текущая позиция X в пикселях от левого края страницы.
     pub x: f32,
-    /// Текущая позиция Y в пикселях (от верхнего поля).
+    /// Текущая позиция Y в пикселях от верхнего края страницы.
     pub y: f32,
-    /// Текущая секция.
-    pub section: Option<&'static Section>,
-    /// Текущий индекс в тело секции/документа.
-    pub body_index: usize,
     /// Текущая колонка (для многоколоночной раскладки).
     pub column_index: usize,
     /// Ширина текущей колонки.
     pub column_width: f32,
-    /// Отступ слева для текущей колонки.
+    /// Отступ слева для текущей колонки (от левого края страницы).
     pub column_x: f32,
+    /// Верхняя граница полосы набора (верхнее поле страницы).
+    pub content_top: f32,
+    /// Нижняя граница полосы набора (высота страницы минус нижнее поле).
+    pub content_bottom: f32,
 }
 
 /// Опции раскладки.
 #[derive(Debug, Clone)]
 pub struct LayoutOptions {
-    /// Ширина canvas в пикселях (для ограничения ширины).
+    /// Верхняя граница ширины полосы набора в физических пикселях canvas.
+    ///
+    /// Именно ограничение сверху, а не замена ширины: ширину задаёт страница,
+    /// canvas лишь режет её, когда окно уже страницы.
     pub canvas_width: Option<f32>,
-    /// Масштаб рендеринга.
+    /// Масштаб рендеринга. Параметр рисования, а не верстки.
     pub scale: f32,
-    /// DPR (device pixel ratio).
+    /// DPR (device pixel ratio). Параметр рисования, а не верстки.
     pub dpr: f32,
 }
 
@@ -231,10 +234,22 @@ impl Default for LayoutOptions {
 }
 
 impl LayoutOptions {
-    /// Эффективная ширина в пикселях.
+    /// Эффективная ширина полосы набора в пикселях раскладки.
+    ///
+    /// `canvas_width` задан в физических пикселях, поэтому переводится в пиксели
+    /// раскладки делением на `scale * dpr`; без него ширина равна ширине страницы.
+    /// Некорректные (нулевые или нечисловые) параметры рисования не сужают полосу
+    /// набора до нуля — иначе текст перестал бы раскладываться вовсе.
     #[must_use]
     pub fn effective_width(&self, page_width: f32) -> f32 {
-        self.canvas_width.unwrap_or(page_width) / self.dpr * self.scale
+        let Some(canvas_width) = self.canvas_width else {
+            return page_width;
+        };
+        let factor = self.scale * self.dpr;
+        if !factor.is_finite() || factor <= 0.0 {
+            return page_width;
+        }
+        (canvas_width / factor).min(page_width)
     }
 }
 
@@ -285,7 +300,6 @@ pub fn layout_document(
     options: &LayoutOptions,
     fonts: &mut FontRegistry,
 ) -> Result<PageLayout, LayoutError> {
-    let mut state = LayoutState::new();
     let mut pages = Vec::new();
     let mut placed_floats: Vec<crate::layout::float::FloatElement> = Vec::new();
 
@@ -295,17 +309,20 @@ pub fn layout_document(
         .first()
         .cloned()
         .unwrap_or_else(default_section);
-    let mut current_page = create_page(&first_section, 1, options);
+    let mut current_page = create_page(&first_section, 1);
     let mut current_y = current_page.margins.top;
+    let mut state = LayoutState::for_page(&current_page, &first_section);
     let default_font_id = FontId::default();
-
-    // Calculate available text width
-    let text_width = current_page.width - current_page.margins.left - current_page.margins.right;
 
     // Process all blocks
     for block in &document.body.items {
         match block {
             BlockItem::Paragraph(paragraph) => {
+                // Курсор страницы — источник истины: состояние возвращается к нему перед
+                // каждым абзацем, иначе элементы получают координаты от прошлого блока.
+                state.x = state.column_x;
+                state.y = current_y;
+
                 // Layout paragraph
                 let mut line_breaker = LineBreaker::new(fonts, default_font_id);
                 let (content_height, layout_items) =
@@ -324,9 +341,9 @@ pub fn layout_document(
                     current_page = create_page(
                         &next_section,
                         u32::try_from(pages.len()).unwrap_or(u32::MAX) + 1,
-                        options,
                     );
                     current_y = current_page.margins.top;
+                    state = LayoutState::for_page(&current_page, &next_section);
                 }
 
                 for item in layout_items {
@@ -336,7 +353,8 @@ pub fn layout_document(
             }
             BlockItem::Table(table) => {
                 // Layout table
-                let table_height = layout_table(table, &mut state, options, fonts, text_width);
+                let table_width = state.column_width;
+                let table_height = layout_table(table, &mut state, options, fonts, table_width);
 
                 // Check if table fits on current page
                 if current_y + table_height > current_page.height - current_page.margins.bottom {
@@ -351,9 +369,9 @@ pub fn layout_document(
                     current_page = create_page(
                         &next_section,
                         u32::try_from(pages.len()).unwrap_or(u32::MAX) + 1,
-                        options,
                     );
                     current_y = current_page.margins.top;
+                    state = LayoutState::for_page(&current_page, &next_section);
                 }
 
                 // TODO: Add table to current page
@@ -374,9 +392,9 @@ pub fn layout_document(
                     current_page = create_page(
                         &next_section,
                         u32::try_from(pages.len()).unwrap_or(u32::MAX) + 1,
-                        options,
                     );
                     current_y = current_page.margins.top;
+                    state = LayoutState::for_page(&current_page, &next_section);
                 }
             }
             BlockItem::Unknown { .. } => {
@@ -396,7 +414,7 @@ pub fn layout_document(
 }
 
 /// Создать страницу с заданными параметрами.
-fn create_page(section: &Section, number: u32, _options: &LayoutOptions) -> Page {
+fn create_page(section: &Section, number: u32) -> Page {
     let width = twips_to_px(section.page_size.width);
     let height = twips_to_px(section.page_size.height);
 
@@ -605,23 +623,108 @@ impl Default for SectionProperties {
     }
 }
 
-impl Default for LayoutState {
-    fn default() -> Self {
+impl LayoutState {
+    /// Состояние на начало страницы: полоса набора внутри её полей.
+    ///
+    /// Секция пока используется только для проверки числа колонок; поля и размеры
+    /// берутся из уже собранной страницы, чтобы состояние и страница не разъезжались.
+    #[must_use]
+    pub fn for_page(page: &Page, section: &Section) -> Self {
+        let column_width = page.width - page.margins.left - page.margins.right;
+        if section.columns.count > 1 {
+            // TODO (Спринт 10): многоколоночная раскладка — полосу набора предстоит
+            // делить между колонками; все фикстуры одноколоночные.
+        }
         Self {
-            x: 0.0,
-            y: 0.0,
-            section: None,
-            body_index: 0,
+            x: page.margins.left,
+            y: page.margins.top,
             column_index: 0,
-            column_width: 0.0,
-            column_x: 0.0,
+            column_width,
+            column_x: page.margins.left,
+            content_top: page.margins.top,
+            content_bottom: page.height - page.margins.bottom,
         }
     }
 }
 
-impl LayoutState {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{
+        Body, Inline, Metadata, NumberingTable, Relationships, Run, RunContent, Settings,
+        StyleTable,
+    };
+
+    /// Документ из одного абзаца с текстом.
+    ///
+    /// `sections` пуст намеренно: раскладка обязана взять секцию по умолчанию —
+    /// так же, как для документа без заключительного `w:sectPr`.
+    fn document_with_text(text: &str) -> Document {
+        let paragraph = Paragraph {
+            id: NodeId::new(1),
+            runs: vec![Inline::Run(Run {
+                id: NodeId::new(2),
+                content: vec![RunContent::Text(text.to_owned())],
+                ..Run::default()
+            })],
+            ..Paragraph::default()
+        };
+        Document {
+            id: NodeId::ROOT,
+            body: Body {
+                id: NodeId::new(3),
+                items: vec![BlockItem::Paragraph(paragraph)],
+                sections: Vec::new(),
+            },
+            styles: StyleTable::default(),
+            numbering: NumberingTable::default(),
+            settings: Settings::default(),
+            metadata: Metadata::default(),
+            rels: Relationships::default(),
+            footnotes: Vec::new(),
+            endnotes: Vec::new(),
+            comments: Vec::new(),
+            headers: std::collections::BTreeMap::new(),
+            footers: std::collections::BTreeMap::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Блокер S1.1: абзац с текстом обязан попасть на страницу внутри полей.
+    // Координаты копируются из полей страницы без арифметики — сравнение точное.
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn a_paragraph_lands_inside_the_margins() {
+        let text = "Hello, DOCX layout";
+        let document = document_with_text(text);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(layout.pages.len(), 1, "одностраничный документ");
+        let page = &layout.pages[0];
+        let paragraphs: Vec<(&Rect, &String)> = page
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                LayoutItem::Paragraph { rect, text, .. } => Some((rect, text)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            paragraphs.len(),
+            1,
+            "ровно один абзац, получено {paragraphs:?}"
+        );
+
+        let (rect, laid_out) = paragraphs[0];
+        assert_eq!(rect.x, page.margins.left, "абзац начинается от левого поля");
+        assert_eq!(
+            rect.y, page.margins.top,
+            "абзац начинается от верхнего поля"
+        );
+        assert!(rect.width > 0.0, "ширина строки: {}", rect.width);
+        assert_eq!(laid_out.as_str(), text);
     }
 }
