@@ -16,21 +16,21 @@
 use std::borrow::Cow;
 
 use doc_converter_core::xml::XmlReader;
-use doc_converter_core::WarningKind;
+use doc_converter_core::{NodeId, WarningKind};
 use quick_xml::events::{BytesStart, Event};
 
 use crate::context::ParseCtx;
 use crate::error::{Error, Result};
 use crate::model::{
-    AlignH, AlignV, Anchor, BlockItem, Body, Border, BorderStyle, BreakKind, Cell, CellBorders,
-    CellMargins, CellVAlign, CellWidth, CharacterSpacing, Color, ColumnDef, Columns, Extent,
-    FontHint, GridCol, HalfPoint, HeightRule, Highlight, Ind, Inline, InlineImage, InlineOrAnchor,
-    Justification, LineSpacing, LineSpacingRule, Margins, NumId, NumPr, Orientation, PageSize,
-    Paragraph, ParagraphBorders, ParagraphSpacing, PartRef, PositionH, PositionV, RFonts, RawPPr,
-    RawRPr, RelFromH, RelFromV, Relationships, Row, RowHeight, Run, RunContent, Section,
-    SectionProperties, SectionType, Shading, ShadingPattern, StyleId, TabLeader, TabStop,
-    TabStopKind, Table, TableBorders, TableLayout, TableLook, TableWidth, Toggle, Twips, Underline,
-    VMerge, VertAlign, WrapKind,
+    AlignH, AlignV, Anchor, BlockItem, Body, Bookmark, Border, BorderStyle, BreakKind, Cell,
+    CellBorders, CellMargins, CellVAlign, CellWidth, CharacterSpacing, Color, ColumnDef, Columns,
+    Extent, Field, FieldKind, FontHint, GridCol, HalfPoint, HeightRule, Highlight, Hyperlink, Ind,
+    Inline, InlineImage, InlineOrAnchor, Justification, LineSpacing, LineSpacingRule, Margins,
+    NumId, NumPr, Orientation, PageSize, Paragraph, ParagraphBorders, ParagraphSpacing, PartRef,
+    PositionH, PositionV, RFonts, RawPPr, RawRPr, RelFromH, RelFromV, Relationships, Row,
+    RowHeight, Run, RunContent, Section, SectionProperties, SectionType, Shading, ShadingPattern,
+    StyleId, TabLeader, TabStop, TabStopKind, Table, TableBorders, TableLayout, TableLook,
+    TableWidth, Toggle, Twips, Underline, VMerge, VertAlign, WrapKind,
 };
 use crate::xml::{
     attr_f32, attr_i32, attr_toggle, attr_u32, attributes, capture_element, find, is_true,
@@ -629,6 +629,9 @@ fn parse_paragraph(
     let mut ppr = RawPPr::default();
     let mut section_break = None;
     let mut runs = Vec::new();
+    // Поле собирается из соседних run'ов, а не внутри одного: состояние живёт
+    // в цикле абзаца, пока он читает эти run'ы.
+    let mut state = InlineState::default();
     loop {
         let Some(event) = reader.next_significant()? else {
             return Err(Error::malformed(
@@ -653,10 +656,13 @@ fn parse_paragraph(
                 section_break = properties;
             }
             _ => {
-                parse_inline_element(reader, element, empty, rels, ctx, part, xml_path, &mut runs)?;
+                parse_inline_step(
+                    reader, element, empty, rels, ctx, part, xml_path, 0, &mut state, &mut runs,
+                )?;
             }
         }
     }
+    state.finish(ctx, part, xml_path, &mut runs)?;
     // `mark_rpr` — свойства знака абзаца: к runs они не применяются (ADR-0013 §2).
     let mark_rpr = ppr.r_pr.clone().unwrap_or_default();
     let style_ref = ppr.style.clone();
@@ -1519,13 +1525,346 @@ fn toggle_is_on(toggle: Option<Toggle>) -> bool {
 // Inline-содержимое абзаца
 // ---------------------------------------------------------------------------
 
+/// Предел вложенности inline-контейнеров (`w:hyperlink`, `w:fldSimple`).
+///
+/// Вложенность задаётся входом, а разбор рекурсивный: без предела патологический
+/// документ уронил бы разбор стеком.
+const MAX_INLINE_DEPTH: usize = 16;
+
+/// Вид `w:fldChar` (`w:fldCharType`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum FieldMark {
+    /// `begin`: начало составного поля.
+    Begin,
+    /// `separate`: дальше идёт результат поля.
+    Separated,
+    /// `end`: конец составного поля.
+    End,
+}
+
+/// Вид `w:fldChar` по `w:fldCharType`; незнакомое значение — не разметка поля.
+fn parse_field_mark(raw: &str) -> Option<FieldMark> {
+    match raw {
+        "begin" => Some(FieldMark::Begin),
+        "separate" => Some(FieldMark::Separated),
+        "end" => Some(FieldMark::End),
+        _ => None,
+    }
+}
+
+/// Найденное в run'е для составного поля.
+///
+/// `w:fldChar` и `w:instrText` в `RunContent` не выражаются, а поле собирается
+/// из нескольких соседних run'ов — поэтому разбор run'а отдаёт найденное наружу.
+#[derive(Default)]
+struct FieldParts {
+    /// Первый (и обычно единственный) `w:fldChar` в run'е.
+    mark: Option<FieldMark>,
+    /// Текст `w:instrText`, склеенный по всем вхождениям в run.
+    instruction: String,
+    /// XML фрагментов поля: если поле не закроется, они возвращаются в run'ы
+    /// как [`RunContent::Unknown`], чтобы не пропали.
+    stray: Vec<(NodeId, String)>,
+    /// `w:fldChar/@w:dirty`: результат поля устарел.
+    dirty: bool,
+}
+
+/// Run внутри собираемого поля вместе с его разметкой поля.
+struct FieldRun {
+    /// Сам run: его содержимое — часть результата поля.
+    run: Run,
+    /// XML `w:fldChar`/`w:instrText` этого run'а — на случай, если поле не закроется.
+    stray: Vec<(NodeId, String)>,
+}
+
+/// Элемент собираемого поля по порядку.
+///
+/// Оба варианта — боксы: сам [`Inline`] велик, а элементов в поле много.
+enum FieldItem {
+    /// Run поля.
+    Run(Box<FieldRun>),
+    /// Прочее inline-содержимое результата (`w:hyperlink`, закладка, рисунок).
+    Inline(Box<Inline>),
+}
+
+/// Сборка составного поля: `begin` … `instrText` … `separate` … `end`.
+///
+/// Поле живёт не в одном элементе, а в последовательности соседних run'ов, и
+/// конца может не прийти вовсе. Поэтому содержимое копится здесь, а не в run'е:
+/// несостоявшееся поле возвращается в поток теми же run'ами, а его разметка —
+/// как [`RunContent::Unknown`].
+struct FieldBuilder {
+    /// Идентификатор узла будущего поля.
+    id: NodeId,
+    /// Инструкция поля из `w:instrText`.
+    instruction: String,
+    /// Встретился `w:fldChar w:fldCharType="end"`.
+    closed: bool,
+    /// `w:fldChar/@w:dirty`: результат поля устарел.
+    dirty: bool,
+    /// Содержимое поля по порядку.
+    items: Vec<FieldItem>,
+}
+
+impl FieldBuilder {
+    /// Поле, начатое run'ом с `w:fldChar w:fldCharType="begin"`.
+    fn new(id: NodeId, run: Run, parts: FieldParts) -> Self {
+        Self {
+            id,
+            instruction: parts.instruction,
+            closed: false,
+            dirty: parts.dirty,
+            items: vec![FieldItem::Run(Box::new(FieldRun {
+                run,
+                stray: parts.stray,
+            }))],
+        }
+    }
+
+    /// Дописать run поля.
+    fn push_run(&mut self, run: Run, parts: FieldParts) {
+        match parts.mark {
+            // Вложенное поле модель не выражает: его разметка остаётся в `stray`.
+            Some(FieldMark::End) => self.closed = true,
+            Some(FieldMark::Begin | FieldMark::Separated) => {}
+            None => self.instruction.push_str(&parts.instruction),
+        }
+        self.items.push(FieldItem::Run(Box::new(FieldRun {
+            run,
+            stray: parts.stray,
+        })));
+    }
+
+    /// Собранное поле: содержимое результата, без разметки поля.
+    fn finish(self) -> Field {
+        let mut result = Vec::new();
+        for item in self.items {
+            match item {
+                FieldItem::Inline(inline) => result.push(*inline),
+                FieldItem::Run(field_run) if !field_run.run.content.is_empty() => {
+                    result.push(Inline::Run(field_run.run));
+                }
+                FieldItem::Run(_) => {}
+            }
+        }
+        Field {
+            id: self.id,
+            kind: FieldKind::Complex,
+            instruction: self.instruction,
+            result,
+            dirty: self.dirty,
+        }
+    }
+
+    /// Вернуть несостоявшееся поле в поток как обычное содержимое.
+    fn abandon(self, out: &mut Vec<Inline>) {
+        for item in self.items {
+            match item {
+                FieldItem::Inline(inline) => out.push(*inline),
+                FieldItem::Run(field_run) => {
+                    out.push(Inline::Run(reinsert_strays(field_run.run, field_run.stray)));
+                }
+            }
+        }
+    }
+}
+
+/// Состояние inline-содержимого: собираемое составное поле, если оно есть.
+///
+/// Живёт в том цикле, который читает соседние элементы абзаца: конец поля —
+/// такой же соседний элемент, а `End` объемлющего элемента застаёт поле
+/// недособранным. Поэтому разбор поля не читает поток сам, а лишь копит run'ы.
+#[derive(Default)]
+struct InlineState {
+    /// Незакрытое поле.
+    field: Option<FieldBuilder>,
+}
+
+impl InlineState {
+    /// Дописать run и положить в `out` поле, если оно только что закрылось.
+    ///
+    /// # Errors
+    /// То же, что у [`parse_blocks`].
+    fn push_run(
+        &mut self,
+        run: Run,
+        parts: FieldParts,
+        ctx: &mut ParseCtx,
+        part: &str,
+        xml_path: &str,
+        out: &mut Vec<Inline>,
+    ) -> Result<()> {
+        let Some(builder) = self.field.as_mut() else {
+            if parts.mark == Some(FieldMark::Begin) {
+                self.field = Some(FieldBuilder::new(ctx.id(), run, parts));
+                return Ok(());
+            }
+            return push_stray_run(run, parts, ctx, part, xml_path, out);
+        };
+        builder.push_run(run, parts);
+        if builder.closed {
+            let builder = self.field.take().expect("the field is being built");
+            out.push(Inline::Field(builder.finish()));
+        }
+        Ok(())
+    }
+
+    /// Положить разобранное inline-содержимое в поле или в поток.
+    fn push_inlines(&mut self, items: Vec<Inline>, out: &mut Vec<Inline>) {
+        match self.field.as_mut() {
+            Some(builder) => builder.items.extend(
+                items
+                    .into_iter()
+                    .map(|inline| FieldItem::Inline(Box::new(inline))),
+            ),
+            None => out.extend(items),
+        }
+    }
+
+    /// Закрыть поток: несостоявшееся поле возвращается в него как есть.
+    ///
+    /// # Errors
+    /// То же, что у [`parse_blocks`].
+    fn finish(
+        &mut self,
+        ctx: &mut ParseCtx,
+        part: &str,
+        xml_path: &str,
+        out: &mut Vec<Inline>,
+    ) -> Result<()> {
+        let Some(builder) = self.field.take() else {
+            return Ok(());
+        };
+        ctx.warn_at(
+            WarningKind::UnknownElement,
+            part,
+            Some(xml_path),
+            "a complex field has no `w:fldChar w:fldCharType=\"end\"`, its fragments are kept as unknown",
+        )?;
+        builder.abandon(out);
+        Ok(())
+    }
+}
+
+/// Вернуть run в поток, сохранив разметку непарного поля как `Unknown`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn push_stray_run(
+    run: Run,
+    parts: FieldParts,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+    out: &mut Vec<Inline>,
+) -> Result<()> {
+    if parts.stray.is_empty() {
+        out.push(Inline::Run(run));
+        return Ok(());
+    }
+    ctx.warn_at(
+        WarningKind::UnknownElement,
+        part,
+        Some(xml_path),
+        "`w:fldChar`/`w:instrText` outside a complex field, kept as unknown",
+    )?;
+    out.push(Inline::Run(reinsert_strays(run, parts.stray)));
+    Ok(())
+}
+
+/// Run с разметкой поля, возвращённой в содержимое как `RunContent::Unknown`.
+fn reinsert_strays(mut run: Run, stray: Vec<(NodeId, String)>) -> Run {
+    for (id, xml) in stray {
+        run.content.push(RunContent::Unknown { id, xml });
+    }
+    run
+}
+
+/// Разобрать один элемент inline-содержимого с учётом собираемого поля.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+#[allow(clippy::too_many_arguments)]
+fn parse_inline_step(
+    reader: &mut XmlReader<'_>,
+    element: &BytesStart<'_>,
+    empty: bool,
+    rels: &Relationships,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+    depth: usize,
+    state: &mut InlineState,
+    out: &mut Vec<Inline>,
+) -> Result<()> {
+    // Run — единственный элемент, который может продолжаться в соседнем run'е:
+    // `w:fldChar begin` открывает поле, разметка которого лежит в следующих.
+    if local_name(element.name().into_inner()) == b"r" && !empty {
+        let (run, parts) = parse_run(reader, rels, ctx, part, xml_path)?;
+        return state.push_run(run, parts, ctx, part, xml_path, out);
+    }
+    let mut parsed = Vec::new();
+    parse_inline_element(
+        reader,
+        element,
+        empty,
+        rels,
+        ctx,
+        part,
+        xml_path,
+        depth,
+        &mut parsed,
+    )?;
+    state.push_inlines(parsed, out);
+    Ok(())
+}
+
+/// Разобрать inline-содержимое до `End` объемлющего элемента.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+#[allow(clippy::too_many_arguments)]
+fn parse_inline_content(
+    reader: &mut XmlReader<'_>,
+    rels: &Relationships,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+    depth: usize,
+    out: &mut Vec<Inline>,
+) -> Result<()> {
+    let mut state = InlineState::default();
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside inline content",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return state.finish(ctx, part, xml_path, out),
+            _ => continue,
+        };
+        parse_inline_step(
+            reader, element, empty, rels, ctx, part, xml_path, depth, &mut state, out,
+        )?;
+    }
+}
+
 /// Разобрать один элемент inline-уровня и дописать его в `out`.
+///
+/// Составное поле здесь не собирается: одиночный run не видит соседей. Начало
+/// поля находит [`parse_inline_step`], а разметка непарного поля — [`parse_run`].
 ///
 /// # Errors
 /// То же, что у [`parse_blocks`].
 // Список аргументов длиннее порога, как и у соседних разборщиков содержимого:
-// к их набору добавляются связи части — без них не разрешить цель рисунка.
-#[allow(clippy::too_many_arguments)]
+// к их набору добавляются связи части — без них не разрешить цель ссылки.
+// Длинная функция — та же карта соответствия «элемент → разбор», что и ниже:
+// разнести её по функциям значило бы разорвать эту карту.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn parse_inline_element(
     reader: &mut XmlReader<'_>,
     element: &BytesStart<'_>,
@@ -1534,6 +1873,7 @@ fn parse_inline_element(
     ctx: &mut ParseCtx,
     part: &str,
     xml_path: &str,
+    depth: usize,
     out: &mut Vec<Inline>,
 ) -> Result<()> {
     match local_name(element.name().into_inner()) {
@@ -1544,14 +1884,81 @@ fn parse_inline_element(
                     ..Run::default()
                 }
             } else {
-                parse_run(reader, rels, ctx, part, xml_path)?
+                // Соседних run'ов отсюда не видно, поэтому разметку поля собрать
+                // нельзя; но и терять её не за что — она возвращается в run как
+                // `Unknown`.
+                let (run, parts) = parse_run(reader, rels, ctx, part, xml_path)?;
+                reinsert_strays(run, parts.stray)
             };
             out.push(Inline::Run(run));
+        }
+        b"hyperlink" if depth < MAX_INLINE_DEPTH => out.push(Inline::Hyperlink(parse_hyperlink(
+            reader, element, empty, rels, ctx, part, xml_path, depth,
+        )?)),
+        b"fldSimple" if depth < MAX_INLINE_DEPTH => out.push(Inline::Field(parse_simple_field(
+            reader, element, empty, rels, ctx, part, xml_path, depth,
+        )?)),
+        b"hyperlink" | b"fldSimple" => {
+            let id = ctx.id();
+            let xml = capture_any(reader, element, empty, ctx, part)?;
+            ctx.warn_at(
+                WarningKind::DeepNesting,
+                part,
+                Some(xml_path),
+                format!(
+                    "`{}` is nested deeper than {MAX_INLINE_DEPTH}, kept as unknown",
+                    element_name(element)
+                ),
+            )?;
+            out.push(Inline::Unknown { id, xml });
+        }
+        b"bookmarkStart" => {
+            let attrs = attributes(element, part)?;
+            let id = ctx.id();
+            let bookmark_id = i64::from(attr_i32(&attrs, "id", ctx, part)?.unwrap_or(0));
+            let name = find(&attrs, "name").unwrap_or_default().to_owned();
+            ctx.start_bookmark(bookmark_id);
+            out.push(Inline::Bookmark(Bookmark {
+                id,
+                name,
+                bookmark_id,
+            }));
+        }
+        b"bookmarkEnd" => {
+            let attrs = attributes(element, part)?;
+            skip_element(reader, empty, part)?;
+            let bookmark_id = i64::from(attr_i32(&attrs, "id", ctx, part)?.unwrap_or(0));
+            if !ctx.end_bookmark(bookmark_id) {
+                ctx.warn_at(
+                    WarningKind::OrphanBookmark,
+                    part,
+                    Some(xml_path),
+                    format!("`w:bookmarkEnd` `{bookmark_id}` has no `w:bookmarkStart`, ignored"),
+                )?;
+            }
+        }
+        // Правки не разбираются намеренно: содержимое сохраняется целиком, иначе
+        // удалённый текст выглядел бы как обычный (план §7).
+        b"ins" | b"del" => {
+            let id = ctx.id();
+            let xml = capture_any(reader, element, empty, ctx, part)?;
+            ctx.warn_at(
+                WarningKind::UnknownElement,
+                part,
+                Some(xml_path),
+                format!(
+                    "`{}` (a track change) is not supported, kept as unknown",
+                    element_name(element)
+                ),
+            )?;
+            out.push(Inline::Unknown { id, xml });
         }
         b"AlternateContent" if !empty => {
             match resolve_alternate_content(reader, element, ctx, part, xml_path)? {
                 AlternateContent::Choice(fragment) => {
-                    out.extend(parse_inline_fragment(&fragment, rels, ctx, part, xml_path)?);
+                    out.extend(parse_inline_fragment(
+                        &fragment, rels, ctx, part, xml_path, depth,
+                    )?);
                 }
                 AlternateContent::Unsupported(xml) => {
                     ctx.warn_at(
@@ -1567,14 +1974,11 @@ fn parse_inline_element(
         b"drawing" => out.push(Inline::Drawing(parse_drawing(
             reader, empty, rels, ctx, part, xml_path,
         )?)),
-        // Разметка, не несущая содержимого модели. TODO (S7b): `w:bookmarkEnd`
-        // даёт `OrphanBookmark`, только если пары нет, — а пару видно лишь при
-        // разборе `w:bookmarkStart`, который S7a оставляет неизвестным.
-        b"proofErr" | b"lastRenderedPageBreak" | b"bookmarkEnd" => {
+        // Разметка, не несущая содержимого модели.
+        b"proofErr" | b"lastRenderedPageBreak" => {
             skip_element(reader, empty, part)?;
         }
         _ => {
-            // TODO (S7b): ссылки, закладки, поля, вставки и удаления.
             let id = ctx.id();
             let xml = capture_any(reader, element, empty, ctx, part)?;
             ctx.warn_at(
@@ -1592,6 +1996,95 @@ fn parse_inline_element(
     Ok(())
 }
 
+/// Разобрать `w:hyperlink`: цель, подсказка и содержимое.
+///
+/// Цель внешней ссылки — адрес, а не часть пакета: `Relationship::part` её не
+/// строит, поэтому для `TargetMode="External"` берётся сам `Target`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+#[allow(clippy::too_many_arguments)]
+fn parse_hyperlink(
+    reader: &mut XmlReader<'_>,
+    element: &BytesStart<'_>,
+    empty: bool,
+    rels: &Relationships,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+    depth: usize,
+) -> Result<Hyperlink> {
+    let id = ctx.id();
+    let attrs = attributes(element, part)?;
+    let rel_id = find(&attrs, "id").map(str::to_owned);
+    let target = if let Some(rel_id) = rel_id.as_deref() {
+        if let Some(relation) = rels.get(rel_id) {
+            Some(
+                relation
+                    .part(part)
+                    .unwrap_or_else(|| relation.target.clone()),
+            )
+        } else {
+            ctx.warn(
+                WarningKind::MissingPart,
+                part,
+                format!("`w:hyperlink`: relationship `{rel_id}` is not declared"),
+            )?;
+            None
+        }
+    } else {
+        None
+    };
+    let mut runs = Vec::new();
+    if !empty {
+        parse_inline_content(reader, rels, ctx, part, xml_path, depth + 1, &mut runs)?;
+    }
+    Ok(Hyperlink {
+        id,
+        // Ссылка с `r:id` ведёт за пределы документа, с `w:anchor` — внутрь него.
+        external: rel_id.is_some(),
+        rel_id,
+        anchor: find(&attrs, "anchor").map(str::to_owned),
+        tooltip: find(&attrs, "tooltip").map(str::to_owned),
+        target,
+        runs,
+    })
+}
+
+/// Разобрать `w:fldSimple`: простое поле с инструкцией в атрибуте.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+#[allow(clippy::too_many_arguments)]
+fn parse_simple_field(
+    reader: &mut XmlReader<'_>,
+    element: &BytesStart<'_>,
+    empty: bool,
+    rels: &Relationships,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+    depth: usize,
+) -> Result<Field> {
+    let attrs = attributes(element, part)?;
+    let id = ctx.id();
+    // `w:instr` сохраняется как есть, вместе с окружающими пробелами: это
+    // инструкция поля, а не текст документа, и её формат задаёт сам код поля.
+    let instruction = find(&attrs, "instr").unwrap_or_default().to_owned();
+    let dirty = attr_on(&attrs, "dirty", false);
+    let mut result = Vec::new();
+    if !empty {
+        parse_inline_content(reader, rels, ctx, part, xml_path, depth + 1, &mut result)?;
+    }
+    Ok(Field {
+        id,
+        kind: FieldKind::Simple,
+        instruction,
+        result,
+        dirty,
+    })
+}
+
 /// Разобрать фрагмент `mc:Choice` как inline-содержимое.
 ///
 /// # Errors
@@ -1602,35 +2095,17 @@ fn parse_inline_fragment(
     ctx: &mut ParseCtx,
     part: &str,
     xml_path: &str,
+    depth: usize,
 ) -> Result<Vec<Inline>> {
     let wrapped = wrap_fragment(fragment);
     let mut reader = XmlReader::preserving(wrapped.as_bytes(), part);
+    // Единственный `End` фрагмента — `End` синтетического корня: на нём и
+    // остановится `parse_inline_content`, а `End` самого `mc:AlternateContent`
+    // уже вычитан `resolve_alternate_content`.
     expect_fragment_root(&mut reader, part)?;
     let mut out = Vec::new();
-    loop {
-        let Some(event) = reader.next_significant()? else {
-            return Err(Error::malformed(
-                part,
-                "unexpected end of input inside an inline fragment",
-            ));
-        };
-        let (element, empty) = match &event {
-            Event::Start(element) => (element, false),
-            Event::Empty(element) => (element, true),
-            Event::End(_) => return Ok(out),
-            _ => continue,
-        };
-        parse_inline_element(
-            &mut reader,
-            element,
-            empty,
-            rels,
-            ctx,
-            part,
-            xml_path,
-            &mut out,
-        )?;
-    }
+    parse_inline_content(&mut reader, rels, ctx, part, xml_path, depth + 1, &mut out)?;
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -1638,6 +2113,10 @@ fn parse_inline_fragment(
 // ---------------------------------------------------------------------------
 
 /// Разобрать `w:r`: свойства знака и содержимое.
+///
+/// Возвращает ещё и найденную разметку составного поля: `w:fldChar`/`w:instrText`
+/// в [`RunContent`] не выражаются, а поле собирается из соседних run'ов — run
+/// лишь отдаёт её вызывающему.
 ///
 /// # Errors
 /// То же, что у [`parse_blocks`].
@@ -1647,10 +2126,11 @@ fn parse_run(
     ctx: &mut ParseCtx,
     part: &str,
     xml_path: &str,
-) -> Result<Run> {
+) -> Result<(Run, FieldParts)> {
     let id = ctx.id();
     let mut rpr = RawRPr::default();
     let mut content = Vec::new();
+    let mut field = FieldParts::default();
     loop {
         let Some(event) = reader.next_significant()? else {
             return Err(Error::malformed(
@@ -1679,17 +2159,21 @@ fn parse_run(
                 ctx,
                 part,
                 xml_path,
+                &mut field,
                 &mut content,
             )?;
         }
     }
     let style_ref = rpr.style.clone();
-    Ok(Run {
-        id,
-        rpr,
-        style_ref,
-        content,
-    })
+    Ok((
+        Run {
+            id,
+            rpr,
+            style_ref,
+            content,
+        },
+        field,
+    ))
 }
 
 /// Разобрать один элемент содержимого run'а и дописать его в `out`.
@@ -1705,6 +2189,7 @@ fn parse_run_content(
     ctx: &mut ParseCtx,
     part: &str,
     xml_path: &str,
+    field: &mut FieldParts,
     out: &mut Vec<RunContent>,
 ) -> Result<()> {
     match local_name(element.name().into_inner()) {
@@ -1729,6 +2214,25 @@ fn parse_run_content(
         // хранит их как текст, иначе плоский текст разошёлся бы с исходным.
         b"noBreakHyphen" => out.push(RunContent::Text("\u{2011}".to_owned())),
         b"softHyphen" => out.push(RunContent::Text("\u{00ad}".to_owned())),
+        // Разметка составного поля в `RunContent` не выражается: run отдаёт её
+        // наружу, а сам элемент кладёт в `stray` — иначе он пропал бы, не
+        // закрой поле соседний run.
+        b"fldChar" => {
+            let attrs = attributes(element, part)?;
+            if field.mark.is_none() {
+                field.mark = find(&attrs, "fldCharType").and_then(parse_field_mark);
+            }
+            field.dirty |= attr_on(&attrs, "dirty", false);
+            field
+                .stray
+                .push((ctx.id(), capture_any(reader, element, empty, ctx, part)?));
+        }
+        b"instrText" => {
+            let id = ctx.id();
+            let xml = capture_any(reader, element, empty, ctx, part)?;
+            field.instruction.push_str(&fragment_text(&xml, part)?);
+            field.stray.push((id, xml));
+        }
         b"AlternateContent" if !empty => {
             let fragment = match resolve_alternate_content(reader, element, ctx, part, xml_path)? {
                 AlternateContent::Choice(fragment) => fragment,
@@ -1743,7 +2247,9 @@ fn parse_run_content(
                     return Ok(());
                 }
             };
-            out.extend(parse_run_fragment(&fragment, rels, ctx, part, xml_path)?);
+            out.extend(parse_run_fragment(
+                &fragment, rels, ctx, part, xml_path, field,
+            )?);
         }
         b"drawing" => out.push(RunContent::Drawing(parse_drawing(
             reader, empty, rels, ctx, part, xml_path,
@@ -1777,6 +2283,7 @@ fn parse_run_fragment(
     ctx: &mut ParseCtx,
     part: &str,
     xml_path: &str,
+    field: &mut FieldParts,
 ) -> Result<Vec<RunContent>> {
     let wrapped = wrap_fragment(fragment);
     let mut reader = XmlReader::preserving(wrapped.as_bytes(), part);
@@ -1803,6 +2310,7 @@ fn parse_run_fragment(
             ctx,
             part,
             xml_path,
+            field,
             &mut out,
         )?;
     }
@@ -2412,6 +2920,22 @@ fn read_text(reader: &mut XmlReader<'_>, part: &str) -> Result<String> {
             Event::End(_) => depth -= 1,
             _ => {}
         }
+    }
+}
+
+/// Текст элемента по уже сохранённому XML, с развёрнутыми сущностями.
+///
+/// `w:instrText` читается целиком — его XML нужен [`FieldParts::stray`], — а
+/// инструкции нужен текст: один проход отдаёт что-то одно, поэтому фрагмент
+/// разбирается ещё раз.
+///
+/// # Errors
+/// То же, что у [`read_text`].
+fn fragment_text(xml: &str, part: &str) -> Result<String> {
+    let mut reader = XmlReader::preserving(xml.as_bytes(), part);
+    match reader.next_significant()? {
+        Some(Event::Start(_)) => read_text(&mut reader, part),
+        _ => Ok(String::new()),
     }
 }
 
@@ -3303,6 +3827,21 @@ mod tests {
         Relationships::from_map(map)
     }
 
+    /// Связи с внешними целями (`TargetMode="External"`): так записаны адреса
+    /// гиперссылок — цель такой связи не разрешается в часть пакета.
+    fn external_rels(entries: &[(&str, &str, &str)]) -> Relationships {
+        let mut xml = String::from("<Relationships>");
+        for (id, rel_type, target) in entries {
+            let _ = write!(
+                xml,
+                r#"<Relationship Id="{id}" Type="{rel_type}" Target="{target}" TargetMode="External"/>"#
+            );
+        }
+        xml.push_str("</Relationships>");
+        let map = doc_converter_core::rels::RelMap::parse(xml.as_bytes()).expect("rels parse");
+        Relationships::from_map(map)
+    }
+
     /// Плоский текст абзаца — то, что сверяют сайдкары фикстур.
     fn paragraph_text(paragraph: &Paragraph) -> String {
         let mut text = String::new();
@@ -3783,7 +4322,7 @@ mod tests {
     fn ignored_inline_markup_does_not_produce_warnings() {
         let (body, warnings) = parse_xml(
             r#"<w:p><w:proofErr w:type="spellStart"/><w:lastRenderedPageBreak/>
-               <w:bookmarkEnd w:id="7"/><w:r><w:t>text</w:t></w:r></w:p>"#,
+               <w:r><w:t>text</w:t></w:r></w:p>"#,
         );
 
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -3791,23 +4330,219 @@ mod tests {
     }
 
     #[test]
-    fn hyperlinks_are_unknown_but_their_text_is_not_lost() {
+    fn a_hyperlink_takes_its_external_target_from_rels() {
+        let rels = external_rels(&[(
+            "rId4",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            "https://example.com/page",
+        )]);
+        let (body, warnings) = parse_part_with(
+            document_xml(
+                r#"<w:p><w:hyperlink r:id="rId4" w:tooltip="hint">
+                     <w:r><w:t>link</w:t></w:r>
+                   </w:hyperlink></w:p>"#,
+            )
+            .as_bytes(),
+            &rels,
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let paragraph = paragraphs(&body)[0];
+        match &paragraph.runs[0] {
+            Inline::Hyperlink(link) => {
+                assert_eq!(link.rel_id.as_deref(), Some("rId4"));
+                // Цель внешней ссылки — это адрес, а не часть пакета.
+                assert_eq!(link.target.as_deref(), Some("https://example.com/page"));
+                assert_eq!(link.tooltip.as_deref(), Some("hint"));
+                assert!(link.external);
+                assert_eq!(link.anchor, None);
+                // Содержимое ссылки — обычные run'ы, текст не теряется.
+                match &link.runs[0] {
+                    Inline::Run(run) => {
+                        assert_eq!(run.content, vec![RunContent::Text("link".to_owned())]);
+                    }
+                    other => panic!("expected a run, got {other:?}"),
+                }
+            }
+            other => panic!("expected a hyperlink, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_internal_hyperlink_keeps_its_anchor() {
         let (body, warnings) = parse_xml(
-            r#"<w:p><w:hyperlink r:id="rId4"><w:r><w:t>link</w:t></w:r></w:hyperlink></w:p>"#,
+            r#"<w:p><w:hyperlink w:anchor="mark"><w:r><w:t>jump</w:t></w:r></w:hyperlink></w:p>"#,
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        match &paragraphs(&body)[0].runs[0] {
+            Inline::Hyperlink(link) => {
+                // `w:anchor` ведёт внутрь документа: связи и внешней цели нет.
+                assert!(!link.external);
+                assert_eq!(link.anchor.as_deref(), Some("mark"));
+                assert_eq!(link.rel_id, None);
+                assert_eq!(link.target, None);
+            }
+            other => panic!("expected a hyperlink, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_hyperlink_without_a_relationship_warns() {
+        let (body, warnings) = parse_xml(
+            r#"<w:p><w:hyperlink r:id="rId404"><w:r><w:t>link</w:t></w:r></w:hyperlink></w:p>"#,
         );
 
         assert_eq!(warnings.len(), 1);
-        assert_eq!(warnings[0].kind, WarningKind::UnknownElement);
-        // Содержимое ссылки сохраняется в XML узла `Unknown` — S7b разберёт его
-        // на месте, а не потеряет текст.
+        assert_eq!(warnings[0].kind, WarningKind::MissingPart);
         match &paragraphs(&body)[0].runs[0] {
-            Inline::Unknown { xml, .. } => {
-                assert_eq!(
-                    xml,
-                    r#"<w:hyperlink r:id="rId4"><w:r><w:t>link</w:t></w:r></w:hyperlink>"#
-                );
+            Inline::Hyperlink(link) => {
+                assert_eq!(link.rel_id.as_deref(), Some("rId404"));
+                assert_eq!(link.target, None);
             }
+            other => panic!("expected a hyperlink, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_bookmark_pair_is_kept_and_an_orphan_end_warns() {
+        let (body, warnings) = parse_xml(
+            r#"<w:p><w:bookmarkStart w:id="3" w:name="mark"/><w:r><w:t>text</w:t></w:r>
+               <w:bookmarkEnd w:id="3"/><w:bookmarkEnd w:id="9"/></w:p>"#,
+        );
+
+        let paragraph = paragraphs(&body)[0];
+        // Закладка — начало с именем; парный `w:bookmarkEnd` в модель не попадает,
+        // а непарный не попадает ещё и с предупреждением.
+        assert_eq!(paragraph.runs.len(), 2);
+        match &paragraph.runs[0] {
+            Inline::Bookmark(bookmark) => {
+                assert_eq!(bookmark.name, "mark");
+                assert_eq!(bookmark.bookmark_id, 3);
+            }
+            other => panic!("expected a bookmark, got {other:?}"),
+        }
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].kind, WarningKind::OrphanBookmark);
+        assert_eq!(paragraph_text(paragraph), "text");
+    }
+
+    #[test]
+    fn a_simple_field_keeps_its_instruction_and_result() {
+        let (body, warnings) = parse_xml(
+            r#"<w:p><w:fldSimple w:instr=" PAGE " w:dirty="true"><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>"#,
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        match &paragraphs(&body)[0].runs[0] {
+            Inline::Field(field) => {
+                assert_eq!(field.kind, FieldKind::Simple);
+                // Инструкция сохраняется как есть, вместе с пробелами.
+                assert_eq!(field.instruction, " PAGE ");
+                assert!(field.dirty);
+                assert_eq!(field.result.len(), 1);
+            }
+            other => panic!("expected a field, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_complex_field_is_assembled_from_neighbouring_runs() {
+        let (body, warnings) = parse_xml(
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>
+               <w:r><w:instrText xml:space="preserve"> REF mark \h </w:instrText></w:r>
+               <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+               <w:r><w:t>5</w:t></w:r>
+               <w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        );
+
+        // Разметка поля в модель не попадает и предупреждений не оставляет.
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let paragraph = paragraphs(&body)[0];
+        assert_eq!(paragraph.runs.len(), 1);
+        match &paragraph.runs[0] {
+            Inline::Field(field) => {
+                assert_eq!(field.kind, FieldKind::Complex);
+                assert_eq!(field.instruction, " REF mark \\h ");
+                assert!(!field.dirty);
+                // В результате — только содержимое run'ов, без самой разметки.
+                assert_eq!(field.result.len(), 1);
+                match &field.result[0] {
+                    Inline::Run(run) => {
+                        assert_eq!(run.content, vec![RunContent::Text("5".to_owned())]);
+                    }
+                    other => panic!("expected a run, got {other:?}"),
+                }
+            }
+            other => panic!("expected a complex field, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_unclosed_complex_field_returns_its_fragments_as_unknown() {
+        let (body, warnings) = parse_xml(
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>
+               <w:r><w:instrText>PAGE</w:instrText></w:r></w:p>"#,
+        );
+
+        // Поля не вышло: run'ы возвращаются в поток, а их разметка — как `Unknown`.
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].kind, WarningKind::UnknownElement);
+        let paragraph = paragraphs(&body)[0];
+        assert_eq!(paragraph.runs.len(), 2);
+        for inline in &paragraph.runs {
+            let Inline::Run(run) = inline else {
+                panic!("expected a run, got {inline:?}");
+            };
+            assert!(
+                matches!(run.content.as_slice(), [RunContent::Unknown { .. }]),
+                "{:?}",
+                run.content
+            );
+        }
+    }
+
+    #[test]
+    fn tracked_changes_are_kept_as_unknown_xml() {
+        let (body, warnings) = parse_xml(
+            r#"<w:p><w:ins w:id="1" w:author="a"><w:r><w:t>added</w:t></w:r></w:ins>
+               <w:del w:id="2" w:author="a"><w:r><w:delText>gone</w:delText></w:r></w:del></w:p>"#,
+        );
+
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings
+            .iter()
+            .all(|warning| warning.kind == WarningKind::UnknownElement));
+        let paragraph = paragraphs(&body)[0];
+        assert_eq!(paragraph.runs.len(), 2);
+        match &paragraph.runs[0] {
+            Inline::Unknown { xml, .. } => assert_eq!(
+                xml,
+                r#"<w:ins w:id="1" w:author="a"><w:r><w:t>added</w:t></w:r></w:ins>"#
+            ),
             other => panic!("expected an unknown inline, got {other:?}"),
+        }
+        // Удалённый текст остаётся внутри XML и не притворяется обычным текстом.
+        match &paragraph.runs[1] {
+            Inline::Unknown { xml, .. } => assert!(xml.contains("<w:delText>gone</w:delText>")),
+            other => panic!("expected an unknown inline, got {other:?}"),
+        }
+        assert_eq!(paragraph_text(paragraph), "");
+    }
+
+    #[test]
+    fn a_pict_is_kept_as_unknown() {
+        let (body, warnings) =
+            parse_xml(r#"<w:p><w:r><w:pict><v:shape id="s1"/></w:pict></w:r></w:p>"#);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].kind, WarningKind::UnknownElement);
+        let run = only_run(&body);
+        match &run.content[0] {
+            RunContent::Unknown { xml, .. } => {
+                assert_eq!(xml, r#"<w:pict><v:shape id="s1"/></w:pict>"#);
+            }
+            other => panic!("expected unknown run content, got {other:?}"),
         }
     }
 
