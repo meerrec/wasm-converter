@@ -475,12 +475,12 @@ fn full_cell() -> Cell {
             right: Some(Twips::new(108)),
         },
         v_align: CellVAlign::Bottom,
-        borders: CellBorders {
+        borders: Box::new(CellBorders {
             top: Some(border(BorderStyle::Single)),
             left: Some(border(BorderStyle::Thick)),
             bottom: Some(border(BorderStyle::Outset)),
             right: Some(border(BorderStyle::ThinThickSmallGap)),
-        },
+        }),
         shading: Some(Shading {
             val: ShadingPattern::Solid,
             color: Some(Color::None),
