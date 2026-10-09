@@ -589,6 +589,13 @@ function printDifferences(entries: Entry[]): void {
   }
 }
 
+/** Неверный вызов — это ошибка использования, а не провал гейта. */
+function usage(message: string): never {
+  process.stderr.write(`${message}\n`);
+  process.stderr.write('usage: diff-mammoth.ts [--update-oracle | --check]\n');
+  process.exit(2);
+}
+
 async function checkFresh(fresh: Map<string, string>): Promise<boolean> {
   const drift: string[] = [];
   for (const [file, expected] of fresh) {
@@ -613,14 +620,19 @@ async function main(): Promise<void> {
   const update = args.includes('--update-oracle');
   const check = args.includes('--check');
   for (const arg of args) {
-    if (arg !== '--update-oracle' && arg !== '--check') {
-      process.stderr.write(`unknown flag: ${arg}\n`);
-      process.stderr.write('usage: diff-mammoth.ts [--update-oracle | --check]\n');
-      process.exit(2);
-    }
+    if (arg !== '--update-oracle' && arg !== '--check') usage(`unknown flag: ${arg}`);
   }
+  // Вместе флаги дали бы запись файлов и «сверку» с тем, что только что записано, —
+  // то есть зелёную проверку, которая ничего не проверила.
+  if (update && check) usage('--update-oracle и --check несовместимы');
 
-  const mammoth = createRequire(import.meta.url)('mammoth') as Mammoth;
+  let mammoth: Mammoth;
+  try {
+    mammoth = createRequire(import.meta.url)('mammoth') as Mammoth;
+  } catch (error) {
+    process.stderr.write(`mammoth не подключается: ${(error as Error).message}\n`);
+    process.exit(2);
+  }
   const mammothVersion = readMammothVersion();
   const { entries, summary } = await compare(mammoth);
   const oracle = buildOracle(entries, mammothVersion, summary.candidates);
