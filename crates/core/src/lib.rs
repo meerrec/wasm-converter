@@ -10,11 +10,15 @@
 
 pub mod archive;
 pub mod error;
+pub mod node_id;
 pub mod rels;
+pub mod warning;
 pub mod xml;
 
 pub use archive::Archive;
 pub use error::{Error, Result};
+pub use node_id::{NodeId, NodeIdAllocator};
+pub use warning::{ParseWarning, WarningKind, WarningLocation, Warnings};
 
 /// Версия OOXML (ECMA-376 5-е издание), которую поддерживает движок.
 pub const OOXML_ECMA_376: &str = "ECMA-376:2021";
