@@ -3,9 +3,14 @@
 //!
 //! Сравнение идёт по структуре, а не по строкам JSON: `skip_serializing_if` с неверным
 //! условием или `untagged`-неоднозначность проходят мимо строк и видны только здесь.
+//!
+//! Второй источник документа — фикстуры: `every_fixture_survives_a_json_round_trip`
+//! гоняет круг по всему, что разбирается, и ловит поля, которых не выставляет
+//! ни один программно собранный документ.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
+use std::path::{Path, PathBuf};
 
 use doc_converter_core::rels::{RelMap, Relationship};
 use doc_converter_core::{NodeId, ParseWarning, WarningKind};
@@ -25,6 +30,8 @@ use doc_converter_docx::{
     TabStopKind, Table, TableBorders, TableLayout, TableLook, TableStyle, TableStyleCondition,
     TableWidth, Toggle, Twips, Underline, VMerge, VertAlign, WrapKind,
 };
+// Парсер наружу открывается одним входом `open`: вариант с `ZipLimits` — внутренний.
+use doc_converter_docx::open;
 // `RawTblPr` — поле `TableStyle`/`ConditionalFormat`, но в поимённый реэкспорт
 // корня (`lib.rs`) пока не попал: он добавлен слайсом S8 поверх модели.
 use doc_converter_docx::model::raw::RawTblPr;
@@ -1336,4 +1343,74 @@ fn annotations_and_sections() {
     document.endnotes = full_endnotes();
     document.comments = full_comments();
     roundtrip_document(&document);
+}
+
+// ---------------------------------------------------------------------------
+// Обход фикстур
+// ---------------------------------------------------------------------------
+
+/// Каталог фикстур DOCX.
+fn fixtures_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-fixtures/docx")
+}
+
+/// Все `.docx` под каталогом фикстур, по возрастанию пути: обход рекурсивный,
+/// потому что фикстуры разложены по категориям (`broken/`, `simple/`, …).
+fn fixture_paths() -> Vec<PathBuf> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .collect();
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("docx") {
+                out.push(path);
+            }
+        }
+    }
+
+    let mut paths = Vec::new();
+    walk(&fixtures_dir(), &mut paths);
+    paths
+}
+
+#[test]
+fn every_fixture_survives_a_json_round_trip() {
+    let paths = fixture_paths();
+    assert!(!paths.is_empty(), "фикстуры не найдены");
+
+    let mut round_tripped = 0usize;
+    let mut skipped: Vec<String> = Vec::new();
+    for path in &paths {
+        let name = path
+            .strip_prefix(fixtures_dir())
+            .unwrap_or(path)
+            .display()
+            .to_string();
+        let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let document = match open(bytes) {
+            Ok(document) => document,
+            // Фатальные фикстуры проверяются в `warnings.rs`: здесь важно
+            // только то, что дошло до модели.
+            Err(_) => {
+                skipped.push(name);
+                continue;
+            }
+        };
+        let json = serde_json::to_string(&document).unwrap();
+        let decoded: Document = serde_json::from_str(&json)
+            .unwrap_or_else(|e| panic!("{name}: JSON не разбирается обратно: {e}"));
+        assert_eq!(decoded, document, "{name}: JSON round-trip потерял данные");
+        round_tripped += 1;
+    }
+
+    println!(
+        "round-trip прошло {round_tripped} фикстур из {} (пропущено {}: {})",
+        paths.len(),
+        skipped.len(),
+        skipped.join(", ")
+    );
 }
