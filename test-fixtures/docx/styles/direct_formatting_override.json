@@ -1,0 +1,44 @@
+{
+  "metadata": {
+    "name": "styles/direct_formatting_override",
+    "category": "styles",
+    "description": "Прямое форматирование прогона (w:b, w:sz, w:color) перекрывает стиль",
+    "docTitle": "Прямое форматирование прогона (w:b, w:sz, w:color) перекрывает стиль",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Прямое форматирование остальное из стиля",
+        "style": "Quote",
+        "runs": [
+          {
+            "text": "Прямое форматирование",
+            "style": "Quote",
+            "bold": true,
+            "sizeHalfPoints": 36,
+            "color": "008000"
+          },
+          {
+            "text": " остальное из стиля",
+            "style": "Quote"
+          }
+        ]
+      }
+    ],
+    "tables": [],
+    "images": [],
+    "styles": [
+      {
+        "id": "Quote",
+        "type": "paragraph",
+        "basedOn": "Normal",
+        "italic": true,
+        "color": "595959"
+      }
+    ]
+  }
+}

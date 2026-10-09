@@ -1,0 +1,46 @@
+{
+  "metadata": {
+    "name": "notes/comments_multiple",
+    "category": "notes",
+    "description": "Три комментария, один из них — в ячейке таблицы",
+    "docTitle": "Три комментария, один из них — в ячейке таблицы",
+    "expectedParagraphs": 2,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "tables": [
+      {
+        "rows": 1,
+        "cols": 1,
+        "cells": [
+          [
+            "Annotated cell"
+          ]
+        ]
+      }
+    ],
+    "comments": [
+      {
+        "id": 1,
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z",
+        "text": "First comment."
+      },
+      {
+        "id": 2,
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z",
+        "text": "Second comment."
+      },
+      {
+        "id": 3,
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z",
+        "text": "Comment inside a table cell.",
+        "inTable": true
+      }
+    ]
+  }
+}

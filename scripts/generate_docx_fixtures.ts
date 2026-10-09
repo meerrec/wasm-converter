@@ -1,255 +1,164 @@
-// Генератор фикстур DOCX (упрощённая версия)
-// DOCX - это ZIP-архив с XML-файлами.
-// Используем archiver для создания ZIP.
+// Генератор фикстур DOCX.
 //
-// Запуск: npx tsx scripts/generate_docx_fixtures.ts
+// ZIP собирается своим writer'ом (scripts/docx-zip.ts) с фиксированными
+// таймстампами и порядком записей, поэтому повторный запуск даёт побайтово
+// те же файлы: `git status --porcelain test-fixtures/docx` после второго
+// прогона пуст.
+//
+// Запуск:
+//   npx tsx scripts/generate_docx_fixtures.ts           # коммитируемые фикстуры
+//   npx tsx scripts/generate_docx_fixtures.ts --large   # только «большие» (>= 10 МиБ, в target/)
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { createWriteStream } from 'node:fs';
+
+import { buildZip } from './docx-zip.js';
+import { type FixtureSpec, withDocTitle } from './docx-fixtures/kit.js';
+import { legacyFixtures } from './docx-fixtures/legacy.js';
+import { basicFixtures } from './docx-fixtures/basic.js';
+import { stylesFixtures } from './docx-fixtures/styles.js';
+import { numberingFixtures } from './docx-fixtures/numbering.js';
+import { tablesFixtures } from './docx-fixtures/tables.js';
+import { imagesFixtures } from './docx-fixtures/images.js';
+import { alternateContentFixtures } from './docx-fixtures/alternate-content.js';
+import { trackChangesFixtures } from './docx-fixtures/track-changes.js';
+import { fieldsFixtures } from './docx-fixtures/fields.js';
+import { rtlFixtures } from './docx-fixtures/rtl.js';
+import { cjkFixtures } from './docx-fixtures/cjk.js';
+import { headersFootersFixtures } from './docx-fixtures/headers-footers.js';
+import { notesFixtures } from './docx-fixtures/notes.js';
+import { brokenFixtures } from './docx-fixtures/broken.js';
+import { generateLargeFixtures } from './docx-fixtures/large.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const OUT_DIR = path.join(ROOT, 'test-fixtures', 'docx');
+const LARGE_DIR = path.join(ROOT, 'target', 'fixtures', 'docx-large');
 
-// Экранирование XML
-const escapeXml = (text: string): string => {
-    return text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&apos;');
-};
+/** Минимум коммитируемых фикстур, который обязан собрать генератор. */
+const MIN_COMMITTABLE = 95;
 
-// Создание ZIP-архива с использованием Node.js Child Process (zip команда)
-const createZip = async (outputPath: string, files: Record<string, string>): Promise<void> => {
-    const { exec } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const execAsync = promisify(exec);
-    
-    // Создаем временную директорию
-    const tempDir = path.join(ROOT, 'temp_docx_' + Date.now());
-    await mkdir(tempDir, { recursive: true });
-    
-    // Пишем файлы
-    for (const [filePath, content] of Object.entries(files)) {
-        const fullPath = path.join(tempDir, filePath);
-        await mkdir(path.dirname(fullPath), { recursive: true });
-        await writeFile(fullPath, content);
-    }
-    
-    // Архивируем
-    const zipPath = path.resolve(outputPath);
-    await execAsync(`cd "${tempDir}" && zip -r "${zipPath}" *`);
-    
-    // Удаляем временную директорию
-    const { rm } = await import('node:fs/promises');
-    await rm(tempDir, { recursive: true, force: true });
-};
+/** Все коммитируемые фикстуры; пути уникальны и не пересекаются между файлами. */
+export const committableFixtures = (): FixtureSpec[] => [
+    ...legacyFixtures,
+    ...basicFixtures,
+    ...stylesFixtures,
+    ...numberingFixtures,
+    ...tablesFixtures,
+    ...imagesFixtures,
+    ...alternateContentFixtures,
+    ...trackChangesFixtures,
+    ...fieldsFixtures,
+    ...rtlFixtures,
+    ...cjkFixtures,
+    ...headersFootersFixtures,
+    ...notesFixtures,
+    ...brokenFixtures,
+];
 
-// Проверяем, есть ли команда zip
-const checkZipCommand = async (): Promise<boolean> => {
-    const { exec } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const execAsync = promisify(exec);
-    try {
-        await execAsync('zip -v');
-        return true;
-    } catch {
-        return false;
+const checkUnique = (specs: FixtureSpec[]): void => {
+    const seen = new Set<string>();
+    for (const spec of specs) {
+        if (seen.has(spec.name)) throw new Error(`duplicate fixture name: ${spec.name}`);
+        if (!spec.name.includes('/')) throw new Error(`fixture without category prefix: ${spec.name}`);
+        seen.add(spec.name);
     }
 };
 
-// Базовая структура DOCX
-const baseDocxFiles = (): Record<string, string> => ({
-    '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
-</Types>`,
+/**
+ * Пишет `.docx` и сайдкар `.json`.
+ *
+ * Абзацы тела считаются вручную в описании фикстуры (`expectedParagraphs`) —
+ * генератор намеренно не разбирает XML: он должен остаться тупым писателем.
+ */
+const writeFixture = async (spec: FixtureSpec, outDir: string, sidecar: boolean): Promise<void> => {
+    const docTitle = spec.docTitle ?? spec.description;
+    const docxPath = path.join(outDir, `${spec.name}.docx`);
+    await mkdir(path.dirname(docxPath), { recursive: true });
+    // `bytes` — готовый файл (обрезанный ZIP); обычный путь — сборка из частей.
+    const docx = spec.bytes ?? buildZip(withDocTitle(spec.parts, docTitle));
+    // Приведение — расхождение дженериков Buffer/Uint8Array в @types/node.
+    await writeFile(docxPath, docx as Uint8Array);
 
-    '_rels/.rels': `<?xml version="1.0" encoding="UTF-8"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
-</Relationships>`,
+    if (!sidecar) return;
+    const metadata: Record<string, unknown> = {
+        name: spec.name,
+        category: spec.name.split('/')[0],
+        description: spec.description,
+        docTitle,
+        expectedParagraphs: spec.expectedParagraphs,
+        expectedTables: spec.expectedTables,
+        expectedImages: spec.expectedImages ?? 0,
+        expectedWarnings: spec.expectedWarnings ?? [],
+        ...spec.meta,
+    };
+    const payload = { metadata, content: spec.content ?? {} };
+    await writeFile(path.join(outDir, `${spec.name}.json`), `${JSON.stringify(payload, null, 2)}\n`);
+};
 
-    'word/_rels/document.xml.rels': `<?xml version="1.0" encoding="UTF-8"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
-</Relationships>`,
+/** Убирает из каталога сгенерированные ранее файлы, которых больше нет в списке. */
+const pruneStale = async (outDir: string, expected: Set<string>): Promise<number> => {
+    let removed = 0;
+    const walk = async (dir: string): Promise<void> => {
+        const entries = await readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                await walk(full);
+                continue;
+            }
+            if (!/\.(docx|json)$/.test(entry.name)) continue;
+            const relative = path.relative(outDir, full);
+            if (!expected.has(relative)) {
+                await rm(full);
+                removed++;
+            }
+        }
+    };
+    await walk(outDir);
+    return removed;
+};
 
-    'word/styles.xml': `<?xml version="1.0" encoding="UTF-8"?>
-<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:docDefaults>
-    <w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/></w:rPr></w:rPrDefault>
-    <w:pPrDefault><w:pPr><w:spacing w:before="120" w:after="120"/></w:pPr></w:pPrDefault>
-  </w:docDefaults>
-</w:styles>`,
+const generate = async (): Promise<void> => {
+    const specs = committableFixtures();
+    checkUnique(specs);
+
+    await mkdir(OUT_DIR, { recursive: true });
+    const byCategory = new Map<string, number>();
+    for (const spec of specs) {
+        const category = spec.name.split('/')[0]!;
+        byCategory.set(category, (byCategory.get(category) ?? 0) + 1);
+        await writeFixture(spec, OUT_DIR, true);
+    }
+
+    const expected = new Set(specs.flatMap((s) => [`${s.name}.docx`, `${s.name}.json`]));
+    const removed = await pruneStale(OUT_DIR, expected);
+
+    console.log(`DOCX fixtures: ${specs.length} (stale removed: ${removed})`);
+    for (const [category, count] of [...byCategory.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+        console.log(`  ${category.padEnd(18)} ${count}`);
+    }
+    if (specs.length < MIN_COMMITTABLE) {
+        throw new Error(`expected at least ${MIN_COMMITTABLE} committable fixtures, got ${specs.length}`);
+    }
+};
+
+const main = async (): Promise<void> => {
+    const large = process.argv.includes('--large');
+    if (large) {
+        const written = await generateLargeFixtures(LARGE_DIR);
+        console.log(`Large DOCX fixtures: ${written.length} → ${LARGE_DIR}`);
+        for (const { name, bytes } of written) {
+            console.log(`  ${name.padEnd(28)} ${(bytes / 1024 / 1024).toFixed(1)} MiB`);
+        }
+        if (written.some(({ bytes }) => bytes < 10 * 1024 * 1024)) {
+            throw new Error('large fixture below 10 MiB');
+        }
+        return;
+    }
+    await generate();
+};
+
+main().catch((error: unknown) => {
+    console.error(error);
+    process.exitCode = 1;
 });
-
-// Создание document.xml
-const createDocumentXml = (content: string): string => {
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:body>
-${content}
-  </w:body>
-</w:document>`;
-};
-
-// Генерация параграфа
-const p = (text: string, bold = false, italic = false): string => {
-    const props = [];
-    if (bold) props.push('<w:b/>');
-    if (italic) props.push('<w:i/>');
-    const rPr = props.length > 0 ? `<w:rPr>${props.join('')}</w:rPr>` : '';
-    return `<w:p><w:r>${rPr}<w:t>${escapeXml(text)}</w:t></w:r></w:p>`;
-};
-
-// Генерация заголовка
-const h = (text: string, level: 1 | 2 | 3 = 1): string => {
-    return `<w:p><w:pPr><w:pStyle w:val="Heading${level}"/></w:pPr><w:r><w:t>${escapeXml(text)}</w:t></w:r></w:p>`;
-};
-
-// Генерация таблицы
-const table = (rows: string[][]): string => {
-    const trs = rows.map(row => {
-        const tcs = row.map(cell => `<w:tc><w:p><w:r><w:t>${escapeXml(cell)}</w:t></w:r></w:p></w:tc>`).join('');
-        return `<w:tr>${tcs}</w:tr>`;
-    }).join('');
-    return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>${trs}</w:tbl>`;
-};
-
-// Сохранение фикстуры
-const saveFixture = async (name: string, docContent: string, metadata: any, contentData: any): Promise<void> => {
-    const files = { ...baseDocxFiles(), 'word/document.xml': createDocumentXml(docContent) };
-    await createZip(path.join(OUT_DIR, `${name}.docx`), files);
-    await writeFile(path.join(OUT_DIR, `${name}.json`), JSON.stringify({ metadata, content: contentData }, null, 2));
-    console.log(`  ✅ ${name}`);
-};
-
-// Генерация всех фикстур
-async function main() {
-    const hasZip = await checkZipCommand();
-    if (!hasZip) {
-        console.error('❌ Error: zip command not found. Please install zip utility.');
-        console.log('   On macOS: brew install zip');
-        console.log('   On Ubuntu: sudo apt-get install zip');
-        process.exit(1);
-    }
-    
-    console.log('🚀 Generating DOCX fixtures...');
-    
-    // Создаём директории
-    const dirs = ['simple', 'formatting', 'tables', 'complex', 'edge_cases'];
-    for (const dir of dirs) {
-        await mkdir(path.join(OUT_DIR, dir), { recursive: true });
-    }
-    
-    // ==================== SIMPLE ====================
-    console.log('\n📝 Simple fixtures:');
-    
-    await saveFixture('simple/empty', '', {
-        name: 'simple/empty',
-        description: 'Пустой документ',
-        expectedParagraphs: 0,
-        expectedTables: 0
-    }, { paragraphs: [], tables: [], images: [] });
-    
-    await saveFixture('simple/one_paragraph', p('Hello, World!'), {
-        name: 'simple/one_paragraph',
-        description: 'Один абзац',
-        expectedParagraphs: 1,
-        expectedTables: 0
-    }, { paragraphs: [{ text: 'Hello, World!' }], tables: [], images: [] });
-    
-    for (let i = 0; i < 3; i++) {
-        const paragraphs = Array.from({ length: 5 }, (_, j) => p(`Paragraph ${j + 1}`));
-        await saveFixture(`simple/multiple_paragraphs_${i}`, paragraphs.join(''), {
-            name: `simple/multiple_paragraphs_${i}`,
-            description: '5 абзацев',
-            expectedParagraphs: 5,
-            expectedTables: 0
-        }, { paragraphs: Array.from({ length: 5 }, (_, j) => ({ text: `Paragraph ${j + 1}` })), tables: [], images: [] });
-    }
-    
-    // ==================== FORMATTING ====================
-    console.log('\n🎨 Formatting fixtures:');
-    
-    await saveFixture('formatting/bold', p('Bold text', true), {
-        name: 'formatting/bold',
-        description: 'Жирный текст',
-        expectedParagraphs: 1
-    }, { paragraphs: [{ text: 'Bold text', bold: true }], tables: [] });
-    
-    await saveFixture('formatting/italic', p('Italic text', false, true), {
-        name: 'formatting/italic',
-        description: 'Курсив',
-        expectedParagraphs: 1
-    }, { paragraphs: [{ text: 'Italic text', italic: true }], tables: [] });
-    
-    for (let level = 1; level <= 3; level++) {
-        await saveFixture(`formatting/heading_${level}`, h(`Heading ${level}`, level as 1 | 2 | 3), {
-            name: `formatting/heading_${level}`,
-            description: `Заголовок уровня ${level}`,
-            expectedParagraphs: 1
-        }, { paragraphs: [{ text: `Heading ${level}`, style: `Heading${level}` }], tables: [] });
-    }
-    
-    // ==================== TABLES ====================
-    console.log('\n📊 Table fixtures:');
-    
-    await saveFixture('tables/simple_2x2', table([['A1', 'A2'], ['B1', 'B2']]), {
-        name: 'tables/simple_2x2',
-        description: 'Таблица 2x2',
-        expectedTables: 1
-    }, { tables: [{ rows: 2, cols: 2, cells: [['A1', 'A2'], ['B1', 'B2']] }], paragraphs: [] });
-    
-    await saveFixture('tables/simple_3x3', table([['A1', 'A2', 'A3'], ['B1', 'B2', 'B3'], ['C1', 'C2', 'C3']]), {
-        name: 'tables/simple_3x3',
-        description: 'Таблица 3x3',
-        expectedTables: 1
-    }, { tables: [{ rows: 3, cols: 3, cells: [['A1', 'A2', 'A3'], ['B1', 'B2', 'B3'], ['C1', 'C2', 'C3']] }], paragraphs: [] });
-    
-    // ==================== COMPLEX ====================
-    console.log('\n📜 Complex fixtures:');
-    
-    await saveFixture('complex/text_and_table', p('Text before') + table([['H1', 'H2'], ['C1', 'C2']]) + p('Text after'), {
-        name: 'complex/text_and_table',
-        description: 'Текст + таблица + текст',
-        expectedParagraphs: 2,
-        expectedTables: 1
-    }, {
-        paragraphs: [{ text: 'Text before' }, { text: 'Text after' }],
-        tables: [{ rows: 2, cols: 2, cells: [['H1', 'H2'], ['C1', 'C2']] }]
-    });
-    
-    // ==================== EDGE CASES ====================
-    console.log('\n⚠️  Edge case fixtures:');
-    
-    await saveFixture('edge_cases/empty_paragraphs', p('') + p('Non-empty') + p(''), {
-        name: 'edge_cases/empty_paragraphs',
-        description: 'Пустые абзацы',
-        expectedParagraphs: 3
-    }, { paragraphs: ['', 'Non-empty', ''], tables: [] });
-    
-    const specialText = '<>&"\'Test&\'"<>';
-    await saveFixture('edge_cases/special_chars', p(specialText), {
-        name: 'edge_cases/special_chars',
-        description: 'Специальные символы',
-        expectedParagraphs: 1
-    }, { paragraphs: [{ text: specialText }], tables: [] });
-    
-    await saveFixture('edge_cases/multilingual', p('English') + p('Русский') + p('中文'), {
-        name: 'edge_cases/multilingual',
-        description: 'Разные языки',
-        expectedParagraphs: 3
-    }, { paragraphs: [{ text: 'English' }, { text: 'Русский' }, { text: '中文' }], tables: [] });
-    
-    console.log('\n✅ All DOCX fixtures generated!');
-    console.log(`📂 Saved to: ${OUT_DIR}`);
-}
-
-main().catch(console.error);

@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "name": "basic/breaks_and_tabs",
+    "category": "basic",
+    "description": "Разрывы строки и страницы, табуляция внутри прогонов",
+    "docTitle": "Разрывы строки и страницы, табуляция внутри прогонов",
+    "expectedParagraphs": 4,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "First line\nsecond line",
+        "breaks": [
+          "line"
+        ]
+      },
+      {
+        "text": "Col1\tCol2",
+        "tabs": 1
+      },
+      {
+        "text": "",
+        "breaks": [
+          "page"
+        ]
+      },
+      {
+        "text": "After the page break"
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

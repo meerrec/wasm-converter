@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "name": "headers_footers/page_number_field",
+    "category": "headers_footers",
+    "description": "Поля PAGE и NUMPAGES в колонтитулах (fldChar + instrText)",
+    "docTitle": "Поля PAGE и NUMPAGES в колонтитулах (fldChar + instrText)",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "fields": [
+      {
+        "instruction": "PAGE",
+        "part": "word/header1.xml",
+        "result": "1"
+      },
+      {
+        "instruction": "NUMPAGES",
+        "part": "word/footer1.xml",
+        "result": "3"
+      }
+    ]
+  }
+}

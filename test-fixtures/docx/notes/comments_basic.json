@@ -1,0 +1,22 @@
+{
+  "metadata": {
+    "name": "notes/comments_basic",
+    "category": "notes",
+    "description": "Один комментарий: commentRangeStart/End и commentReference",
+    "docTitle": "Один комментарий: commentRangeStart/End и commentReference",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "comments": [
+      {
+        "id": 1,
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z",
+        "text": "Comment text."
+      }
+    ]
+  }
+}

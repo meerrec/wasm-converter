@@ -1,9 +1,13 @@
 {
   "metadata": {
     "name": "complex/text_and_table",
+    "category": "complex",
     "description": "Текст + таблица + текст",
+    "docTitle": "Текст + таблица + текст",
     "expectedParagraphs": 2,
-    "expectedTables": 1
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
   },
   "content": {
     "paragraphs": [
@@ -29,6 +33,7 @@
           ]
         ]
       }
-    ]
+    ],
+    "images": []
   }
 }

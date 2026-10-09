@@ -1,9 +1,13 @@
 {
   "metadata": {
     "name": "simple/multiple_paragraphs_0",
+    "category": "simple",
     "description": "5 абзацев",
+    "docTitle": "5 абзацев",
     "expectedParagraphs": 5,
-    "expectedTables": 0
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
   },
   "content": {
     "paragraphs": [

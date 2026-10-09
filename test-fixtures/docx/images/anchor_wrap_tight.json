@@ -1,0 +1,29 @@
+{
+  "metadata": {
+    "name": "images/anchor_wrap_tight",
+    "category": "images",
+    "description": "Плавающий рисунок с обтеканием по контуру",
+    "docTitle": "Плавающий рисунок с обтеканием по контуру",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 1,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": ""
+      }
+    ],
+    "images": [
+      {
+        "relId": "rIdImg1",
+        "file": "tight.png",
+        "kind": "anchor",
+        "wrap": "tight",
+        "cx": 685800,
+        "cy": 685800
+      }
+    ]
+  }
+}

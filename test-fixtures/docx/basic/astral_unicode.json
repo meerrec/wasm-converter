@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "name": "basic/astral_unicode",
+    "category": "basic",
+    "description": "Символы вне BMP: эмодзи и музыкальные знаки вперемешку с текстом",
+    "docTitle": "Символы вне BMP: эмодзи и музыкальные знаки вперемешку с текстом",
+    "expectedParagraphs": 3,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Emoji: 😀 🎉 🚀"
+      },
+      {
+        "text": "Astral symbols: 𝄞 𝄢 𝕏"
+      },
+      {
+        "text": "Mixed: before 😀 middle 𝄞 after"
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

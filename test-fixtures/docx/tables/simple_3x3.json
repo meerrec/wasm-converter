@@ -1,10 +1,16 @@
 {
   "metadata": {
     "name": "tables/simple_3x3",
+    "category": "tables",
     "description": "Таблица 3x3",
-    "expectedTables": 1
+    "docTitle": "Таблица 3x3",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
   },
   "content": {
+    "paragraphs": [],
     "tables": [
       {
         "rows": 3,
@@ -28,6 +34,6 @@
         ]
       }
     ],
-    "paragraphs": []
+    "images": []
   }
 }

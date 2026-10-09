@@ -1,0 +1,36 @@
+{
+  "metadata": {
+    "name": "basic/sections",
+    "category": "basic",
+    "description": "Две секции: портрет A4 и ландшафт A4",
+    "docTitle": "Две секции: портрет A4 и ландшафт A4",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [],
+    "sections": [
+      {
+        "orientation": "portrait",
+        "widthTwips": 11906,
+        "heightTwips": 16838
+      },
+      {
+        "orientation": "landscape",
+        "widthTwips": 16838,
+        "heightTwips": 11906
+      }
+    ]
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "First section: portrait A4"
+      },
+      {
+        "text": "Second section: landscape A4"
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

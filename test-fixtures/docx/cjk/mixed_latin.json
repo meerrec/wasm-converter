@@ -1,0 +1,36 @@
+{
+  "metadata": {
+    "name": "cjk/mixed_latin",
+    "category": "cjk",
+    "description": "Смешанный абзац: латиница и CJK в разных прогонах",
+    "docTitle": "Смешанный абзац: латиница и CJK в разных прогонах",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Hello 中文 world",
+        "runs": [
+          {
+            "text": "Hello ",
+            "font": "Calibri",
+            "eastAsia": null
+          },
+          {
+            "text": "中文",
+            "font": "Calibri",
+            "eastAsia": "SimSun"
+          },
+          {
+            "text": " world",
+            "font": "Calibri",
+            "eastAsia": null
+          }
+        ]
+      }
+    ]
+  }
+}

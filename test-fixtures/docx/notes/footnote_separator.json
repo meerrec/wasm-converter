@@ -1,0 +1,30 @@
+{
+  "metadata": {
+    "name": "notes/footnote_separator",
+    "category": "notes",
+    "description": "Сноска вместе со служебными separator и continuationSeparator",
+    "docTitle": "Сноска вместе со служебными separator и continuationSeparator",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "footnotes": [
+      {
+        "id": 1,
+        "text": "Footnote after separators."
+      }
+    ],
+    "separators": [
+      {
+        "id": -1,
+        "type": "separator"
+      },
+      {
+        "id": 0,
+        "type": "continuationSeparator"
+      }
+    ]
+  }
+}

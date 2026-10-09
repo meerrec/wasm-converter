@@ -1,8 +1,13 @@
 {
   "metadata": {
     "name": "formatting/italic",
+    "category": "formatting",
     "description": "Курсив",
-    "expectedParagraphs": 1
+    "docTitle": "Курсив",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
   },
   "content": {
     "paragraphs": [
@@ -11,6 +16,7 @@
         "italic": true
       }
     ],
-    "tables": []
+    "tables": [],
+    "images": []
   }
 }

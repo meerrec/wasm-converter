@@ -1,0 +1,14 @@
+{
+  "metadata": {
+    "name": "broken/macro_enabled",
+    "category": "broken",
+    "description": "Макросный документ (.docm) с расширением .docx — non-goal v1",
+    "docTitle": "Макросный документ (.docm) с расширением .docx — non-goal v1",
+    "expectedParagraphs": 0,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [],
+    "fatal": "MacroEnabledDocument"
+  },
+  "content": {}
+}

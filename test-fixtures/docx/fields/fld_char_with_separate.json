@@ -1,0 +1,39 @@
+{
+  "metadata": {
+    "name": "fields/fld_char_with_separate",
+    "category": "fields",
+    "description": "fldChar с separate: кэшированный результат разбит по прогонам",
+    "docTitle": "fldChar с separate: кэшированный результат разбит по прогонам",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Page 7 of 10"
+      },
+      {
+        "text": "Bold result: 01.01.2026"
+      }
+    ],
+    "fields": [
+      {
+        "instruction": " PAGE ",
+        "type": "page",
+        "cached": "7",
+        "form": "fldChar"
+      },
+      {
+        "instruction": " DATE ",
+        "type": "date",
+        "cached": "01.01.2026",
+        "cachedBold": true,
+        "form": "fldChar"
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

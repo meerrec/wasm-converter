@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "name": "alternate_content/group_shape",
+    "category": "alternate_content",
+    "description": "Группа фигур: wpg:wgp из двух фигур в Choice, VML-группа в Fallback",
+    "docTitle": "Группа фигур: wpg:wgp из двух фигур в Choice, VML-группа в Fallback",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 1,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": ""
+      }
+    ],
+    "alternateContent": [
+      {
+        "choices": [
+          "wpg"
+        ],
+        "fallback": "vml"
+      }
+    ],
+    "notes": "Choice требует wpg; в группе прямоугольник и овал"
+  }
+}

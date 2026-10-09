@@ -1,15 +1,27 @@
 {
   "metadata": {
     "name": "edge_cases/empty_paragraphs",
+    "category": "edge_cases",
     "description": "Пустые абзацы",
-    "expectedParagraphs": 3
+    "docTitle": "Пустые абзацы",
+    "expectedParagraphs": 3,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
   },
   "content": {
     "paragraphs": [
-      "",
-      "Non-empty",
-      ""
+      {
+        "text": ""
+      },
+      {
+        "text": "Non-empty"
+      },
+      {
+        "text": ""
+      }
     ],
-    "tables": []
+    "tables": [],
+    "images": []
   }
 }

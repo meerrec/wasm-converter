@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "name": "fields/unknown_field",
+    "category": "fields",
+    "description": "Поля с нестандартными инструкциями: MERGEFIELD и неизвестное имя",
+    "docTitle": "Поля с нестандартными инструкциями: MERGEFIELD и неизвестное имя",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Hello Иван!"
+      },
+      {
+        "text": ""
+      }
+    ],
+    "fields": [
+      {
+        "instruction": " MERGEFIELD FirstName \\* MERGEFORMAT ",
+        "type": "unknown",
+        "cached": "Иван",
+        "form": "fldChar"
+      },
+      {
+        "instruction": " FOOBAR \"arg\" ",
+        "type": "unknown",
+        "form": "fldChar"
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

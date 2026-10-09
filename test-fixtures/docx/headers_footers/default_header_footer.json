@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "name": "headers_footers/default_header_footer",
+    "category": "headers_footers",
+    "description": "Колонтитулы default: header1.xml и footer1.xml",
+    "docTitle": "Колонтитулы default: header1.xml и footer1.xml",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "headers": [
+      {
+        "type": "default",
+        "part": "word/header1.xml",
+        "text": "Default header"
+      }
+    ],
+    "footers": [
+      {
+        "type": "default",
+        "part": "word/footer1.xml",
+        "text": "Default footer"
+      }
+    ]
+  }
+}

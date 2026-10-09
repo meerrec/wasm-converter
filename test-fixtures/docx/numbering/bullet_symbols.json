@@ -1,0 +1,78 @@
+{
+  "metadata": {
+    "name": "numbering/bullet_symbols",
+    "category": "numbering",
+    "description": "Bullet-уровни с маркерами в шрифтах Symbol, Courier New и Wingdings",
+    "docTitle": "Bullet-уровни с маркерами в шрифтах Symbol, Courier New и Wingdings",
+    "expectedParagraphs": 4,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Первый маркер",
+        "numId": 1,
+        "ilvl": 0,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Вложенный маркер",
+        "numId": 1,
+        "ilvl": 1,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Третий уровень",
+        "numId": 1,
+        "ilvl": 2,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Снова второй уровень",
+        "numId": 1,
+        "ilvl": 1,
+        "style": "ListParagraph"
+      }
+    ],
+    "tables": [],
+    "images": [],
+    "numbering": [
+      {
+        "numId": 1,
+        "abstractNumId": 0,
+        "levels": [
+          {
+            "ilvl": 0,
+            "numFmt": "bullet",
+            "lvlText": "",
+            "start": 1,
+            "font": "Symbol"
+          },
+          {
+            "ilvl": 1,
+            "numFmt": "bullet",
+            "lvlText": "o",
+            "start": 1,
+            "font": "Courier New"
+          },
+          {
+            "ilvl": 2,
+            "numFmt": "bullet",
+            "lvlText": "",
+            "start": 1,
+            "font": "Wingdings"
+          }
+        ]
+      }
+    ],
+    "styles": [
+      {
+        "id": "ListParagraph",
+        "type": "paragraph",
+        "basedOn": "Normal"
+      }
+    ]
+  }
+}

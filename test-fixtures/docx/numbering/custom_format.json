@@ -1,0 +1,63 @@
+{
+  "metadata": {
+    "name": "numbering/custom_format",
+    "category": "numbering",
+    "description": "Нестандартные форматы: lowerLetter на первом уровне и upperRoman на втором",
+    "docTitle": "Нестандартные форматы: lowerLetter на первом уровне и upperRoman на втором",
+    "expectedParagraphs": 3,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Первый пункт",
+        "numId": 1,
+        "ilvl": 0,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Первый подпункт",
+        "numId": 1,
+        "ilvl": 1,
+        "style": "ListParagraph"
+      },
+      {
+        "text": "Второй пункт",
+        "numId": 1,
+        "ilvl": 0,
+        "style": "ListParagraph"
+      }
+    ],
+    "tables": [],
+    "images": [],
+    "numbering": [
+      {
+        "numId": 1,
+        "abstractNumId": 0,
+        "levels": [
+          {
+            "ilvl": 0,
+            "numFmt": "lowerLetter",
+            "lvlText": "%1)",
+            "start": 1
+          },
+          {
+            "ilvl": 1,
+            "numFmt": "upperRoman",
+            "lvlText": "%2.",
+            "start": 1
+          }
+        ]
+      }
+    ],
+    "styles": [
+      {
+        "id": "ListParagraph",
+        "type": "paragraph",
+        "basedOn": "Normal"
+      }
+    ]
+  }
+}

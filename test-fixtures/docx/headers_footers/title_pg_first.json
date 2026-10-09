@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "name": "headers_footers/title_pg_first",
+    "category": "headers_footers",
+    "description": "Отдельный колонтитул первой страницы (w:titlePg + w:type=\"first\")",
+    "docTitle": "Отдельный колонтитул первой страницы (w:titlePg + w:type=\"first\")",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "headers": [
+      {
+        "type": "default",
+        "part": "word/header1.xml",
+        "text": "Default header"
+      },
+      {
+        "type": "first",
+        "part": "word/header2.xml",
+        "text": "First page header"
+      }
+    ],
+    "titlePg": true
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "name": "styles/doc_defaults",
+    "category": "styles",
+    "description": "docDefaults задаёт шрифт, размер и интервалы; абзац без прямого форматирования их наследует",
+    "docTitle": "docDefaults задаёт шрифт, размер и интервалы; абзац без прямого форматирования их наследует",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Абзац наследует docDefaults",
+        "style": "Normal"
+      }
+    ],
+    "tables": [],
+    "images": [],
+    "docDefaults": {
+      "font": "Georgia",
+      "sizeHalfPoints": 26,
+      "color": "1A1A1A",
+      "spacingAfterTwips": 240,
+      "lineTwips": 360,
+      "justification": "both"
+    },
+    "styles": [
+      {
+        "id": "Normal",
+        "type": "paragraph",
+        "default": true
+      }
+    ]
+  }
+}

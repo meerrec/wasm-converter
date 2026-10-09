@@ -1,0 +1,44 @@
+{
+  "metadata": {
+    "name": "fields/hyperlink_field",
+    "category": "fields",
+    "description": "Поля HYPERLINK: элемент w:hyperlink и форма fldChar с внешним rel",
+    "docTitle": "Поля HYPERLINK: элемент w:hyperlink и форма fldChar с внешним rel",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "example.com/docs",
+        "hyperlink": "https://example.com/docs",
+        "relId": "rId2"
+      },
+      {
+        "text": "Link: example.com/docs",
+        "hyperlink": "https://example.com/docs",
+        "relId": "rId2"
+      }
+    ],
+    "fields": [
+      {
+        "instruction": " HYPERLINK \"https://example.com/docs\" ",
+        "type": "hyperlink",
+        "target": "https://example.com/docs",
+        "form": "fldChar"
+      }
+    ],
+    "rels": [
+      {
+        "id": "rId2",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+        "target": "https://example.com/docs",
+        "external": true
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

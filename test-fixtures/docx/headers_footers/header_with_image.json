@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "name": "headers_footers/header_with_image",
+    "category": "headers_footers",
+    "description": "Картинка в колонтитуле: свои rels у header1.xml",
+    "docTitle": "Картинка в колонтитуле: свои rels у header1.xml",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "headers": [
+      {
+        "type": "default",
+        "part": "word/header1.xml",
+        "imageRel": "rIdImg1"
+      }
+    ],
+    "media": [
+      {
+        "part": "word/media/image1.png",
+        "rel": "rIdImg1",
+        "inPart": "word/header1.xml"
+      }
+    ]
+  }
+}

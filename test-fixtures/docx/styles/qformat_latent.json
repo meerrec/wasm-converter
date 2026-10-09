@@ -1,0 +1,63 @@
+{
+  "metadata": {
+    "name": "styles/qformat_latent",
+    "category": "styles",
+    "description": "w:latentStyles и флаги qFormat/uiPriority/semiHidden на стилях",
+    "docTitle": "w:latentStyles и флаги qFormat/uiPriority/semiHidden на стилях",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Абзац со стилем из qFormat",
+        "style": "FancyQuote"
+      },
+      {
+        "text": "Абзац со скрытым стилем",
+        "style": "HiddenNote"
+      }
+    ],
+    "tables": [],
+    "images": [],
+    "latentStyles": {
+      "count": 376,
+      "exceptions": [
+        {
+          "name": "Normal",
+          "qFormat": true,
+          "uiPriority": 0
+        },
+        {
+          "name": "heading 1",
+          "qFormat": true,
+          "uiPriority": 9
+        },
+        {
+          "name": "Subtitle",
+          "semiHidden": true,
+          "unhideWhenUsed": true,
+          "uiPriority": 11
+        }
+      ]
+    },
+    "styles": [
+      {
+        "id": "FancyQuote",
+        "type": "paragraph",
+        "qFormat": true,
+        "uiPriority": 31,
+        "italic": true
+      },
+      {
+        "id": "HiddenNote",
+        "type": "paragraph",
+        "semiHidden": true,
+        "unhideWhenUsed": true,
+        "uiPriority": 99
+      }
+    ]
+  }
+}

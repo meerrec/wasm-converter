@@ -1,0 +1,50 @@
+{
+  "metadata": {
+    "name": "basic/paragraph_spacing",
+    "category": "basic",
+    "description": "Интервалы абзацев: before/after, line и lineRule",
+    "docTitle": "Интервалы абзацев: before/after, line и lineRule",
+    "expectedParagraphs": 4,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Before 240, after 120",
+        "spacing": {
+          "before": 240,
+          "after": 120
+        }
+      },
+      {
+        "text": "Line 360, lineRule auto",
+        "spacing": {
+          "line": 360,
+          "lineRule": "auto"
+        }
+      },
+      {
+        "text": "Line 240, lineRule exact",
+        "spacing": {
+          "before": 0,
+          "after": 0,
+          "line": 240,
+          "lineRule": "exact"
+        }
+      },
+      {
+        "text": "Line 720, lineRule atLeast",
+        "spacing": {
+          "before": 360,
+          "after": 360,
+          "line": 720,
+          "lineRule": "atLeast"
+        }
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

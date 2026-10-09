@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "name": "alternate_content/choice_shape",
+    "category": "alternate_content",
+    "description": "Фигура: прямоугольник DrawingML в Choice, овал VML в Fallback",
+    "docTitle": "Фигура: прямоугольник DrawingML в Choice, овал VML в Fallback",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 1,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": ""
+      }
+    ],
+    "alternateContent": [
+      {
+        "choices": [
+          "wps"
+        ],
+        "fallback": "vml"
+      }
+    ],
+    "notes": "Choice — примитив prstGeom rect без текста"
+  }
+}

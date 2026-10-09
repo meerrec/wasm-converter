@@ -1,0 +1,36 @@
+{
+  "metadata": {
+    "name": "fields/instr_text",
+    "category": "fields",
+    "description": "Поля через fldChar begin/end и w:instrText без результата",
+    "docTitle": "Поля через fldChar begin/end и w:instrText без результата",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Page "
+      },
+      {
+        "text": "Today is "
+      }
+    ],
+    "fields": [
+      {
+        "instruction": " PAGE ",
+        "type": "page",
+        "form": "fldChar"
+      },
+      {
+        "instruction": " DATE ",
+        "type": "date",
+        "form": "fldChar"
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

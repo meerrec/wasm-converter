@@ -1,0 +1,33 @@
+{
+  "metadata": {
+    "name": "images/anchor_wrap_square",
+    "category": "images",
+    "description": "Плавающий рисунок с обтеканием по квадрату и ненулевой позицией",
+    "docTitle": "Плавающий рисунок с обтеканием по квадрату и ненулевой позицией",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 1,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": ""
+      }
+    ],
+    "images": [
+      {
+        "relId": "rIdImg1",
+        "file": "square.png",
+        "kind": "anchor",
+        "wrap": "square",
+        "hRelative": "column",
+        "posX": 457200,
+        "posY": 228600,
+        "behindDoc": false,
+        "cx": 1143000,
+        "cy": 857250
+      }
+    ]
+  }
+}

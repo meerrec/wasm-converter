@@ -1,0 +1,54 @@
+{
+  "metadata": {
+    "name": "track_changes/table_row_changes",
+    "category": "track_changes",
+    "description": "Вставка и удаление строки таблицы (w:ins/w:del в w:trPr, w:cellIns/w:cellDel)",
+    "docTitle": "Вставка и удаление строки таблицы (w:ins/w:del в w:trPr, w:cellIns/w:cellDel)",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "tables": [
+      {
+        "rows": 2,
+        "cols": 1,
+        "cells": [
+          [
+            "Inserted row cell"
+          ],
+          [
+            "Deleted row cell"
+          ]
+        ]
+      }
+    ],
+    "revisions": [
+      {
+        "type": "ins",
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z",
+        "target": "row"
+      },
+      {
+        "type": "cellIns",
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z",
+        "text": "Inserted row cell"
+      },
+      {
+        "type": "del",
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z",
+        "target": "row"
+      },
+      {
+        "type": "cellDel",
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z",
+        "text": "Deleted row cell"
+      }
+    ]
+  }
+}

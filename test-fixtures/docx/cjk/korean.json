@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "name": "cjk/korean",
+    "category": "cjk",
+    "description": "Корейский хангыль: eastAsia-шрифт Malgun Gothic",
+    "docTitle": "Корейский хангыль: eastAsia-шрифт Malgun Gothic",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "한국어 테스트입니다. 한글 자모 조합.",
+        "runs": [
+          {
+            "text": "한국어 테스트입니다. 한글 자모 조합.",
+            "font": "Malgun Gothic",
+            "eastAsia": "ko-KR"
+          }
+        ]
+      }
+    ]
+  }
+}

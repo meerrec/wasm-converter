@@ -1,10 +1,16 @@
 {
   "metadata": {
     "name": "tables/simple_2x2",
+    "category": "tables",
     "description": "Таблица 2x2",
-    "expectedTables": 1
+    "docTitle": "Таблица 2x2",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
   },
   "content": {
+    "paragraphs": [],
     "tables": [
       {
         "rows": 2,
@@ -21,6 +27,6 @@
         ]
       }
     ],
-    "paragraphs": []
+    "images": []
   }
 }

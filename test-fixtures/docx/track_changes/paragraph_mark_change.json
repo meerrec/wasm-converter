@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "name": "track_changes/paragraph_mark_change",
+    "category": "track_changes",
+    "description": "Изменение знака абзаца (w:pPr/w:rPr/w:ins и w:del)",
+    "docTitle": "Изменение знака абзаца (w:pPr/w:rPr/w:ins и w:del)",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "revisions": [
+      {
+        "type": "ins",
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z",
+        "target": "paragraphMark"
+      },
+      {
+        "type": "del",
+        "author": "Fixture Author",
+        "date": "2026-01-01T00:00:00Z",
+        "target": "paragraphMark"
+      }
+    ]
+  }
+}

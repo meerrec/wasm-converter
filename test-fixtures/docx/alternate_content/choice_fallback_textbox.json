@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "name": "alternate_content/choice_fallback_textbox",
+    "category": "alternate_content",
+    "description": "Текстовое поле: DrawingML в Choice, VML в Fallback",
+    "docTitle": "Текстовое поле: DrawingML в Choice, VML в Fallback",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 1,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": ""
+      }
+    ],
+    "alternateContent": [
+      {
+        "choices": [
+          "wps"
+        ],
+        "fallback": "vml"
+      }
+    ],
+    "notes": "Choice разрешается в текстовое поле wps:txbx, Fallback не разбирается"
+  }
+}

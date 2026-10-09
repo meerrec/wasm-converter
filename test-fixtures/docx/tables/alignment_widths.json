@@ -1,0 +1,79 @@
+{
+  "metadata": {
+    "name": "tables/alignment_widths",
+    "category": "tables",
+    "description": "Явные ширины w:tblGrid и w:tcW, выравнивание w:jc и w:vAlign",
+    "docTitle": "Явные ширины w:tblGrid и w:tcW, выравнивание w:jc и w:vAlign",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [],
+    "tables": [
+      {
+        "rows": 3,
+        "cols": 3,
+        "jc": "center",
+        "grid": [
+          2000,
+          5000,
+          2000
+        ],
+        "widths": [
+          [
+            2000,
+            5000,
+            2000
+          ],
+          [
+            3000,
+            4000,
+            2000
+          ],
+          [
+            2000,
+            5000,
+            2000
+          ]
+        ],
+        "vAlign": [
+          [
+            "top",
+            "center",
+            "bottom"
+          ],
+          [
+            "top",
+            "top",
+            "top"
+          ],
+          [
+            "bottom",
+            "bottom",
+            "bottom"
+          ]
+        ],
+        "cells": [
+          [
+            "Сверху",
+            "По центру",
+            "Снизу"
+          ],
+          [
+            "Шире сетки",
+            "Уже сетки",
+            "Ровно"
+          ],
+          [
+            "Первая строка Вторая строка",
+            "По правому краю",
+            "По центру"
+          ]
+        ]
+      }
+    ],
+    "images": []
+  }
+}

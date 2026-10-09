@@ -1,0 +1,14 @@
+{
+  "metadata": {
+    "name": "broken/truncated_zip",
+    "category": "broken",
+    "description": "Обрезанный ZIP: последние 200 байт с EOCD отрезаны",
+    "docTitle": "Обрезанный ZIP: последние 200 байт с EOCD отрезаны",
+    "expectedParagraphs": 0,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [],
+    "fatal": "Zip"
+  },
+  "content": {}
+}

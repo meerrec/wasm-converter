@@ -1,0 +1,23 @@
+{
+  "metadata": {
+    "name": "rtl/arabic_basic",
+    "category": "rtl",
+    "description": "Арабский абзац: bidi и RTL-прогон",
+    "docTitle": "Арабский абзац: bidi и RTL-прогон",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "direction": "rtl",
+    "paragraphs": [
+      {
+        "text": "مرحبا بالعالم",
+        "style": "RtlParagraph",
+        "bidi": true,
+        "rtl": true
+      }
+    ]
+  }
+}

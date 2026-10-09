@@ -15,6 +15,7 @@
     "build:wasm": "bash scripts/build-wasm.sh",
     "gen:fixtures": "node scripts/gen-fixtures.ts",
     "gen:docx-fixtures": "npx tsx scripts/generate_docx_fixtures.ts",
+    "gen:docx-fixtures:large": "npx tsx scripts/generate_docx_fixtures.ts --large",
     "size-limit": "size-limit"
   },
   "devDependencies": {

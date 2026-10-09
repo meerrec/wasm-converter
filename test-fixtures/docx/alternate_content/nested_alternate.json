@@ -1,0 +1,34 @@
+{
+  "metadata": {
+    "name": "alternate_content/nested_alternate",
+    "category": "alternate_content",
+    "description": "Вложенный AlternateContent внутри Choice",
+    "docTitle": "Вложенный AlternateContent внутри Choice",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 1,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": ""
+      }
+    ],
+    "alternateContent": [
+      {
+        "choices": [
+          "wps"
+        ],
+        "fallback": "text"
+      },
+      {
+        "choices": [
+          "wpg"
+        ],
+        "fallback": "text"
+      }
+    ],
+    "notes": "Первый Choice поддерживается и содержит второй AlternateContent"
+  }
+}
