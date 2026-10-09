@@ -1,0 +1,124 @@
+name: Fuzz
+
+# Фаззинг — отдельный workflow: цели собираются nightly-тулчейном с
+# sanitizer, а монорепозиторий закреплён на stable 1.98.0, и мешать их в
+# одном job'е нельзя. Ночной прогон (15 минут на цель) ищет падения на
+# длинном горизонте, прогон на PR — короткий: он ловит регрессию конкретной
+# правки, не выжигая часы CI.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'crates/core/**'
+      - 'crates/xlsx/**'
+      - 'crates/fuzz/**'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    # 15 минут прогона + сборка под sanitizer; заведомо меньше дефолтных 6 часов.
+    timeout-minutes: 40
+    strategy:
+      # Одна упавшая цель не должна отменять остальные: падения независимы.
+      fail-fast: false
+      matrix:
+        target: [core_zip, core_xml_reader, core_rels, xlsx_worksheet]
+    concurrency:
+      group: fuzz-${{ matrix.target }}-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      MAX_TOTAL_TIME: ${{ github.event_name == 'pull_request' && '60' || '900' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      # Кэш ставится до `cargo install`, чтобы восстановить ~/.cargo/bin с
+      # уже собранным cargo-fuzz. `workspaces` — потому что fuzz-крейт это
+      # отдельный workspace: без него rust-cache кэшировал бы корневой target/.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/fuzz -> target
+          shared-key: fuzz-${{ matrix.target }}
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # Корпус собирается из фикстур: без него либфаззер стартует с пустого
+      # каталога и первые минуты тратит на структуру ZIP/OOXML, которую мы уже
+      # умеем генерировать. Имя seed-файла — сплющенный путь фикстуры:
+      # libFuzzer читает только файлы верхнего уровня корпуса.
+      - name: Seed corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="crates/fuzz/corpus/${{ matrix.target }}"
+          mkdir -p "$dir"
+          flatten() { tr '/' '_'; }
+          copy_docs() {
+            find test-fixtures -type f \( -name '*.docx' -o -name '*.xlsx' \) -print0 |
+              while IFS= read -r -d '' f; do cp "$f" "$dir/$(printf '%s' "$f" | flatten)"; done
+          }
+          extract() {
+            # $1 — маска части в архиве. В имя seed-файла идёт и путь фикстуры,
+            # и путь части: в пакете их обычно две (`_rels/.rels` и
+            # `word/_rels/document.xml.rels`), и без части они бы затирали
+            # друг друга.
+            if ! command -v unzip >/dev/null; then return 1; fi
+            find test-fixtures -type f \( -name '*.docx' -o -name '*.xlsx' \) -print0 |
+              while IFS= read -r -d '' f; do
+                while IFS= read -r entry; do
+                  out="$dir/$(printf '%s.%s' "$f" "$entry" | flatten)"
+                  unzip -p "$f" "$entry" > "$out" 2>/dev/null || rm -f "$out"
+                done < <(unzip -Z1 "$f" "$1" 2>/dev/null || true)
+              done
+          }
+          case "${{ matrix.target }}" in
+            core_zip)
+              copy_docs
+              ;;
+            xlsx_worksheet)
+              find test-fixtures/xlsx -type f -name '*.xlsx' -print0 |
+                while IFS= read -r -d '' f; do cp "$f" "$dir/$(printf '%s' "$f" | flatten)"; done
+              ;;
+            core_xml_reader)
+              # Цели нужен XML, а не ZIP: распаковываем `word/document.xml`.
+              # Пустой корпус — не ошибка: тогда сидируем сырыми .docx.
+              extract 'word/document.xml' || copy_docs
+              if [ -z "$(ls -A "$dir")" ]; then copy_docs; fi
+              ;;
+            core_rels)
+              extract '*.rels' || copy_docs
+              if [ -z "$(ls -A "$dir")" ]; then copy_docs; fi
+              ;;
+          esac
+          # `head` тут не годится: на корпусе в пару сотен файлов `ls` ловит
+          # SIGPIPE, а с `-o pipefail` это уронило бы шаг.
+          echo "seeded $(find "$dir" -type f | wc -l) files into $dir"
+
+      # `-timeout=30` ловит зависания, `-rss_limit_mb=2048` — утечки памяти;
+      # оба порога выше того, что занимает честный разбор фикстуры.
+      # `--fuzz-dir .` обязателен: без него cargo-fuzz ищет fuzz-проект как
+      # `<корневой манифест>/fuzz`, а он лежит в crates/fuzz.
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: crates/fuzz
+        run: cargo fuzz run --fuzz-dir . ${{ matrix.target }} -- -max_total_time=$MAX_TOTAL_TIME -timeout=30 -rss_limit_mb=2048
+
+      # Артефакт — это вход, на котором цель упала; без него падение в CI
+      # не воспроизвести локально.
+      - name: Upload artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: crates/fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore

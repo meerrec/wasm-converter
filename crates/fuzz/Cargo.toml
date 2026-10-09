@@ -1,0 +1,45 @@
+[package]
+name = "doc-converter-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+doc-converter-core = { path = "../core" }
+doc-converter-xlsx = { path = "../xlsx" }
+
+# Отдельный workspace: nightly и sanitizer не должны попадать в сборку
+# монорепозитория (в корневом Cargo.toml крейт в `exclude`, как vendor/printpdf).
+[workspace]
+
+[[bin]]
+name = "core_zip"
+path = "fuzz_targets/core_zip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_xml_reader"
+path = "fuzz_targets/core_xml_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_rels"
+path = "fuzz_targets/core_rels.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xlsx_worksheet"
+path = "fuzz_targets/xlsx_worksheet.rs"
+test = false
+doc = false
+bench = false
