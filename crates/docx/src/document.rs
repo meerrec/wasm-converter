@@ -1077,7 +1077,7 @@ fn parse_cell(
         width: None,
         margins: CellMargins::default(),
         v_align: CellVAlign::Top,
-        borders: CellBorders::default(),
+        borders: Box::default(),
         shading: None,
         items: Vec::new(),
     };
@@ -1167,7 +1167,7 @@ fn parse_tc_pr(
             b"vAlign" => cell.v_align = parse_cell_v_align(&attrs, ctx, part)?,
             b"tcBorders" => {
                 if !empty {
-                    cell.borders = parse_cell_borders(reader, ctx, part, xml_path)?;
+                    *cell.borders = parse_cell_borders(reader, ctx, part, xml_path)?;
                 }
             }
             b"shd" => cell.shading = Some(parse_shading(&attrs, ctx, part)?),

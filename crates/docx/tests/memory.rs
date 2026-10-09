@@ -50,6 +50,20 @@ fn run_stays_within_budget() {
     );
 }
 
+/// `Cell` укладывается в бюджет ROADMAP §9 «≤ 192 байта на ячейку».
+///
+/// Бюджет держится тем, что `CellBorders` лежит по указателю: по значению он занимает
+/// 192 байта — столько же, сколько весь бюджет, — и ячейка в него не влезала.
+#[test]
+fn cell_stays_within_budget() {
+    let size = bytes::<Cell>();
+    println!("size_of::<Cell>() = {size} байт");
+    assert!(
+        size <= 192,
+        "Cell занимает {size} байт, бюджет ROADMAP §9 — 192"
+    );
+}
+
 /// Размеры соседних типов модели — для следующих слайсов, бюджет пока не проверяется.
 #[test]
 fn reports_neighbouring_sizes() {

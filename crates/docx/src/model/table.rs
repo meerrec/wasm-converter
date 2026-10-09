@@ -72,7 +72,10 @@ pub struct Cell {
     /// Вертикальное выравнивание содержимого (`w:vAlign`).
     pub v_align: CellVAlign,
     /// Границы ячейки (`w:tcBorders`).
-    pub borders: CellBorders,
+    ///
+    /// По указателю: по значению поле занимает 192 байта и не даёт ячейке уложиться
+    /// в бюджет ROADMAP §9 (≤ 192 байта на `Cell`).
+    pub borders: Box<CellBorders>,
     /// Заливка ячейки (`w:shd`).
     pub shading: Option<Shading>,
     /// Содержимое ячейки: абзацы и вложенные таблицы.
