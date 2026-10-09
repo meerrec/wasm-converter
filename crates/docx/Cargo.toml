@@ -18,6 +18,11 @@ tracing              = { workspace = true }
 # Сквозные тесты собирают пакеты в памяти, как это делает Word.
 zip        = { workspace = true }
 serde_json = { workspace = true }
+criterion  = { workspace = true }
+
+[[bench]]
+name = "open"
+harness = false
 
 # proptest тянет rand → getrandom, который не собирается под wasm32 без
 # `getrandom_backend="wasm_js"`; эти dev-зависимости нужны только нативным тестам.
