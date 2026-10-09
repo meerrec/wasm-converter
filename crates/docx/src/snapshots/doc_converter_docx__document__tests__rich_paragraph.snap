@@ -108,9 +108,10 @@ expression: body
                   "text": "choice"
                 },
                 {
-                  "unknown": {
+                  "drawing": {
                     "id": 4,
-                    "xml": "<w:drawing/>"
+                    "inline": null,
+                    "anchor": null
                   }
                 }
               ]

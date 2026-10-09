@@ -22,12 +22,14 @@ use quick_xml::events::{BytesStart, Event};
 use crate::context::ParseCtx;
 use crate::error::{Error, Result};
 use crate::model::{
-    BlockItem, Body, Border, BorderStyle, BreakKind, Cell, CellBorders, CellMargins, CellVAlign,
-    CellWidth, CharacterSpacing, Color, FontHint, GridCol, HalfPoint, HeightRule, Highlight, Ind,
-    Inline, Justification, LineSpacing, LineSpacingRule, NumId, NumPr, Paragraph, ParagraphBorders,
-    ParagraphSpacing, RFonts, RawPPr, RawRPr, Relationships, Row, RowHeight, Run, RunContent,
-    Shading, ShadingPattern, StyleId, TabLeader, TabStop, TabStopKind, Table, TableBorders,
-    TableLayout, TableLook, TableWidth, Toggle, Twips, Underline, VMerge, VertAlign,
+    AlignH, AlignV, Anchor, BlockItem, Body, Border, BorderStyle, BreakKind, Cell, CellBorders,
+    CellMargins, CellVAlign, CellWidth, CharacterSpacing, Color, Extent, FontHint, GridCol,
+    HalfPoint, HeightRule, Highlight, Ind, Inline, InlineImage, InlineOrAnchor, Justification,
+    LineSpacing, LineSpacingRule, NumId, NumPr, Paragraph, ParagraphBorders, ParagraphSpacing,
+    PositionH, PositionV, RFonts, RawPPr, RawRPr, RelFromH, RelFromV, Relationships, Row,
+    RowHeight, Run, RunContent, Shading, ShadingPattern, StyleId, TabLeader, TabStop, TabStopKind,
+    Table, TableBorders, TableLayout, TableLook, TableWidth, Toggle, Twips, Underline, VMerge,
+    VertAlign, WrapKind,
 };
 use crate::xml::{
     attr_f32, attr_i32, attr_toggle, attr_u32, attributes, capture_element, find, is_true,
@@ -116,7 +118,7 @@ fn parse_block_into(
                     ..Paragraph::default()
                 }
             } else {
-                parse_paragraph(reader, ctx, part, xml_path)?
+                parse_paragraph(reader, rels, ctx, part, xml_path)?
             };
             out.push(BlockItem::Paragraph(paragraph));
         }
@@ -233,6 +235,7 @@ fn parse_block_fragment(
 /// То же, что у [`parse_blocks`].
 fn parse_paragraph(
     reader: &mut XmlReader<'_>,
+    rels: &Relationships,
     ctx: &mut ParseCtx,
     part: &str,
     xml_path: &str,
@@ -261,7 +264,9 @@ fn parse_paragraph(
                     parse_ppr(reader, ctx, part, xml_path)?
                 };
             }
-            _ => parse_inline_element(reader, element, empty, ctx, part, xml_path, &mut runs)?,
+            _ => {
+                parse_inline_element(reader, element, empty, rels, ctx, part, xml_path, &mut runs)?;
+            }
         }
     }
     // `mark_rpr` — свойства знака абзаца: к runs они не применяются (ADR-0013 §2).
@@ -1131,10 +1136,14 @@ fn toggle_is_on(toggle: Option<Toggle>) -> bool {
 ///
 /// # Errors
 /// То же, что у [`parse_blocks`].
+// Список аргументов длиннее порога, как и у соседних разборщиков содержимого:
+// к их набору добавляются связи части — без них не разрешить цель рисунка.
+#[allow(clippy::too_many_arguments)]
 fn parse_inline_element(
     reader: &mut XmlReader<'_>,
     element: &BytesStart<'_>,
     empty: bool,
+    rels: &Relationships,
     ctx: &mut ParseCtx,
     part: &str,
     xml_path: &str,
@@ -1148,14 +1157,14 @@ fn parse_inline_element(
                     ..Run::default()
                 }
             } else {
-                parse_run(reader, ctx, part, xml_path)?
+                parse_run(reader, rels, ctx, part, xml_path)?
             };
             out.push(Inline::Run(run));
         }
         b"AlternateContent" if !empty => {
             match resolve_alternate_content(reader, element, ctx, part, xml_path)? {
                 AlternateContent::Choice(fragment) => {
-                    out.extend(parse_inline_fragment(&fragment, ctx, part, xml_path)?);
+                    out.extend(parse_inline_fragment(&fragment, rels, ctx, part, xml_path)?);
                 }
                 AlternateContent::Unsupported(xml) => {
                     ctx.warn_at(
@@ -1168,6 +1177,9 @@ fn parse_inline_element(
                 }
             }
         }
+        b"drawing" => out.push(Inline::Drawing(parse_drawing(
+            reader, empty, rels, ctx, part, xml_path,
+        )?)),
         // Разметка, не несущая содержимого модели. TODO (S7b): `w:bookmarkEnd`
         // даёт `OrphanBookmark`, только если пары нет, — а пару видно лишь при
         // разборе `w:bookmarkStart`, который S7a оставляет неизвестным.
@@ -1199,6 +1211,7 @@ fn parse_inline_element(
 /// То же, что у [`parse_blocks`].
 fn parse_inline_fragment(
     fragment: &str,
+    rels: &Relationships,
     ctx: &mut ParseCtx,
     part: &str,
     xml_path: &str,
@@ -1220,7 +1233,16 @@ fn parse_inline_fragment(
             Event::End(_) => return Ok(out),
             _ => continue,
         };
-        parse_inline_element(&mut reader, element, empty, ctx, part, xml_path, &mut out)?;
+        parse_inline_element(
+            &mut reader,
+            element,
+            empty,
+            rels,
+            ctx,
+            part,
+            xml_path,
+            &mut out,
+        )?;
     }
 }
 
@@ -1234,6 +1256,7 @@ fn parse_inline_fragment(
 /// То же, что у [`parse_blocks`].
 fn parse_run(
     reader: &mut XmlReader<'_>,
+    rels: &Relationships,
     ctx: &mut ParseCtx,
     part: &str,
     xml_path: &str,
@@ -1261,7 +1284,16 @@ fn parse_run(
                 parse_rpr(reader, ctx, part, xml_path)?
             };
         } else {
-            parse_run_content(reader, element, empty, ctx, part, xml_path, &mut content)?;
+            parse_run_content(
+                reader,
+                element,
+                empty,
+                rels,
+                ctx,
+                part,
+                xml_path,
+                &mut content,
+            )?;
         }
     }
     let style_ref = rpr.style.clone();
@@ -1277,10 +1309,12 @@ fn parse_run(
 ///
 /// # Errors
 /// То же, что у [`parse_blocks`].
+#[allow(clippy::too_many_arguments)]
 fn parse_run_content(
     reader: &mut XmlReader<'_>,
     element: &BytesStart<'_>,
     empty: bool,
+    rels: &Relationships,
     ctx: &mut ParseCtx,
     part: &str,
     xml_path: &str,
@@ -1322,11 +1356,13 @@ fn parse_run_content(
                     return Ok(());
                 }
             };
-            out.extend(parse_run_fragment(&fragment, ctx, part, xml_path)?);
+            out.extend(parse_run_fragment(&fragment, rels, ctx, part, xml_path)?);
         }
+        b"drawing" => out.push(RunContent::Drawing(parse_drawing(
+            reader, empty, rels, ctx, part, xml_path,
+        )?)),
         b"lastRenderedPageBreak" => skip_element(reader, empty, part)?,
         _ => {
-            // TODO (S7b): `w:drawing` (рисунки) и прочее содержимое run'а.
             let id = ctx.id();
             let xml = capture_any(reader, element, empty, ctx, part)?;
             ctx.warn_at(
@@ -1350,6 +1386,7 @@ fn parse_run_content(
 /// То же, что у [`parse_blocks`].
 fn parse_run_fragment(
     fragment: &str,
+    rels: &Relationships,
     ctx: &mut ParseCtx,
     part: &str,
     xml_path: &str,
@@ -1371,7 +1408,537 @@ fn parse_run_fragment(
             Event::End(_) => return Ok(out),
             _ => continue,
         };
-        parse_run_content(&mut reader, element, empty, ctx, part, xml_path, &mut out)?;
+        parse_run_content(
+            &mut reader,
+            element,
+            empty,
+            rels,
+            ctx,
+            part,
+            xml_path,
+            &mut out,
+        )?;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Рисунки
+// ---------------------------------------------------------------------------
+
+/// Предел глубины обхода `w:drawing`.
+///
+/// Сам рисунок вложен неглубоко (`a:graphic/pic:pic/…`), а обход рекурсивный:
+/// без предела патологический вход уронил бы разбор стеком.
+const MAX_DRAWING_DEPTH: usize = 24;
+
+/// Собранные свойства `wp:inline`/`wp:anchor`.
+///
+/// Нужное разбросано по ветвям рисунка: `wp:docPr` рядом с `wp:extent`, а
+/// ссылка на картинку — в `a:graphic/pic:pic/pic:blipFill/a:blip`, глубина
+/// которой заранее не известна. Поэтому поддерево обходится целиком.
+#[derive(Default)]
+struct DrawingParts {
+    /// Встретился `wp:inline` или `wp:anchor`.
+    found: bool,
+    /// Встретился именно `wp:inline`; иначе рисунок плавающий.
+    inline: bool,
+    /// `wp:anchor/@behindDoc`: рисунок лежит под текстом.
+    behind_text: bool,
+    /// `wp:extent`.
+    extent: Option<Extent>,
+    /// `wp:docPr/@name`.
+    name: Option<String>,
+    /// `wp:docPr/@descr`.
+    description: Option<String>,
+    /// `a:blip/@r:embed` или `@r:link`.
+    rel_id: Option<String>,
+    /// `wp:positionH`.
+    horizontal: Option<PositionH>,
+    /// `wp:positionV`.
+    vertical: Option<PositionV>,
+    /// `wp:wrap*`.
+    wrap: Option<WrapKind>,
+}
+
+/// Разобрать `w:drawing`: `wp:inline` или `wp:anchor`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_drawing(
+    reader: &mut XmlReader<'_>,
+    empty: bool,
+    rels: &Relationships,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+) -> Result<InlineOrAnchor> {
+    let id = ctx.id();
+    let mut parts = DrawingParts::default();
+    if !empty {
+        scan_drawing(reader, ctx, part, xml_path, 0, &mut parts)?;
+    }
+    if !parts.found {
+        // Ни `wp:inline`, ни `wp:anchor`: у рисунка нечего разбирать (так
+        // выглядит, например, `w:drawing` с одной лишь фигурой VML в Fallback).
+        ctx.warn_at(
+            WarningKind::UnknownElement,
+            part,
+            Some(xml_path),
+            "`w:drawing` has no `wp:inline` or `wp:anchor`, kept as an empty drawing",
+        )?;
+        return Ok(InlineOrAnchor {
+            id,
+            inline: None,
+            anchor: None,
+        });
+    }
+    let rel_id = parts.rel_id.unwrap_or_default();
+    let image = InlineImage {
+        id: ctx.id(),
+        part: image_part(rels, part, &rel_id, ctx, xml_path)?,
+        rel_id,
+        name: parts.name,
+        description: parts.description,
+        extent: parts.extent.unwrap_or(Extent { cx: 0, cy: 0 }),
+    };
+    if parts.inline {
+        return Ok(InlineOrAnchor {
+            id,
+            inline: Some(image),
+            anchor: None,
+        });
+    }
+    Ok(InlineOrAnchor {
+        id,
+        inline: None,
+        anchor: Some(Anchor {
+            id: ctx.id(),
+            extent: image.extent.clone(),
+            horizontal: parts.horizontal.unwrap_or_else(default_position_h),
+            vertical: parts.vertical.unwrap_or_else(default_position_v),
+            wrap: parts.wrap.unwrap_or(WrapKind::None),
+            behind_text: parts.behind_text,
+            image,
+        }),
+    })
+}
+
+/// Цель связи картинки, приведённая к пути части.
+///
+/// # Errors
+/// [`Error::TooManyWarnings`] — предупреждений стало больше порога.
+fn image_part(
+    rels: &Relationships,
+    source: &str,
+    rel_id: &str,
+    ctx: &mut ParseCtx,
+    xml_path: &str,
+) -> Result<Option<String>> {
+    if rel_id.is_empty() {
+        return Ok(None);
+    }
+    if let Some(rel) = rels.get(rel_id) {
+        Ok(rel.part(source))
+    } else {
+        // Битая ссылка — не отказ: рисунок останется без части, но
+        // документ откроется (ADR-0016 §2).
+        ctx.warn_at(
+            WarningKind::MissingPart,
+            source,
+            Some(xml_path),
+            format!("the relationship `{rel_id}` of the image is missing"),
+        )?;
+        Ok(None)
+    }
+}
+
+/// Обойти детей `w:drawing`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn scan_drawing(
+    reader: &mut XmlReader<'_>,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+    depth: usize,
+    parts: &mut DrawingParts,
+) -> Result<()> {
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `w:drawing`",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(()),
+            _ => continue,
+        };
+        scan_drawing_element(reader, element, empty, ctx, part, xml_path, depth, parts)?;
+    }
+}
+
+/// Разобрать один элемент внутри `w:drawing` и спуститься в его детей.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+// Опять же порог аргументов: обход рекурсивный, и состояние (`parts`, `depth`)
+// с окружением разбора иначе не передать.
+#[allow(clippy::too_many_arguments)]
+fn scan_drawing_element(
+    reader: &mut XmlReader<'_>,
+    element: &BytesStart<'_>,
+    empty: bool,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+    depth: usize,
+    parts: &mut DrawingParts,
+) -> Result<()> {
+    if depth >= MAX_DRAWING_DEPTH {
+        ctx.warn_at(
+            WarningKind::DeepNesting,
+            part,
+            Some(xml_path),
+            format!("`w:drawing` is nested deeper than {MAX_DRAWING_DEPTH}, the rest is skipped"),
+        )?;
+        return skip_element(reader, empty, part);
+    }
+    let attrs = attributes(element, part)?;
+    match local_name(element.name().into_inner()) {
+        b"inline" => {
+            parts.found = true;
+            parts.inline = true;
+        }
+        b"anchor" => {
+            parts.found = true;
+            parts.inline = false;
+            parts.behind_text = find(&attrs, "behindDoc").is_some_and(is_true);
+        }
+        b"extent" => {
+            // `wp:extent` — размер рисунка; `a:ext` (в `a:xfrm`) сюда не попадает.
+            parts.extent = Some(Extent {
+                cx: attr_i64(&attrs, "cx", ctx, part)?.unwrap_or_default(),
+                cy: attr_i64(&attrs, "cy", ctx, part)?.unwrap_or_default(),
+            });
+        }
+        b"docPr" => {
+            parts.name = find(&attrs, "name").map(str::to_owned);
+            parts.description = find(&attrs, "descr").map(str::to_owned);
+        }
+        b"blip" => {
+            parts.rel_id = find(&attrs, "embed")
+                .or_else(|| find(&attrs, "link"))
+                .map(str::to_owned);
+        }
+        b"wrapNone" => parts.wrap = Some(WrapKind::None),
+        b"wrapSquare" => parts.wrap = Some(WrapKind::Square),
+        b"wrapTight" => parts.wrap = Some(WrapKind::Tight),
+        b"wrapThrough" => parts.wrap = Some(WrapKind::Through),
+        b"wrapTopAndBottom" => parts.wrap = Some(WrapKind::TopAndBottom),
+        // Позиция — единственная ветвь с собственными детьми: `wp:align`,
+        // `wp:posOffset` или `wp:pct` лежат внутри неё, а не атрибутами.
+        b"positionH" => {
+            parts.horizontal = Some(parse_position_h(
+                reader, empty, &attrs, ctx, part, xml_path,
+            )?);
+            return Ok(());
+        }
+        b"positionV" => {
+            parts.vertical = Some(parse_position_v(
+                reader, empty, &attrs, ctx, part, xml_path,
+            )?);
+            return Ok(());
+        }
+        _ => {}
+    }
+    if empty {
+        return Ok(());
+    }
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `w:drawing`",
+            ));
+        };
+        match &event {
+            Event::Start(child) => {
+                scan_drawing_element(reader, child, false, ctx, part, xml_path, depth + 1, parts)?;
+            }
+            Event::Empty(child) => {
+                scan_drawing_element(reader, child, true, ctx, part, xml_path, depth + 1, parts)?;
+            }
+            Event::End(_) => return Ok(()),
+            _ => {}
+        }
+    }
+}
+
+/// Позиция по горизонтали: `wp:positionH`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_position_h(
+    reader: &mut XmlReader<'_>,
+    empty: bool,
+    attrs: &[Attr<'_>],
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+) -> Result<PositionH> {
+    let value = if empty {
+        PositionValue::default()
+    } else {
+        parse_position_value(reader, ctx, part, xml_path)?
+    };
+    Ok(PositionH {
+        relative_from: parse_rel_from_h(find(attrs, "relativeFrom"), ctx, part)?,
+        align: value.align.as_deref().map(parse_align_h),
+        offset: value.offset,
+        percent: value.percent,
+    })
+}
+
+/// Позиция по вертикали: `wp:positionV`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_position_v(
+    reader: &mut XmlReader<'_>,
+    empty: bool,
+    attrs: &[Attr<'_>],
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+) -> Result<PositionV> {
+    let value = if empty {
+        PositionValue::default()
+    } else {
+        parse_position_value(reader, ctx, part, xml_path)?
+    };
+    Ok(PositionV {
+        relative_from: parse_rel_from_v(find(attrs, "relativeFrom"), ctx, part)?,
+        align: value.align.as_deref().map(parse_align_v),
+        offset: value.offset,
+        percent: value.percent,
+    })
+}
+
+/// Значение позиции: `wp:align`, `wp:posOffset` или `wp:pct` — ровно одно.
+#[derive(Default)]
+struct PositionValue {
+    /// `wp:align`.
+    align: Option<String>,
+    /// `wp:posOffset` — смещение в EMU.
+    offset: Option<i64>,
+    /// `wp:pct` — доля в тысячных долях процента; хранится как есть.
+    percent: Option<i32>,
+}
+
+/// Разобрать детей `wp:positionH`/`wp:positionV`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_position_value(
+    reader: &mut XmlReader<'_>,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+) -> Result<PositionValue> {
+    let mut value = PositionValue::default();
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `wp:positionH`",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(value),
+            _ => continue,
+        };
+        match local_name(element.name().into_inner()) {
+            b"align" => {
+                value.align = Some(if empty {
+                    String::new()
+                } else {
+                    read_text(reader, part)?
+                });
+            }
+            b"posOffset" => {
+                value.offset = read_number(reader, empty, ctx, part, xml_path, "wp:posOffset")?;
+            }
+            b"pct" => {
+                if let Some(raw) = read_number(reader, empty, ctx, part, xml_path, "wp:pct")? {
+                    match i32::try_from(raw) {
+                        Ok(percent) => value.percent = Some(percent),
+                        Err(_) => ctx.warn_at(
+                            WarningKind::InvalidAttribute,
+                            part,
+                            Some(xml_path),
+                            format!("`wp:pct`: `{raw}` is out of range, ignored"),
+                        )?,
+                    }
+                }
+            }
+            _ => skip_element(reader, empty, part)?,
+        }
+    }
+}
+
+/// База отсчёта `wp:positionH/@relativeFrom`.
+///
+/// # Errors
+/// [`Error::TooManyWarnings`] — предупреждений стало больше порога.
+fn parse_rel_from_h(raw: Option<&str>, ctx: &mut ParseCtx, part: &str) -> Result<RelFromH> {
+    let Some(raw) = raw else {
+        ctx.warn(
+            WarningKind::InvalidAttribute,
+            part,
+            "`wp:positionH` has no `relativeFrom`, counted as `margin`",
+        )?;
+        return Ok(RelFromH::Margin);
+    };
+    Ok(match raw {
+        "margin" => RelFromH::Margin,
+        "page" => RelFromH::Page,
+        "column" => RelFromH::Column,
+        "character" => RelFromH::Character,
+        "leftMargin" => RelFromH::LeftMargin,
+        "rightMargin" => RelFromH::RightMargin,
+        "insideMargin" => RelFromH::InsideMargin,
+        "outsideMargin" => RelFromH::OutsideMargin,
+        other => RelFromH::Other(other.to_owned()),
+    })
+}
+
+/// База отсчёта `wp:positionV/@relativeFrom`.
+///
+/// # Errors
+/// [`Error::TooManyWarnings`] — предупреждений стало больше порога.
+fn parse_rel_from_v(raw: Option<&str>, ctx: &mut ParseCtx, part: &str) -> Result<RelFromV> {
+    let Some(raw) = raw else {
+        ctx.warn(
+            WarningKind::InvalidAttribute,
+            part,
+            "`wp:positionV` has no `relativeFrom`, counted as `margin`",
+        )?;
+        return Ok(RelFromV::Margin);
+    };
+    Ok(match raw {
+        "margin" => RelFromV::Margin,
+        "page" => RelFromV::Page,
+        "paragraph" => RelFromV::Paragraph,
+        "line" => RelFromV::Line,
+        "topMargin" => RelFromV::TopMargin,
+        "bottomMargin" => RelFromV::BottomMargin,
+        "insideMargin" => RelFromV::InsideMargin,
+        "outsideMargin" => RelFromV::OutsideMargin,
+        other => RelFromV::Other(other.to_owned()),
+    })
+}
+
+/// `wp:align` по горизонтали.
+#[must_use]
+fn parse_align_h(raw: &str) -> AlignH {
+    match raw {
+        "left" => AlignH::Left,
+        "center" => AlignH::Center,
+        "right" => AlignH::Right,
+        "inside" => AlignH::Inside,
+        "outside" => AlignH::Outside,
+        other => AlignH::Other(other.to_owned()),
+    }
+}
+
+/// `wp:align` по вертикали.
+#[must_use]
+fn parse_align_v(raw: &str) -> AlignV {
+    match raw {
+        "top" => AlignV::Top,
+        "center" => AlignV::Center,
+        "bottom" => AlignV::Bottom,
+        "inside" => AlignV::Inside,
+        "outside" => AlignV::Outside,
+        other => AlignV::Other(other.to_owned()),
+    }
+}
+
+/// Позиция плавающего рисунка, если `wp:positionH` в разметке нет.
+#[must_use]
+fn default_position_h() -> PositionH {
+    PositionH {
+        relative_from: RelFromH::Margin,
+        align: None,
+        offset: None,
+        percent: None,
+    }
+}
+
+/// Позиция плавающего рисунка, если `wp:positionV` в разметке нет.
+#[must_use]
+fn default_position_v() -> PositionV {
+    PositionV {
+        relative_from: RelFromV::Margin,
+        align: None,
+        offset: None,
+        percent: None,
+    }
+}
+
+/// Атрибут-число в `i64`: EMU (`wp:extent/@cx`) не помещаются в `i32`.
+///
+/// # Errors
+/// [`Error::TooManyWarnings`] — предупреждений стало больше порога.
+fn attr_i64(attrs: &[Attr<'_>], name: &str, ctx: &mut ParseCtx, part: &str) -> Result<Option<i64>> {
+    let Some(raw) = find(attrs, name) else {
+        return Ok(None);
+    };
+    if let Ok(value) = raw.trim().parse::<i64>() {
+        Ok(Some(value))
+    } else {
+        ctx.warn(
+            WarningKind::InvalidAttribute,
+            part,
+            format!("`{name}`: `{raw}` is not a number, ignored"),
+        )?;
+        Ok(None)
+    }
+}
+
+/// Число из текста элемента: `wp:posOffset` и `wp:pct` записаны текстом.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn read_number(
+    reader: &mut XmlReader<'_>,
+    empty: bool,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+    element: &str,
+) -> Result<Option<i64>> {
+    if empty {
+        return Ok(None);
+    }
+    let raw = read_text(reader, part)?;
+    let raw = raw.trim();
+    if let Ok(value) = raw.parse::<i64>() {
+        Ok(Some(value))
+    } else {
+        ctx.warn_at(
+            WarningKind::InvalidAttribute,
+            part,
+            Some(xml_path),
+            format!("`{element}`: `{raw}` is not a number, ignored"),
+        )?;
+        Ok(None)
     }
 }
 
@@ -2316,11 +2883,15 @@ mod tests {
         parse_part(document_xml(body).as_bytes())
     }
 
-    /// Разобрать часть `word/document.xml`.
+    /// Разобрать часть `word/document.xml` без связей.
     fn parse_part(xml: &[u8]) -> (Body, Vec<ParseWarning>) {
+        parse_part_with(xml, &Relationships::default())
+    }
+
+    /// Разобрать часть вместе с её связями: без них не разрешить цели ссылок.
+    fn parse_part_with(xml: &[u8], rels: &Relationships) -> (Body, Vec<ParseWarning>) {
         let mut ctx = ParseCtx::new();
-        let body =
-            parse(xml, &Relationships::default(), &mut ctx, PART).expect("the document parses");
+        let body = parse(xml, rels, &mut ctx, PART).expect("the document parses");
         let warnings = ctx.warnings().to_vec();
         (body, warnings)
     }
@@ -2582,7 +3153,7 @@ mod tests {
     fn unknown_blocks_and_runs_are_kept_as_xml() {
         let (body, warnings) = parse_xml(
             r#"<w:sdt><w:sdtContent><w:p/></w:sdtContent></w:sdt>
-               <w:p><w:r><w:drawing/><w:footnoteReference w:id="1"/></w:r></w:p>"#,
+               <w:p><w:r><w:pict/><w:footnoteReference w:id="1"/></w:r></w:p>"#,
         );
 
         assert_eq!(warnings.len(), 3, "{warnings:?}");
@@ -2598,7 +3169,7 @@ mod tests {
         let content = &only_run(&body).content;
         assert_eq!(content.len(), 2);
         match &content[0] {
-            RunContent::Unknown { xml, .. } => assert_eq!(xml, "<w:drawing/>"),
+            RunContent::Unknown { xml, .. } => assert_eq!(xml, "<w:pict/>"),
             other => panic!("expected an unknown run content, got {other:?}"),
         }
     }
@@ -2960,8 +3531,8 @@ mod tests {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-fixtures/docx")
     }
 
-    /// Пары «имя, `word/document.xml`, сайкар» из категории фикстур.
-    fn fixture_cases(category: &str) -> Vec<(String, Vec<u8>, serde_json::Value)> {
+    /// Фикстуры категории: имя, `word/document.xml`, связи части и сайкар.
+    fn fixture_cases(category: &str) -> Vec<(String, Vec<u8>, Relationships, serde_json::Value)> {
         let dir = fixtures_root().join(category);
         let mut cases = Vec::new();
         let entries = std::fs::read_dir(&dir)
@@ -2986,7 +3557,10 @@ mod tests {
             let xml = archive
                 .read("word/document.xml")
                 .unwrap_or_else(|e| panic!("{name}: `word/document.xml`: {e}"));
-            cases.push((name, xml, sidecar));
+            let mut rels_ctx = ParseCtx::new();
+            let rels = crate::rels::load(&mut archive, PART, &mut rels_ctx)
+                .unwrap_or_else(|e| panic!("{name}: связи части: {e}"));
+            cases.push((name, xml, rels, sidecar));
         }
         cases.sort_by(|a, b| a.0.cmp(&b.0));
         cases
@@ -2998,7 +3572,7 @@ mod tests {
     fn fixtures_match_their_sidecars() {
         let mut checked = 0;
         for category in ["basic", "simple", "edge_cases", "formatting"] {
-            for (name, xml, sidecar) in fixture_cases(category) {
+            for (name, xml, _rels, sidecar) in fixture_cases(category) {
                 let path = format!("{category}/{name}");
                 let (body, warnings) = parse_part(&xml);
                 assert!(warnings.is_empty(), "{path}: {warnings:?}");
@@ -3358,7 +3932,7 @@ mod tests {
     #[test]
     fn tables_fixtures_match_their_sidecars() {
         let mut checked = 0;
-        for (name, xml, sidecar) in fixture_cases("tables") {
+        for (name, xml, _rels, sidecar) in fixture_cases("tables") {
             let path = format!("tables/{name}");
             let (body, warnings) = parse_part(&xml);
             assert!(warnings.is_empty(), "{path}: {warnings:?}");
@@ -3389,7 +3963,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn snapshot_breaks_and_tabs_fixture() {
-        let (_, xml, _) = fixture_cases("basic")
+        let (_, xml, _, _) = fixture_cases("basic")
             .into_iter()
             .find(|(name, ..)| name == "breaks_and_tabs")
             .expect("фикстура на месте");
@@ -3403,7 +3977,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn snapshot_heading_fixture() {
-        let (_, xml, _) = fixture_cases("formatting")
+        let (_, xml, _, _) = fixture_cases("formatting")
             .into_iter()
             .find(|(name, ..)| name == "heading_1")
             .expect("фикстура на месте");
@@ -3442,7 +4016,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn snapshot_table_fixture() {
-        let (_, xml, _) = fixture_cases("tables")
+        let (_, xml, _, _) = fixture_cases("tables")
             .into_iter()
             .find(|(name, ..)| name == "v_merge")
             .expect("фикстура на месте");
