@@ -7,6 +7,10 @@
 // Размер набирается «шумом» из детерминированного PRNG: осмысленный текст
 // deflate сжимает в сотни раз, а случайные слова — лишь до ~0.75, поэтому
 // итоговый файл действительно большой.
+//
+// Последние две фикстуры — профили бюджетов ROADMAP §9 (время `openDocx` и
+// пиковая память). Их состав задан роадмапом, поэтому за размер отвечает длина
+// «шума», а не число абзацев или картинок.
 
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -15,7 +19,6 @@ import { type Bytes, buildZip, makePrng, pngBytes } from '../docx-zip.js';
 import {
     XML_DECL,
     W_NS,
-    type FixtureSpec,
     defaultSectPr,
     defaultSettingsXml,
     defaultStylesXml,
@@ -24,15 +27,22 @@ import {
     imageRelId,
     p,
     packageParts,
+    para,
+    run,
     sectionProps,
     tc,
     tr,
 } from './kit.js';
 
+/** Части пакета: путь в ZIP → содержимое. */
+type PackageParts = Array<[string, string | Bytes]>;
+
 /** Итог генерации большой фикстуры. */
 export interface LargeFixtureResult {
     name: string;
     bytes: number;
+    /** Пол размера: ниже него фикстура вырождена, и бюджеты по ней не мерятся. */
+    minBytes: number;
 }
 
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -52,6 +62,17 @@ const noiseText = (length: number, rnd: () => number): string => {
     return buf.toString('latin1');
 };
 
+const MIB = 1024 * 1024;
+
+/** Пол «больших» фикстур: они нужны бюджетами, а не полнотой покрытия. */
+const MIN_LARGE_BYTES = 10 * MIB;
+
+/**
+ * Пол фикстур-профилей бюджетов: 50 МиБ из ROADMAP §9 плюс запас — на самом
+ * пороге проверка мигала бы от любого шевеления профиля.
+ */
+const MIN_BUDGET_BYTES = 50 * MIB;
+
 const numberingXml = (): string =>
     XML_DECL +
     `<w:numbering xmlns:w="${W_NS}">` +
@@ -60,31 +81,19 @@ const numberingXml = (): string =>
     '<w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum>' +
     '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>';
 
-const spec = (
-    name: string,
-    description: string,
-    parts: FixtureSpec['parts'],
-): FixtureSpec => ({
-    name,
-    description,
-    expectedParagraphs: 0,
-    expectedTables: 0,
-    parts,
-});
-
-const buildManyParagraphs = (): FixtureSpec => {
+const buildManyParagraphs = (): PackageParts => {
     const rnd = makePrng(0x51a1);
     const blocks: string[] = [];
     for (let i = 0; i < 100_000; i++) {
         blocks.push(p(noiseText(170, rnd)));
     }
-    return spec('many_paragraphs', '100 000 абзацев текста', packageParts({
+    return packageParts({
         title: 'many_paragraphs',
         body: blocks.join('') + sectionProps(defaultSectPr),
-    }));
+    });
 };
 
-const buildWideTable = (): FixtureSpec => {
+const buildWideTable = (): PackageParts => {
     const rnd = makePrng(0x51a2);
     const rows: string[] = [];
     for (let r = 0; r < 2000; r++) {
@@ -100,13 +109,13 @@ const buildWideTable = (): FixtureSpec => {
         '</w:tblBorders></w:tblPr>' +
         rows.join('') +
         '</w:tbl>';
-    return spec('wide_table', 'Таблица 2000×20', packageParts({
+    return packageParts({
         title: 'wide_table',
         body: tableXml + sectionProps(defaultSectPr),
-    }));
+    });
 };
 
-const buildManyImages = (): FixtureSpec => {
+const buildManyImages = (): PackageParts => {
     const count = 200;
     const images: Record<string, Bytes> = {};
     const paragraphs: string[] = [];
@@ -117,29 +126,29 @@ const buildManyImages = (): FixtureSpec => {
             '<w:p><w:r>' + inlineImage(imageRelId(i), { id: i + 1, name: fileName, cx: 812800, cy: 812800 }) + '</w:r></w:p>',
         );
     }
-    return spec('many_images', '200 изображений', packageParts({
+    return packageParts({
         title: 'many_images',
         body: paragraphs.join('') + sectionProps(defaultSectPr),
         images,
-    }));
+    });
 };
 
-const buildNumberedList = (): FixtureSpec => {
+const buildNumberedList = (): PackageParts => {
     const rnd = makePrng(0x51a4);
     const blocks: string[] = [];
     for (let i = 0; i < 50_000; i++) {
         blocks.push(p(noiseText(320, rnd), { numId: 1, ilvl: 0 }));
     }
-    return spec('numbered_list', '50 000 абзацев с нумерацией', packageParts({
+    return packageParts({
         title: 'numbered_list',
         body: blocks.join('') + sectionProps(defaultSectPr),
         numbering: numberingXml(),
         settings: defaultSettingsXml(),
         styles: defaultStylesXml(),
-    }));
+    });
 };
 
-const buildMixed = (): FixtureSpec => {
+const buildMixed = (): PackageParts => {
     const rnd = makePrng(0x51a5);
     const images: Record<string, Bytes> = {};
     const blocks: string[] = [];
@@ -165,7 +174,7 @@ const buildMixed = (): FixtureSpec => {
     }
     const sectPr =
         `<w:sectPr><w:headerReference w:type="default" r:id="${headerRelId(0)}"/>${defaultSectPr}</w:sectPr>`;
-    return spec('mixed', 'Текст + таблицы + изображения', packageParts({
+    return packageParts({
         title: 'mixed',
         body: blocks.join('') + sectPr,
         images,
@@ -174,34 +183,175 @@ const buildMixed = (): FixtureSpec => {
         },
         settings: defaultSettingsXml(),
         styles: defaultStylesXml(),
-    }));
+    });
 };
 
+// ==================== Профили бюджетов ROADMAP §9 ====================
+//
+// Числа профилей менять нельзя: под них подписаны бюджеты времени и памяти.
+// Размер набирается длиной «шума» — она подобрана эмпирически так, чтобы файл
+// попадал в 52–60 МиБ, то есть с запасом над порогом 50 МиБ.
+
+/** Профиль бюджета времени `openDocx`: 100 000 абзацев, 500 таблиц, 50 картинок. */
+const PROFILE_PARAGRAPHS = 100_000;
+const PROFILE_TABLES = 500;
+const PROFILE_IMAGES = 50;
+/** ~690 знаков на абзац дают ~55 МиБ: шум из PRNG deflate жмёт лишь до ~0.75. */
+const PROFILE_PARAGRAPH_CHARS = 690;
+const PROFILE_TABLE_ROWS = 6;
+const PROFILE_TABLE_CELLS = 4;
+const PROFILE_CELL_CHARS = 240;
+/** 100 000 / 500 = 200 — таблица каждые 200 абзацев, ровно 500 штук. */
+const PROFILE_TABLE_EVERY = PROFILE_PARAGRAPHS / PROFILE_TABLES;
+/** 100 000 / 50 = 2000 — картинка каждые 2000 абзацев, ровно 50 штук. */
+const PROFILE_IMAGE_EVERY = PROFILE_PARAGRAPHS / PROFILE_IMAGES;
+
+/** Одна таблица профиля: без границ — считаются абзацы и ячейки, а не вид. */
+const profileTable = (rnd: () => number): string => {
+    const rows: string[] = [];
+    for (let r = 0; r < PROFILE_TABLE_ROWS; r++) {
+        const cells: string[] = [];
+        for (let c = 0; c < PROFILE_TABLE_CELLS; c++) cells.push(tc(noiseText(PROFILE_CELL_CHARS, rnd)));
+        rows.push(tr(cells.join('')));
+    }
+    return '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>' + rows.join('') + '</w:tbl>';
+};
+
+const buildProfile50MiB = (): PackageParts => {
+    const rnd = makePrng(0x51a6);
+    const images: Record<string, Bytes> = {};
+    const blocks: string[] = [];
+    let imageIndex = 0;
+    for (let i = 0; i < PROFILE_PARAGRAPHS; i++) {
+        let runs = run(noiseText(PROFILE_PARAGRAPH_CHARS, rnd));
+        if (i % PROFILE_IMAGE_EVERY === 0) {
+            const fileName = `image${imageIndex + 1}.png`;
+            images[fileName] = pngBytes(160, 160, 0x5100 + imageIndex);
+            runs +=
+                '<w:r>' +
+                inlineImage(imageRelId(imageIndex), { id: imageIndex + 1, name: fileName, cx: 812800, cy: 812800 }) +
+                '</w:r>';
+            imageIndex++;
+        }
+        // Картинка лежит в том же абзаце, что и текст: абзацев ровно 100 000,
+        // а не «100 000 плюс по абзацу на каждую картинку».
+        blocks.push(para('', runs));
+        if (i % PROFILE_TABLE_EVERY === 0) blocks.push(profileTable(rnd));
+    }
+    return packageParts({
+        title: 'profile_50mib',
+        body: blocks.join('') + sectionProps(defaultSectPr),
+        images,
+    });
+};
+
+/** Профиль бюджета памяти: ≥ 50 МиБ, вес набирают картинки, а не текст. */
+const MEMORY_PARAGRAPHS = 6_000;
+const MEMORY_IMAGES = 75;
+const MEMORY_PARAGRAPH_CHARS = 200;
+/** 512 px: шумовой PNG весит ~770 КиБ, 75 штук дают ~56 МиБ. */
+const MEMORY_IMAGE_PX = 512;
+/** 512 px при 96 dpi: 512 / 96 × 914400 — размер картинки на странице. */
+const MEMORY_IMAGE_EMU = 4_876_800;
+/** 6 000 / 75 = 80 — картинка каждые 80 абзацев, ровно 75 штук. */
+const MEMORY_IMAGE_EVERY = MEMORY_PARAGRAPHS / MEMORY_IMAGES;
+
+const buildMemory50MiB = (): PackageParts => {
+    const rnd = makePrng(0x51a7);
+    const images: Record<string, Bytes> = {};
+    const blocks: string[] = [];
+    let imageIndex = 0;
+    for (let i = 0; i < MEMORY_PARAGRAPHS; i++) {
+        let runs = run(noiseText(MEMORY_PARAGRAPH_CHARS, rnd));
+        if (i % MEMORY_IMAGE_EVERY === 0) {
+            const fileName = `image${imageIndex + 1}.png`;
+            images[fileName] = pngBytes(MEMORY_IMAGE_PX, MEMORY_IMAGE_PX, 0x5300 + imageIndex);
+            runs +=
+                '<w:r>' +
+                inlineImage(imageRelId(imageIndex), {
+                    id: imageIndex + 1,
+                    name: fileName,
+                    cx: MEMORY_IMAGE_EMU,
+                    cy: MEMORY_IMAGE_EMU,
+                }) +
+                '</w:r>';
+            imageIndex++;
+        }
+        blocks.push(para('', runs));
+    }
+    return packageParts({
+        title: 'memory_50mib',
+        body: blocks.join('') + sectionProps(defaultSectPr),
+        images,
+    });
+};
+
+/** Большая фикстура: имя файла, пол размера и ленивый билдер частей пакета. */
+interface LargeFixture {
+    name: string;
+    minBytes: number;
+    build: () => PackageParts;
+}
+
+/** Большая фикстура общего пола размера. */
+const large = (name: string, build: () => PackageParts): LargeFixture => ({
+    name,
+    minBytes: MIN_LARGE_BYTES,
+    build,
+});
+
+/** Фикстура-профиль бюджета: на ней стоят замеры времени или памяти ROADMAP §9. */
+const budget = (name: string, build: () => PackageParts): LargeFixture => ({
+    name,
+    minBytes: MIN_BUDGET_BYTES,
+    build,
+});
+
 /**
- * Генерирует 5 больших фикстур в указанный каталог.
+ * Все большие фикстуры в порядке генерации.
+ *
+ * Таблица имя → билдер, а не список спеков: по имени фильтрует `--only`, и
+ * фильтр обязан сработать до сборки — иначе запрос одной маленькой фикстуры
+ * собирал бы десятки мегабайт профиля впустую.
+ */
+const LARGE_FIXTURES: readonly LargeFixture[] = [
+    large('many_paragraphs', buildManyParagraphs),
+    large('wide_table', buildWideTable),
+    large('many_images', buildManyImages),
+    large('numbered_list', buildNumberedList),
+    large('mixed', buildMixed),
+    budget('profile_50mib', buildProfile50MiB),
+    budget('memory_50mib', buildMemory50MiB),
+];
+
+/** Имена больших фикстур в порядке генерации — для подсказки в CLI. */
+export const largeFixtureNames = (): string[] => LARGE_FIXTURES.map((fixture) => fixture.name);
+
+/**
+ * Генерирует большие фикстуры в указанный каталог.
  *
  * @param outDir каталог назначения (обычно `target/fixtures/docx-large`)
- * @returns имена файлов и их размеры
+ * @param only имя единственной фикстуры; без него каталог перезаписывается
+ *   целиком, иначе старые большие файлы копятся. С ним остальные файлы
+ *   каталога остаются на месте — ими пользуются бюджеты соседних профилей.
+ * @returns имена файлов, размеры и полы размера
  */
-export const generateLargeFixtures = async (outDir: string): Promise<LargeFixtureResult[]> => {
-    // Каталог перезаписывается целиком: иначе старые большие файлы копятся.
-    await rm(outDir, { recursive: true, force: true });
+export const generateLargeFixtures = async (outDir: string, only?: string): Promise<LargeFixtureResult[]> => {
+    const selected = only === undefined ? LARGE_FIXTURES : LARGE_FIXTURES.filter((f) => f.name === only);
+    if (selected.length === 0) {
+        throw new Error(`unknown large fixture: ${only}\navailable: ${largeFixtureNames().join(', ')}`);
+    }
+    if (only === undefined) {
+        await rm(outDir, { recursive: true, force: true });
+    }
     await mkdir(outDir, { recursive: true });
 
-    const specs = [
-        buildManyParagraphs(),
-        buildWideTable(),
-        buildManyImages(),
-        buildNumberedList(),
-        buildMixed(),
-    ];
-
     const results: LargeFixtureResult[] = [];
-    for (const item of specs) {
-        const bytes = buildZip(item.parts);
+    for (const fixture of selected) {
+        const bytes = buildZip(fixture.build());
         // Приведение — расхождение дженериков Buffer/Uint8Array в @types/node.
-        await writeFile(path.join(outDir, `${item.name}.docx`), bytes as Uint8Array);
-        results.push({ name: item.name, bytes: bytes.length });
+        await writeFile(path.join(outDir, `${fixture.name}.docx`), bytes as Uint8Array);
+        results.push({ name: fixture.name, bytes: bytes.length, minBytes: fixture.minBytes });
     }
     return results;
 };
