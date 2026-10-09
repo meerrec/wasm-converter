@@ -221,7 +221,7 @@ fn note_kind(attrs: &[Attr<'_>], default_kind: NoteKind) -> NoteKind {
 fn mark_rpr(body: &[BlockItem]) -> RawRPr {
     body.iter()
         .find_map(|item| match item {
-            BlockItem::Paragraph(paragraph) => Some(paragraph.mark_rpr.clone()),
+            BlockItem::Paragraph(paragraph) => Some((*paragraph.mark_rpr).clone()),
             _ => None,
         })
         .unwrap_or_default()

@@ -270,7 +270,7 @@ fn collect_sections(items: &[BlockItem], ctx: &mut ParseCtx) -> Vec<Section> {
     let mut sections = Vec::new();
     for item in items {
         let properties = match item {
-            BlockItem::Paragraph(paragraph) => paragraph.section_break.as_ref(),
+            BlockItem::Paragraph(paragraph) => paragraph.section_break.as_deref(),
             BlockItem::SectPr(properties) => Some(properties),
             _ => None,
         };
@@ -669,12 +669,12 @@ fn parse_paragraph(
     let numbering_ref = ppr.num_pr.as_ref().and_then(|num| num.num_id);
     Ok(Paragraph {
         id,
-        ppr,
-        mark_rpr,
+        ppr: Box::new(ppr),
+        mark_rpr: Box::new(mark_rpr),
         runs,
         style_ref,
         numbering_ref,
-        section_break,
+        section_break: section_break.map(Box::new),
     })
 }
 
@@ -3987,7 +3987,7 @@ mod tests {
         );
         // `w:rPr` внутри `w:pPr` — свойства знака абзаца, а не runs.
         assert_eq!(paragraph.mark_rpr.b, Some(Toggle::On));
-        assert_eq!(paragraph.ppr.r_pr, Some(paragraph.mark_rpr.clone()));
+        assert_eq!(paragraph.ppr.r_pr, Some((*paragraph.mark_rpr).clone()));
     }
 
     #[test]

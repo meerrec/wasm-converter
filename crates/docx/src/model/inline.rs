@@ -18,9 +18,13 @@ pub struct Paragraph {
     /// Идентификатор узла в модели.
     pub id: NodeId,
     /// Сырые свойства абзаца (`w:pPr`).
-    pub ppr: RawPPr,
+    ///
+    /// `Box` — бюджет памяти ROADMAP §9 (≤ 256 байт на абзац): `RawPPr` тяжелее бюджета целиком.
+    pub ppr: Box<RawPPr>,
     /// Свойства знака абзаца (`w:rPr` внутри `w:pPr`); к runs не применяются (ADR-0013 §2).
-    pub mark_rpr: RawRPr,
+    ///
+    /// `Box` — тот же бюджет памяти: `RawRPr` — второе по тяжести поле абзаца.
+    pub mark_rpr: Box<RawRPr>,
     /// Содержимое абзаца по порядку.
     pub runs: Vec<Inline>,
     /// Идентификатор стиля абзаца (`w:pStyle`) — копия `ppr.style`.
@@ -28,7 +32,10 @@ pub struct Paragraph {
     /// Нумерация абзаца (`w:numId`) — копия `ppr.num_pr.num_id`.
     pub numbering_ref: Option<NumId>,
     /// `w:sectPr` внутри `w:pPr`: конец секции, а не её начало.
-    pub section_break: Option<SectionProperties>,
+    ///
+    /// `Box` — бюджет памяти: `SectionProperties` заметно тяжелее бюджета абзаца, а есть он
+    /// у считанных абзацев документа.
+    pub section_break: Option<Box<SectionProperties>>,
 }
 
 /// Inline-содержимое абзаца.
