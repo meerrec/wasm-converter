@@ -1449,6 +1449,23 @@ mod tests {
         );
     }
 
+    /// `w:name` — название схемы для интерфейса, в модели его нет: элемент
+    /// пропускается молча; незнакомый же элемент схемы — с предупреждением
+    /// (ADR-0016).
+    #[test]
+    fn abstract_num_name_is_skipped_and_unknown_child_warns() {
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\"><w:name w:val=\"Список\"/><w:foo/>\
+             <w:multiLevelType w:val=\"hybridMultilevel\"/></w:abstractNum>",
+        ));
+        assert_eq!(warnings, vec![WarningKind::UnknownElement]);
+        // Разбор продолжился: элемент после пропущенного на месте.
+        assert_eq!(
+            table.abstract_nums[&AbstractNumId::new(0)].multi_level_type,
+            MultiLevelType::HybridMultilevel
+        );
+    }
+
     #[test]
     fn level_attributes_are_parsed() {
         let lvl = level_zero(
@@ -1551,6 +1568,25 @@ mod tests {
         assert_eq!(lvl.restart, Some(2));
     }
 
+    /// `w:lvlRestart` вне 0…=8 отбрасывается с предупреждением; `w:legacy`
+    /// в модели нет — элемент пропускается молча; пустой `w:lvlText` — пустая
+    /// строка, а не текст соседнего элемента.
+    #[test]
+    fn level_restart_outside_the_range_and_legacy_are_handled() {
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\"><w:lvl w:ilvl=\"0\">\
+             <w:lvlRestart w:val=\"9\"/><w:legacy w:val=\"1\"/></w:lvl></w:abstractNum>",
+        ));
+        assert_eq!(warnings, vec![WarningKind::InvalidAttribute]);
+        assert_eq!(
+            table.abstract_nums[&AbstractNumId::new(0)].levels[&0].restart,
+            None
+        );
+
+        let lvl = level_zero("<w:lvl w:ilvl=\"0\"><w:lvlText/></w:lvl>");
+        assert_eq!(lvl.lvl_text, "");
+    }
+
     #[test]
     fn level_flags_and_bullet_reference_are_parsed() {
         let lvl = level_zero(
@@ -1595,6 +1631,650 @@ mod tests {
         assert_eq!(lvl.rpr.u, Some(Underline::Wave));
         assert_eq!(lvl.rpr.sz, Some(HalfPoint::new(24)));
         assert_eq!(lvl.rpr.color, Some(Color::Rgb(0x00FF_0000)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Таблицы значений атрибутов
+    // -----------------------------------------------------------------------
+
+    /// Таблица `ST_Border` целиком: строки, которой в ней нет, граница
+    /// не узнала бы и уехала в [`BorderStyle::Other`].
+    #[test]
+    fn border_style_covers_the_whole_st_border() {
+        let table = [
+            ("nil", BorderStyle::Nil),
+            ("none", BorderStyle::None),
+            ("single", BorderStyle::Single),
+            ("thick", BorderStyle::Thick),
+            ("double", BorderStyle::Double),
+            ("dotted", BorderStyle::Dotted),
+            ("dashed", BorderStyle::Dashed),
+            ("dotDash", BorderStyle::DotDash),
+            ("dotDotDash", BorderStyle::DotDotDash),
+            ("triple", BorderStyle::Triple),
+            ("thinThickSmallGap", BorderStyle::ThinThickSmallGap),
+            ("thickThinSmallGap", BorderStyle::ThickThinSmallGap),
+            ("thinThickThinSmallGap", BorderStyle::ThinThickThinSmallGap),
+            ("thinThickMediumGap", BorderStyle::ThinThickMediumGap),
+            ("thickThinMediumGap", BorderStyle::ThickThinMediumGap),
+            (
+                "thinThickThinMediumGap",
+                BorderStyle::ThinThickThinMediumGap,
+            ),
+            ("thinThickLargeGap", BorderStyle::ThinThickLargeGap),
+            ("thickThinLargeGap", BorderStyle::ThickThinLargeGap),
+            ("thinThickThinLargeGap", BorderStyle::ThinThickThinLargeGap),
+            ("wave", BorderStyle::Wave),
+            ("doubleWave", BorderStyle::DoubleWave),
+            ("dashSmallGap", BorderStyle::DashSmallGap),
+            ("dashDotStroked", BorderStyle::DashDotStroked),
+            ("threeDEmboss", BorderStyle::ThreeDEmboss),
+            ("threeDEngrave", BorderStyle::ThreeDEngrave),
+            ("outset", BorderStyle::Outset),
+            ("inset", BorderStyle::Inset),
+        ];
+        // Перечень модели обязан быть той же длины: разойдясь, они разойдутся
+        // и со `ST_Border`.
+        assert_eq!(table.len(), BorderStyle::ALL.len());
+        for (raw, expected) in table {
+            assert_eq!(border_style(raw), expected, "{raw}");
+        }
+        // Значение вне стандарта сохраняется как есть, а не теряется.
+        assert_eq!(
+            border_style("bogus"),
+            BorderStyle::Other("bogus".to_owned())
+        );
+    }
+
+    /// Таблица `ST_Shd` (§17.18.78) целиком: пропущенный узор заливки уехал бы
+    /// в [`ShadingPattern::Other`].
+    #[test]
+    fn shading_pattern_covers_the_whole_st_shd() {
+        let table = [
+            ("nil", ShadingPattern::Nil),
+            ("clear", ShadingPattern::Clear),
+            ("solid", ShadingPattern::Solid),
+            ("horzStripe", ShadingPattern::HorzStripe),
+            ("vertStripe", ShadingPattern::VertStripe),
+            ("reverseDiagStripe", ShadingPattern::ReverseDiagStripe),
+            ("diagStripe", ShadingPattern::DiagStripe),
+            ("horzCross", ShadingPattern::HorzCross),
+            ("diagCross", ShadingPattern::DiagCross),
+            ("thinHorzStripe", ShadingPattern::ThinHorzStripe),
+            ("thinVertStripe", ShadingPattern::ThinVertStripe),
+            (
+                "thinReverseDiagStripe",
+                ShadingPattern::ThinReverseDiagStripe,
+            ),
+            ("thinDiagStripe", ShadingPattern::ThinDiagStripe),
+            ("thinHorzCross", ShadingPattern::ThinHorzCross),
+            ("thinDiagCross", ShadingPattern::ThinDiagCross),
+            ("pct5", ShadingPattern::Pct5),
+            ("pct10", ShadingPattern::Pct10),
+            ("pct12", ShadingPattern::Pct12),
+            ("pct15", ShadingPattern::Pct15),
+            ("pct20", ShadingPattern::Pct20),
+            ("pct25", ShadingPattern::Pct25),
+            ("pct30", ShadingPattern::Pct30),
+            ("pct35", ShadingPattern::Pct35),
+            ("pct37", ShadingPattern::Pct37),
+            ("pct40", ShadingPattern::Pct40),
+            ("pct45", ShadingPattern::Pct45),
+            ("pct50", ShadingPattern::Pct50),
+            ("pct55", ShadingPattern::Pct55),
+            ("pct60", ShadingPattern::Pct60),
+            ("pct62", ShadingPattern::Pct62),
+            ("pct65", ShadingPattern::Pct65),
+            ("pct70", ShadingPattern::Pct70),
+            ("pct75", ShadingPattern::Pct75),
+            ("pct80", ShadingPattern::Pct80),
+            ("pct85", ShadingPattern::Pct85),
+            ("pct87", ShadingPattern::Pct87),
+            ("pct90", ShadingPattern::Pct90),
+            ("pct95", ShadingPattern::Pct95),
+        ];
+        assert_eq!(table.len(), ShadingPattern::ALL.len());
+        for (raw, expected) in table {
+            assert_eq!(shading_pattern(raw), expected, "{raw}");
+        }
+        assert_eq!(
+            shading_pattern("bogus"),
+            ShadingPattern::Other("bogus".to_owned())
+        );
+    }
+
+    /// Таблица `ST_HighlightColor` (§17.18.40) целиком.
+    #[test]
+    fn highlight_covers_the_whole_st_highlight_color() {
+        let table = [
+            ("black", Highlight::Black),
+            ("blue", Highlight::Blue),
+            ("cyan", Highlight::Cyan),
+            ("green", Highlight::Green),
+            ("magenta", Highlight::Magenta),
+            ("red", Highlight::Red),
+            ("yellow", Highlight::Yellow),
+            ("white", Highlight::White),
+            ("darkBlue", Highlight::DarkBlue),
+            ("darkCyan", Highlight::DarkCyan),
+            ("darkGreen", Highlight::DarkGreen),
+            ("darkMagenta", Highlight::DarkMagenta),
+            ("darkRed", Highlight::DarkRed),
+            ("darkYellow", Highlight::DarkYellow),
+            ("darkGray", Highlight::DarkGray),
+            ("lightGray", Highlight::LightGray),
+            ("none", Highlight::None),
+        ];
+        for (raw, expected) in table {
+            assert_eq!(highlight(raw), expected, "{raw}");
+        }
+        assert_eq!(highlight("bogus"), Highlight::Other("bogus".to_owned()));
+    }
+
+    /// Таблица `ST_TabJc` (`w:tab/@w:val`) целиком.
+    #[test]
+    fn tab_stop_kind_covers_the_whole_st_tab_jc() {
+        let table = [
+            ("bar", TabStopKind::Bar),
+            ("center", TabStopKind::Center),
+            ("clear", TabStopKind::Clear),
+            ("decimal", TabStopKind::Decimal),
+            ("end", TabStopKind::End),
+            ("num", TabStopKind::Num),
+            ("start", TabStopKind::Start),
+            ("left", TabStopKind::Left),
+            ("right", TabStopKind::Right),
+        ];
+        for (raw, expected) in table {
+            assert_eq!(tab_stop_kind(raw), expected, "{raw}");
+        }
+        assert_eq!(
+            tab_stop_kind("bogus"),
+            TabStopKind::Other("bogus".to_owned())
+        );
+    }
+
+    /// Прочие таблицы значений: выравнивание `ST_Jc`, подчёркивание
+    /// `ST_Underline`, подсказка шрифта `ST_Hint`, заполнитель `ST_TabTlc`
+    /// и правило высоты строки `ST_LineSpacingRule`.
+    #[test]
+    fn the_remaining_value_tables_cover_their_spellings() {
+        for (raw, expected) in [
+            ("left", Justification::Left),
+            ("center", Justification::Center),
+            ("right", Justification::Right),
+            ("both", Justification::Both),
+            ("distribute", Justification::Distribute),
+            ("start", Justification::Start),
+            ("end", Justification::End),
+        ] {
+            assert_eq!(justification(raw), expected, "{raw}");
+        }
+        assert_eq!(
+            justification("bogus"),
+            Justification::Other("bogus".to_owned())
+        );
+
+        for (raw, expected) in [
+            ("single", Underline::Single),
+            ("words", Underline::Words),
+            ("double", Underline::Double),
+            ("thick", Underline::Thick),
+            ("dotted", Underline::Dotted),
+            ("dottedHeavy", Underline::DottedHeavy),
+            ("dash", Underline::Dash),
+            ("dashedHeavy", Underline::DashedHeavy),
+            ("dashLong", Underline::DashLong),
+            ("dashLongHeavy", Underline::DashLongHeavy),
+            ("dotDash", Underline::DotDash),
+            ("dashDotHeavy", Underline::DashDotHeavy),
+            ("dotDotDash", Underline::DotDotDash),
+            ("dashDotDotHeavy", Underline::DashDotDotHeavy),
+            ("wave", Underline::Wave),
+            ("wavyHeavy", Underline::WavyHeavy),
+            ("wavyDouble", Underline::WavyDouble),
+            ("none", Underline::None),
+        ] {
+            assert_eq!(underline(raw), expected, "{raw}");
+        }
+        assert_eq!(underline("bogus"), Underline::Other("bogus".to_owned()));
+
+        for (raw, expected) in [
+            ("default", FontHint::Default),
+            ("eastAsia", FontHint::EastAsia),
+            ("cs", FontHint::Cs),
+        ] {
+            assert_eq!(font_hint(raw), expected, "{raw}");
+        }
+        assert_eq!(font_hint("bogus"), FontHint::Other("bogus".to_owned()));
+
+        for (raw, expected) in [
+            ("none", TabLeader::None),
+            ("dot", TabLeader::Dot),
+            ("hyphen", TabLeader::Hyphen),
+            ("middleDot", TabLeader::MiddleDot),
+            ("heavy", TabLeader::Heavy),
+            ("underscore", TabLeader::Underscore),
+        ] {
+            assert_eq!(tab_leader(raw), expected, "{raw}");
+        }
+        assert_eq!(tab_leader("bogus"), TabLeader::Other("bogus".to_owned()));
+
+        for (raw, expected) in [
+            ("auto", LineSpacingRule::Auto),
+            ("exact", LineSpacingRule::Exact),
+            ("atLeast", LineSpacingRule::AtLeast),
+        ] {
+            assert_eq!(line_spacing_rule(raw), expected, "{raw}");
+        }
+        assert_eq!(
+            line_spacing_rule("bogus"),
+            LineSpacingRule::Other("bogus".to_owned())
+        );
+    }
+
+    /// `ST_VerticalAlignRun`: варианта «прочее» у [`VertAlign`] нет, поэтому
+    /// незнакомое значение отбрасывается с предупреждением.
+    #[test]
+    fn vert_align_is_parsed_and_bogus_value_warns() {
+        for (raw, expected) in [
+            ("baseline", VertAlign::Baseline),
+            ("superscript", VertAlign::Superscript),
+            ("subscript", VertAlign::Subscript),
+        ] {
+            let lvl = level_zero(&format!(
+                "<w:lvl w:ilvl=\"0\"><w:rPr><w:vertAlign w:val=\"{raw}\"/></w:rPr></w:lvl>"
+            ));
+            assert_eq!(lvl.rpr.vert_align, Some(expected), "{raw}");
+        }
+
+        // Без `w:val` смещение не задано — предупреждать не о чем.
+        let lvl = level_zero("<w:lvl w:ilvl=\"0\"><w:rPr><w:vertAlign/></w:rPr></w:lvl>");
+        assert_eq!(lvl.rpr.vert_align, None);
+
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\"><w:lvl w:ilvl=\"0\"><w:rPr>\
+             <w:vertAlign w:val=\"bogus\"/></w:rPr></w:lvl></w:abstractNum>",
+        ));
+        assert_eq!(warnings, vec![WarningKind::InvalidAttribute]);
+        assert_eq!(
+            table.abstract_nums[&AbstractNumId::new(0)].levels[&0]
+                .rpr
+                .vert_align,
+            None
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Свойства внутри уровня
+    // -----------------------------------------------------------------------
+
+    /// Ветви `w:pPr` уровня, которых не приносят фикстуры: стиль, ссылка
+    /// на список, интервалы, заливка и позиции табуляции.
+    #[test]
+    fn ppr_level_properties_are_parsed() {
+        let lvl = level_zero(
+            "<w:lvl w:ilvl=\"0\"><w:pPr>\
+             <w:pStyle w:val=\"ListParagraph\"/>\
+             <w:numPr><w:ilvl w:val=\"1\"/><w:numId w:val=\"3\"/></w:numPr>\
+             <w:spacing w:before=\"120\" w:after=\"240\" w:line=\"360\" w:lineRule=\"auto\"\
+             w:beforeLines=\"50\" w:afterLines=\"75\" w:beforeAutospacing=\"1\"/>\
+             <w:ind w:firstLine=\"567\"/>\
+             <w:keepLines/><w:pageBreakBefore w:val=\"0\"/><w:widowControl/>\
+             <w:outlineLvl w:val=\"2\"/>\
+             <w:pBdr><w:top w:val=\"double\" w:sz=\"8\" w:space=\"4\" w:color=\"FF0000\"/>\
+             <w:bottom w:val=\"nil\"/></w:pBdr>\
+             <w:shd w:val=\"pct50\" w:color=\"FF0000\" w:fill=\"00FF00\"/>\
+             <w:tabs><w:tab w:val=\"center\" w:pos=\"2880\" w:leader=\"dot\"/></w:tabs>\
+             </w:pPr></w:lvl>",
+        );
+        assert_eq!(
+            lvl.ppr.style.as_ref().map(StyleId::as_str),
+            Some("ListParagraph")
+        );
+        let num_pr = lvl.ppr.num_pr.as_ref().expect("`w:numPr` разобран");
+        assert_eq!(num_pr.ilvl, Some(1));
+        assert_eq!(num_pr.num_id, Some(NumId::new(3)));
+        let spacing = lvl.ppr.spacing.as_ref().expect("`w:spacing` разобран");
+        assert_eq!(spacing.before, Some(Twips::new(120)));
+        assert_eq!(spacing.after, Some(Twips::new(240)));
+        assert_eq!(spacing.line, Some(LineSpacing::new(360)));
+        assert_eq!(spacing.line_rule, Some(LineSpacingRule::Auto));
+        assert_eq!(spacing.before_lines, Some(50));
+        assert_eq!(spacing.after_lines, Some(75));
+        assert!(spacing.before_autospacing);
+        assert!(!spacing.after_autospacing);
+        assert_eq!(
+            lvl.ppr.ind.as_ref(),
+            Some(&Ind {
+                left: None,
+                right: None,
+                first_line: Some(Twips::new(567)),
+                hanging: None,
+            })
+        );
+        assert_eq!(lvl.ppr.keep_lines, Some(Toggle::On));
+        assert_eq!(lvl.ppr.page_break_before, Some(Toggle::Off));
+        assert_eq!(lvl.ppr.widow_control, Some(Toggle::On));
+        assert_eq!(lvl.ppr.outline_lvl, Some(2));
+        let borders = lvl.ppr.p_bdr.as_ref().expect("`w:pBdr` разобран");
+        let top = borders.top.as_ref().expect("верхняя граница");
+        assert_eq!(top.val, BorderStyle::Double);
+        assert_eq!(top.sz, Some(8));
+        assert_eq!(top.space, Some(4));
+        assert_eq!(top.color, Some(Color::Rgb(0x00FF_0000)));
+        assert_eq!(
+            borders.bottom.as_ref().map(|border| border.val.clone()),
+            Some(BorderStyle::Nil)
+        );
+        let shd = lvl.ppr.shd.as_ref().expect("`w:shd` разобран");
+        assert_eq!(shd.val, ShadingPattern::Pct50);
+        assert_eq!(shd.color, Some(Color::Rgb(0x00FF_0000)));
+        assert_eq!(shd.fill, Some(Color::Rgb(0x0000_FF00)));
+        assert_eq!(lvl.ppr.tabs.len(), 1);
+        assert_eq!(lvl.ppr.tabs[0].val, Twips::new(2880));
+        assert_eq!(lvl.ppr.tabs[0].kind, TabStopKind::Center);
+        assert_eq!(lvl.ppr.tabs[0].leader, TabLeader::Dot);
+    }
+
+    /// `w:outlineLvl` — уровень структуры документа 0…=9; значение вне
+    /// диапазона отбрасывается с предупреждением, отсутствие `w:val` — молча.
+    #[test]
+    fn outline_level_outside_the_range_warns() {
+        let lvl =
+            level_zero("<w:lvl w:ilvl=\"0\"><w:pPr><w:outlineLvl w:val=\"9\"/></w:pPr></w:lvl>");
+        assert_eq!(lvl.ppr.outline_lvl, Some(9));
+
+        let lvl = level_zero("<w:lvl w:ilvl=\"0\"><w:pPr><w:outlineLvl/></w:pPr></w:lvl>");
+        assert_eq!(lvl.ppr.outline_lvl, None);
+
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\"><w:lvl w:ilvl=\"0\"><w:pPr>\
+             <w:outlineLvl w:val=\"10\"/></w:pPr></w:lvl></w:abstractNum>",
+        ));
+        assert_eq!(warnings, vec![WarningKind::InvalidAttribute]);
+        assert_eq!(
+            table.abstract_nums[&AbstractNumId::new(0)].levels[&0]
+                .ppr
+                .outline_lvl,
+            None
+        );
+    }
+
+    /// `w:pBdr`: границы читаются и в написании ISO Strict (`w:start`/`w:end`),
+    /// и в Transitional (`w:left`/`w:right`) — ADR-0017.
+    #[test]
+    fn paragraph_borders_accept_both_spellings() {
+        let lvl = level_zero(
+            "<w:lvl w:ilvl=\"0\"><w:pPr><w:pBdr>\
+             <w:left w:val=\"single\"/><w:right w:val=\"thick\"/>\
+             <w:between w:val=\"dotted\"/><w:bar w:val=\"dashed\"/></w:pBdr></w:pPr></w:lvl>",
+        );
+        let borders = lvl.ppr.p_bdr.as_ref().expect("`w:pBdr` разобран");
+        assert_eq!(
+            borders.left.as_ref().map(|border| border.val.clone()),
+            Some(BorderStyle::Single)
+        );
+        assert_eq!(
+            borders.right.as_ref().map(|border| border.val.clone()),
+            Some(BorderStyle::Thick)
+        );
+        assert_eq!(
+            borders.between.as_ref().map(|border| border.val.clone()),
+            Some(BorderStyle::Dotted)
+        );
+        assert_eq!(
+            borders.bar.as_ref().map(|border| border.val.clone()),
+            Some(BorderStyle::Dashed)
+        );
+
+        let lvl = level_zero(
+            "<w:lvl w:ilvl=\"0\"><w:pPr><w:pBdr>\
+             <w:start w:val=\"wave\"/><w:end w:val=\"dotDash\"/></w:pBdr></w:pPr></w:lvl>",
+        );
+        let borders = lvl.ppr.p_bdr.as_ref().expect("`w:pBdr` разобран");
+        assert_eq!(
+            borders.left.as_ref().map(|border| border.val.clone()),
+            Some(BorderStyle::Wave)
+        );
+        assert_eq!(
+            borders.right.as_ref().map(|border| border.val.clone()),
+            Some(BorderStyle::DotDash)
+        );
+    }
+
+    /// Граница без `w:val` теряется с предупреждением, незнакомый элемент
+    /// `w:pBdr` пропускается тоже с предупреждением (ADR-0016).
+    ///
+    /// У незнакомого элемента стоит `w:val`: `parse_pbdr` зовёт `parse_border`
+    /// до проверки имени, и элемент без стиля дал бы лишнее предупреждение
+    /// о границе, которой нет.
+    #[test]
+    fn border_without_a_style_and_unknown_pbdr_child_warn() {
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\"><w:lvl w:ilvl=\"0\"><w:pPr><w:pBdr>\
+             <w:top/><w:foo w:val=\"single\"/></w:pBdr></w:pPr></w:lvl></w:abstractNum>",
+        ));
+        assert_eq!(
+            warnings,
+            vec![WarningKind::InvalidAttribute, WarningKind::UnknownElement]
+        );
+        let borders = table.abstract_nums[&AbstractNumId::new(0)].levels[&0]
+            .ppr
+            .p_bdr
+            .clone()
+            .expect("`w:pBdr` разобран");
+        assert!(borders.top.is_none());
+    }
+
+    /// `w:tabs`: позиция без `w:pos` или без `w:val` теряется, незнакомый
+    /// элемент пропускается; остальные позиции остаются на месте.
+    #[test]
+    fn tabs_without_a_position_or_a_kind_are_skipped() {
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\"><w:lvl w:ilvl=\"0\"><w:pPr><w:tabs>\
+             <w:tab w:val=\"left\"/><w:tab w:pos=\"720\"/><w:foo/>\
+             <w:tab w:val=\"right\" w:pos=\"1440\"/></w:tabs></w:pPr></w:lvl></w:abstractNum>",
+        ));
+        assert_eq!(
+            warnings,
+            vec![
+                WarningKind::InvalidAttribute,
+                WarningKind::InvalidAttribute,
+                WarningKind::UnknownElement
+            ]
+        );
+        let tabs = &table.abstract_nums[&AbstractNumId::new(0)].levels[&0]
+            .ppr
+            .tabs;
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].val, Twips::new(1440));
+        assert_eq!(tabs[0].kind, TabStopKind::Right);
+        assert_eq!(tabs[0].leader, TabLeader::None);
+    }
+
+    /// Ветви `w:rPr` уровня, которых не приносят фикстуры: начертания,
+    /// подсветка, надстрочный знак, кегль для сложной раскладки и интервалы.
+    #[test]
+    fn rpr_level_properties_are_parsed() {
+        let lvl = level_zero(
+            "<w:lvl w:ilvl=\"0\"><w:rPr>\
+             <w:rStyle w:val=\"Emphasis\"/><w:i/><w:caps w:val=\"0\"/><w:smallCaps/>\
+             <w:strike/><w:dstrike w:val=\"false\"/><w:vanish/><w:outline/>\
+             <w:shadow w:val=\"on\"/><w:emboss/><w:imprint w:val=\"0\"/>\
+             <w:szCs w:val=\"20\"/><w:highlight w:val=\"red\"/>\
+             <w:u/><w:vertAlign w:val=\"superscript\"/>\
+             <w:spacing w:val=\"-20\"/><w:position w:val=\"6\"/>\
+             </w:rPr></w:lvl>",
+        );
+        let rpr = &lvl.rpr;
+        assert_eq!(rpr.style.as_ref().map(StyleId::as_str), Some("Emphasis"));
+        assert_eq!(rpr.i, Some(Toggle::On));
+        assert_eq!(rpr.caps, Some(Toggle::Off));
+        assert_eq!(rpr.small_caps, Some(Toggle::On));
+        assert_eq!(rpr.strike, Some(Toggle::On));
+        assert_eq!(rpr.dstrike, Some(Toggle::Off));
+        assert_eq!(rpr.vanish, Some(Toggle::On));
+        assert_eq!(rpr.outline, Some(Toggle::On));
+        assert_eq!(rpr.shadow, Some(Toggle::On));
+        assert_eq!(rpr.emboss, Some(Toggle::On));
+        assert_eq!(rpr.imprint, Some(Toggle::Off));
+        assert_eq!(rpr.sz_cs, Some(HalfPoint::new(20)));
+        assert_eq!(rpr.highlight, Some(Highlight::Red));
+        // `w:u` без `w:val` — одиночная линия (умолчание `ST_Underline`).
+        assert_eq!(rpr.u, Some(Underline::Single));
+        assert_eq!(rpr.vert_align, Some(VertAlign::Superscript));
+        assert_eq!(
+            rpr.spacing.as_ref().and_then(|spacing| spacing.value),
+            Some(Twips::new(-20))
+        );
+        assert_eq!(rpr.position, Some(HalfPoint::new(6)));
+    }
+
+    /// Незнакомый элемент `w:rPr` сохраняется дословно, как и в `w:pPr`.
+    #[test]
+    fn unknown_rpr_child_is_kept_as_verbatim_xml() {
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\"><w:lvl w:ilvl=\"0\"><w:rPr>\
+             <w:fitText w:val=\"10\"/></w:rPr></w:lvl></w:abstractNum>",
+        ));
+        assert_eq!(warnings, vec![WarningKind::UnknownElement]);
+        let unknown = &table.abstract_nums[&AbstractNumId::new(0)].levels[&0]
+            .rpr
+            .unknown;
+        assert_eq!(
+            unknown.as_slice(),
+            [("fitText".to_owned(), "<w:fitText w:val=\"10\"/>".to_owned())]
+        );
+    }
+
+    /// `w:color` вне `ST_HexColor` (шесть шестнадцатеричных цифр, `auto`,
+    /// `none`) теряется с предупреждением.
+    #[test]
+    fn color_outside_the_hex_form_warns() {
+        for raw in ["ZZZZZZ", "FF00"] {
+            let (table, warnings) = parse_part(&part_xml(&format!(
+                "<w:abstractNum w:abstractNumId=\"0\"><w:lvl w:ilvl=\"0\"><w:rPr>\
+                 <w:color w:val=\"{raw}\"/></w:rPr></w:lvl></w:abstractNum>"
+            )));
+            assert_eq!(warnings, vec![WarningKind::InvalidAttribute], "{raw}");
+            assert_eq!(
+                table.abstract_nums[&AbstractNumId::new(0)].levels[&0]
+                    .rpr
+                    .color,
+                None,
+                "{raw}"
+            );
+        }
+    }
+
+    /// `w:numPr`: номер уровня вне 0…=8 отбрасывается с предупреждением,
+    /// незнакомый элемент — тоже; `w:numId` при этом не теряется.
+    #[test]
+    fn num_pr_ilvl_outside_the_range_warns() {
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\"><w:lvl w:ilvl=\"0\"><w:pPr><w:numPr>\
+             <w:ilvl w:val=\"9\"/><w:foo/><w:numId w:val=\"4\"/></w:numPr></w:pPr>\
+             </w:lvl></w:abstractNum>",
+        ));
+        assert_eq!(
+            warnings,
+            vec![WarningKind::InvalidAttribute, WarningKind::UnknownElement]
+        );
+        let num_pr = table.abstract_nums[&AbstractNumId::new(0)].levels[&0]
+            .ppr
+            .num_pr
+            .clone()
+            .expect("`w:numPr` разобран");
+        assert_eq!(num_pr.ilvl, None);
+        assert_eq!(num_pr.num_id, Some(NumId::new(4)));
+    }
+
+    /// `w:num`: повторная ссылка на схему не переигрывает первую, ссылка
+    /// на маркер-картинку читается, незнакомый элемент пропускается.
+    #[test]
+    fn num_keeps_the_first_scheme_and_reads_the_picture_bullet() {
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\"/><w:abstractNum w:abstractNumId=\"1\"/>\
+             <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/><w:abstractNumId w:val=\"1\"/>\
+             <w:picBulletId w:val=\"3\"/><w:foo/></w:num>",
+        ));
+        assert_eq!(
+            warnings,
+            vec![WarningKind::InvalidAttribute, WarningKind::UnknownElement]
+        );
+        let num = &table.nums[&NumId::new(1)];
+        assert_eq!(num.abstract_id, AbstractNumId::new(0));
+        assert_eq!(num.picture_bullet_id, Some(3));
+
+        // `w:abstractNumId` без `w:val` — ссылки нет: список отбрасывается
+        // молча, ведь о мусорном значении уже предупредил `attr_u32`.
+        let (table, warnings) =
+            parse_part(&part_xml("<w:num w:numId=\"2\"><w:abstractNumId/></w:num>"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(table.nums.is_empty());
+    }
+
+    /// `w:lvlOverride` без пригодного `w:ilvl` пропускается: переопределять
+    /// нечего. Мусорный и выходящий за 0…=8 номер уровня — тот же случай.
+    #[test]
+    fn override_without_a_valid_ilvl_is_skipped() {
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\"/>\
+             <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/><w:lvlOverride/></w:num>",
+        ));
+        assert_eq!(warnings, vec![WarningKind::InvalidAttribute]);
+        assert!(table.nums[&NumId::new(1)].overrides.is_empty());
+
+        for raw in ["abc", "9", "300"] {
+            let (table, warnings) = parse_part(&part_xml(&format!(
+                "<w:abstractNum w:abstractNumId=\"0\"/>\
+                 <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/>\
+                 <w:lvlOverride w:ilvl=\"{raw}\"><w:startOverride w:val=\"5\"/>\
+                 </w:lvlOverride></w:num>"
+            )));
+            assert!(!warnings.is_empty(), "{raw}");
+            assert!(
+                table.nums[&NumId::new(1)].overrides.is_empty(),
+                "{raw}: переопределение отброшено"
+            );
+        }
+
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\"/>\
+             <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/>\
+             <w:lvlOverride w:ilvl=\"0\"><w:foo/></w:lvlOverride></w:num>",
+        ));
+        assert_eq!(warnings, vec![WarningKind::UnknownElement]);
+        assert_eq!(
+            table.nums[&NumId::new(1)].overrides[&0].start_override,
+            None
+        );
+    }
+
+    /// Схема без `w:abstractNumId` и список без `w:numId` ни на что не
+    /// ссылаются: и то, и другое пропускается с предупреждением (ADR-0016).
+    #[test]
+    fn schemes_and_lists_without_an_id_are_skipped() {
+        let (table, warnings) = parse_part(&part_xml("<w:abstractNum/>"));
+        assert_eq!(warnings, vec![WarningKind::InvalidAttribute]);
+        assert!(table.abstract_nums.is_empty());
+
+        let (table, warnings) = parse_part(&part_xml("<w:num/>"));
+        assert_eq!(warnings, vec![WarningKind::InvalidAttribute]);
+        assert!(table.nums.is_empty());
+    }
+
+    /// `w:pPr` уровня несёт ещё и свойства знака абзаца (`w:rPr`) — те же,
+    /// что у `w:lvl/w:rPr`.
+    #[test]
+    fn paragraph_mark_rpr_inside_ppr_is_parsed() {
+        let lvl = level_zero(
+            "<w:lvl w:ilvl=\"0\"><w:pPr><w:rPr><b/><color w:val=\"none\"/></w:rPr></w:pPr></w:lvl>",
+        );
+        let rpr = lvl.ppr.r_pr.as_ref().expect("`w:pPr/w:rPr` разобран");
+        assert_eq!(rpr.b, Some(Toggle::On));
+        assert_eq!(rpr.color, Some(Color::None));
     }
 
     #[test]
