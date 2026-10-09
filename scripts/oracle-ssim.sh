@@ -34,12 +34,19 @@
 # Внешние утилиты есть в CI (см. .github/workflows/oracle.yml); там же прогон и
 # живёт. Локально без них скрипт штатно скипается кодом 3.
 set -euo pipefail
+# Маска без совпадений даёт пустой список, а не слово со звёздочкой.
+shopt -s nullglob
 
 usage="usage: oracle-ssim.sh <mem_probe> <каталог-фикстур> <workdir> [фикстура...]"
 
-probe=${1:?$usage}
-fixtures_dir=${2:?$usage}
-workdir=${3:?$usage}
+if [ "$#" -lt 3 ]; then
+  echo "$usage" >&2
+  exit 2
+fi
+
+probe=$1
+fixtures_dir=$2
+workdir=$3
 shift 3
 
 # Умолчание — фикстуры, выбранные под разные части рендера: простые значения,
@@ -85,7 +92,8 @@ if command -v magick >/dev/null 2>&1; then
   im_compare=(magick compare)
   im_identify=(magick identify)
   im_convert=(magick convert)
-elif command -v compare >/dev/null 2>&1 && command -v convert >/dev/null 2>&1; then
+elif command -v compare >/dev/null 2>&1 && command -v convert >/dev/null 2>&1 \
+  && command -v identify >/dev/null 2>&1; then
   im_compare=(compare)
   im_identify=(identify)
   im_convert=(convert)
@@ -100,7 +108,7 @@ if [ "${#missing[@]}" -ne 0 ]; then
   exit 3
 fi
 
-if [ ! -x "$probe" ]; then
+if [ ! -f "$probe" ] || [ ! -x "$probe" ]; then
   echo "нет исполняемого $probe — соберите: cargo build --release -p doc-converter-pdf --example mem_probe" >&2
   exit 2
 fi
@@ -149,6 +157,45 @@ min_ssim="-"
 mean_ssim="-"
 note=""
 outcome=""
+fail_rank=0
+fail_status=""
+
+# Статус сбоя не понижается: у фикстуры бывает и сбой сравнения, и сбой
+# окружения — в отчёте важнее причина (окружение), а не следствие.
+mark_fail() {
+  if [ "$1" -gt "$fail_rank" ]; then
+    fail_rank=$1
+    fail_status=$2
+  fi
+}
+
+# Формат подписи для отчёта, а не парсируемый диапазон: перечисление страниц
+# примечанием к таблице. Фигурные скобки у имён обязательны: в bash 3.2 (macOS)
+# тире сразу после `$first` съедает последний байт значения и старший байт тире.
+format_page_ranges() {
+  local out="" first="" last="" p
+  for p in "$@"; do
+    if [ -z "$last" ]; then
+      first=$p
+    elif [ "$p" -ne "$((last + 1))" ]; then
+      if [ "$first" -eq "$last" ]; then
+        out+="${out:+, }$first"
+      else
+        out+="${out:+, }${first}–${last}"
+      fi
+      first=$p
+    fi
+    last=$p
+  done
+  if [ -n "$last" ]; then
+    if [ "$first" -eq "$last" ]; then
+      out+="${out:+, }$first"
+    else
+      out+="${out:+, }${first}–${last}"
+    fi
+  fi
+  printf '%s\n' "$out"
+}
 
 compare_fixture() {
   local name=$1
@@ -159,6 +206,9 @@ compare_fixture() {
   mean_ssim="-"
   note=""
   outcome=""
+  fail_rank=0
+  fail_status=""
+  local -a paper_pages=()
 
   if [ ! -f "$file" ]; then
     note="нет файла"
@@ -200,12 +250,14 @@ compare_fixture() {
     else
       note="soffice: код $status (лог $log)"
     fi
+    mark_fail 3 "сбой окружения"
     outcome=fail
     return 0
   fi
   # LibreOffice умеет вернуть 0 и не написать файл, поэтому мало кода выхода.
   if [ ! -s "$lo_pdf" ]; then
     note="LibreOffice не создал $stem.pdf (лог $log)"
+    mark_fail 3 "сбой окружения"
     outcome=fail
     return 0
   fi
@@ -214,6 +266,7 @@ compare_fixture() {
   "$probe" "$file" --out "$our_pdf" >"$log.our" 2>&1 || status=$?
   if [ "$status" -ne 0 ] || [ ! -s "$our_pdf" ]; then
     note="mem_probe: код $status, PDF не создан (лог $log.our)"
+    mark_fail 2 "сбой экспорта"
     outcome=fail
     return 0
   fi
@@ -223,11 +276,13 @@ compare_fixture() {
   rm -f "$lo_px"-*.png "$our_px"-*.png
   if ! pdftoppm -png -gray -r 150 "$lo_pdf" "$lo_px" >"$log.lo.ppm" 2>&1; then
     note="pdftoppm не растеризовал PDF LibreOffice"
+    mark_fail 3 "сбой окружения"
     outcome=fail
     return 0
   fi
   if ! pdftoppm -png -gray -r 150 "$our_pdf" "$our_px" >"$log.our.ppm" 2>&1; then
     note="pdftoppm не растеризовал наш PDF"
+    mark_fail 2 "сбой экспорта"
     outcome=fail
     return 0
   fi
@@ -242,6 +297,7 @@ compare_fixture() {
   for f in "$our_px"-*.png; do [ -e "$f" ] && our_imgs+=("$f"); done
   if [ "${#lo_imgs[@]}" -eq 0 ] || [ "${#our_imgs[@]}" -eq 0 ]; then
     note="растеризация не дала страниц"
+    mark_fail 1 "сбой сравнения"
     outcome=fail
     return 0
   fi
@@ -264,6 +320,7 @@ compare_fixture() {
     size_b=$("${im_identify[@]}" -format '%wx%h' "$b" 2>/dev/null) || size_b=""
     if [ -z "$size_a" ] || [ -z "$size_b" ]; then
       note+="${note:+; }страница $((i + 1)): не определил размеры страниц"
+      mark_fail 1 "сбой сравнения"
       continue
     fi
     if [ "$size_a" != "$size_b" ]; then
@@ -277,10 +334,10 @@ compare_fixture() {
       # не значил бы.
       local w_a=${size_a%x*} h_a=${size_a#*x} w_b=${size_b%x*} h_b=${size_b#*x}
       local dw=$((w_a - w_b)) dh=$((h_a - h_b))
-      [ "$dw" -lt 0 ] && dw=$((-dw))
-      [ "$dh" -lt 0 ] && dh=$((-dh))
+      dw=$((dw < 0 ? -dw : dw))
+      dh=$((dh < 0 ? -dh : dh))
       if [ "$dw" -gt 2 ] || [ "$dh" -gt 2 ]; then
-        note+="${note:+; }страница $((i + 1)): размеры $size_a и $size_b — разные бумага или масштаб, SSIM не считан"
+        paper_pages+=("$((i + 1))")
         continue
       fi
       local w=$((w_a < w_b ? w_a : w_b)) h=$((h_a < h_b ? h_a : h_b))
@@ -289,6 +346,7 @@ compare_fixture() {
       if ! "${im_convert[@]}" "$a" -crop "${w}x${h}+0+0" +repage "$crop_lo" 2>/dev/null ||
         ! "${im_convert[@]}" "$b" -crop "${w}x${h}+0+0" +repage "$crop_our" 2>/dev/null; then
         note+="${note:+; }страница $((i + 1)): не обрезал страницы до общего размера"
+        mark_fail 1 "сбой сравнения"
         continue
       fi
       note+="${note:+; }страница $((i + 1)): размеры $size_a и $size_b — округление сетки растеризации, сравнено по фрагменту ${w}x${h}"
@@ -303,29 +361,41 @@ compare_fixture() {
     val=$("${im_compare[@]}" -metric SSIM "$a" "$b" "$workdir/diff/$stem-$((i + 1)).png" 2>&1 >/dev/null) || status=$?
     if [ "$status" -ge 2 ]; then
       note+="${note:+; }страница $((i + 1)): compare упал (код $status)"
+      mark_fail 1 "сбой сравнения"
       continue
     fi
 
     # IM6 печатает «0.987654», IM7 — «0.987654 (0.987654)»; первое число — сам
     # SSIM. awk, а не grep|head: на пустой находке конвейер под pipefail уронил
-    # бы скрипт из-за «нет совпадений» — это не ошибка растеризации.
-    val=$(printf '%s\n' "$val" | awk 'match($0, /-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?/) { print substr($0, RSTART, RLENGTH); exit }')
+    # бы скрипт из-за «нет совпадений» — это не ошибка растеризации. Запятая в
+    # регулярке — на случай LC_NUMERIC с запятой: дальше значение уходит в файл
+    # SSIM, который читает awk уже с точкой.
+    val=$(printf '%s\n' "$val" | awk 'match($0, /-?[0-9]+([.,][0-9]+)?([eE][-+]?[0-9]+)?/) { print substr($0, RSTART, RLENGTH); exit }')
+    val=${val//,/.}
     if [ -z "$val" ]; then
       note+="${note:+; }страница $((i + 1)): compare не напечатал SSIM"
+      mark_fail 1 "сбой сравнения"
       continue
     fi
     printf '%s\n' "$val" >>"$ssim_file"
   done
 
+  if [ "${#paper_pages[@]}" -ne 0 ]; then
+    note+="${note:+; }страницы $(format_page_ranges "${paper_pages[@]}"): разные бумага или масштаб, SSIM не считан"
+    mark_fail 3 "сбой окружения"
+  fi
+
   if [ -s "$ssim_file" ]; then
     # min ловит полностью разъехавшуюся страницу, которую среднее скрыло бы;
-    # mean показывает, насколько близки страницы в целом.
+    # mean показывает, насколько близки страницы в целом. Локаль прижата к C:
+    # и сравнение, и printf зависят от LC_NUMERIC (в ru_RU разделитель — запятая).
     read -r min_ssim mean_ssim < <(
-      awk '{ if (NR == 1 || $1 < min) min = $1; sum += $1 } END { printf "%.4f %.4f\n", min, sum / NR }' "$ssim_file"
+      LC_ALL=C awk '{ if (NR == 1 || $1 < min) min = $1; sum += $1 } END { printf "%.4f %.4f\n", min, sum / NR }' "$ssim_file"
     )
     outcome=ok
   else
     note+="${note:+; }SSIM не снят ни с одной страницы"
+    mark_fail 1 "сбой сравнения"
     outcome=fail
   fi
 
@@ -336,16 +406,26 @@ rows=()
 ok=0
 skipped=0
 failed=0
+env_failed=0
+export_failed=0
+cmp_failed=0
 
 for name in "${fixtures[@]}"; do
   compare_fixture "$name"
   case "$outcome" in
-    ok) ok=$((ok + 1)) ;;
-    skip) skipped=$((skipped + 1)) ;;
-    *) failed=$((failed + 1)) ;;
+    ok) ok=$((ok + 1)); row_status="сравнено" ;;
+    skip) skipped=$((skipped + 1)); row_status="пропущено" ;;
+    *) failed=$((failed + 1))
+       row_status=$fail_status
+       case "$fail_rank" in
+         3) env_failed=$((env_failed + 1)) ;;
+         2) export_failed=$((export_failed + 1)) ;;
+         *) cmp_failed=$((cmp_failed + 1)) ;;
+       esac ;;
   esac
   note=${note:-—}
-  rows+=("| $name | $lo_pages | $our_pages | $min_ssim | $mean_ssim | $note |")
+  note=${note//|/\\|}
+  rows+=("| $name | $lo_pages | $our_pages | $min_ssim | $mean_ssim | $note | $row_status |")
 done
 
 # --- отчёт ------------------------------------------------------------------
@@ -367,17 +447,22 @@ soffice_version=$(soffice --version 2>/dev/null | head -1) || true
   echo "Прогон: $(date -u '+%Y-%m-%d %H:%M UTC')"
   echo "Эталон: $soffice_version; локаль LANG=${LANG:-(не задана)} LC_ALL=${LC_ALL:-(не задана)}"
   echo
-  echo "| фикстура | страниц у LO | страниц у нас | min SSIM | mean SSIM | примечание |"
-  echo "| --- | --- | --- | --- | --- | --- |"
+  echo "| фикстура | страниц у LO | страниц у нас | min SSIM | mean SSIM | примечание | статус |"
+  echo "| --- | --- | --- | --- | --- | --- | --- |"
   printf '%s\n' "${rows[@]}"
   echo
-  echo "Сравнено: $ok, пропущено: $skipped, с ошибкой: $failed."
+  if [ "$failed" -gt 0 ]; then
+    echo "Сравнено: $ok, пропущено: $skipped, с ошибкой: $failed (окружение: $env_failed, экспорт: $export_failed, сравнение: $cmp_failed)."
+  else
+    echo "Сравнено: $ok, пропущено: $skipped, с ошибкой: $failed."
+  fi
 } | tee "$report"
 
-# Ноль сравнений при нуле пропусков означает, что не сработал конвейер целиком
-# (нет soffice нужной версии, сломан экспорт) — это состояние харнесса, и о нём
-# CI должен узнать падением. Пропуски же — нормальный исход отбора.
-if [ "$ok" -eq 0 ] && [ "$skipped" -eq 0 ]; then
+# Ноль сравнений при хотя бы одной упавшей фикстуре означает, что не сработал
+# конвейер целиком (нет soffice нужной версии, сломан экспорт) — это состояние
+# харнесса, и о нём CI должен узнать падением. Прогон, где всё пропущено, —
+# нормальный исход отбора, он остаётся зелёным.
+if [ "$ok" -eq 0 ] && [ "$failed" -gt 0 ]; then
   echo "ни одну фикстуру сравнить не удалось — смотрите логи в $workdir/log" >&2
   exit 1
 fi
