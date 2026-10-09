@@ -13,9 +13,9 @@
 
 ```bash
 cargo test -p doc-converter-docx --test memory -- --nocapture          # размеры узлов и таблицы по фикстурам
-cargo build --release -p doc-converter-docx --example mem_probe        # адресно: см. «ловушку» ниже
-/usr/bin/time -l target/release/examples/mem_probe --open-only target/fixtures/docx-large/memory_50mib.docx
-bash scripts/check-docx-memory.sh target/release/examples/mem_probe target/fixtures/docx-large/memory_50mib.docx 200
+cargo build --release -p doc-converter-docx --example mem_probe_docx   # адресно: см. «ловушку» ниже
+/usr/bin/time -l target/release/examples/mem_probe_docx --open-only target/fixtures/docx-large/memory_50mib.docx
+bash scripts/check-docx-memory.sh target/release/examples/mem_probe_docx target/fixtures/docx-large/memory_50mib.docx 200
 ```
 
 Пик RSS снимает системный `time(1)` (`maximum resident set size`; на Linux
@@ -178,9 +178,9 @@ enum'ов и JSON-контракт при этом не менялись: `Box` 
 это `many_paragraphs`.
 
 **Из чего складывается пик** (для профиля; часть — прямые замеры, часть —
-оценка снизу по измеренным `size_of` и счётчикам `mem_probe`):
+оценка снизу по измеренным `size_of` и счётчикам `mem_probe_docx`):
 
-- вход 55,5 МиБ — `mem_probe` читает файл целиком, как и вызывающий `open`;
+- вход 55,5 МиБ — `mem_probe_docx` читает файл целиком, как и вызывающий `open`;
 - **копия входа внутри `parse_docx`** — ещё 55,5 МиБ (`bytes.to_vec()`, см.
   «Известный запас»);
 - распакованный `word/document.xml` — 42,15 МиБ;
@@ -218,20 +218,27 @@ ADR-0016; но это известный резерв — передача вл�
 
 ## Операционная ловушка: у двух примеров одно имя
 
-У `crates/pdf/examples/mem_probe.rs` и `crates/docx/examples/mem_probe.rs`
-совпадает имя, и cargo пишет оба в `target/release/examples/mem_probe`
-(предупреждение «output filename collision»; в каталоге при этом лежат оба
-хешированных бинарника — DOCX ≈ 0,77 МБ, PDF ≈ 2,9 МБ, — а некэшированное имя
-`mem_probe` достаётся собранному последним). Последствия и лечение:
+**Устранена 09.10.2026:** DOCX-пример переименован в `mem_probe_docx`
+(`crates/docx/examples/mem_probe_docx.rs`), и двух примеров под одним именем
+больше нет. Ниже — история до переименования, как это выглядело.
 
-- в CI пример собирается **адресно**: `cargo build --release -p
-  doc-converter-docx --example mem_probe` — сборка `--workspace --examples`
-  или любой таргет PDF-крейта подменила бы бинарник под тем же именем, и
-  гейт памяти падал бы на чужом числе;
-- локально сборка PDF-примера ломает DOCX-гейт, пока DOCX-пример не
-  пересобран; быстрая проверка, чей бинарь лежит под именем, — вывод
-  `mem_probe --open-only <файл>`: DOCX-пример печатает «вход … МиБ, абзацев
-  …», PDF-пример просит `.xlsx` (`usage: mem_probe <fixture.xlsx | путь>`).
+До переименования у `crates/pdf/examples/mem_probe.rs` и
+`crates/docx/examples/mem_probe.rs` совпадало имя, и cargo писал оба в
+`target/release/examples/mem_probe` (предупреждение «output filename collision»;
+в каталоге при этом лежали оба хешированных бинарника — DOCX ≈ 0,77 МБ,
+PDF ≈ 2,9 МБ, — а некэшированное имя `mem_probe` доставалось собранному
+последним). В CI это ловили на практике: сборка PDF-примера подменяла
+DOCX-пример, и гейт памяти DOCX падал на чужом бинарнике, а не на своих
+числах. Последствия и лечение:
+
+- в CI пример и сейчас собирается **адресно**: `cargo build --release -p
+  doc-converter-docx --example mem_probe_docx` — джоба не тянет чужие таргеты.
+  После переименования адресность сохранена как есть, но как защита от подмены
+  бинарника она больше не нужна: коллизии имён нет;
+- до переименования сборка PDF-примера ломала локальный DOCX-гейт, пока
+  DOCX-пример не пересобран; быстрая проверка, чей бинарь лежит под именем, —
+  вывод `mem_probe --open-only <файл>`: DOCX-пример печатал «вход … МиБ, абзацев
+  …», PDF-пример просил `.xlsx` (`usage: mem_probe <fixture.xlsx | путь>`).
 
 ## Как воспроизвести
 
@@ -240,10 +247,10 @@ pnpm gen:docx-fixtures:large          # ≈ 11 с, пишет target/fixtures/do
 
 cargo test -p doc-converter-docx --test memory -- --nocapture
 
-cargo build --release -p doc-converter-docx --example mem_probe
-/usr/bin/time -l target/release/examples/mem_probe --open-only target/fixtures/docx-large/memory_50mib.docx
-/usr/bin/time -l target/release/examples/mem_probe --open-only target/fixtures/docx-large/profile_50mib.docx
-bash scripts/check-docx-memory.sh target/release/examples/mem_probe target/fixtures/docx-large/memory_50mib.docx 200
+cargo build --release -p doc-converter-docx --example mem_probe_docx
+/usr/bin/time -l target/release/examples/mem_probe_docx --open-only target/fixtures/docx-large/memory_50mib.docx
+/usr/bin/time -l target/release/examples/mem_probe_docx --open-only target/fixtures/docx-large/profile_50mib.docx
+bash scripts/check-docx-memory.sh target/release/examples/mem_probe_docx target/fixtures/docx-large/memory_50mib.docx 200
 ```
 
 Первая строка — генерация фикстур, вторая — числа модели, третья–пятая —

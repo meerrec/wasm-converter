@@ -4,23 +4,23 @@
 # «Бенчмарки и бюджеты»). Механизм повторяет гейт DoD 8 спринта 7 —
 # scripts/check-pdf-memory.sh: тот же time(1), тот же разбор, те же коды.
 #
-# Метрика — ru_maxrss процесса mem_probe, снятый системным time(1): у mem_probe
+# Метрика — ru_maxrss процесса mem_probe_docx, снятый системным time(1): у mem_probe_docx
 # нет своего счётчика RSS, а пик нужен за весь разбор, а не в точке замера.
 # Формат у time(1) платформенный: BSD на macOS печатает байты по `-l`, GNU на
 # Linux — килобайты по `-v`; разбор обоих живёт здесь, чтобы число в CI означало
 # то же, что число в отчёте спринта.
 #
 # Usage:
-#   bash scripts/check-docx-memory.sh <mem_probe> <fixture.docx> [предел МиБ]
+#   bash scripts/check-docx-memory.sh <mem_probe_docx> <fixture.docx> [предел МиБ]
 #
 # Тяжёлую фикстуру в git не кладут: её пишет
 # `npx tsx scripts/generate_docx_fixtures.ts --large` в target/fixtures/docx-large
 # (каталог `target/` под .gitignore, ~11 с на все большие фикстуры), оттуда её
-# берут mem_probe, бенч и этот гейт.
+# берут mem_probe_docx, бенч и этот гейт.
 set -euo pipefail
 
-probe=${1:?usage: check-docx-memory.sh <mem_probe> <fixture.docx> [limit_mib]}
-fixture=${2:?usage: check-docx-memory.sh <mem_probe> <fixture.docx> [limit_mib]}
+probe=${1:?usage: check-docx-memory.sh <mem_probe_docx> <fixture.docx> [limit_mib]}
+fixture=${2:?usage: check-docx-memory.sh <mem_probe_docx> <fixture.docx> [limit_mib]}
 limit_mib=${3:-200}
 
 # Критерии фикстуры: замер имеет смысл, только если файл — тот самый тяжёлый
@@ -59,13 +59,13 @@ case "$(uname -s)" in
     ;;
 esac
 
-# stdout mem_probe и stderr time(1) сливаются: в лог уходит и вывод прогона
+# stdout mem_probe_docx и stderr time(1) сливаются: в лог уходит и вывод прогона
 # (вход, абзацы, изображения, время разбора), и метрики time. LC_ALL=C — у GNU
 # time есть переводы (в том числе русский), и разбор строки метрики не должен
 # зависеть от локали раннера.
 if ! run=$(LC_ALL=C "$time_bin" "${time_args[@]}" "$probe" --open-only "$fixture" 2>&1); then
   printf '%s\n' "$run"
-  echo "mem_probe завершился с ошибкой" >&2
+  echo "mem_probe_docx завершился с ошибкой" >&2
   exit 1
 fi
 printf '%s\n' "$run"
@@ -84,7 +84,7 @@ fi
 peak_bytes=$((rss * rss_scale))
 limit_bytes=$((limit_mib * 1024 * 1024))
 
-# Числа фикстуры — из единственной стабильной строки mem_probe; LC_ALL=C и
+# Числа фикстуры — из единственной стабильной строки mem_probe_docx; LC_ALL=C и
 # здесь: шаблоны с кириллицей должны совпасть одинаково на любой локали раннера.
 stats() { printf '%s\n' "$run" | LC_ALL=C sed -nE "$1" | tail -1; }
 input_mib=$(stats 's/.*вход ([0-9]+(\.[0-9]+)?) МиБ.*/\1/p')
@@ -100,7 +100,7 @@ check_min() { # <значение> <минимум> <подпись>
 }
 
 if [ -z "$input_mib" ] || [ -z "$paragraphs" ] || [ -z "$images" ]; then
-  echo "mem_probe не напечатал вход/абзацы/изображения — фикстура не проверена" >&2
+  echo "mem_probe_docx не напечатал вход/абзацы/изображения — фикстура не проверена" >&2
   exit 1
 fi
 

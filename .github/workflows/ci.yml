@@ -291,25 +291,21 @@ jobs:
           cache: pnpm
 
       # Тяжёлых фикстур (target/fixtures/docx-large) в git нет: их пишет тот же
-      # генератор, что и остальные фикстуры, — отсюда их берут mem_probe,
+      # генератор, что и остальные фикстуры, — отсюда их берут mem_probe_docx,
       # гейт памяти и бенч.
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
       - run: pnpm gen:docx-fixtures:large
 
-      # Сборка адресная, а не `--workspace`: у crates/pdf/examples/mem_probe.rs
-      # и crates/docx/examples/mem_probe.rs совпадает имя, и cargo кладёт оба в
-      # один target/release/examples/mem_probe (предупреждение «output filename
-      # collision») — собранный последним затирает первого. В CI это уже ловили:
-      # сборка PDF-примера подменяла DOCX-пример, и гейт памяти DOCX падал на
-      # чужом бинарнике, а не на своих числах.
-      - name: build mem_probe
-        run: cargo build --release -p doc-converter-docx --example mem_probe
+      # Сборка адресная, а не `--workspace`: она не тянет за собой чужие
+      # таргеты, а джобе нужен ровно один пример.
+      - name: build mem_probe_docx
+        run: cargo build --release -p doc-converter-docx --example mem_probe_docx
 
       # Жёсткий бюджет DoD: пик RSS полного разбора 50-МиБ DOCX с картинками
       # ≤ 200 МиБ. Предел дублирует дефолт скрипта — чтобы бюджет был виден
       # в самой джобе, а не только внутри scripts/check-docx-memory.sh.
       - name: DoD 6 memory gate
-        run: bash scripts/check-docx-memory.sh target/release/examples/mem_probe target/fixtures/docx-large/memory_50mib.docx 200
+        run: bash scripts/check-docx-memory.sh target/release/examples/mem_probe_docx target/fixtures/docx-large/memory_50mib.docx 200
 
       # Мягкий бюджет ROADMAP §9 (отдельный пункт DoD спринта 8, не шестой:
       # шестой — про память выше): медиана разбора профиля 50 МиБ < 1500 мс.
@@ -317,7 +313,7 @@ jobs:
       # «50» из «50 МиБ», и гейт молча мерил бы 50 мс (предупреждение об этом
       # стоит в crates/docx/benches/open.rs). Фильтр criterion берёт только
       # группу 50 МиБ, но настройку остальных групп бенч всё равно выполняет —
-      # поэтому фикстуры выше генерируются до бенча, а не только для mem_probe.
+      # поэтому фикстуры выше генерируются до бенча, а не только для mem_probe_docx.
       - name: ROADMAP §9 time (soft)
         run: |
           set -uo pipefail
@@ -340,7 +336,7 @@ jobs:
       # (см. шапку джобы и docs/sprint-8/memory-report.md) — красный шаг на этом
       # числе был бы ложной тревогой.
       - name: profile 50 MiB (info)
-        run: target/release/examples/mem_probe --open-only target/fixtures/docx-large/profile_50mib.docx
+        run: target/release/examples/mem_probe_docx --open-only target/fixtures/docx-large/profile_50mib.docx
 
   audit:
     name: Security audit
