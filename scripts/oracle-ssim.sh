@@ -14,7 +14,8 @@
 # Коды выхода:
 #   0 — прогон состоялся (низкий SSIM — результат, а не ошибка скрипта);
 #   1 — ни одну фикстуру сравнить не удалось: сломан харнесс или окружение;
-#   2 — неверное употребление: нет mem_probe или каталога фикстур;
+#   2 — неверное употребление: нет mem_probe, под именем не PDF-пример
+#       mem_probe или нет каталога фикстур;
 #   3 — нет системных утилит (soffice/pdftoppm/unzip/ImageMagick).
 #
 # Только однолистовые книги. Наш экспорт рисует лист 0, а `soffice` печатает всю
@@ -103,6 +104,17 @@ if [ ! -x "$probe" ]; then
   echo "нет исполняемого $probe — соберите: cargo build --release -p doc-converter-pdf --example mem_probe" >&2
   exit 2
 fi
+
+# `-x` не отличает PDF-пример от DOCX-ного: до 09.10.2026 у обоих было одно имя
+# (mem_probe), и под ним мог лежать DOCX-бинарник — дальше скрипт зовёт `--out`
+# и умирает уже после прогона эталонов. `--out` есть в usage только у PDF-ного
+# примера; без аргументов оба печатают usage и выходят кодом 2.
+probe_usage=$("$probe" 2>&1 || true)
+if [[ "$probe_usage" != *"--out"* ]]; then
+  echo "под именем $probe не PDF-пример mem_probe — соберите: cargo build --release -p doc-converter-pdf --example mem_probe" >&2
+  exit 2
+fi
+
 if [ ! -d "$fixtures_dir" ]; then
   echo "нет каталога фикстур $fixtures_dir" >&2
   exit 2

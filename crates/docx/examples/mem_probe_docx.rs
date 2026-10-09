@@ -5,9 +5,9 @@
 //! resident set size). Свой код для RSS потребовал бы `unsafe` либо чтения
 //! `/proc`, которого на macOS нет:
 //!
-//!     cargo build --release -p doc-converter-docx --example mem_probe
-//!     /usr/bin/time -l target/release/examples/mem_probe many_paragraphs
-//!     /usr/bin/time -l target/release/examples/mem_probe --open-only test-fixtures/docx/tables/simple_2x2.docx
+//!     cargo build --release -p doc-converter-docx --example mem_probe_docx
+//!     /usr/bin/time -l target/release/examples/mem_probe_docx many_paragraphs
+//!     /usr/bin/time -l target/release/examples/mem_probe_docx --open-only test-fixtures/docx/tables/simple_2x2.docx
 //!
 //! Аргумент — путь до `.docx`; если файла по такому пути нет, он ищется в
 //! `target/fixtures/docx-large` (крупные фикстуры генератора, в репозитории их
@@ -130,7 +130,7 @@ fn main() {
         }
     }
     let Some(arg) = arg else {
-        eprintln!("usage: mem_probe [--open-only] <fixture.docx | путь>");
+        eprintln!("usage: mem_probe_docx [--open-only] <fixture.docx | путь>");
         std::process::exit(2);
     };
 
