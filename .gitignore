@@ -39,3 +39,4 @@ packages/*/pkg/
 fuzz/corpus/
 fuzz/artifacts/
 fuzz/target/
+oracle-out/
