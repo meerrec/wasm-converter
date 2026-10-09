@@ -801,14 +801,13 @@ fn parse_pbdr(
     let mut borders = ParagraphBorders::default();
     read_children(reader, empty, part, |reader, child, empty| {
         let attrs = attributes(child, part)?;
-        let border = parse_border(&attrs, ctx, part)?;
         match local_name(child.name().as_ref()) {
-            b"top" => borders.top = border,
-            b"left" | b"start" => borders.left = border,
-            b"bottom" => borders.bottom = border,
-            b"right" | b"end" => borders.right = border,
-            b"between" => borders.between = border,
-            b"bar" => borders.bar = border,
+            b"top" => borders.top = parse_border(&attrs, ctx, part)?,
+            b"left" | b"start" => borders.left = parse_border(&attrs, ctx, part)?,
+            b"bottom" => borders.bottom = parse_border(&attrs, ctx, part)?,
+            b"right" | b"end" => borders.right = parse_border(&attrs, ctx, part)?,
+            b"between" => borders.between = parse_border(&attrs, ctx, part)?,
+            b"bar" => borders.bar = parse_border(&attrs, ctx, part)?,
             _ => {
                 ctx.warn(
                     WarningKind::UnknownElement,
@@ -2043,17 +2042,16 @@ mod tests {
         );
     }
 
-    /// Граница без `w:val` теряется с предупреждением, незнакомый элемент
-    /// `w:pBdr` пропускается тоже с предупреждением (ADR-0016).
-    ///
-    /// У незнакомого элемента стоит `w:val`: `parse_pbdr` зовёт `parse_border`
-    /// до проверки имени, и элемент без стиля дал бы лишнее предупреждение
-    /// о границе, которой нет.
+    /// Граница без `w:val` теряется с предупреждением, а незнакомый элемент
+    /// `w:pBdr` пропускается — тоже ровно с одним предупреждением (ADR-0016):
+    /// границы у незнакомого элемента нет, поэтому второго предупреждения
+    /// о ней быть не должно. Граница со стилем разбирается как обычно.
     #[test]
     fn border_without_a_style_and_unknown_pbdr_child_warn() {
         let (table, warnings) = parse_part(&part_xml(
             "<w:abstractNum w:abstractNumId=\"0\"><w:lvl w:ilvl=\"0\"><w:pPr><w:pBdr>\
-             <w:top/><w:foo w:val=\"single\"/></w:pBdr></w:pPr></w:lvl></w:abstractNum>",
+             <w:top/><w:bottom w:val=\"double\"/><w:foo/>\
+             </w:pBdr></w:pPr></w:lvl></w:abstractNum>",
         ));
         assert_eq!(
             warnings,
@@ -2064,7 +2062,12 @@ mod tests {
             .p_bdr
             .clone()
             .expect("`w:pBdr` разобран");
-        assert!(borders.top.is_none());
+        assert!(borders.top.is_none(), "граница без `w:val` не выставляется");
+        assert_eq!(
+            borders.bottom.as_ref().map(|border| border.val.clone()),
+            Some(BorderStyle::Double),
+            "граница со стилем разбирается"
+        );
     }
 
     /// `w:tabs`: позиция без `w:pos` или без `w:val` теряется, незнакомый
