@@ -8,6 +8,7 @@
 // Запуск:
 //   npx tsx scripts/generate_docx_fixtures.ts           # коммитируемые фикстуры
 //   npx tsx scripts/generate_docx_fixtures.ts --large   # только «большие» (>= 10 МиБ, в target/)
+//   npx tsx scripts/generate_docx_fixtures.ts --large --only profile_50mib   # одну из них
 
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -28,11 +29,13 @@ import { cjkFixtures } from './docx-fixtures/cjk.js';
 import { headersFootersFixtures } from './docx-fixtures/headers-footers.js';
 import { notesFixtures } from './docx-fixtures/notes.js';
 import { brokenFixtures } from './docx-fixtures/broken.js';
-import { generateLargeFixtures } from './docx-fixtures/large.js';
+import { generateLargeFixtures, largeFixtureNames } from './docx-fixtures/large.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const OUT_DIR = path.join(ROOT, 'test-fixtures', 'docx');
 const LARGE_DIR = path.join(ROOT, 'target', 'fixtures', 'docx-large');
+
+const MIB = 1024 * 1024;
 
 /** Минимум коммитируемых фикстур, который обязан собрать генератор. */
 const MIN_COMMITTABLE = 95;
@@ -142,16 +145,47 @@ const generate = async (): Promise<void> => {
     }
 };
 
+/** Печатает ошибку использования и ставит код возврата 1 — без стектрейса. */
+const die = (message: string): void => {
+    console.error(message);
+    process.exitCode = 1;
+};
+
 const main = async (): Promise<void> => {
     const large = process.argv.includes('--large');
+    const onlyAt = process.argv.indexOf('--only');
+    // Значение не может начинаться с «-»: так `--only --large` (потерянное имя)
+    // не превращается в запрос фикстуры с именем «--large», а падает.
+    const rawOnly = onlyAt === -1 ? undefined : process.argv[onlyAt + 1];
+    const only = rawOnly === undefined || rawOnly.startsWith('-') ? undefined : rawOnly;
+
+    if (onlyAt !== -1 && !large) {
+        die('--only works only together with --large: committable fixtures are always written in full');
+        return;
+    }
+    if (onlyAt !== -1 && only === undefined) {
+        die('--only requires a fixture name');
+        return;
+    }
+    if (only !== undefined) {
+        const names = largeFixtureNames();
+        if (!names.includes(only)) {
+            die(`unknown large fixture: ${only}\navailable: ${names.join(', ')}`);
+            return;
+        }
+    }
+
     if (large) {
-        const written = await generateLargeFixtures(LARGE_DIR);
+        const written = await generateLargeFixtures(LARGE_DIR, only);
         console.log(`Large DOCX fixtures: ${written.length} → ${LARGE_DIR}`);
         for (const { name, bytes } of written) {
-            console.log(`  ${name.padEnd(28)} ${(bytes / 1024 / 1024).toFixed(1)} MiB`);
+            console.log(`  ${name.padEnd(28)} ${(bytes / MIB).toFixed(1)} MiB`);
         }
-        if (written.some(({ bytes }) => bytes < 10 * 1024 * 1024)) {
-            throw new Error('large fixture below 10 MiB');
+        const small = written.find(({ bytes, minBytes }) => bytes < minBytes);
+        if (small !== undefined) {
+            throw new Error(
+                `${small.name}: ${(small.bytes / MIB).toFixed(1)} MiB, expected at least ${small.minBytes / MIB} MiB`,
+            );
         }
         return;
     }
