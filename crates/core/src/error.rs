@@ -34,6 +34,10 @@ pub enum Error {
 
     #[error("UTF-8 error: {0}")]
     Utf8(#[from] std::str::Utf8Error),
+
+    /// Предупреждений парсера стало больше, чем допускает ADR-0016 §6.
+    #[error("too many parse warnings: {0}")]
+    TooManyWarnings(usize),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
