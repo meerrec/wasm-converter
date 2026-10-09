@@ -4,9 +4,13 @@
 # таблицу и падает только тогда, когда сравнить не удалось ничего.
 #
 # Ни растеризация, ни SSIM здесь не пишутся своим кодом намеренно. `soffice`,
-# `pdftoppm` и ImageMagick `compare` — реализация, не зависящая от нашего
+# `pdftoppm` и фильтр `ssim` в ffmpeg — реализация, не зависящая от нашего
 # рендера; свой SSIM мерил бы согласие нашего кода с самим собой и был бы
-# снисходителен ровно к тем ошибкам, которые ищем.
+# снисходителен ровно к тем ошибкам, которые ищем. Считать метрику в
+# ImageMagick нельзя: в 6-й версии (Ubuntu 24.04, то есть CI) типа метрики SSIM
+# нет вовсе, а `-metric SSIM` седьмой печатает distortion (SSIM = 1 − 2·distortion),
+# и в отчёт попадало бы не то число. ImageMagick остаётся для размеров страниц
+# (`identify`) и обрезки (`convert`).
 #
 # Usage:
 #   bash scripts/oracle-ssim.sh <mem_probe> <каталог-фикстур> <workdir> [фикстура...]
@@ -16,7 +20,7 @@
 #   1 — ни одну фикстуру сравнить не удалось: сломан харнесс или окружение;
 #   2 — неверное употребление: меньше трёх аргументов, нет mem_probe, под
 #       именем не PDF-пример mem_probe или нет каталога фикстур;
-#   3 — нет системных утилит (soffice/pdftoppm/unzip/ImageMagick).
+#   3 — нет системных утилит (soffice/pdftoppm/ffmpeg/unzip/ImageMagick).
 #
 # Только однолистовые книги. Наш экспорт рисует лист 0, а `soffice` печатает всю
 # книгу: на второй странице эталона окажется второй лист, у нас — вторая
@@ -88,20 +92,19 @@ fi
 # --- системные утилиты ------------------------------------------------------
 
 missing=()
-for tool in soffice pdftoppm unzip; do
+# ffmpeg — единственный источник SSIM, см. шапку: у ImageMagick метрики либо нет
+# (6), либо она печатает distortion (7).
+for tool in soffice pdftoppm ffmpeg unzip; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 
-# ImageMagick 7 прячет `compare` за мультитулом `magick`; в 6 (Ubuntu-пакет
-# imagemagick) это отдельный бинарник. Ставим массив, а не строку: путь может
-# содержать пробелы, и разбор по словам был бы ошибкой.
+# ImageMagick 7 прячет `identify` и `convert` за мультитулом `magick`; в 6
+# (Ubuntu-пакет imagemagick) это отдельные бинарники. Ставим массив, а не
+# строку: путь может содержать пробелы, и разбор по словам был бы ошибкой.
 if command -v magick >/dev/null 2>&1; then
-  im_compare=(magick compare)
   im_identify=(magick identify)
   im_convert=(magick convert)
-elif command -v compare >/dev/null 2>&1 && command -v convert >/dev/null 2>&1 \
-  && command -v identify >/dev/null 2>&1; then
-  im_compare=(compare)
+elif command -v convert >/dev/null 2>&1 && command -v identify >/dev/null 2>&1; then
   im_identify=(identify)
   im_convert=(convert)
 else
@@ -110,8 +113,8 @@ fi
 
 if [ "${#missing[@]}" -ne 0 ]; then
   echo "нет утилит: ${missing[*]}" >&2
-  echo "Ubuntu/Debian: sudo apt-get install -y --no-install-recommends libreoffice-calc poppler-utils imagemagick unzip" >&2
-  echo "macOS:         brew install --cask libreoffice && brew install poppler imagemagick (unzip в системе)" >&2
+  echo "Ubuntu/Debian: sudo apt-get install -y --no-install-recommends libreoffice-calc poppler-utils ffmpeg imagemagick unzip" >&2
+  echo "macOS:         brew install --cask libreoffice && brew install poppler ffmpeg imagemagick (unzip в системе)" >&2
   exit 3
 fi
 
@@ -368,26 +371,37 @@ compare_fixture() {
       b=$crop_our
     fi
 
-    # Метрика печатается в stderr, поэтому stdout уводится в /dev/null, а stderr
-    # попадает в подстановку. Код 1 у compare — не сбой, а «картинки
-    # различаются»: это и есть измеряемый случай. Сбой — код 2, его и ловим.
+    # Карта различий — артефакт для разбора, а не часть метрики: compare раньше
+    # писал её третьим аргументом, теперь её собирает отдельный convert. Не
+    # записалась — прогон это не валит: SSIM от неё не зависит.
+    "${im_convert[@]}" "$a" "$b" -compose difference -composite \
+      "$workdir/diff/$stem-$((i + 1)).png" 2>/dev/null || true
+
+    # SSIM считает ffmpeg, а не ImageMagick: в 6-й версии (Ubuntu 24.04, CI) этого
+    # типа метрики нет, а `-metric SSIM` седьмой печатает distortion, из которого
+    # SSIM получается как 1 − 2·distortion, — в отчёт попало бы не то число.
+    # `-lavfi ssim` даёт канонический SSIM в [−1, 1] одной реализацией в обеих
+    # системах. Метрика печатается в stderr, поэтому stdout уводится в /dev/null,
+    # а stderr попадает в подстановку. В отличие от compare, у которого код 1
+    # означал «картинки различаются», у ffmpeg ненулевой код — всегда сбой.
     status=0
-    val=$("${im_compare[@]}" -metric SSIM "$a" "$b" "$workdir/diff/$stem-$((i + 1)).png" 2>&1 >/dev/null) || status=$?
-    if [ "$status" -ge 2 ]; then
-      note+="${note:+; }страница $((i + 1)): compare упал (код $status)"
+    val=$(ffmpeg -hide_banner -loglevel info -i "$a" -i "$b" -lavfi ssim -f null - 2>&1 >/dev/null) || status=$?
+    if [ "$status" -ne 0 ]; then
+      note+="${note:+; }страница $((i + 1)): ffmpeg упал (код $status)"
       mark_fail 1 "сбой сравнения"
       continue
     fi
 
-    # IM6 печатает «0.987654», IM7 — «0.987654 (0.987654)»; первое число — сам
-    # SSIM. awk, а не grep|head: на пустой находке конвейер под pipefail уронил
-    # бы скрипт из-за «нет совпадений» — это не ошибка растеризации. Запятая в
-    # регулярке — на случай LC_NUMERIC с запятой: дальше значение уходит в файл
-    # SSIM, который читает awk уже с точкой.
-    val=$(printf '%s\n' "$val" | awk 'match($0, /-?[0-9]+([.,][0-9]+)?([eE][-+]?[0-9]+)?/) { print substr($0, RSTART, RLENGTH); exit }')
+    # Строка фильтра — `[Parsed_ssim_0 @ 0x…] SSIM Y:0.983609 (17.86) All:0.983609 (17.86)`;
+    # нужен `All`. Для серых страниц (`-gray` у pdftoppm) Y и All совпадают, но
+    # канонично именно общее число. awk, а не grep|head: на пустой находке
+    # конвейер под pipefail уронил бы скрипт из-за «нет совпадений» — это не
+    # ошибка растеризации. Запятая в регулярке — на случай LC_NUMERIC с запятой:
+    # дальше значение уходит в файл SSIM, который читает awk уже с точкой.
+    val=$(printf '%s\n' "$val" | awk 'match($0, /All:-?[0-9]+([.,][0-9]+)?/) { print substr($0, RSTART + 4, RLENGTH - 4); exit }')
     val=${val//,/.}
     if [ -z "$val" ]; then
-      note+="${note:+; }страница $((i + 1)): compare не напечатал SSIM"
+      note+="${note:+; }страница $((i + 1)): ffmpeg не напечатал SSIM"
       mark_fail 1 "сбой сравнения"
       continue
     fi
@@ -458,7 +472,7 @@ soffice_version=$(soffice --version 2>/dev/null | head -1) || true
 {
   echo "# XLSX: наш PDF против LibreOffice"
   echo
-  echo "Постраничный SSIM: ImageMagick \`compare -metric SSIM\`, 1.0 — страницы"
+  echo "Постраничный SSIM: ffmpeg \`-lavfi ssim\`, 1.0 — страницы"
   echo "совпали. Растеризация \`pdftoppm -png -gray -r 150\`; режим \`-gray\`"
   echo "намеренно слеп к цвету — метрика ловит геометрию, шрифт и пагинацию, а"
   echo "совпадение заливок и цветов текста ею не проверяется."

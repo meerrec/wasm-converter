@@ -63,11 +63,15 @@ jobs:
       # первый попавшийся шрифт и разъедется по метрикам сразу во всех книгах —
       # SSIM упадёт систематически, и различить это от ошибок рендера будет
       # нельзя.
+      # ffmpeg — источник SSIM: у imagemagick из 24.04 типа метрики SSIM нет
+      # вовсе, а `-metric SSIM` седьмой версии печатает distortion (SSIM =
+      # 1 − 2·distortion), то есть не то число, которое нужно отчёту.
+      # ImageMagick остаётся для размеров страниц и обрезки.
       - name: system tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libreoffice-calc fonts-crosextra-carlito poppler-utils imagemagick unzip
+            libreoffice-calc fonts-crosextra-carlito poppler-utils ffmpeg imagemagick unzip
 
       - name: build mem_probe
         run: cargo build --release -p doc-converter-pdf --example mem_probe
