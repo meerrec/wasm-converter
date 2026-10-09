@@ -5435,4 +5435,666 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         insta::assert_json_snapshot!("table_v_merge", body);
     }
+
+    // -----------------------------------------------------------------------
+    // Таблицы «значение атрибута → enum» (ECMA-376 Part 1)
+    // -----------------------------------------------------------------------
+
+    /// Атрибуты элемента без его разбора: `(локальное имя, значение)`.
+    ///
+    /// До таблиц значений не дотянуться через `parse_xml`: они живут в чистых
+    /// функциях над `Attr`, и собирать документ ради одной строки незачем.
+    fn element_attrs(pairs: &[(&'static str, &'static str)]) -> Vec<Attr<'static>> {
+        pairs
+            .iter()
+            .map(|(name, value)| Attr {
+                name: name.as_bytes(),
+                value: Cow::Borrowed(value),
+            })
+            .collect()
+    }
+
+    /// Каждое значение `ST_Shd` (ECMA-376 Part 1 §17.18.78) даёт свой узор заливки,
+    /// а значение вне схемы сохраняется как есть, а не подменяется.
+    #[test]
+    fn st_shd_maps_every_pattern_of_the_schema() {
+        let cases: &[(&'static str, ShadingPattern)] = &[
+            ("nil", ShadingPattern::Nil),
+            ("clear", ShadingPattern::Clear),
+            ("solid", ShadingPattern::Solid),
+            ("horzStripe", ShadingPattern::HorzStripe),
+            ("vertStripe", ShadingPattern::VertStripe),
+            ("reverseDiagStripe", ShadingPattern::ReverseDiagStripe),
+            ("diagStripe", ShadingPattern::DiagStripe),
+            ("horzCross", ShadingPattern::HorzCross),
+            ("diagCross", ShadingPattern::DiagCross),
+            ("thinHorzStripe", ShadingPattern::ThinHorzStripe),
+            ("thinVertStripe", ShadingPattern::ThinVertStripe),
+            (
+                "thinReverseDiagStripe",
+                ShadingPattern::ThinReverseDiagStripe,
+            ),
+            ("thinDiagStripe", ShadingPattern::ThinDiagStripe),
+            ("thinHorzCross", ShadingPattern::ThinHorzCross),
+            ("thinDiagCross", ShadingPattern::ThinDiagCross),
+            ("pct5", ShadingPattern::Pct5),
+            ("pct10", ShadingPattern::Pct10),
+            ("pct12", ShadingPattern::Pct12),
+            ("pct15", ShadingPattern::Pct15),
+            ("pct20", ShadingPattern::Pct20),
+            ("pct25", ShadingPattern::Pct25),
+            ("pct30", ShadingPattern::Pct30),
+            ("pct35", ShadingPattern::Pct35),
+            ("pct37", ShadingPattern::Pct37),
+            ("pct40", ShadingPattern::Pct40),
+            ("pct45", ShadingPattern::Pct45),
+            ("pct50", ShadingPattern::Pct50),
+            ("pct55", ShadingPattern::Pct55),
+            ("pct60", ShadingPattern::Pct60),
+            ("pct62", ShadingPattern::Pct62),
+            ("pct65", ShadingPattern::Pct65),
+            ("pct70", ShadingPattern::Pct70),
+            ("pct75", ShadingPattern::Pct75),
+            ("pct80", ShadingPattern::Pct80),
+            ("pct85", ShadingPattern::Pct85),
+            ("pct87", ShadingPattern::Pct87),
+            ("pct90", ShadingPattern::Pct90),
+            ("pct95", ShadingPattern::Pct95),
+            // Плотности 33 % в схеме нет; значение сохраняется как есть.
+            ("pct33", ShadingPattern::Other("pct33".to_owned())),
+        ];
+
+        // Перечень схемы не должен разойтись с таблицей незаметно.
+        for pattern in ShadingPattern::ALL {
+            assert!(
+                cases.iter().any(|(_, expected)| *expected == pattern),
+                "{pattern:?} is missing from the table"
+            );
+        }
+        for (raw, expected) in cases {
+            assert_eq!(parse_shading_pattern(raw), *expected, "`{raw}`");
+        }
+    }
+
+    /// Каждое значение `ST_Border` (ECMA-376 Part 1 §17.18.2) даёт свой стиль
+    /// линии; стиль из другого словаря сохраняется как есть.
+    #[test]
+    fn st_border_maps_every_style_of_the_schema() {
+        let cases: &[(&'static str, BorderStyle)] = &[
+            ("nil", BorderStyle::Nil),
+            ("none", BorderStyle::None),
+            ("single", BorderStyle::Single),
+            ("thick", BorderStyle::Thick),
+            ("double", BorderStyle::Double),
+            ("dotted", BorderStyle::Dotted),
+            ("dashed", BorderStyle::Dashed),
+            ("dotDash", BorderStyle::DotDash),
+            ("dotDotDash", BorderStyle::DotDotDash),
+            ("triple", BorderStyle::Triple),
+            ("thinThickSmallGap", BorderStyle::ThinThickSmallGap),
+            ("thickThinSmallGap", BorderStyle::ThickThinSmallGap),
+            ("thinThickThinSmallGap", BorderStyle::ThinThickThinSmallGap),
+            ("thinThickMediumGap", BorderStyle::ThinThickMediumGap),
+            ("thickThinMediumGap", BorderStyle::ThickThinMediumGap),
+            (
+                "thinThickThinMediumGap",
+                BorderStyle::ThinThickThinMediumGap,
+            ),
+            ("thinThickLargeGap", BorderStyle::ThinThickLargeGap),
+            ("thickThinLargeGap", BorderStyle::ThickThinLargeGap),
+            ("thinThickThinLargeGap", BorderStyle::ThinThickThinLargeGap),
+            ("wave", BorderStyle::Wave),
+            ("doubleWave", BorderStyle::DoubleWave),
+            ("dashSmallGap", BorderStyle::DashSmallGap),
+            ("dashDotStroked", BorderStyle::DashDotStroked),
+            ("threeDEmboss", BorderStyle::ThreeDEmboss),
+            ("threeDEngrave", BorderStyle::ThreeDEngrave),
+            ("outset", BorderStyle::Outset),
+            ("inset", BorderStyle::Inset),
+            // `groove` — стиль CSS, а не `ST_Border`.
+            ("groove", BorderStyle::Other("groove".to_owned())),
+        ];
+
+        for style in BorderStyle::ALL {
+            assert!(
+                cases.iter().any(|(_, expected)| *expected == style),
+                "{style:?} is missing from the table"
+            );
+        }
+        for (raw, expected) in cases {
+            assert_eq!(parse_border_style(raw), *expected, "`{raw}`");
+        }
+    }
+
+    /// Каждое значение `ST_HighlightColor` (ECMA-376 Part 1 §17.18.40) даёт свой
+    /// цвет выделения; цвет вне схемы сохраняется как есть.
+    #[test]
+    fn st_highlight_color_maps_every_colour_of_the_schema() {
+        let cases: &[(&'static str, Highlight)] = &[
+            ("black", Highlight::Black),
+            ("blue", Highlight::Blue),
+            ("cyan", Highlight::Cyan),
+            ("green", Highlight::Green),
+            ("magenta", Highlight::Magenta),
+            ("red", Highlight::Red),
+            ("yellow", Highlight::Yellow),
+            ("white", Highlight::White),
+            ("darkBlue", Highlight::DarkBlue),
+            ("darkCyan", Highlight::DarkCyan),
+            ("darkGreen", Highlight::DarkGreen),
+            ("darkMagenta", Highlight::DarkMagenta),
+            ("darkRed", Highlight::DarkRed),
+            ("darkYellow", Highlight::DarkYellow),
+            ("darkGray", Highlight::DarkGray),
+            ("lightGray", Highlight::LightGray),
+            ("none", Highlight::None),
+            // `pink` в схеме нет: значение остаётся собой.
+            ("pink", Highlight::Other("pink".to_owned())),
+        ];
+
+        let mut ctx = ParseCtx::new();
+        for (raw, expected) in cases {
+            let attrs = element_attrs(&[("val", raw)]);
+            let highlight = parse_highlight(&attrs, &mut ctx, PART).expect("the attribute parses");
+            assert_eq!(highlight.as_ref(), Some(expected), "`{raw}`");
+        }
+        assert!(ctx.warnings().is_empty(), "{:?}", ctx.warnings());
+    }
+
+    /// `w:highlight` без `w:val` ничего не выделяет: в `ST_HighlightColor`
+    /// (ECMA-376 Part 1 §17.18.40) значение обязательно.
+    #[test]
+    fn a_highlight_without_a_value_is_dropped_with_a_warning() {
+        let mut ctx = ParseCtx::new();
+        let highlight = parse_highlight(&element_attrs(&[]), &mut ctx, PART).expect("it parses");
+
+        assert_eq!(highlight, None);
+        assert_eq!(ctx.warnings().len(), 1, "{:?}", ctx.warnings());
+        assert_eq!(ctx.warnings()[0].kind, WarningKind::InvalidAttribute);
+    }
+
+    /// Каждое значение `ST_Underline` (ECMA-376 Part 1 §17.3.2.29) даёт свой вид
+    /// подчёркивания; без `w:val` схема подразумевает `single`.
+    #[test]
+    fn st_underline_maps_every_style_of_the_schema() {
+        let cases: &[(&'static str, Underline)] = &[
+            ("single", Underline::Single),
+            ("words", Underline::Words),
+            ("double", Underline::Double),
+            ("thick", Underline::Thick),
+            ("dotted", Underline::Dotted),
+            ("dottedHeavy", Underline::DottedHeavy),
+            ("dash", Underline::Dash),
+            ("dashedHeavy", Underline::DashedHeavy),
+            ("dashLong", Underline::DashLong),
+            ("dashLongHeavy", Underline::DashLongHeavy),
+            ("dotDash", Underline::DotDash),
+            ("dashDotHeavy", Underline::DashDotHeavy),
+            ("dotDotDash", Underline::DotDotDash),
+            ("dashDotDotHeavy", Underline::DashDotDotHeavy),
+            ("wave", Underline::Wave),
+            ("wavyHeavy", Underline::WavyHeavy),
+            ("wavyDouble", Underline::WavyDouble),
+            ("none", Underline::None),
+            // Схема знает `wave`, `wavyHeavy` и `wavyDouble`, но не `wavy`.
+            ("wavy", Underline::Other("wavy".to_owned())),
+        ];
+
+        for (raw, expected) in cases {
+            let attrs = element_attrs(&[("val", raw)]);
+            assert_eq!(parse_underline(&attrs), *expected, "`{raw}`");
+        }
+        assert_eq!(parse_underline(&element_attrs(&[])), Underline::Single);
+    }
+
+    /// `ST_VerticalAlignRun` (ECMA-376 Part 1 §17.18.84) знает три положения
+    /// знака; чужое значение отбрасывается с предупреждением.
+    #[test]
+    fn st_vertical_align_run_maps_the_three_positions() {
+        let cases: &[(&'static str, VertAlign)] = &[
+            ("baseline", VertAlign::Baseline),
+            ("superscript", VertAlign::Superscript),
+            ("subscript", VertAlign::Subscript),
+        ];
+
+        let mut ctx = ParseCtx::new();
+        for (raw, expected) in cases {
+            let attrs = element_attrs(&[("val", raw)]);
+            let align = parse_vert_align(&attrs, &mut ctx, PART).expect("it parses");
+            assert_eq!(align, Some(*expected), "`{raw}`");
+        }
+        assert!(ctx.warnings().is_empty(), "{:?}", ctx.warnings());
+
+        // `top` — значение `ST_VerticalJc`, а не `ST_VerticalAlignRun`.
+        let attrs = element_attrs(&[("val", "top")]);
+        let align = parse_vert_align(&attrs, &mut ctx, PART).expect("it parses");
+        assert_eq!(align, None);
+        assert_eq!(ctx.warnings().len(), 1, "{:?}", ctx.warnings());
+        assert_eq!(ctx.warnings()[0].kind, WarningKind::InvalidAttribute);
+
+        // Отсутствие `w:val` идёт тем же путём: смещения нет.
+        let align = parse_vert_align(&element_attrs(&[]), &mut ctx, PART).expect("it parses");
+        assert_eq!(align, None);
+        assert_eq!(ctx.warnings().len(), 2, "{:?}", ctx.warnings());
+    }
+
+    /// `ST_Jc` (ECMA-376 Part 1 §17.18.44): семь значений модели и запас `Other`
+    /// для остальных — `mediumKashida` схема знает, модель нет.
+    #[test]
+    fn st_jc_maps_every_alignment_of_the_schema() {
+        let cases: &[(&'static str, Justification)] = &[
+            ("left", Justification::Left),
+            ("center", Justification::Center),
+            ("right", Justification::Right),
+            ("both", Justification::Both),
+            ("distribute", Justification::Distribute),
+            ("start", Justification::Start),
+            ("end", Justification::End),
+            (
+                "mediumKashida",
+                Justification::Other("mediumKashida".to_owned()),
+            ),
+        ];
+
+        let mut ctx = ParseCtx::new();
+        for (raw, expected) in cases {
+            let attrs = element_attrs(&[("val", raw)]);
+            let jc = parse_justification(&attrs, &mut ctx, PART).expect("it parses");
+            assert_eq!(jc.as_ref(), Some(expected), "`{raw}`");
+        }
+        assert!(ctx.warnings().is_empty(), "{:?}", ctx.warnings());
+
+        // `w:jc` без `w:val` не выравнивает ничего.
+        let jc = parse_justification(&element_attrs(&[]), &mut ctx, PART).expect("it parses");
+        assert_eq!(jc, None);
+        assert_eq!(ctx.warnings().len(), 1, "{:?}", ctx.warnings());
+        assert_eq!(ctx.warnings()[0].kind, WarningKind::InvalidAttribute);
+    }
+
+    /// Цвет — `auto`, `none` или `RRGGBB`; всё прочее отбрасывается
+    /// (ECMA-376 Part 1 §17.18.9, `ST_HexColor`).
+    #[test]
+    fn a_colour_is_read_from_hex_or_a_keyword() {
+        let mut ctx = ParseCtx::new();
+        let cases: &[(&'static str, Color)] = &[
+            ("FF0000", Color::Rgb(0x00FF_0000)),
+            ("00ff00", Color::Rgb(0x0000_FF00)),
+            ("auto", Color::Auto),
+            // `none` в `ST_HexColor` нет, но Word его пишет.
+            ("none", Color::None),
+        ];
+        for (raw, expected) in cases {
+            let color = parse_color(Some(raw), &mut ctx, PART).expect("it parses");
+            assert_eq!(color, Some(*expected), "`{raw}`");
+        }
+        assert!(ctx.warnings().is_empty(), "{:?}", ctx.warnings());
+
+        // Пять и семь цифр — не `RRGGBB`; `GGGGGG` — не шестнадцатеричное.
+        for raw in ["12345", "1234567", "GGGGGG"] {
+            let color = parse_color(Some(raw), &mut ctx, PART).expect("it parses");
+            assert_eq!(color, None, "`{raw}`");
+        }
+        assert_eq!(ctx.warnings().len(), 3, "{:?}", ctx.warnings());
+        assert!(ctx
+            .warnings()
+            .iter()
+            .all(|warning| warning.kind == WarningKind::InvalidAttribute));
+
+        // Атрибута нет — цвета нет, и предупреждать не о чем.
+        let color = parse_color(None, &mut ctx, PART).expect("it parses");
+        assert_eq!(color, None);
+        assert_eq!(ctx.warnings().len(), 3, "{:?}", ctx.warnings());
+    }
+
+    /// Базы отсчёта плавающего рисунка — `ST_RelFromH` и `ST_RelFromV`
+    /// (ECMA-376 Part 1 §20.4): все значения схемы и запас `Other` на чужие.
+    #[test]
+    fn drawing_relative_bases_cover_the_schema() {
+        let horizontal: &[(&'static str, RelFromH)] = &[
+            ("margin", RelFromH::Margin),
+            ("page", RelFromH::Page),
+            ("column", RelFromH::Column),
+            ("character", RelFromH::Character),
+            ("leftMargin", RelFromH::LeftMargin),
+            ("rightMargin", RelFromH::RightMargin),
+            ("insideMargin", RelFromH::InsideMargin),
+            ("outsideMargin", RelFromH::OutsideMargin),
+            ("textbox", RelFromH::Other("textbox".to_owned())),
+        ];
+        let vertical: &[(&'static str, RelFromV)] = &[
+            ("margin", RelFromV::Margin),
+            ("page", RelFromV::Page),
+            ("paragraph", RelFromV::Paragraph),
+            ("line", RelFromV::Line),
+            ("topMargin", RelFromV::TopMargin),
+            ("bottomMargin", RelFromV::BottomMargin),
+            ("insideMargin", RelFromV::InsideMargin),
+            ("outsideMargin", RelFromV::OutsideMargin),
+            ("textbox", RelFromV::Other("textbox".to_owned())),
+        ];
+
+        let mut ctx = ParseCtx::new();
+        for (raw, expected) in horizontal {
+            let base = parse_rel_from_h(Some(raw), &mut ctx, PART).expect("it parses");
+            assert_eq!(base, *expected, "`{raw}`");
+        }
+        for (raw, expected) in vertical {
+            let base = parse_rel_from_v(Some(raw), &mut ctx, PART).expect("it parses");
+            assert_eq!(base, *expected, "`{raw}`");
+        }
+        assert!(ctx.warnings().is_empty(), "{:?}", ctx.warnings());
+
+        // Без `relativeFrom` базой отсчёта схема считает поле страницы.
+        let base = parse_rel_from_h(None, &mut ctx, PART).expect("it parses");
+        assert_eq!(base, RelFromH::Margin);
+        let base = parse_rel_from_v(None, &mut ctx, PART).expect("it parses");
+        assert_eq!(base, RelFromV::Margin);
+        assert_eq!(ctx.warnings().len(), 2, "{:?}", ctx.warnings());
+        assert!(ctx
+            .warnings()
+            .iter()
+            .all(|warning| warning.kind == WarningKind::InvalidAttribute));
+    }
+
+    /// Выравнивание рисунка относительно базы — `ST_AlignH` и `ST_AlignV`
+    /// (ECMA-376 Part 1 §20.4).
+    #[test]
+    fn drawing_alignments_cover_the_schema() {
+        let horizontal: &[(&'static str, AlignH)] = &[
+            ("left", AlignH::Left),
+            ("center", AlignH::Center),
+            ("right", AlignH::Right),
+            ("inside", AlignH::Inside),
+            ("outside", AlignH::Outside),
+            ("middle", AlignH::Other("middle".to_owned())),
+        ];
+        let vertical: &[(&'static str, AlignV)] = &[
+            ("top", AlignV::Top),
+            ("center", AlignV::Center),
+            ("bottom", AlignV::Bottom),
+            ("inside", AlignV::Inside),
+            ("outside", AlignV::Outside),
+            ("middle", AlignV::Other("middle".to_owned())),
+        ];
+
+        for (raw, expected) in horizontal {
+            assert_eq!(parse_align_h(raw), *expected, "`{raw}`");
+        }
+        for (raw, expected) in vertical {
+            assert_eq!(parse_align_v(raw), *expected, "`{raw}`");
+        }
+    }
+
+    /// Разобрать синтетическое тело вместе со связями части: без них не
+    /// разрешить цель `a:blip/@r:embed`.
+    fn parse_xml_with(body: &str, rels: &Relationships) -> (Body, Vec<ParseWarning>) {
+        parse_part_with(document_xml(body).as_bytes(), rels)
+    }
+
+    /// Связи с картинкой: `rId5` — та же цель, что пишет Word.
+    fn image_rels() -> Relationships {
+        rels_from(&[(
+            "rId5",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            "media/image1.png",
+        )])
+    }
+
+    /// Нарисованный в абзаце рисунок — единственное содержимое первого run'а.
+    fn drawing_of(body: &Body) -> &InlineOrAnchor {
+        let content = &only_run(body).content;
+        match &content[0] {
+            RunContent::Drawing(drawing) => drawing,
+            other => panic!("expected a drawing, got {other:?}"),
+        }
+    }
+
+    /// Плавающий рисунок читает размер, имя и позицию (ECMA-376 Part 1 §20.4).
+    #[test]
+    fn an_anchored_drawing_keeps_extent_position_and_wrap() {
+        let (body, warnings) = parse_xml_with(
+            r#"<w:p><w:r><w:drawing>
+                 <wp:anchor behindDoc="1">
+                   <wp:extent cx="914400" cy="457200"/>
+                   <wp:docPr name="Picture 1" descr="кружок"/>
+                   <a:blip r:embed="rId5"/>
+                   <wp:positionH relativeFrom="page"><wp:align>center</wp:align></wp:positionH>
+                   <wp:positionV relativeFrom="line"><wp:posOffset>914400</wp:posOffset></wp:positionV>
+                   <wp:wrapSquare/>
+                 </wp:anchor>
+               </w:drawing></w:r></w:p>"#,
+            &image_rels(),
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let drawing = drawing_of(&body);
+        assert!(drawing.inline.is_none());
+        let anchor = drawing.anchor.as_ref().expect("`wp:anchor` is kept");
+
+        assert_eq!(
+            anchor.extent,
+            Extent {
+                cx: 914_400,
+                cy: 457_200
+            }
+        );
+        assert!(anchor.behind_text);
+        assert_eq!(anchor.wrap, WrapKind::Square);
+        assert_eq!(anchor.horizontal.relative_from, RelFromH::Page);
+        assert_eq!(anchor.horizontal.align, Some(AlignH::Center));
+        assert_eq!(anchor.horizontal.offset, None);
+        assert_eq!(anchor.horizontal.percent, None);
+        assert_eq!(anchor.vertical.relative_from, RelFromV::Line);
+        assert_eq!(anchor.vertical.offset, Some(914_400));
+        assert_eq!(anchor.image.rel_id, "rId5");
+        assert_eq!(anchor.image.part.as_deref(), Some("word/media/image1.png"));
+        assert_eq!(anchor.image.name.as_deref(), Some("Picture 1"));
+        assert_eq!(anchor.image.description.as_deref(), Some("кружок"));
+    }
+
+    /// Встроенный рисунок (`wp:inline`) анкером не становится, и обтекания
+    /// у него нет (ECMA-376 Part 1 §20.4).
+    #[test]
+    fn an_inline_drawing_has_no_anchor() {
+        let (body, warnings) = parse_xml_with(
+            r#"<w:p><w:r><w:drawing>
+                 <wp:inline>
+                   <wp:extent cx="914400" cy="457200"/>
+                   <a:blip r:embed="rId5"/>
+                 </wp:inline>
+               </w:drawing></w:r></w:p>"#,
+            &image_rels(),
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let drawing = drawing_of(&body);
+        assert!(drawing.anchor.is_none());
+        let image = drawing.inline.as_ref().expect("`wp:inline` is kept");
+        assert_eq!(
+            image.extent,
+            Extent {
+                cx: 914_400,
+                cy: 457_200
+            }
+        );
+        assert_eq!(image.part.as_deref(), Some("word/media/image1.png"));
+    }
+
+    /// Каждый вид обтекания (`wp:wrap*`) читается, а без `wp:positionH` и
+    /// `wp:positionV` позиция берётся умолчанием схемы (ECMA-376 Part 1 §20.4).
+    #[test]
+    fn every_wrap_kind_and_the_default_position_are_read() {
+        let cases: &[(&'static str, WrapKind)] = &[
+            ("<wp:wrapNone/>", WrapKind::None),
+            ("<wp:wrapSquare/>", WrapKind::Square),
+            ("<wp:wrapTight/>", WrapKind::Tight),
+            ("<wp:wrapThrough/>", WrapKind::Through),
+            ("<wp:wrapTopAndBottom/>", WrapKind::TopAndBottom),
+        ];
+
+        for (wrap, expected) in cases {
+            let xml = format!(
+                r#"<w:p><w:r><w:drawing><wp:anchor>
+                     <wp:extent cx="1" cy="1"/><a:blip r:embed="rId5"/>{wrap}
+                   </wp:anchor></w:drawing></w:r></w:p>"#
+            );
+            let (body, warnings) = parse_xml_with(&xml, &image_rels());
+            assert!(warnings.is_empty(), "`{wrap}`: {warnings:?}");
+
+            let drawing = drawing_of(&body);
+            let anchor = drawing.anchor.as_ref().expect("`wp:anchor` is kept");
+            assert_eq!(anchor.wrap, *expected, "`{wrap}`");
+            // Позиция не названа: база — поле страницы, выравнивания нет.
+            assert_eq!(
+                anchor.horizontal.relative_from,
+                RelFromH::Margin,
+                "`{wrap}`"
+            );
+            assert_eq!(anchor.horizontal.align, None, "`{wrap}`");
+            assert_eq!(anchor.vertical.relative_from, RelFromV::Margin, "`{wrap}`");
+            assert_eq!(anchor.vertical.align, None, "`{wrap}`");
+            assert!(!anchor.behind_text, "`{wrap}`");
+        }
+    }
+
+    /// Внутри `wp:positionH` читаются `wp:align`, `wp:posOffset` и `wp:pct`,
+    /// а элемент вне `CT_PosH` пропускается молча (ECMA-376 Part 1 §20.4:
+    /// выбор в `CT_PosH` один, и посторонний ребёнок — не его ветка).
+    #[test]
+    fn a_position_reads_align_offset_and_percent() {
+        let (body, warnings) = parse_xml(
+            r#"<w:p><w:r><w:drawing><wp:anchor>
+                 <wp:extent cx="1" cy="1"/>
+                 <wp:positionH relativeFrom="character">
+                   <wp:align>outside</wp:align>
+                   <wp:posOffset>-914400</wp:posOffset>
+                   <wp:pct>50000</wp:pct>
+                   <wp:notAPositionChild/>
+                 </wp:positionH>
+                 <wp:positionV relativeFrom="topMargin"><wp:posOffset>0</wp:posOffset></wp:positionV>
+               </wp:anchor></w:drawing></w:r></w:p>"#,
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let drawing = drawing_of(&body);
+        let anchor = drawing.anchor.as_ref().expect("`wp:anchor` is kept");
+        assert_eq!(anchor.horizontal.align, Some(AlignH::Outside));
+        assert_eq!(anchor.horizontal.offset, Some(-914_400));
+        assert_eq!(anchor.horizontal.percent, Some(50_000));
+        assert_eq!(anchor.vertical.relative_from, RelFromV::TopMargin);
+        assert_eq!(anchor.vertical.offset, Some(0));
+    }
+
+    /// Пустой `wp:align` даёт пустое выравнивание, а `a:blip` с необъявленной
+    /// связью оставляет рисунок без части: и то и другое — не отказ разбора
+    /// (ADR-0016 §2).
+    #[test]
+    fn an_empty_align_and_a_missing_image_relationship_are_kept() {
+        let (body, warnings) = parse_xml(
+            r#"<w:p><w:r><w:drawing><wp:anchor>
+                 <wp:positionH relativeFrom="margin"><wp:align/></wp:positionH>
+                 <a:blip r:embed="rId9"/>
+               </wp:anchor></w:drawing></w:r></w:p>"#,
+        );
+
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(warnings[0].kind, WarningKind::MissingPart);
+
+        let drawing = drawing_of(&body);
+        let anchor = drawing.anchor.as_ref().expect("`wp:anchor` is kept");
+        assert_eq!(anchor.horizontal.align, Some(AlignH::Other(String::new())));
+        assert_eq!(anchor.image.rel_id, "rId9");
+        assert_eq!(anchor.image.part, None);
+    }
+
+    /// Нечисловое смещение, процент вне `i32`, пустой `wp:pct` и `wp:extent`
+    /// без числа не срывают разбор: значение отбрасывается с предупреждением
+    /// (ECMA-376 Part 1 §20.4).
+    #[test]
+    fn broken_position_and_extent_values_warn() {
+        let (body, warnings) = parse_xml(
+            r#"<w:p><w:r><w:drawing><wp:anchor>
+                 <wp:extent cx="not a number" cy="457200"/>
+                 <wp:positionH relativeFrom="margin"><wp:pct/><wp:pct>99999999999</wp:pct></wp:positionH>
+                 <wp:positionV relativeFrom="margin"><wp:posOffset>четыре</wp:posOffset></wp:positionV>
+               </wp:anchor></w:drawing></w:r></w:p>"#,
+        );
+
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert!(warnings
+            .iter()
+            .all(|warning| warning.kind == WarningKind::InvalidAttribute));
+
+        let drawing = drawing_of(&body);
+        let anchor = drawing.anchor.as_ref().expect("`wp:anchor` is kept");
+        // Ширина не прочиталась — остаётся ноль, а не половинчатое значение.
+        assert_eq!(anchor.extent, Extent { cx: 0, cy: 457_200 });
+        assert_eq!(anchor.horizontal.percent, None);
+        assert_eq!(anchor.vertical.offset, None);
+    }
+
+    /// `w:drawing` глубже `MAX_DRAWING_DEPTH` не сканируется: остаток
+    /// пропускается с предупреждением (ADR-0016 §6).
+    #[test]
+    fn a_deeply_nested_drawing_is_skipped_with_a_warning() {
+        let mut xml = String::from("<w:p><w:r><w:drawing><wp:anchor>");
+        for _ in 0..=MAX_DRAWING_DEPTH {
+            xml.push_str("<wp:grpSp>");
+        }
+        for _ in 0..=MAX_DRAWING_DEPTH {
+            xml.push_str("</wp:grpSp>");
+        }
+        xml.push_str("</wp:anchor></w:drawing></w:r></w:p>");
+
+        let (body, warnings) = parse_xml(&xml);
+
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(warnings[0].kind, WarningKind::DeepNesting);
+        assert!(drawing_of(&body).anchor.is_some());
+    }
+
+    /// Обрыв потока внутри контейнера — ошибка разбора, а не паника
+    /// (ADR-0016: фатально только то, что мешает читать сам XML).
+    #[test]
+    fn an_unterminated_container_is_malformed() {
+        // Открытые теги без закрывающих: ридер доводит поток до конца, и
+        // разборщик контейнера обязан сказать, внутри чего он кончился
+        // (закрыть все теги здесь нельзя — тогда ошибку поймал бы сам ридер).
+        let prefixes = [
+            "<w:document><w:body>",
+            "<w:document><w:body><w:tbl>",
+            "<w:document><w:body><w:tbl><w:tblPr>",
+            "<w:document><w:body><w:tbl><w:tblGrid>",
+            "<w:document><w:body><w:tbl><w:tr>",
+            "<w:document><w:body><w:tbl><w:tr><w:trPr>",
+            "<w:document><w:body><w:tbl><w:tr><w:tc>",
+            "<w:document><w:body><w:tbl><w:tr><w:tc><w:tcPr>",
+            "<w:document><w:body><w:p>",
+            "<w:document><w:body><w:p><w:pPr>",
+            "<w:document><w:body><w:p><w:pPr><w:numPr>",
+            "<w:document><w:body><w:p><w:pPr><w:pBdr>",
+            "<w:document><w:body><w:p><w:pPr><w:tabs>",
+            "<w:document><w:body><w:p><w:r>",
+            "<w:document><w:body><w:p><w:r><w:t>",
+            "<w:document><w:body><w:p><w:r><w:drawing>",
+            "<w:document><w:body><w:p><w:r><w:drawing><wp:anchor><wp:positionH relativeFrom=\"page\">",
+            "<w:document><w:body><w:sectPr>",
+            "<w:document><w:body><w:sectPr><w:cols>",
+        ];
+
+        for prefix in prefixes {
+            let result = parse(
+                prefix.as_bytes(),
+                &Relationships::default(),
+                &mut ParseCtx::new(),
+                PART,
+            );
+            let err = result.expect_err("an unterminated container does not parse");
+            assert!(
+                err.to_string().contains("unexpected end of input"),
+                "`{prefix}`: {err}"
+            );
+        }
+    }
 }
