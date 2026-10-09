@@ -168,7 +168,7 @@ export const stylesFixtures: FixtureSpec[] = [
             tables: [],
             images: [],
             styles: [
-                { id: 'Heading1', type: 'paragraph', link: 'Heading1Char', bold: true, color: '2F5496' },
+                { id: 'Heading1', type: 'paragraph', basedOn: 'Normal', link: 'Heading1Char', bold: true, color: '2F5496' },
                 { id: 'Heading1Char', type: 'character', link: 'Heading1', basedOn: 'DefaultParagraphFont' },
             ],
         },
@@ -297,8 +297,8 @@ export const stylesFixtures: FixtureSpec[] = [
                 ],
             },
             styles: [
-                { id: 'FancyQuote', type: 'paragraph', qFormat: true, uiPriority: 31, italic: true },
-                { id: 'HiddenNote', type: 'paragraph', semiHidden: true, unhideWhenUsed: true, uiPriority: 99 },
+                { id: 'FancyQuote', type: 'paragraph', basedOn: 'Normal', qFormat: true, uiPriority: 31, italic: true },
+                { id: 'HiddenNote', type: 'paragraph', basedOn: 'Normal', semiHidden: true, unhideWhenUsed: true, uiPriority: 99 },
             ],
         },
     },

@@ -31,6 +31,7 @@
       {
         "id": "Heading1",
         "type": "paragraph",
+        "basedOn": "Normal",
         "link": "Heading1Char",
         "bold": true,
         "color": "2F5496"

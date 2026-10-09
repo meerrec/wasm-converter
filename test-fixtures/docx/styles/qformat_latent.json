@@ -47,6 +47,7 @@
       {
         "id": "FancyQuote",
         "type": "paragraph",
+        "basedOn": "Normal",
         "qFormat": true,
         "uiPriority": 31,
         "italic": true
@@ -54,6 +55,7 @@
       {
         "id": "HiddenNote",
         "type": "paragraph",
+        "basedOn": "Normal",
         "semiHidden": true,
         "unhideWhenUsed": true,
         "uiPriority": 99
