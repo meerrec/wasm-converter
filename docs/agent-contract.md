@@ -167,9 +167,14 @@
 - criterion-baseline отсутствует (в репозитории его нет; `target/` и
   `/criterion/` в `.gitignore`), бенчмарки в CI не запускаются и ни с чем не
   сравниваются: «до/после» — из локального прогона и отчёта, а не из гейта;
-- покрытие тестами (Rust ≥ 85 %, TS ≥ 80 % из `CLAUDE.md`) сейчас не
-  измеряется: `cargo-llvm-cov` в CI нет, он вводится в Спринте 8 (`ROADMAP.md`
-  §10). Гейт по покрытию не выдумывается заново — его пока не существует.
+- покрытие тестами (Rust ≥ 85 %, TS ≥ 80 % из `CLAUDE.md`) измеряется: джоба
+  `coverage` в `.github/workflows/ci.yml` гоняет `cargo llvm-cov
+  --fail-under-lines` по крейту, пороги — 85 % строк для `doc-converter-docx` и
+  80 % для нового кода `doc-converter-core`. Локально то же самое:
+  `cargo llvm-cov -p doc-converter-<крейт> --fail-under-lines <порог>`;
+  в cargo-llvm-cov 0.9.1 нет опции `--target-dir` — каталог сборки задаётся
+  через `CARGO_TARGET_DIR`. TS-порог (≥ 80 %) гейтом не закрыт: покрытие TS в CI
+  не проверяется.
 
 ## 7. Границы применимости
 
