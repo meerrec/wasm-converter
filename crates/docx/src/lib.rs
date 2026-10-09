@@ -69,6 +69,7 @@ pub use model::table::{
     TableBorders, TableLayout, TableLook, TableWidth, VMerge,
 };
 pub use model::{BlockItem, Body, Document, Metadata, Relationships};
+pub use parse::parse_docx;
 
 use doc_converter_core::zip_limits::ZipLimits;
 
