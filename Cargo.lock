@@ -550,6 +550,7 @@ dependencies = [
  "proptest",
  "quick-xml",
  "serde",
+ "serde_json",
  "smallvec",
  "thiserror",
  "zip",

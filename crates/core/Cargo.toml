@@ -17,5 +17,6 @@ smallvec   = { workspace = true }
 # proptest тянет rand → getrandom, который не собирается под wasm32 без
 # `getrandom_backend="wasm_js"`; эти dev-зависимости нужны только нативным тестам.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-proptest = { workspace = true }
-insta    = { workspace = true }
+proptest   = { workspace = true }
+insta      = { workspace = true }
+serde_json = { workspace = true }

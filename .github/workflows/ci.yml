@@ -258,6 +258,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: 1.98.0 }
       - run: cargo install cargo-deny --locked && cargo deny check
+      - run: cargo install cargo-audit --locked && cargo audit
       # Версию pnpm action берёт из `packageManager` в package.json; ключ
       # `version` рядом с ним — ошибка «Multiple versions of pnpm specified».
       - uses: pnpm/action-setup@v4
