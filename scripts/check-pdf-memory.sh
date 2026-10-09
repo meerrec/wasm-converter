@@ -63,7 +63,10 @@ printf '%s\n' "$run"
 rss=$(printf '%s\n' "$run" | awk -v re="$rss_re" \
   '$0 ~ re { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) { print $i; exit } }')
 if [ -z "$rss" ]; then
-  echo "не нашёл строку «$rss_re» в выводе time(1)" >&2
+  # Фигурные скобки обязательны: следом стоит закрывающая кавычка, и bash 3.2
+  # (macOS) втягивает её байты в имя переменной — на этом пути (метрики нет)
+  # скрипт падал бы с unbound variable вместо кода 2.
+  echo "не нашёл строку «${rss_re}» в выводе time(1)" >&2
   exit 2
 fi
 peak_bytes=$((rss * rss_scale))
