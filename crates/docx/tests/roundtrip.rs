@@ -107,7 +107,7 @@ fn simple_paragraph(node: u64, text: &str) -> Paragraph {
         mark_rpr: Box::new(RawRPr::default()),
         runs: vec![Inline::Run(Run {
             id: id(node + 1),
-            rpr: RawRPr::default(),
+            rpr: Box::new(RawRPr::default()),
             style_ref: None,
             content: vec![RunContent::Text(text.to_owned())],
         })],
@@ -381,7 +381,7 @@ fn inline_drawing() -> InlineOrAnchor {
 fn full_run() -> Run {
     Run {
         id: id(11),
-        rpr: full_rpr(),
+        rpr: Box::new(full_rpr()),
         style_ref: Some(StyleId::from("Strong")),
         content: vec![
             RunContent::Text("Привет".to_owned()),

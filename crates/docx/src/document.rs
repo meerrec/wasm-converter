@@ -2168,7 +2168,7 @@ fn parse_run(
     Ok((
         Run {
             id,
-            rpr,
+            rpr: Box::new(rpr),
             style_ref,
             content,
         },

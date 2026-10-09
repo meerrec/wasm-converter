@@ -84,7 +84,10 @@ pub struct Run {
     /// Идентификатор узла в модели.
     pub id: NodeId,
     /// Сырые свойства знака (`w:rPr`).
-    pub rpr: RawRPr,
+    ///
+    /// `Box` — бюджет памяти ROADMAP §9 (≤ 128 байт на run): `RawRPr` тяжелее бюджета целиком,
+    /// а run'ов в документе много.
+    pub rpr: Box<RawRPr>,
     /// Идентификатор знакового стиля (`w:rStyle`) — копия `rpr.style`.
     pub style_ref: Option<StyleId>,
     /// Содержимое run'а по порядку.
