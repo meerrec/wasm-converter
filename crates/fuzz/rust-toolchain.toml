@@ -1,0 +1,5 @@
+# В корне репозитория закреплён stable 1.98.0, а `cargo fuzz` требует nightly
+# (sanitizer). Файл нужен, чтобы rustup выбирал nightly при вызове из этого
+# каталога без `+nightly` — иначе команды падали бы на stable.
+[toolchain]
+channel = "nightly"
