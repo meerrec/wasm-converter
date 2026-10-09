@@ -4,11 +4,33 @@ name: Fuzz
 # sanitizer, а монорепозиторий закреплён на stable 1.98.0, и мешать их в
 # одном job'е нельзя. Ночной прогон (15 минут на цель) ищет падения на
 # длинном горизонте, прогон на PR — короткий: он ловит регрессию конкретной
-# правки, не выжигая часы CI.
+# правки, не выжигая часы CI. Ручной запуск рассчитан на длинный горизонт (до
+# 5.5 ч на цель), и ради него корпус ездит между прогонами: без этого каждая
+# длинная сессия начинается с нуля и первые часы тратит на структуру ZIP/OOXML,
+# которую мы и так умеем генерировать.
 on:
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
+    inputs:
+      target:
+        description: 'Цель фаззинга'
+        type: choice
+        default: all
+        options:
+          - all
+          - core_zip
+          - core_xml_reader
+          - core_rels
+          - xlsx_worksheet
+          - docx_document
+          - docx_styles
+          - docx_numbering
+          - docx_rels
+      minutes:
+        description: 'Длительность на цель, минут (только для ручного запуска)'
+        type: number
+        default: 60
   pull_request:
     paths:
       - 'crates/core/**'
@@ -21,31 +43,101 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # Матрицу собирает отдельный job: у ручного запуска и цели, и длительность —
+  # входные параметры, а `strategy.matrix` разворачивается до старта job'а и
+  # `inputs` не видит. Здесь же считаются секунды для `-max_total_time` и таймаут
+  # job'а: оба числа выводятся из одной переменной, поэтому разъехаться не могут.
+  setup:
+    name: setup
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.plan.outputs.targets }}
+      minutes: ${{ steps.plan.outputs.minutes }}
+      max_total_time: ${{ steps.plan.outputs.max_total_time }}
+      job_timeout: ${{ steps.plan.outputs.job_timeout }}
+    steps:
+      - name: Plan targets and limits
+        id: plan
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TARGET: ${{ inputs.target }}
+          INPUT_MINUTES: ${{ inputs.minutes }}
+        run: |
+          set -euo pipefail
+
+          # JSON-массив собирает jq, а не человек: `strategy.matrix` принимает
+          # его через fromJSON, и одна лишняя кавычка стоила бы всего прогона.
+          all_targets=$(printf '%s\n' \
+              core_zip core_xml_reader core_rels xlsx_worksheet \
+              docx_document docx_styles docx_numbering docx_rels |
+            jq -Rcn '[inputs]')
+          # Одиночная цель тоже проходит через jq — так значение гарантированно
+          # попадает в кавычки и не сломает JSON.
+          if [ "$EVENT_NAME" = workflow_dispatch ] && [ -n "$INPUT_TARGET" ] && [ "$INPUT_TARGET" != all ]; then
+            targets=$(jq -cn --arg t "$INPUT_TARGET" '[$t]')
+          else
+            targets="$all_targets"
+          fi
+
+          # PR и ночь живут по прежним числам и inputs игнорируют: длительность
+          # задаёт человек только при ручном запуске.
+          case "$EVENT_NAME" in
+            pull_request) fuzz_minutes=1 ;;   # 60 с: регрессия конкретной правки
+            schedule)     fuzz_minutes=15 ;;  # 900 с: ночной горизонт
+            *)            fuzz_minutes="${INPUT_MINUTES:-60}" ;;
+          esac
+          case "$fuzz_minutes" in
+            '' | *[!0-9]*)
+              echo "minutes must be a positive integer, got '$fuzz_minutes'" >&2
+              exit 1
+              ;;
+          esac
+          [ "$fuzz_minutes" -ge 1 ] || fuzz_minutes=1
+          # 6 ч — жёсткий лимит job'а на GitHub-hosted раннере, и он общий на
+          # сборку под sanitizer, сидирование, фаззинг и выгрузку корпуса. На
+          # фаззинг отдаём 5.5 ч: прогон на все 6 ч снялся бы ровно на шести
+          # часах, уже без корпуса в артефакте.
+          [ "$fuzz_minutes" -le 330 ] || fuzz_minutes=330
+          # `-max_total_time` либфаззера — секунды, а входной параметр и лимит
+          # job'а — минуты; перевод в одном месте, чтобы они не разъехались.
+          max_total_time=$(( fuzz_minutes * 60 ))
+
+          # Запас на сборку/сидирование/выгрузку, не больше шести часов и не
+          # меньше прежних 40 минут.
+          job_timeout=$(( fuzz_minutes + 30 ))
+          [ "$job_timeout" -ge 40 ] || job_timeout=40
+          [ "$job_timeout" -le 360 ] || job_timeout=360
+
+          {
+            echo "targets=$targets"
+            echo "minutes=$fuzz_minutes"
+            echo "max_total_time=$max_total_time"
+            echo "job_timeout=$job_timeout"
+          } >> "$GITHUB_OUTPUT"
+          echo "event=$EVENT_NAME minutes=$fuzz_minutes max_total_time=$max_total_time job_timeout=$job_timeout targets=$targets"
+
   fuzz:
     name: fuzz (${{ matrix.target }})
+    needs: setup
     runs-on: ubuntu-latest
-    # 15 минут прогона + сборка под sanitizer; заведомо меньше дефолтных 6 часов.
-    timeout-minutes: 40
+    # Таймаут считает setup и держит его в пределах шести часов — потолка
+    # GitHub-hosted раннера, — но 6 ч фаззинга в 6 ч job'а не помещаются:
+    # сборка и выгрузка корпуса идут за счёт того же лимита.
+    timeout-minutes: ${{ fromJSON(needs.setup.outputs.job_timeout) }}
     strategy:
       # Одна упавшая цель не должна отменять остальные: падения независимы.
       fail-fast: false
       matrix:
-        target:
-          [
-            core_zip,
-            core_xml_reader,
-            core_rels,
-            xlsx_worksheet,
-            docx_document,
-            docx_styles,
-            docx_numbering,
-            docx_rels,
-          ]
+        target: ${{ fromJSON(needs.setup.outputs.targets) }}
+    # event_name в группе: ночной cron и ручной прогон идут в одной ветке, и без
+    # него cron снимал бы запущенный вручную длинный прогон на середине. Внутри
+    # одного события поведение прежнее — новый прогон отменяет старый.
     concurrency:
-      group: fuzz-${{ matrix.target }}-${{ github.ref }}
+      group: fuzz-${{ matrix.target }}-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
     env:
-      MAX_TOTAL_TIME: ${{ github.event_name == 'pull_request' && '60' || '900' }}
+      MAX_TOTAL_TIME: ${{ needs.setup.outputs.max_total_time }}
     steps:
       - uses: actions/checkout@v4
 
@@ -64,10 +156,24 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
 
+      # Корпус переезжает между прогонами: ключ уникален на запуск, потому что
+      # кэш неизменяем — запись под существующим ключом не перезаписывается, — а
+      # restore-keys подтягивает самый свежий корпус этой цели. Вытесняют старые
+      # записи лимит кэша репозитория, а не мы.
+      - name: Restore corpus
+        uses: actions/cache@v4
+        with:
+          path: crates/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
       # Корпус собирается из фикстур: без него либфаззер стартует с пустого
       # каталога и первые минуты тратит на структуру ZIP/OOXML, которую мы уже
       # умеем генерировать. Имя seed-файла — сплющенный путь фикстуры:
-      # libFuzzer читает только файлы верхнего уровня корпуса.
+      # libFuzzer читает только файлы верхнего уровня корпуса. Восстановленный
+      # из кэша корпус шаг не затирает: имена seed'ов не совпадают с именами
+      # SHA1-файлов либфаззера, так что файлы просто дописываются.
       - name: Seed corpus
         shell: bash
         run: |
@@ -134,7 +240,9 @@ jobs:
       # оба порога выше того, что занимает честный разбор фикстуры.
       # `--fuzz-dir .` обязателен: без него cargo-fuzz ищет fuzz-проект как
       # `<корневой манифест>/fuzz`, а он лежит в crates/fuzz.
-      - name: Fuzz ${{ matrix.target }}
+      # В имени шага — минуты, а не секунды: `-max_total_time` считает секунды,
+      # и в списке шагов удобнее видеть бюджет в единицах, которые задал человек.
+      - name: Fuzz ${{ matrix.target }} (${{ needs.setup.outputs.minutes }} мин)
         working-directory: crates/fuzz
         run: cargo fuzz run --fuzz-dir . ${{ matrix.target }} -- -max_total_time=$MAX_TOTAL_TIME -timeout=30 -rss_limit_mb=2048
 
@@ -147,3 +255,23 @@ jobs:
           name: fuzz-artifacts-${{ matrix.target }}
           path: crates/fuzz/artifacts/${{ matrix.target }}
           if-no-files-found: ignore
+
+      # Корпус выгружается при любом исходе: упавшая цель — как раз та, чей
+      # корпус интереснее всего разобрать, — а кэш пишется post-шагом с
+      # `success()`, то есть на упавшем job'е не сохраняется.
+      - name: Upload corpus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: crates/fuzz/corpus/${{ matrix.target }}
+          if-no-files-found: ignore
+          # За час корпус вырастает до десятков тысяч мелких файлов, и deflate
+          # на них упирается в один поток CPU: шаг висел бы на упаковке дольше,
+          # чем шёл сам фаззинг. Артефакт — zip без сжатия: место здесь дешевле
+          # времени прогона.
+          compression-level: 0
+          # Артефакт нужен, чтобы разобрать конкретный прогон, а не чтобы
+          # хранить корпус — его основной носитель между прогонами кэш. 7 дней
+          # вместо дефолтных 90: ночные прогоны копили бы десятки гигабайт.
+          retention-days: 7
