@@ -89,14 +89,49 @@ impl Relationship {
     /// абсолютные цели (`/xl/worksheets/sheet1.xml`), и выходы наверх (`../`).
     /// `None` — цель внешняя: это ссылка, а не часть пакета.
     ///
-    /// TODO (Фаза 6): percent-декодирование цели — в DOCX имена картинок
-    /// приходят как `media/image%201.png`.
+    /// `Target` приходит percent-закодированным (`media/image%201.png`) —
+    /// в ZIP часть записана уже раскодированной (`media/image 1.png`),
+    /// поэтому декодирование идёт последним шагом.
     #[must_use]
     pub fn part(&self, source_part: &str) -> Option<String> {
         if self.target_mode.as_deref() == Some("External") {
             return None;
         }
-        Some(resolve_target(source_part, &self.target))
+        Some(percent_decode(&resolve_target(source_part, &self.target)))
+    }
+}
+
+/// Percent-декодирование пути части.
+///
+/// `+` остаётся собой: это путь, а не form-encoding. Битая последовательность
+/// (`%`, `%2`, `%ZZ`) сохраняется дословно — пакет должен открыться, даже если
+/// имена частей записаны с ошибками. Если байты не складываются в UTF-8,
+/// возвращается исходная строка: терять данные нельзя.
+fn percent_decode(target: &str) -> String {
+    let bytes = target.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_digit(bytes[i + 1]), hex_digit(bytes[i + 2])) {
+                out.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| target.to_string())
+}
+
+/// Значение hex-цифры; регистр не важен.
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -197,6 +232,75 @@ mod tests {
     fn external_targets_are_not_parts() {
         assert_eq!(
             rel("https://example.com/", Some("External")).part("xl/workbook.xml"),
+            None
+        );
+    }
+
+    #[test]
+    fn percent_decodes_media_names() {
+        assert_eq!(
+            rel("media/image%201.png", None).part("word/document.xml"),
+            Some("word/media/image 1.png".into())
+        );
+    }
+
+    #[test]
+    fn percent_decodes_utf8_in_deep_paths() {
+        // %D0%BF… — «привет» в UTF-8; байты собираются в строку после раскрытия
+        // `../`, иначе проверялся бы путь до нормализации.
+        assert_eq!(
+            rel("../media/%D0%BF%D1%80%D0%B8%D0%B2%D0%B5%D1%82.xml", None)
+                .part("word/document.xml"),
+            Some("media/привет.xml".into())
+        );
+        assert_eq!(
+            rel("/word/media/%D0%BF%D1%80%D0%B8%D0%B2%D0%B5%D1%82.xml", None)
+                .part("word/document.xml"),
+            Some("word/media/привет.xml".into())
+        );
+    }
+
+    #[test]
+    fn percent_decode_ignores_hex_case() {
+        assert_eq!(
+            rel("media%2fimage%2F1.png", None).part("word/document.xml"),
+            Some("word/media/image/1.png".into())
+        );
+    }
+
+    #[test]
+    fn keeps_broken_percent_sequences() {
+        for broken in ["media/%", "media/%2", "media/%ZZ", "media/100%"] {
+            assert_eq!(
+                rel(broken, None).part("word/document.xml"),
+                Some(format!("word/{broken}")),
+                "битая последовательность {broken} должна остаться как есть"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_the_path_when_decoded_bytes_are_not_utf8() {
+        // %FF — не UTF-8-последовательность; строка остаётся как есть,
+        // иначе байты пришлось бы выбрасывать.
+        assert_eq!(
+            rel("media/%FF.png", None).part("word/document.xml"),
+            Some("word/media/%FF.png".into())
+        );
+    }
+
+    #[test]
+    fn plus_is_not_a_space() {
+        assert_eq!(
+            rel("media/a+b.xml", None).part("word/document.xml"),
+            Some("word/media/a+b.xml".into())
+        );
+    }
+
+    #[test]
+    fn external_targets_are_not_percent_decoded() {
+        assert_eq!(
+            rel("https://example.com/my%20file.docx", Some("External")).part("word/document.xml"),
             None
         );
     }
