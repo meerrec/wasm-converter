@@ -152,7 +152,7 @@ impl NumberingTable {
 mod tests {
     use super::*;
     use crate::model::numbering::{AbstractNum, AbstractNumId, MultiLevelType, Num, NumId};
-    use crate::model::raw::{RawPPr, RawRPr};
+    use crate::model::raw::{RawPPr, RawRPr, RawTblPr};
     use crate::model::style::{CharacterStyle, NumberingStyle, ParagraphStyle, TableStyle};
 
     /// Стиль абзаца без свойств: заполнено только то, что важно валидации.
@@ -199,6 +199,7 @@ mod tests {
             aliases: Vec::new(),
             ppr: RawPPr::default(),
             rpr: RawRPr::default(),
+            tbl_pr: RawTblPr::default(),
             conditional: Vec::new(),
         }
     }

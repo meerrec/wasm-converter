@@ -25,6 +25,9 @@ use doc_converter_docx::{
     TabStopKind, Table, TableBorders, TableLayout, TableLook, TableStyle, TableStyleCondition,
     TableWidth, Toggle, Twips, Underline, VMerge, VertAlign, WrapKind,
 };
+// `RawTblPr` — поле `TableStyle`/`ConditionalFormat`, но в поимённый реэкспорт
+// корня (`lib.rs`) пока не попал: он добавлен слайсом S8 поверх модели.
+use doc_converter_docx::model::raw::RawTblPr;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -588,6 +591,41 @@ fn full_character_style() -> CharacterStyle {
     }
 }
 
+/// Свойства таблицы условного формата и стиля (`w:tblPr`).
+fn full_tbl_pr() -> RawTblPr {
+    RawTblPr {
+        borders: TableBorders {
+            top: Some(border(BorderStyle::Single)),
+            left: Some(border(BorderStyle::Double)),
+            bottom: Some(border(BorderStyle::DashSmallGap)),
+            right: Some(border(BorderStyle::ThreeDEngrave)),
+            inside_h: Some(border(BorderStyle::Dotted)),
+            inside_v: Some(border(BorderStyle::DashDotStroked)),
+        },
+        cell_margins: CellMargins {
+            top: Some(Twips::new(0)),
+            left: Some(Twips::new(108)),
+            bottom: Some(Twips::new(0)),
+            right: Some(Twips::new(108)),
+        },
+        width: Some(TableWidth::Pct(33.5)),
+        look: Some(TableLook {
+            first_row: true,
+            last_row: false,
+            first_column: true,
+            last_column: false,
+            no_h_band: true,
+            no_v_band: false,
+        }),
+        jc: Some(Justification::Center),
+        indent: Some(Twips::new(-108)),
+        unknown: vec![(
+            "tblStyleRowBandSize".to_owned(),
+            "<w:tblStyleRowBandSize w:val=\"2\"/>".to_owned(),
+        )],
+    }
+}
+
 /// Все условия `ST_TblStyleOverrideType` плюс неизвестное значение.
 fn conditional_formats() -> Vec<ConditionalFormat> {
     let mut formats: Vec<ConditionalFormat> = TableStyleCondition::ALL
@@ -596,12 +634,14 @@ fn conditional_formats() -> Vec<ConditionalFormat> {
             kind,
             ppr: full_ppr(),
             rpr: full_rpr(),
+            tbl_pr: full_tbl_pr(),
         })
         .collect();
     formats.push(ConditionalFormat {
         kind: TableStyleCondition::Other("band3Horz".to_owned()),
         ppr: RawPPr::default(),
         rpr: RawRPr::default(),
+        tbl_pr: RawTblPr::default(),
     });
     formats
 }
@@ -617,6 +657,7 @@ fn full_table_style() -> TableStyle {
         aliases: vec!["Сетка".to_owned()],
         ppr: full_ppr(),
         rpr: full_rpr(),
+        tbl_pr: full_tbl_pr(),
         conditional: conditional_formats(),
     }
 }

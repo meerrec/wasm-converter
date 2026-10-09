@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::numbering::NumId;
 use super::section::SectionProperties;
+use super::table::{CellMargins, TableBorders, TableLook, TableWidth};
 
 /// Двадцать вторых долей пункта (twips): 1/1440 дюйма — единица длины в `WordprocessingML`.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -807,6 +808,32 @@ pub struct RawRPr {
     pub spacing: Option<CharacterSpacing>,
     /// Смещение от базовой линии в полупунктах (`w:position`).
     pub position: Option<HalfPoint>,
+    /// Нераспознанные дочерние элементы: (локальное имя, XML элемента).
+    ///
+    /// Элемент сохраняется целиком, а не отбрасывается: раскладка и отладка должны увидеть
+    /// неподдержанное свойство, а не молча его потерять (ADR-0014 §3).
+    pub unknown: Vec<(String, String)>,
+}
+
+/// Сырые свойства таблицы (`w:tblPr`) — как в XML, без каскада.
+///
+/// Стиль таблицы и её условный формат (`w:tblStylePr`) несут тот же набор свойств,
+/// что и сама таблица ([`super::table::Table`]), но применяют их не к одной таблице,
+/// а ко всем, кто на стиль сослался. Каскад не разрешается (ADR-0013 §1).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct RawTblPr {
+    /// Границы таблицы (`w:tblBorders`).
+    pub borders: TableBorders,
+    /// Умолчания полей ячеек (`w:tblCellMar`).
+    pub cell_margins: CellMargins,
+    /// Предпочтительная ширина (`w:tblW`); `None` — ширина не задана.
+    pub width: Option<TableWidth>,
+    /// Признаки оформления (`w:tblLook`); `None` — элемента не было.
+    pub look: Option<TableLook>,
+    /// Выравнивание таблицы (`w:jc`).
+    pub jc: Option<Justification>,
+    /// Отступ таблицы от левого поля (`w:tblInd`).
+    pub indent: Option<Twips>,
     /// Нераспознанные дочерние элементы: (локальное имя, XML элемента).
     ///
     /// Элемент сохраняется целиком, а не отбрасывается: раскладка и отладка должны увидеть
