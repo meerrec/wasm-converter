@@ -5,6 +5,8 @@
 // каждом элементе модуля; `allow` снимается вместе с подключением.
 #![allow(dead_code)]
 
+use std::collections::BTreeSet;
+
 use doc_converter_core::{NodeId, NodeIdAllocator, ParseWarning, WarningKind, Warnings};
 
 use crate::error::{Error, Result};
@@ -17,6 +19,11 @@ use crate::error::{Error, Result};
 pub(crate) struct ParseCtx {
     ids: NodeIdAllocator,
     warnings: Warnings,
+    /// Идентификаторы начатых закладок (`w:bookmarkStart`).
+    ///
+    /// Набор на документ, а не на абзац: закладка вправе охватывать несколько
+    /// абзацев, и `w:bookmarkEnd` встречается далеко от своего начала.
+    bookmarks: BTreeSet<i64>,
 }
 
 impl ParseCtx {
@@ -26,6 +33,7 @@ impl ParseCtx {
         Self {
             ids: NodeIdAllocator::new(),
             warnings: Warnings::new(),
+            bookmarks: BTreeSet::new(),
         }
     }
 
@@ -33,6 +41,20 @@ impl ParseCtx {
     #[must_use]
     pub(crate) fn id(&mut self) -> NodeId {
         self.ids.alloc()
+    }
+
+    /// Запомнить начало закладки (`w:bookmarkStart`).
+    pub(crate) fn start_bookmark(&mut self, bookmark_id: i64) {
+        self.bookmarks.insert(bookmark_id);
+    }
+
+    /// Закрыть закладку: `true`, если начало встретилось в этом же документе.
+    ///
+    /// Повторный `w:bookmarkEnd` с тем же `w:id` пары уже не находит — второй
+    /// такой конец считается потерянным.
+    #[must_use]
+    pub(crate) fn end_bookmark(&mut self, bookmark_id: i64) -> bool {
+        self.bookmarks.remove(&bookmark_id)
     }
 
     /// Добавляет предупреждение с именем части пакета.
