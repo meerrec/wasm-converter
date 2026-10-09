@@ -98,6 +98,17 @@ const writeFixture = async (spec: FixtureSpec, outDir: string, sidecar: boolean)
     await writeFile(path.join(outDir, `${spec.name}.json`), `${JSON.stringify(payload, null, 2)}\n`);
 };
 
+/**
+ * Файлы каталога фикстур, которые генератор не создавал и потому не удаляет.
+ *
+ * `mammoth-oracle.json` кладёт differential-тест против mammoth
+ * (`scripts/diff-mammoth.ts`): каталог выбран им по смыслу, но генератор
+ * владеет только своими фикстурами и сайдкарами, а чужой артефакт в каталоге —
+ * не его дело. Остальное, что генератор создаёт и чего больше нет в списке,
+ * чистка удаляет как раньше.
+ */
+const FOREIGN_FILES = new Set<string>(['mammoth-oracle.json']);
+
 /** Убирает из каталога сгенерированные ранее файлы, которых больше нет в списке. */
 const pruneStale = async (outDir: string, expected: Set<string>): Promise<number> => {
     let removed = 0;
@@ -111,6 +122,7 @@ const pruneStale = async (outDir: string, expected: Set<string>): Promise<number
             }
             if (!/\.(docx|json)$/.test(entry.name)) continue;
             const relative = path.relative(outDir, full);
+            if (FOREIGN_FILES.has(relative)) continue;
             if (!expected.has(relative)) {
                 await rm(full);
                 removed++;
