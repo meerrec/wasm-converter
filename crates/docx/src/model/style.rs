@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::raw::{RawPPr, RawRPr, StyleId};
+use super::raw::{RawPPr, RawRPr, RawTblPr, StyleId};
 
 /// Все стили документа плюс умолчания.
 ///
@@ -109,6 +109,8 @@ pub struct TableStyle {
     pub ppr: RawPPr,
     /// Свойства знака, применяемые к тексту ячеек стиля.
     pub rpr: RawRPr,
+    /// Свойства таблицы стиля (`w:tblPr`): границы, поля ячеек, ширина, `w:tblLook`.
+    pub tbl_pr: RawTblPr,
     /// Условные форматы для строк, столбцов, полос и угловых ячеек (`w:tblStylePr`).
     pub conditional: Vec<ConditionalFormat>,
 }
@@ -122,6 +124,8 @@ pub struct ConditionalFormat {
     pub ppr: RawPPr,
     /// Свойства знака для этой области.
     pub rpr: RawRPr,
+    /// Свойства таблицы для этой области (`w:tblPr` внутри `w:tblStylePr`).
+    pub tbl_pr: RawTblPr,
 }
 
 /// Условие применения формата табличного стиля (`w:type`, `ST_TblStyleOverrideType`).
