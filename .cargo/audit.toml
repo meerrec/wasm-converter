@@ -1,0 +1,6 @@
+# `cargo audit` не читает `deny.toml`, поэтому исключения дублируются здесь.
+[advisories]
+# RUSTSEC-2026-0187 (lopdf, stack overflow) — та же осознанная запись, что в
+# `deny.toml` §[advisories] ignore: это не новая политика, а её копия, без
+# которой локальная приёмка «cargo audit чисто» недостижима.
+ignore = ["RUSTSEC-2026-0187"]

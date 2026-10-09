@@ -92,7 +92,6 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
-    use crate::warning::wire;
 
     #[test]
     fn root_is_zero() {
@@ -147,12 +146,22 @@ mod tests {
 
     #[test]
     fn serde_wire_form_is_a_number() {
-        assert_eq!(wire::capture(&NodeId::new(7)), wire::Value::Number(7));
-        assert_eq!(wire::capture(&NodeId::ROOT), wire::Value::Number(0));
+        assert_eq!(
+            serde_json::to_value(NodeId::new(7)).expect("serializes"),
+            serde_json::json!(7)
+        );
+        assert_eq!(
+            serde_json::to_value(NodeId::ROOT).expect("serializes"),
+            serde_json::json!(0)
+        );
     }
 
     #[test]
     fn serde_round_trips() {
-        assert_eq!(wire::round_trip(&NodeId::new(42)), NodeId::new(42));
+        let wire = serde_json::to_string(&NodeId::new(42)).expect("serializes");
+        assert_eq!(
+            serde_json::from_str::<NodeId>(&wire).expect("deserializes"),
+            NodeId::new(42)
+        );
     }
 }
