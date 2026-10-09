@@ -1895,6 +1895,698 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Таблицы значений ECMA-376
+    // -----------------------------------------------------------------------
+
+    /// Стиль абзаца с данным содержимым — заготовка для табличных тестов.
+    fn paragraph_style(id: &str, inner: &str) -> String {
+        format!("<w:style w:type=\"paragraph\" w:styleId=\"{id}\">{inner}</w:style>")
+    }
+
+    /// Табличный стиль с данным содержимым — заготовка для условных форматов.
+    fn table_style(id: &str, inner: &str) -> String {
+        format!("<w:style w:type=\"table\" w:styleId=\"{id}\">{inner}</w:style>")
+    }
+
+    /// Таблица `ST_Border` (ECMA-376 §17.18.2) целиком: каждый `w:val` границы
+    /// разбирается в свой вариант, незнакомый сохраняется в `Other`.
+    #[test]
+    fn border_style_covers_the_whole_st_border() {
+        let cases: [(&str, BorderStyle); 27] = [
+            ("nil", BorderStyle::Nil),
+            ("none", BorderStyle::None),
+            ("single", BorderStyle::Single),
+            ("thick", BorderStyle::Thick),
+            ("double", BorderStyle::Double),
+            ("dotted", BorderStyle::Dotted),
+            ("dashed", BorderStyle::Dashed),
+            ("dotDash", BorderStyle::DotDash),
+            ("dotDotDash", BorderStyle::DotDotDash),
+            ("triple", BorderStyle::Triple),
+            ("thinThickSmallGap", BorderStyle::ThinThickSmallGap),
+            ("thickThinSmallGap", BorderStyle::ThickThinSmallGap),
+            ("thinThickThinSmallGap", BorderStyle::ThinThickThinSmallGap),
+            ("thinThickMediumGap", BorderStyle::ThinThickMediumGap),
+            ("thickThinMediumGap", BorderStyle::ThickThinMediumGap),
+            (
+                "thinThickThinMediumGap",
+                BorderStyle::ThinThickThinMediumGap,
+            ),
+            ("thinThickLargeGap", BorderStyle::ThinThickLargeGap),
+            ("thickThinLargeGap", BorderStyle::ThickThinLargeGap),
+            ("thinThickThinLargeGap", BorderStyle::ThinThickThinLargeGap),
+            ("wave", BorderStyle::Wave),
+            ("doubleWave", BorderStyle::DoubleWave),
+            ("dashSmallGap", BorderStyle::DashSmallGap),
+            ("dashDotStroked", BorderStyle::DashDotStroked),
+            ("threeDEmboss", BorderStyle::ThreeDEmboss),
+            ("threeDEngrave", BorderStyle::ThreeDEngrave),
+            ("outset", BorderStyle::Outset),
+            ("inset", BorderStyle::Inset),
+        ];
+        // Перечень модели обязан совпасть со `ST_Border`: разойдясь, они
+        // разойдутся и с таблицей разбора.
+        assert_eq!(cases.len(), BorderStyle::ALL.len());
+
+        let mut body = String::new();
+        for (index, (raw, _)) in cases.iter().enumerate() {
+            body.push_str(&paragraph_style(
+                &format!("S{index}"),
+                &format!("<w:pPr><w:pBdr><w:top w:val=\"{raw}\"/></w:pBdr></w:pPr>"),
+            ));
+        }
+        body.push_str(&paragraph_style(
+            "Other",
+            "<w:pPr><w:pBdr><w:top w:val=\"squiggly\"/></w:pBdr></w:pPr>",
+        ));
+
+        let (table, warnings) = parse_xml(&body);
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        for (index, (raw, expected)) in cases.iter().enumerate() {
+            let top = table.paragraph[&StyleId::new(format!("S{index}"))]
+                .ppr
+                .p_bdr
+                .as_ref()
+                .and_then(|borders| borders.top.as_ref())
+                .expect("the top border is parsed");
+            assert_eq!(&top.val, expected, "w:val=\"{raw}\"");
+        }
+        let other = table.paragraph[&StyleId::new("Other")]
+            .ppr
+            .p_bdr
+            .as_ref()
+            .and_then(|borders| borders.top.as_ref())
+            .expect("the top border is parsed");
+        assert_eq!(other.val, BorderStyle::Other("squiggly".to_owned()));
+    }
+
+    /// Слоты `w:pBdr` (§17.3.1.29): `w:start`/`w:end` — то же, что
+    /// `w:left`/`w:right`, `w:bottom` без `w:val` — запасное `single`
+    /// у `parse_border`, лишний ребёнок — `UnknownElement`, пустой `w:pBdr`
+    /// не заполняет слоты.
+    #[test]
+    fn paragraph_borders_cover_every_slot_and_the_default_style() {
+        let (table, warnings) = parse_xml(
+            r#"<w:style w:type="paragraph" w:styleId="All">
+                 <w:pPr><w:pBdr>
+                   <w:top w:val="double" w:sz="8" w:space="1" w:color="FF0000"/>
+                   <w:left w:val="nil"/><w:start w:val="dashed"/>
+                   <w:bottom/><w:right w:val="wave"/><w:end w:val="dotted"/>
+                   <w:between w:val="thick"/><w:bar w:val="inset"/>
+                   <w:weird/>
+                 </w:pBdr></w:pPr>
+               </w:style>
+               <w:style w:type="paragraph" w:styleId="Empty"><w:pPr><w:pBdr/></w:pPr></w:style>"#,
+        );
+
+        assert_eq!(warnings, vec![WarningKind::UnknownElement]);
+        let borders = table.paragraph[&StyleId::new("All")]
+            .ppr
+            .p_bdr
+            .as_ref()
+            .expect("the borders are parsed");
+        let top = borders.top.as_ref().expect("the top border is parsed");
+        assert_eq!(top.val, BorderStyle::Double);
+        assert_eq!(top.sz, Some(8));
+        assert_eq!(top.space, Some(1));
+        assert_eq!(top.color, Some(Color::Rgb(0x00_FF_00_00)));
+        // `w:start`/`w:end` записаны после `w:left`/`w:right` и перекрывают их:
+        // это тот же край, а не отдельный слот.
+        assert_eq!(
+            borders.left.as_ref().map(|border| &border.val),
+            Some(&BorderStyle::Dashed)
+        );
+        assert_eq!(
+            borders.right.as_ref().map(|border| &border.val),
+            Some(&BorderStyle::Dotted)
+        );
+        assert_eq!(
+            borders.bottom.as_ref().map(|border| &border.val),
+            Some(&BorderStyle::Single)
+        );
+        assert_eq!(
+            borders.between.as_ref().map(|border| &border.val),
+            Some(&BorderStyle::Thick)
+        );
+        assert_eq!(
+            borders.bar.as_ref().map(|border| &border.val),
+            Some(&BorderStyle::Inset)
+        );
+        assert_eq!(
+            table.paragraph[&StyleId::new("Empty")].ppr.p_bdr,
+            Some(ParagraphBorders::default())
+        );
+    }
+
+    /// Таблица `ST_Underline` (§17.3.2.29) целиком: 18 значений, незнакомое —
+    /// `Other`, а `w:u` без `w:val` даёт запасное `single`.
+    #[test]
+    fn underline_covers_the_whole_st_underline() {
+        let cases: [(&str, Underline); 18] = [
+            ("single", Underline::Single),
+            ("words", Underline::Words),
+            ("double", Underline::Double),
+            ("thick", Underline::Thick),
+            ("dotted", Underline::Dotted),
+            ("dottedHeavy", Underline::DottedHeavy),
+            ("dash", Underline::Dash),
+            ("dashedHeavy", Underline::DashedHeavy),
+            ("dashLong", Underline::DashLong),
+            ("dashLongHeavy", Underline::DashLongHeavy),
+            ("dotDash", Underline::DotDash),
+            ("dashDotHeavy", Underline::DashDotHeavy),
+            ("dotDotDash", Underline::DotDotDash),
+            ("dashDotDotHeavy", Underline::DashDotDotHeavy),
+            ("wave", Underline::Wave),
+            ("wavyHeavy", Underline::WavyHeavy),
+            ("wavyDouble", Underline::WavyDouble),
+            ("none", Underline::None),
+        ];
+
+        let mut body = String::new();
+        for (index, (raw, _)) in cases.iter().enumerate() {
+            body.push_str(&paragraph_style(
+                &format!("S{index}"),
+                &format!("<w:rPr><w:u w:val=\"{raw}\"/></w:rPr>"),
+            ));
+        }
+        body.push_str(&paragraph_style("NoVal", "<w:rPr><w:u/></w:rPr>"));
+        body.push_str(&paragraph_style(
+            "Other",
+            "<w:rPr><w:u w:val=\"squiggly\"/></w:rPr>",
+        ));
+
+        let (table, warnings) = parse_xml(&body);
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        for (index, (raw, expected)) in cases.iter().enumerate() {
+            let style = &table.paragraph[&StyleId::new(format!("S{index}"))];
+            assert_eq!(style.rpr.u.as_ref(), Some(expected), "w:val=\"{raw}\"");
+        }
+        assert_eq!(
+            table.paragraph[&StyleId::new("NoVal")].rpr.u,
+            Some(Underline::Single)
+        );
+        assert_eq!(
+            table.paragraph[&StyleId::new("Other")].rpr.u,
+            Some(Underline::Other("squiggly".to_owned()))
+        );
+    }
+
+    /// Таблица `ST_HighlightColor` (§17.18.40) целиком. `darkGrey`/`lightGrey` —
+    /// не значения стандарта (там `darkGray`/`lightGray`), а написание из
+    /// `DrawingML` `PresetColorValues`; парсер принимает их как синонимы.
+    #[test]
+    fn highlight_covers_the_whole_st_highlight_color() {
+        let cases: [(&str, Highlight); 19] = [
+            ("black", Highlight::Black),
+            ("blue", Highlight::Blue),
+            ("cyan", Highlight::Cyan),
+            ("green", Highlight::Green),
+            ("magenta", Highlight::Magenta),
+            ("red", Highlight::Red),
+            ("yellow", Highlight::Yellow),
+            ("white", Highlight::White),
+            ("darkBlue", Highlight::DarkBlue),
+            ("darkCyan", Highlight::DarkCyan),
+            ("darkGreen", Highlight::DarkGreen),
+            ("darkMagenta", Highlight::DarkMagenta),
+            ("darkRed", Highlight::DarkRed),
+            ("darkYellow", Highlight::DarkYellow),
+            ("darkGray", Highlight::DarkGray),
+            ("lightGray", Highlight::LightGray),
+            ("none", Highlight::None),
+            ("darkGrey", Highlight::DarkGray),
+            ("lightGrey", Highlight::LightGray),
+        ];
+
+        let mut body = String::new();
+        for (index, (raw, _)) in cases.iter().enumerate() {
+            body.push_str(&paragraph_style(
+                &format!("S{index}"),
+                &format!("<w:rPr><w:highlight w:val=\"{raw}\"/></w:rPr>"),
+            ));
+        }
+        body.push_str(&paragraph_style("NoVal", "<w:rPr><w:highlight/></w:rPr>"));
+        body.push_str(&paragraph_style(
+            "Other",
+            "<w:rPr><w:highlight w:val=\"squiggly\"/></w:rPr>",
+        ));
+
+        let (table, warnings) = parse_xml(&body);
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        for (index, (raw, expected)) in cases.iter().enumerate() {
+            let style = &table.paragraph[&StyleId::new(format!("S{index}"))];
+            assert_eq!(
+                style.rpr.highlight.as_ref(),
+                Some(expected),
+                "w:val=\"{raw}\""
+            );
+        }
+        assert_eq!(table.paragraph[&StyleId::new("NoVal")].rpr.highlight, None);
+        assert_eq!(
+            table.paragraph[&StyleId::new("Other")].rpr.highlight,
+            Some(Highlight::Other("squiggly".to_owned()))
+        );
+    }
+
+    /// Таблица `ST_Shd` (§17.18.78) целиком: 38 узоров заливки, незнакомый —
+    /// `Other`, отсутствие `w:val` (в схеме обязательного) — `clear`.
+    #[test]
+    fn shading_covers_the_whole_st_shd() {
+        let cases: [(&str, ShadingPattern); 38] = [
+            ("nil", ShadingPattern::Nil),
+            ("clear", ShadingPattern::Clear),
+            ("solid", ShadingPattern::Solid),
+            ("horzStripe", ShadingPattern::HorzStripe),
+            ("vertStripe", ShadingPattern::VertStripe),
+            ("reverseDiagStripe", ShadingPattern::ReverseDiagStripe),
+            ("diagStripe", ShadingPattern::DiagStripe),
+            ("horzCross", ShadingPattern::HorzCross),
+            ("diagCross", ShadingPattern::DiagCross),
+            ("thinHorzStripe", ShadingPattern::ThinHorzStripe),
+            ("thinVertStripe", ShadingPattern::ThinVertStripe),
+            (
+                "thinReverseDiagStripe",
+                ShadingPattern::ThinReverseDiagStripe,
+            ),
+            ("thinDiagStripe", ShadingPattern::ThinDiagStripe),
+            ("thinHorzCross", ShadingPattern::ThinHorzCross),
+            ("thinDiagCross", ShadingPattern::ThinDiagCross),
+            ("pct5", ShadingPattern::Pct5),
+            ("pct10", ShadingPattern::Pct10),
+            ("pct12", ShadingPattern::Pct12),
+            ("pct15", ShadingPattern::Pct15),
+            ("pct20", ShadingPattern::Pct20),
+            ("pct25", ShadingPattern::Pct25),
+            ("pct30", ShadingPattern::Pct30),
+            ("pct35", ShadingPattern::Pct35),
+            ("pct37", ShadingPattern::Pct37),
+            ("pct40", ShadingPattern::Pct40),
+            ("pct45", ShadingPattern::Pct45),
+            ("pct50", ShadingPattern::Pct50),
+            ("pct55", ShadingPattern::Pct55),
+            ("pct60", ShadingPattern::Pct60),
+            ("pct62", ShadingPattern::Pct62),
+            ("pct65", ShadingPattern::Pct65),
+            ("pct70", ShadingPattern::Pct70),
+            ("pct75", ShadingPattern::Pct75),
+            ("pct80", ShadingPattern::Pct80),
+            ("pct85", ShadingPattern::Pct85),
+            ("pct87", ShadingPattern::Pct87),
+            ("pct90", ShadingPattern::Pct90),
+            ("pct95", ShadingPattern::Pct95),
+        ];
+        assert_eq!(cases.len(), ShadingPattern::ALL.len());
+
+        let mut body = String::new();
+        for (index, (raw, _)) in cases.iter().enumerate() {
+            body.push_str(&paragraph_style(
+                &format!("S{index}"),
+                &format!("<w:pPr><w:shd w:val=\"{raw}\"/></w:pPr>"),
+            ));
+        }
+        body.push_str(&paragraph_style("NoVal", "<w:pPr><w:shd/></w:pPr>"));
+        body.push_str(&paragraph_style(
+            "Other",
+            "<w:pPr><w:shd w:val=\"squiggly\"/></w:pPr>",
+        ));
+
+        let (table, warnings) = parse_xml(&body);
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        for (index, (raw, expected)) in cases.iter().enumerate() {
+            let shd = table.paragraph[&StyleId::new(format!("S{index}"))]
+                .ppr
+                .shd
+                .as_ref()
+                .expect("the shading is parsed");
+            assert_eq!(&shd.val, expected, "w:val=\"{raw}\"");
+        }
+        assert_eq!(
+            table.paragraph[&StyleId::new("NoVal")]
+                .ppr
+                .shd
+                .as_ref()
+                .map(|shd| &shd.val),
+            Some(&ShadingPattern::Clear)
+        );
+        assert_eq!(
+            table.paragraph[&StyleId::new("Other")]
+                .ppr
+                .shd
+                .as_ref()
+                .map(|shd| shd.val.clone()),
+            Some(ShadingPattern::Other("squiggly".to_owned()))
+        );
+    }
+
+    /// Цвета `w:shd` (`w:color`/`w:fill`, §17.18.78): `auto` и `RRGGBB`;
+    /// негодный цвет не теряется молча.
+    #[test]
+    fn shading_parses_colors_and_warns_about_a_broken_one() {
+        let (table, warnings) = parse_xml(
+            r#"<w:style w:type="paragraph" w:styleId="Shaded">
+                 <w:pPr><w:shd w:val="pct25" w:color="auto" w:fill="00FF00"/></w:pPr>
+               </w:style>
+               <w:style w:type="paragraph" w:styleId="Broken">
+                 <w:pPr><w:shd w:val="solid" w:color="not-a-color"/></w:pPr>
+               </w:style>"#,
+        );
+
+        assert_eq!(warnings, vec![WarningKind::InvalidAttribute]);
+        let shaded = table.paragraph[&StyleId::new("Shaded")]
+            .ppr
+            .shd
+            .as_ref()
+            .expect("the shading is parsed");
+        assert_eq!(shaded.val, ShadingPattern::Pct25);
+        assert_eq!(shaded.color, Some(Color::Auto));
+        assert_eq!(shaded.fill, Some(Color::Rgb(0x00_FF_00)));
+
+        let broken = table.paragraph[&StyleId::new("Broken")]
+            .ppr
+            .shd
+            .as_ref()
+            .expect("the shading is parsed");
+        assert_eq!(broken.val, ShadingPattern::Solid);
+        assert_eq!(broken.color, None);
+        assert_eq!(broken.fill, None);
+    }
+
+    /// Таблицы `ST_TabJc` (`w:tab/@w:val`, §17.3.1.37) и `ST_TabTlc`
+    /// (`w:tab/@w:leader`) целиком; `w:pos` переносится в twips как есть.
+    #[test]
+    fn tab_stops_carry_the_position_kind_and_leader() {
+        let kinds: [(&str, TabStopKind); 9] = [
+            ("bar", TabStopKind::Bar),
+            ("center", TabStopKind::Center),
+            ("clear", TabStopKind::Clear),
+            ("decimal", TabStopKind::Decimal),
+            ("end", TabStopKind::End),
+            ("num", TabStopKind::Num),
+            ("start", TabStopKind::Start),
+            ("left", TabStopKind::Left),
+            ("right", TabStopKind::Right),
+        ];
+        let leaders: [(&str, TabLeader); 6] = [
+            ("none", TabLeader::None),
+            ("dot", TabLeader::Dot),
+            ("hyphen", TabLeader::Hyphen),
+            ("middleDot", TabLeader::MiddleDot),
+            ("heavy", TabLeader::Heavy),
+            ("underscore", TabLeader::Underscore),
+        ];
+
+        let mut body = String::new();
+        for (index, (raw, _)) in kinds.iter().enumerate() {
+            body.push_str(&paragraph_style(
+                &format!("Kind{index}"),
+                &format!("<w:pPr><w:tabs><w:tab w:pos=\"720\" w:val=\"{raw}\"/></w:tabs></w:pPr>"),
+            ));
+        }
+        for (index, (raw, _)) in leaders.iter().enumerate() {
+            body.push_str(&paragraph_style(
+                &format!("Leader{index}"),
+                &format!(
+                    "<w:pPr><w:tabs><w:tab w:pos=\"720\" w:leader=\"{raw}\"/></w:tabs></w:pPr>"
+                ),
+            ));
+        }
+        // `w:val`/`w:pos` в схеме обязательны; без них парсер не выдумывает
+        // мусор, а берёт `left` и нулевую позицию.
+        body.push_str(&paragraph_style(
+            "Bare",
+            "<w:pPr><w:tabs><w:tab/></w:tabs></w:pPr>",
+        ));
+        body.push_str(&paragraph_style(
+            "Other",
+            "<w:pPr><w:tabs><w:tab w:pos=\"720\" w:val=\"squiggly\" w:leader=\"squiggly\"/></w:tabs></w:pPr>",
+        ));
+        // Ребёнок `w:tabs`, не `w:tab`, пропускается целиком.
+        body.push_str(&paragraph_style(
+            "Extra",
+            "<w:pPr><w:tabs><w:bogus><w:inner/></w:bogus><w:tab w:pos=\"720\"/></w:tabs></w:pPr>",
+        ));
+
+        let (table, warnings) = parse_xml(&body);
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        for (index, (raw, expected)) in kinds.iter().enumerate() {
+            let stop = &table.paragraph[&StyleId::new(format!("Kind{index}"))]
+                .ppr
+                .tabs[0];
+            assert_eq!(stop.val, Twips::new(720), "w:val=\"{raw}\"");
+            assert_eq!(&stop.kind, expected, "w:val=\"{raw}\"");
+            assert_eq!(stop.leader, TabLeader::None, "w:val=\"{raw}\"");
+        }
+        for (index, (raw, expected)) in leaders.iter().enumerate() {
+            let stop = &table.paragraph[&StyleId::new(format!("Leader{index}"))]
+                .ppr
+                .tabs[0];
+            assert_eq!(stop.kind, TabStopKind::Left, "w:leader=\"{raw}\"");
+            assert_eq!(&stop.leader, expected, "w:leader=\"{raw}\"");
+        }
+        let bare = &table.paragraph[&StyleId::new("Bare")].ppr.tabs[0];
+        assert_eq!(bare.val, Twips::new(0));
+        let other = &table.paragraph[&StyleId::new("Other")].ppr.tabs[0];
+        assert_eq!(other.kind, TabStopKind::Other("squiggly".to_owned()));
+        assert_eq!(other.leader, TabLeader::Other("squiggly".to_owned()));
+        let extra = &table.paragraph[&StyleId::new("Extra")].ppr.tabs;
+        assert_eq!(extra.len(), 1);
+        assert_eq!(extra[0].kind, TabStopKind::Left);
+    }
+
+    /// Таблица `ST_TblStyleOverrideType` (§17.18.92) целиком; условный формат
+    /// без `w:type` — вся таблица (§17.7.6), `w:trPr`/`w:tcPr` не хранятся
+    /// в модели и не считаются ошибкой, лишний ребёнок — считается.
+    #[test]
+    fn table_style_conditions_cover_the_whole_st_tbl_style_override_type() {
+        let cases: [(&str, TableStyleCondition); 13] = [
+            ("wholeTable", TableStyleCondition::WholeTable),
+            ("firstRow", TableStyleCondition::FirstRow),
+            ("lastRow", TableStyleCondition::LastRow),
+            ("firstCol", TableStyleCondition::FirstCol),
+            ("lastCol", TableStyleCondition::LastCol),
+            ("band1Vert", TableStyleCondition::Band1Vert),
+            ("band2Vert", TableStyleCondition::Band2Vert),
+            ("band1Horz", TableStyleCondition::Band1Horz),
+            ("band2Horz", TableStyleCondition::Band2Horz),
+            ("neCell", TableStyleCondition::NeCell),
+            ("nwCell", TableStyleCondition::NwCell),
+            ("seCell", TableStyleCondition::SeCell),
+            ("swCell", TableStyleCondition::SwCell),
+        ];
+        assert_eq!(cases.len(), TableStyleCondition::ALL.len());
+
+        let mut body = String::new();
+        for (index, (raw, _)) in cases.iter().enumerate() {
+            body.push_str(&table_style(
+                &format!("S{index}"),
+                &format!("<w:tblStylePr w:type=\"{raw}\"/>"),
+            ));
+        }
+        body.push_str(
+            r#"<w:style w:type="table" w:styleId="Extra">
+                 <w:tblStylePr w:type="firstRow">
+                   <w:trPr><w:cnfStyle w:val="001000000000"/></w:trPr><w:tcPr/><w:weird/>
+                 </w:tblStylePr>
+                 <w:tblStylePr w:type="squiggly"/>
+               </w:style>"#,
+        );
+
+        let (table, warnings) = parse_xml(&body);
+
+        assert_eq!(warnings, vec![WarningKind::UnknownElement]);
+        for (index, (raw, expected)) in cases.iter().enumerate() {
+            let style = &table.table[&StyleId::new(format!("S{index}"))];
+            assert_eq!(style.conditional.len(), 1, "w:type=\"{raw}\"");
+            assert_eq!(&style.conditional[0].kind, expected, "w:type=\"{raw}\"");
+        }
+        let extra = &table.table[&StyleId::new("Extra")];
+        assert_eq!(extra.conditional.len(), 2);
+        assert_eq!(extra.conditional[0].kind, TableStyleCondition::FirstRow);
+        assert_eq!(extra.conditional[0].ppr, RawPPr::default());
+        assert_eq!(
+            extra.conditional[1].kind,
+            TableStyleCondition::Other("squiggly".to_owned())
+        );
+    }
+
+    /// Редкие дети `w:pPr`: пустые `w:numPr`/`w:tabs`/`w:pBdr`/`w:rPr` дают
+    /// умолчания, `w:outlineLvl` держится в 0..=9, `w:ind` читает логические
+    /// края, а `w:sectPr` сохраняется как неподдержанный XML.
+    #[test]
+    fn p_pr_covers_rare_properties_and_outline_levels() {
+        let (table, warnings) = parse_xml(
+            r#"<w:style w:type="paragraph" w:styleId="Rare">
+                 <w:pPr>
+                   <w:pStyle w:val="Base"/><w:numPr/>
+                   <w:ind w:left="113" w:right="226" w:firstLine="57" w:hanging="28"/>
+                   <w:keepLines w:val="0"/><w:pageBreakBefore w:val="1"/>
+                   <w:widowControl w:val="false"/><w:outlineLvl w:val="9"/>
+                   <w:tabs/><w:pBdr/><w:rPr/>
+                 </w:pPr>
+               </w:style>
+               <w:style w:type="paragraph" w:styleId="Bidi">
+                 <w:pPr><w:ind w:start="113" w:end="226"/></w:pPr>
+               </w:style>
+               <w:style w:type="paragraph" w:styleId="Section">
+                 <w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:pPr>
+               </w:style>
+               <w:style w:type="paragraph" w:styleId="BadLevel">
+                 <w:pPr><w:outlineLvl w:val="10"/></w:pPr>
+               </w:style>"#,
+        );
+
+        assert_eq!(warnings, vec![WarningKind::InvalidAttribute]);
+        let rare = &table.paragraph[&StyleId::new("Rare")];
+        assert_eq!(rare.ppr.style, Some(StyleId::new("Base")));
+        assert_eq!(rare.ppr.num_pr, Some(NumPr::default()));
+        assert_eq!(rare.ppr.keep_lines, Some(Toggle::Off));
+        assert_eq!(rare.ppr.page_break_before, Some(Toggle::On));
+        assert_eq!(rare.ppr.widow_control, Some(Toggle::Off));
+        assert_eq!(rare.ppr.outline_lvl, Some(9));
+        assert_eq!(rare.ppr.tabs, Vec::new());
+        assert_eq!(rare.ppr.p_bdr, Some(ParagraphBorders::default()));
+        assert_eq!(rare.ppr.r_pr, Some(RawRPr::default()));
+        let ind = rare.ppr.ind.as_ref().expect("the indents are parsed");
+        assert_eq!(ind.left, Some(Twips::new(113)));
+        assert_eq!(ind.right, Some(Twips::new(226)));
+        assert_eq!(ind.first_line, Some(Twips::new(57)));
+        assert_eq!(ind.hanging, Some(Twips::new(28)));
+
+        let bidi = table.paragraph[&StyleId::new("Bidi")]
+            .ppr
+            .ind
+            .as_ref()
+            .expect("the indents are parsed");
+        assert_eq!(bidi.left, Some(Twips::new(113)));
+        assert_eq!(bidi.right, Some(Twips::new(226)));
+
+        assert_eq!(
+            table.paragraph[&StyleId::new("BadLevel")].ppr.outline_lvl,
+            None
+        );
+        let section = &table.paragraph[&StyleId::new("Section")];
+        let kept = section
+            .ppr
+            .unknown
+            .iter()
+            .find(|(name, _)| name == "sectPr")
+            .expect("w:sectPr is kept as XML");
+        assert!(kept.1.contains("w:pgSz"), "{}", kept.1);
+    }
+
+    /// Редкие свойства `w:rPr`: переключатели начертания, `w:szCs`,
+    /// `w:spacing`/`w:position` и негодный `w:color`.
+    #[test]
+    fn r_pr_covers_toggles_character_spacing_and_broken_color() {
+        let (table, warnings) = parse_xml(
+            r#"<w:style w:type="character" w:styleId="Full">
+                 <w:rPr>
+                   <w:rStyle w:val="Base"/>
+                   <w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="MS Mincho" w:cs="Arial" w:hint="eastAsia"/>
+                   <w:b/><w:i w:val="0"/><w:caps/><w:smallCaps/><w:strike/><w:dstrike/>
+                   <w:vanish/><w:outline/><w:shadow/><w:emboss/><w:imprint/>
+                   <w:color w:val="00FF00"/><w:sz w:val="24"/><w:szCs w:val="24"/>
+                   <w:spacing w:val="-20"/><w:position w:val="6"/><w:vertAlign w:val="superscript"/>
+                   <w:weird/>
+                 </w:rPr>
+               </w:style>
+               <w:style w:type="character" w:styleId="Broken">
+                 <w:rPr><w:color w:val="zzz"/></w:rPr>
+               </w:style>"#,
+        );
+
+        assert_eq!(warnings, vec![WarningKind::InvalidAttribute]);
+        let full = &table.character[&StyleId::new("Full")].rpr;
+        assert_eq!(full.style, Some(StyleId::new("Base")));
+        let fonts = full.r_fonts.as_ref().expect("the fonts are parsed");
+        assert_eq!(fonts.ascii.as_deref(), Some("Arial"));
+        assert_eq!(fonts.east_asia.as_deref(), Some("MS Mincho"));
+        assert_eq!(fonts.hint, Some(FontHint::EastAsia));
+        assert_eq!(full.b, Some(Toggle::On));
+        assert_eq!(full.i, Some(Toggle::Off));
+        assert_eq!(full.caps, Some(Toggle::On));
+        assert_eq!(full.small_caps, Some(Toggle::On));
+        assert_eq!(full.strike, Some(Toggle::On));
+        assert_eq!(full.dstrike, Some(Toggle::On));
+        assert_eq!(full.vanish, Some(Toggle::On));
+        assert_eq!(full.outline, Some(Toggle::On));
+        assert_eq!(full.shadow, Some(Toggle::On));
+        assert_eq!(full.emboss, Some(Toggle::On));
+        assert_eq!(full.imprint, Some(Toggle::On));
+        assert_eq!(full.color, Some(Color::Rgb(0x00_FF_00)));
+        assert_eq!(full.sz, Some(HalfPoint::new(24)));
+        assert_eq!(full.sz_cs, Some(HalfPoint::new(24)));
+        assert_eq!(
+            full.spacing,
+            Some(CharacterSpacing {
+                value: Some(Twips::new(-20))
+            })
+        );
+        assert_eq!(full.position, Some(HalfPoint::new(6)));
+        assert_eq!(full.vert_align, Some(VertAlign::Superscript));
+        assert!(full.unknown.iter().any(|(name, _)| name == "weird"));
+
+        let broken = &table.character[&StyleId::new("Broken")].rpr;
+        assert_eq!(broken.color, None);
+    }
+
+    /// Редкие дети `w:tblPr`: пустые `w:tblBorders`/`w:tblCellMar`, ширина
+    /// `auto`, выравнивание и отступ таблицы, неподдержанный ребёнок.
+    #[test]
+    fn tbl_pr_covers_empty_blocks_alignment_and_indent() {
+        let (table, warnings) = parse_xml(
+            r#"<w:style w:type="table" w:styleId="Plain">
+                 <w:tblPr>
+                   <w:tblBorders/><w:tblCellMar/><w:tblW w:w="0" w:type="auto"/>
+                   <w:jc w:val="center"/><w:tblInd w:w="113"/><w:weird/>
+                 </w:tblPr>
+               </w:style>
+               <w:style w:type="table" w:styleId="Empty"><w:tblPr/></w:style>"#,
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let plain = &table.table[&StyleId::new("Plain")].tbl_pr;
+        assert_eq!(plain.borders, TableBorders::default());
+        assert_eq!(plain.cell_margins, CellMargins::default());
+        assert_eq!(plain.width, Some(TableWidth::Auto));
+        assert_eq!(plain.jc, Some(Justification::Center));
+        assert_eq!(plain.indent, Some(Twips::new(113)));
+        assert!(plain.unknown.iter().any(|(name, _)| name == "weird"));
+        assert_eq!(
+            table.table[&StyleId::new("Empty")].tbl_pr,
+            RawTblPr::default()
+        );
+    }
+
+    /// `w:style` без `w:type` пропускается с предупреждением (§17.7.2),
+    /// а самозакрытый стиль детей не читает вовсе.
+    #[test]
+    fn styles_without_a_type_or_children_are_handled() {
+        let (table, warnings) = parse_xml(
+            r#"<w:style w:styleId="NoType"/>
+               <w:style w:type="paragraph" w:styleId="Empty"/>
+               <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>"#,
+        );
+
+        assert_eq!(warnings, vec![WarningKind::InvalidAttribute]);
+        assert!(!table.paragraph.contains_key(&StyleId::new("NoType")));
+        assert_eq!(
+            table.paragraph[&StyleId::new("Empty")].ppr,
+            RawPPr::default()
+        );
+        assert_eq!(
+            table.paragraph[&StyleId::new("Normal")].name.as_deref(),
+            Some("Normal")
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // Фикстуры
     // -----------------------------------------------------------------------
 
