@@ -14,6 +14,8 @@ on:
   pull_request:
     paths:
       - 'scripts/oracle-ssim.sh'
+      - 'scripts/gen-fixtures.ts'
+      - 'test-fixtures/**'
       - '.github/workflows/oracle.yml'
       - 'crates/pdf/**'
       - 'crates/xlsx/**'
@@ -22,11 +24,13 @@ jobs:
   ssim:
     name: LibreOffice SSIM
     runs-on: ubuntu-latest
-    # Бумага LibreOffice: он смотрит /etc/papersize (paperconf), затем LC_*,
-    # затем падает на en-US → Letter. Прогон 37538750822 подтвердил, что одной
-    # локали бумагу не переключить: файл papersize перекрывает её, поэтому a4
-    # пишется в файл. Локаль ru_RU.UTF-8 задана вдобавок к papersize, а не
-    # вместо него — она управляет локализованным форматированием дат в эталоне.
+    # Бумага задана документом: `<pageSetup paperSize="9">` (A4 по ECMA-376)
+    # дописывает в фикстуры scripts/gen-fixtures.ts — только этот рычаг и
+    # работает. Окруженческие рычаги опровергнуты прогонами: локаль
+    # LANG/LC_ALL=ru_RU.UTF-8 (37538750822), /etc/papersize=a4 (37560908632) и
+    # метрическая локаль в профиле LibreOffice (37574459266) — каждый оставил
+    # Letter. Локаль ru_RU.UTF-8 нужна здесь только ради локализованного
+    # форматирования дат в эталоне.
     # Следствие для разбора: систематически низкий SSIM на formats-date-ru —
     # первая гипотеза — русские названия месяцев в эталоне (наш рендер
     # форматирует по кодам формата из книги), а не ошибка рендера.
@@ -44,16 +48,6 @@ jobs:
         run: |
           sudo locale-gen ru_RU.UTF-8
           locale -a | grep -q '^ru_RU'
-
-      # Наш экспорт по умолчанию A4, и фикстуры paperSize не задают (exceljs
-      # его не пишет) — обе стороны берут дефолт, и дефолты обязаны совпасть.
-      - name: A4 paper for LibreOffice
-        run: echo a4 | sudo tee /etc/papersize
-
-      # Проверка на смену образа раннера: без неё оракул молча уедет в Letter
-      # и даст 12 «сбоев окружения» вместо результата.
-      - name: check paper size
-        run: test "$(cat /etc/papersize)" = a4
 
       - uses: dtolnay/rust-toolchain@master
         with:
