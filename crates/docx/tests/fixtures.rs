@@ -9,6 +9,9 @@
 //!
 //! Дополнительно проверяются два свойства `NodeId` (ADR-0019): повторный разбор
 //! даёт то же дерево, и идентификаторы внутри документа не повторяются.
+//!
+//! Рядом с сайдкарами в каталоге лежит ещё и оракул differential-теста против
+//! mammoth — единственный `.json` без пары `.docx`, см. `sidecar_files`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -43,6 +46,19 @@ fn fixture_files(extension: &str) -> Vec<PathBuf> {
     }
     paths.sort();
     paths
+}
+
+/// Оракул differential-теста против mammoth (`scripts/diff-mammoth.ts`): лежит
+/// рядом с фикстурами, потому что разбирает ровно их, но сайдкаром не является —
+/// пары `.docx` у него нет и в пересчёте сайдкаров ему места нет.
+const MAMMOTH_ORACLE: &str = "mammoth-oracle.json";
+
+/// Сайдкары — по одному `.json` на каждую фикстуру, кроме оракула mammoth.
+fn sidecar_files() -> Vec<PathBuf> {
+    fixture_files("json")
+        .into_iter()
+        .filter(|path| path.file_name().is_none_or(|name| name != MAMMOTH_ORACLE))
+        .collect()
 }
 
 /// Имя фикстуры относительно каталога — так, как оно записано в сайдкаре.
@@ -345,8 +361,8 @@ fn every_fixture_matches_its_sidecar() {
     );
     assert_eq!(
         paths.len(),
-        fixture_files("json").len(),
-        "у каждой фикстуры должен быть парный .json"
+        sidecar_files().len(),
+        "у каждой фикстуры должен быть парный .json (оракул mammoth не в счёт)"
     );
 
     let mut corpus = Corpus::default();
