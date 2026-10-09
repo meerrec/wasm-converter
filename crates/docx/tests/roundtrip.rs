@@ -103,8 +103,8 @@ fn base_document() -> Document {
 fn simple_paragraph(node: u64, text: &str) -> Paragraph {
     Paragraph {
         id: id(node),
-        ppr: RawPPr::default(),
-        mark_rpr: RawRPr::default(),
+        ppr: Box::new(RawPPr::default()),
+        mark_rpr: Box::new(RawRPr::default()),
         runs: vec![Inline::Run(Run {
             id: id(node + 1),
             rpr: RawRPr::default(),
@@ -449,12 +449,12 @@ fn all_inlines() -> Vec<Inline> {
 fn full_paragraph() -> Paragraph {
     Paragraph {
         id: id(10),
-        ppr: full_ppr(),
-        mark_rpr: full_rpr(),
+        ppr: Box::new(full_ppr()),
+        mark_rpr: Box::new(full_rpr()),
         runs: all_inlines(),
         style_ref: Some(StyleId::from("Heading1")),
         numbering_ref: Some(NumId::new(7)),
-        section_break: Some(full_section_properties()),
+        section_break: Some(Box::new(full_section_properties())),
     }
 }
 
