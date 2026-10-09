@@ -22,14 +22,17 @@ use quick_xml::events::{BytesStart, Event};
 use crate::context::ParseCtx;
 use crate::error::{Error, Result};
 use crate::model::{
-    BlockItem, Body, Border, BorderStyle, BreakKind, CharacterSpacing, Color, FontHint, HalfPoint,
-    Highlight, Ind, Inline, Justification, LineSpacing, LineSpacingRule, NumId, NumPr, Paragraph,
-    ParagraphBorders, ParagraphSpacing, RFonts, RawPPr, RawRPr, Relationships, Run, RunContent,
-    Shading, ShadingPattern, StyleId, TabLeader, TabStop, TabStopKind, Twips, Underline, VertAlign,
+    BlockItem, Body, Border, BorderStyle, BreakKind, Cell, CellBorders, CellMargins, CellVAlign,
+    CellWidth, CharacterSpacing, Color, FontHint, GridCol, HalfPoint, HeightRule, Highlight, Ind,
+    Inline, Justification, LineSpacing, LineSpacingRule, NumId, NumPr, Paragraph, ParagraphBorders,
+    ParagraphSpacing, RFonts, RawPPr, RawRPr, Relationships, Row, RowHeight, Run, RunContent,
+    Shading, ShadingPattern, StyleId, TabLeader, TabStop, TabStopKind, Table, TableBorders,
+    TableLayout, TableLook, TableWidth, Toggle, Twips, Underline, VMerge, VertAlign,
 };
 use crate::xml::{
-    attr_i32, attr_toggle, attr_u32, attributes, capture_element, find, is_true, local_name,
-    resolve_alternate_content, resolve_reference, wrap_fragment, AlternateContent, Attr,
+    attr_f32, attr_i32, attr_toggle, attr_u32, attributes, capture_element, find, is_true,
+    local_name, resolve_alternate_content, resolve_reference, wrap_fragment, AlternateContent,
+    Attr,
 };
 
 /// Путь до тела — основа `xml_path` в предупреждениях.
@@ -77,61 +80,91 @@ pub(crate) fn parse_blocks(
             Event::End(_) => return Ok(items),
             _ => continue,
         };
-        match local_name(element.name().into_inner()) {
-            b"p" => {
-                let paragraph = if empty {
-                    Paragraph {
-                        id: ctx.id(),
-                        ..Paragraph::default()
-                    }
-                } else {
-                    parse_paragraph(reader, ctx, part, xml_path)?
-                };
-                items.push(BlockItem::Paragraph(paragraph));
-            }
-            b"sectPr" => {
-                // TODO (S7b): завершающий `w:sectPr` тела → `BlockItem::SectPr`
-                // и `Body::sections`. Пока сохраняется как есть и без
-                // предупреждения: это не мусор, а отложенный разбор.
-                let id = ctx.id();
-                let xml = capture_any(reader, element, empty, ctx, part)?;
-                items.push(BlockItem::Unknown { id, xml });
-            }
-            b"AlternateContent" if !empty => {
-                // Ветка `mc:Choice` разворачивается на месте блока, как будто
-                // её содержимое и было телом (ADR-0014 §1).
-                match resolve_alternate_content(reader, element, ctx, part, xml_path)? {
-                    AlternateContent::Choice(fragment) => {
-                        items.extend(parse_block_fragment(&fragment, rels, ctx, part, xml_path)?);
-                    }
-                    AlternateContent::Unsupported(xml) => {
-                        ctx.warn_at(
-                            WarningKind::UnknownElement,
-                            part,
-                            Some(xml_path),
-                            "`mc:AlternateContent` has no supported `mc:Choice`, kept as unknown",
-                        )?;
-                        items.push(BlockItem::Unknown { id: ctx.id(), xml });
-                    }
+        parse_block_into(
+            reader, element, empty, rels, ctx, part, xml_path, &mut items,
+        )?;
+    }
+}
+
+/// Разобрать один блочный элемент и дописать его в `out`.
+///
+/// Вынесено из [`parse_blocks`], чтобы тем же диспетчером разбирать содержимое
+/// ячейки таблицы (`w:tc`): её `w:tcPr` читается отдельно, а всё остальное —
+/// те же блоки, что и в теле, вплоть до вложенных таблиц.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+// Аргументов больше порога, чем у соседних разборщиков: к их набору добавляются
+// связи части — они нужны таблицам. Собирать их в структуру значило бы завести
+// ещё один вид «контекста» рядом с `ParseCtx` и переписать все вызовы.
+#[allow(clippy::too_many_arguments)]
+fn parse_block_into(
+    reader: &mut XmlReader<'_>,
+    element: &BytesStart<'_>,
+    empty: bool,
+    rels: &Relationships,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+    out: &mut Vec<BlockItem>,
+) -> Result<()> {
+    match local_name(element.name().into_inner()) {
+        b"p" => {
+            let paragraph = if empty {
+                Paragraph {
+                    id: ctx.id(),
+                    ..Paragraph::default()
+                }
+            } else {
+                parse_paragraph(reader, ctx, part, xml_path)?
+            };
+            out.push(BlockItem::Paragraph(paragraph));
+        }
+        b"tbl" => out.push(BlockItem::Table(parse_table(
+            reader, empty, rels, ctx, part, xml_path,
+        )?)),
+        b"sectPr" => {
+            // TODO (S7b): завершающий `w:sectPr` тела → `BlockItem::SectPr`
+            // и `Body::sections`. Пока сохраняется как есть и без
+            // предупреждения: это не мусор, а отложенный разбор.
+            let id = ctx.id();
+            let xml = capture_any(reader, element, empty, ctx, part)?;
+            out.push(BlockItem::Unknown { id, xml });
+        }
+        b"AlternateContent" if !empty => {
+            // Ветка `mc:Choice` разворачивается на месте блока, как будто
+            // её содержимое и было телом (ADR-0014 §1).
+            match resolve_alternate_content(reader, element, ctx, part, xml_path)? {
+                AlternateContent::Choice(fragment) => {
+                    out.extend(parse_block_fragment(&fragment, rels, ctx, part, xml_path)?);
+                }
+                AlternateContent::Unsupported(xml) => {
+                    ctx.warn_at(
+                        WarningKind::UnknownElement,
+                        part,
+                        Some(xml_path),
+                        "`mc:AlternateContent` has no supported `mc:Choice`, kept as unknown",
+                    )?;
+                    out.push(BlockItem::Unknown { id: ctx.id(), xml });
                 }
             }
-            _ => {
-                // TODO (S7b): `w:tbl` (таблицы) и прочие блочные элементы.
-                let id = ctx.id();
-                let xml = capture_any(reader, element, empty, ctx, part)?;
-                ctx.warn_at(
-                    WarningKind::UnknownElement,
-                    part,
-                    Some(xml_path),
-                    format!(
-                        "`{}` is not supported, kept as unknown",
-                        element_name(element)
-                    ),
-                )?;
-                items.push(BlockItem::Unknown { id, xml });
-            }
+        }
+        _ => {
+            let id = ctx.id();
+            let xml = capture_any(reader, element, empty, ctx, part)?;
+            ctx.warn_at(
+                WarningKind::UnknownElement,
+                part,
+                Some(xml_path),
+                format!(
+                    "`{}` is not supported, kept as unknown",
+                    element_name(element)
+                ),
+            )?;
+            out.push(BlockItem::Unknown { id, xml });
         }
     }
+    Ok(())
 }
 
 /// Разобрать `word/document.xml`: `w:document/w:body` → [`Body`].
@@ -245,6 +278,849 @@ fn parse_paragraph(
         // TODO (S7b): `w:sectPr` внутри `w:pPr` — конец секции, а не её начало.
         section_break: None,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Таблицы
+// ---------------------------------------------------------------------------
+
+/// Собранные части таблицы (`w:tbl`).
+///
+/// Части копятся в структуру, а не в локальные переменные: `w:tblPr` и
+/// `w:tblGrid` приходят до строк, но в ветке `mc:Choice` могут прийти и внутри
+/// неё, а обходить `mc:AlternateContent` дважды не хочется.
+struct TableParts {
+    /// Стиль таблицы (`w:tblPr/w:tblStyle`).
+    style_ref: Option<StyleId>,
+    /// Сетка столбцов (`w:tblGrid`).
+    grid: Vec<GridCol>,
+    /// Строки (`w:tr`).
+    rows: Vec<Row>,
+    /// Раскладка (`w:tblPr/w:tblLayout`).
+    layout: TableLayout,
+    /// Предпочтительная ширина (`w:tblPr/w:tblW`).
+    width: Option<TableWidth>,
+    /// Границы таблицы (`w:tblPr/w:tblBorders`).
+    borders: TableBorders,
+    /// Признаки оформления (`w:tblPr/w:tblLook`).
+    look: TableLook,
+    /// Выравнивание таблицы (`w:tblPr/w:jc`).
+    jc: Option<Justification>,
+    /// Отступ таблицы от поля (`w:tblPr/w:tblInd`).
+    indent: Option<Twips>,
+    /// Умолчания полей ячеек (`w:tblPr/w:tblCellMar`).
+    cell_margins: CellMargins,
+}
+
+impl Default for TableParts {
+    fn default() -> Self {
+        Self {
+            style_ref: None,
+            grid: Vec::new(),
+            rows: Vec::new(),
+            // `w:tblLayout` нет — WordprocessingML предписывает `autofit`.
+            layout: TableLayout::Autofit,
+            width: None,
+            borders: TableBorders::default(),
+            look: TableLook::default(),
+            jc: None,
+            indent: None,
+            cell_margins: CellMargins::default(),
+        }
+    }
+}
+
+/// Разобрать `w:tbl`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_table(
+    reader: &mut XmlReader<'_>,
+    empty: bool,
+    rels: &Relationships,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+) -> Result<Table> {
+    // ID выделяется до разбора содержимого: узлы нумеруются в порядке документа,
+    // и таблица в нём раньше своих строк.
+    let id = ctx.id();
+    let mut parts = TableParts::default();
+    if !empty {
+        parse_table_children(reader, rels, ctx, part, xml_path, &mut parts)?;
+    }
+    Ok(Table {
+        id,
+        style_ref: parts.style_ref,
+        grid: parts.grid,
+        rows: parts.rows,
+        layout: parts.layout,
+        width: parts.width,
+        borders: parts.borders,
+        look: parts.look,
+        jc: parts.jc,
+        indent: parts.indent,
+        cell_margins: parts.cell_margins,
+    })
+}
+
+/// Разобрать детей `w:tbl` до его `End` — или до `End` фрагмента `mc:Choice`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_table_children(
+    reader: &mut XmlReader<'_>,
+    rels: &Relationships,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+    parts: &mut TableParts,
+) -> Result<()> {
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `w:tbl`",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(()),
+            _ => continue,
+        };
+        match local_name(element.name().into_inner()) {
+            b"tblPr" => {
+                if !empty {
+                    parse_tbl_pr(reader, ctx, part, xml_path, parts)?;
+                }
+            }
+            b"tblGrid" => {
+                if !empty {
+                    parts.grid = parse_tbl_grid(reader, ctx, part, xml_path)?;
+                }
+            }
+            b"tr" => parts
+                .rows
+                .push(parse_row(reader, empty, rels, ctx, part, xml_path)?),
+            b"AlternateContent" if !empty => {
+                match resolve_alternate_content(reader, element, ctx, part, xml_path)? {
+                    AlternateContent::Choice(fragment) => {
+                        // Дети ветки — те же `w:tblPr`, `w:tblGrid` и `w:tr`,
+                        // поэтому разбор идёт тем же накопителем.
+                        let wrapped = wrap_fragment(&fragment);
+                        let mut fragment_reader = XmlReader::preserving(wrapped.as_bytes(), part);
+                        expect_fragment_root(&mut fragment_reader, part)?;
+                        parse_table_children(
+                            &mut fragment_reader,
+                            rels,
+                            ctx,
+                            part,
+                            xml_path,
+                            parts,
+                        )?;
+                    }
+                    // Таблица не хранит XML неизвестных детей: ветку негде
+                    // сохранить, остаётся предупреждение.
+                    AlternateContent::Unsupported(_) => {
+                        ctx.warn_at(
+                            WarningKind::UnknownElement,
+                            part,
+                            Some(xml_path),
+                            "`mc:AlternateContent` has no supported `mc:Choice`, ignored",
+                        )?;
+                    }
+                }
+            }
+            _ => {
+                skip_element(reader, empty, part)?;
+                ctx.warn_at(
+                    WarningKind::UnknownElement,
+                    part,
+                    Some(xml_path),
+                    format!(
+                        "`{}` in `w:tbl` is not supported, ignored",
+                        element_name(element)
+                    ),
+                )?;
+            }
+        }
+    }
+}
+
+/// Разобрать `w:tblPr`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_tbl_pr(
+    reader: &mut XmlReader<'_>,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+    parts: &mut TableParts,
+) -> Result<()> {
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `w:tblPr`",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(()),
+            _ => continue,
+        };
+        let attrs = attributes(element, part)?;
+        match local_name(element.name().into_inner()) {
+            b"tblStyle" => parts.style_ref = find(&attrs, "val").map(StyleId::new),
+            b"tblLayout" => parts.layout = parse_table_layout(&attrs, ctx, part)?,
+            b"tblW" => parts.width = parse_table_width(&attrs, ctx, part)?,
+            b"tblBorders" => {
+                if !empty {
+                    parts.borders = parse_table_borders(reader, ctx, part, xml_path)?;
+                }
+            }
+            b"tblLook" => parts.look = parse_table_look(&attrs),
+            b"jc" => parts.jc = parse_justification(&attrs, ctx, part)?,
+            b"tblInd" => parts.indent = attr_i32(&attrs, "w", ctx, part)?.map(Twips::new),
+            b"tblCellMar" => {
+                if !empty {
+                    parts.cell_margins = parse_cell_margins(reader, ctx, part, xml_path)?;
+                }
+            }
+            _ => {
+                skip_element(reader, empty, part)?;
+                ctx.warn_at(
+                    WarningKind::UnknownElement,
+                    part,
+                    Some(xml_path),
+                    format!(
+                        "`{}` in `w:tblPr` is not supported, ignored",
+                        element_name(element)
+                    ),
+                )?;
+            }
+        }
+    }
+}
+
+/// Разобрать `w:tblGrid`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_tbl_grid(
+    reader: &mut XmlReader<'_>,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+) -> Result<Vec<GridCol>> {
+    let mut grid = Vec::new();
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `w:tblGrid`",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(grid),
+            _ => continue,
+        };
+        if local_name(element.name().into_inner()) == b"gridCol" {
+            let attrs = attributes(element, part)?;
+            let width = attr_i32(&attrs, "w", ctx, part)?.unwrap_or_default();
+            grid.push(GridCol {
+                width: Twips::new(width),
+            });
+        } else {
+            skip_element(reader, empty, part)?;
+            ctx.warn_at(
+                WarningKind::UnknownElement,
+                part,
+                Some(xml_path),
+                format!(
+                    "`{}` in `w:tblGrid` is not supported, ignored",
+                    element_name(element)
+                ),
+            )?;
+        }
+    }
+}
+
+/// Разобрать `w:tr`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_row(
+    reader: &mut XmlReader<'_>,
+    empty: bool,
+    rels: &Relationships,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+) -> Result<Row> {
+    let mut row = Row {
+        id: ctx.id(),
+        cells: Vec::new(),
+        height: None,
+        cant_split: false,
+        header: false,
+    };
+    if empty {
+        return Ok(row);
+    }
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `w:tr`",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(row),
+            _ => continue,
+        };
+        match local_name(element.name().into_inner()) {
+            b"trPr" => {
+                if !empty {
+                    parse_tr_pr(reader, ctx, part, xml_path, &mut row)?;
+                }
+            }
+            b"tc" => row
+                .cells
+                .push(parse_cell(reader, empty, rels, ctx, part, xml_path)?),
+            _ => {
+                skip_element(reader, empty, part)?;
+                ctx.warn_at(
+                    WarningKind::UnknownElement,
+                    part,
+                    Some(xml_path),
+                    format!(
+                        "`{}` in `w:tr` is not supported, ignored",
+                        element_name(element)
+                    ),
+                )?;
+            }
+        }
+    }
+}
+
+/// Разобрать `w:trPr`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_tr_pr(
+    reader: &mut XmlReader<'_>,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+    row: &mut Row,
+) -> Result<()> {
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `w:trPr`",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(()),
+            _ => continue,
+        };
+        let attrs = attributes(element, part)?;
+        match local_name(element.name().into_inner()) {
+            b"trHeight" => row.height = parse_row_height(&attrs, ctx, part)?,
+            b"cantSplit" => {
+                row.cant_split = toggle_is_on(attr_toggle(&attrs, ctx, part, "w:cantSplit")?);
+            }
+            b"tblHeader" => {
+                row.header = toggle_is_on(attr_toggle(&attrs, ctx, part, "w:tblHeader")?);
+            }
+            _ => {
+                skip_element(reader, empty, part)?;
+                ctx.warn_at(
+                    WarningKind::UnknownElement,
+                    part,
+                    Some(xml_path),
+                    format!(
+                        "`{}` in `w:trPr` is not supported, ignored",
+                        element_name(element)
+                    ),
+                )?;
+            }
+        }
+    }
+}
+
+/// Разобрать `w:tc`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_cell(
+    reader: &mut XmlReader<'_>,
+    empty: bool,
+    rels: &Relationships,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+) -> Result<Cell> {
+    let mut cell = Cell {
+        id: ctx.id(),
+        grid_span: 1,
+        v_merge: None,
+        width: None,
+        margins: CellMargins::default(),
+        v_align: CellVAlign::Top,
+        borders: CellBorders::default(),
+        shading: None,
+        items: Vec::new(),
+    };
+    if empty {
+        return Ok(cell);
+    }
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `w:tc`",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(cell),
+            _ => continue,
+        };
+        if local_name(element.name().into_inner()) == b"tcPr" {
+            if !empty {
+                parse_tc_pr(reader, ctx, part, xml_path, &mut cell)?;
+            }
+        } else {
+            // Содержимое ячейки — те же блоки, что и в теле, вплоть до
+            // вложенной таблицы; `NodeId` для них общий с телом (см. `parse_block_into`).
+            parse_block_into(
+                reader,
+                element,
+                empty,
+                rels,
+                ctx,
+                part,
+                xml_path,
+                &mut cell.items,
+            )?;
+        }
+    }
+}
+
+/// Разобрать `w:tcPr`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_tc_pr(
+    reader: &mut XmlReader<'_>,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+    cell: &mut Cell,
+) -> Result<()> {
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `w:tcPr`",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(()),
+            _ => continue,
+        };
+        let attrs = attributes(element, part)?;
+        match local_name(element.name().into_inner()) {
+            b"gridSpan" => {
+                if let Some(span) = attr_u32(&attrs, "val", ctx, part)? {
+                    if span == 0 {
+                        ctx.warn(
+                            WarningKind::InvalidAttribute,
+                            part,
+                            "`w:gridSpan` is zero, counted as one",
+                        )?;
+                    } else {
+                        cell.grid_span = span;
+                    }
+                }
+            }
+            b"vMerge" => cell.v_merge = Some(parse_v_merge(&attrs, ctx, part)?),
+            b"tcW" => cell.width = parse_cell_width(&attrs, ctx, part)?,
+            b"tcMar" => {
+                if !empty {
+                    cell.margins = parse_cell_margins(reader, ctx, part, xml_path)?;
+                }
+            }
+            b"vAlign" => cell.v_align = parse_cell_v_align(&attrs, ctx, part)?,
+            b"tcBorders" => {
+                if !empty {
+                    cell.borders = parse_cell_borders(reader, ctx, part, xml_path)?;
+                }
+            }
+            b"shd" => cell.shading = Some(parse_shading(&attrs, ctx, part)?),
+            _ => {
+                skip_element(reader, empty, part)?;
+                ctx.warn_at(
+                    WarningKind::UnknownElement,
+                    part,
+                    Some(xml_path),
+                    format!(
+                        "`{}` in `w:tcPr` is not supported, ignored",
+                        element_name(element)
+                    ),
+                )?;
+            }
+        }
+    }
+}
+
+/// `w:vMerge`: `restart` начинает объединение, всё прочее — продолжает.
+///
+/// У `w:vMerge` без `w:val` умолчание схемы — `continue` (`ST_Merge`,
+/// ECMA-376 §17.4.85): так Word и пишет продолжение объединения, оставляя
+/// `w:val="restart"` только первой ячейке области.
+///
+/// # Errors
+/// [`Error::TooManyWarnings`] — предупреждений стало больше порога.
+fn parse_v_merge(attrs: &[Attr<'_>], ctx: &mut ParseCtx, part: &str) -> Result<VMerge> {
+    match find(attrs, "val") {
+        Some("restart") => Ok(VMerge::Restart),
+        None | Some("continue") => Ok(VMerge::Continue),
+        Some(other) => {
+            ctx.warn(
+                WarningKind::InvalidAttribute,
+                part,
+                format!("`w:vMerge`: unknown `w:val` `{other}`, counted as `continue`"),
+            )?;
+            Ok(VMerge::Continue)
+        }
+    }
+}
+
+/// Раскладка из `w:tblLayout/@w:type`.
+///
+/// # Errors
+/// [`Error::TooManyWarnings`] — предупреждений стало больше порога.
+fn parse_table_layout(attrs: &[Attr<'_>], ctx: &mut ParseCtx, part: &str) -> Result<TableLayout> {
+    match find(attrs, "type") {
+        None | Some("autofit") => Ok(TableLayout::Autofit),
+        Some("fixed") => Ok(TableLayout::Fixed),
+        Some(other) => {
+            ctx.warn(
+                WarningKind::InvalidAttribute,
+                part,
+                format!("`w:tblLayout`: unknown `w:type` `{other}`, counted as `autofit`"),
+            )?;
+            Ok(TableLayout::Autofit)
+        }
+    }
+}
+
+/// Ширина из `w:tblW`.
+///
+/// `w:pct` записан в пятидесятых долях процента (`ST_MeasurementOrPercent`),
+/// поэтому модель получает проценты: `5000` — это `100.0`.
+///
+/// # Errors
+/// [`Error::TooManyWarnings`] — предупреждений стало больше порога.
+fn parse_table_width(
+    attrs: &[Attr<'_>],
+    ctx: &mut ParseCtx,
+    part: &str,
+) -> Result<Option<TableWidth>> {
+    match find(attrs, "type") {
+        // Без `w:type` значение читается как twips: так пишет Word для `dxa`.
+        None | Some("dxa") => {
+            Ok(attr_i32(attrs, "w", ctx, part)?.map(|w| TableWidth::Dxa(Twips::new(w))))
+        }
+        Some("auto") => Ok(Some(TableWidth::Auto)),
+        Some("pct") => Ok(attr_f32(attrs, "w", ctx, part)?.map(|pct| TableWidth::Pct(pct / 50.0))),
+        Some(other) => {
+            ctx.warn(
+                WarningKind::InvalidAttribute,
+                part,
+                format!("`w:tblW`: unknown `w:type` `{other}`, ignored"),
+            )?;
+            Ok(None)
+        }
+    }
+}
+
+/// Ширина из `w:tcW`.
+///
+/// # Errors
+/// [`Error::TooManyWarnings`] — предупреждений стало больше порога.
+fn parse_cell_width(
+    attrs: &[Attr<'_>],
+    ctx: &mut ParseCtx,
+    part: &str,
+) -> Result<Option<CellWidth>> {
+    match find(attrs, "type") {
+        Some("nil") => Ok(Some(CellWidth::Nil)),
+        Some("pct") => Ok(attr_f32(attrs, "w", ctx, part)?.map(|pct| CellWidth::Pct(pct / 50.0))),
+        None | Some("dxa") => {
+            Ok(attr_i32(attrs, "w", ctx, part)?.map(|w| CellWidth::Dxa(Twips::new(w))))
+        }
+        Some(other) => {
+            ctx.warn(
+                WarningKind::InvalidAttribute,
+                part,
+                format!("`w:tcW`: unknown `w:type` `{other}`, ignored"),
+            )?;
+            Ok(None)
+        }
+    }
+}
+
+/// Высота строки из `w:trHeight`.
+///
+/// # Errors
+/// [`Error::TooManyWarnings`] — предупреждений стало больше порога.
+fn parse_row_height(
+    attrs: &[Attr<'_>],
+    ctx: &mut ParseCtx,
+    part: &str,
+) -> Result<Option<RowHeight>> {
+    let Some(value) = attr_i32(attrs, "val", ctx, part)? else {
+        ctx.warn(
+            WarningKind::InvalidAttribute,
+            part,
+            "`w:trHeight` has no `w:val`, ignored",
+        )?;
+        return Ok(None);
+    };
+    let rule = match find(attrs, "hRule") {
+        None | Some("auto") => HeightRule::Auto,
+        Some("atLeast") => HeightRule::AtLeast,
+        Some("exact") => HeightRule::Exact,
+        Some(other) => {
+            ctx.warn(
+                WarningKind::InvalidAttribute,
+                part,
+                format!("`w:trHeight`: unknown `w:hRule` `{other}`, counted as `auto`"),
+            )?;
+            HeightRule::Auto
+        }
+    };
+    Ok(Some(RowHeight {
+        value: Twips::new(value),
+        rule,
+    }))
+}
+
+/// Вертикальное выравнивание ячейки из `w:vAlign`.
+///
+/// # Errors
+/// [`Error::TooManyWarnings`] — предупреждений стало больше порога.
+fn parse_cell_v_align(attrs: &[Attr<'_>], ctx: &mut ParseCtx, part: &str) -> Result<CellVAlign> {
+    let Some(raw) = find(attrs, "val") else {
+        ctx.warn(
+            WarningKind::InvalidAttribute,
+            part,
+            "`w:vAlign` has no `w:val`, counted as `top`",
+        )?;
+        return Ok(CellVAlign::Top);
+    };
+    Ok(match raw {
+        "top" => CellVAlign::Top,
+        "center" => CellVAlign::Center,
+        "bottom" => CellVAlign::Bottom,
+        other => {
+            ctx.warn(
+                WarningKind::InvalidAttribute,
+                part,
+                format!("`w:vAlign`: unknown `w:val` `{other}`, counted as `top`"),
+            )?;
+            CellVAlign::Top
+        }
+    })
+}
+
+/// Признаки оформления из `w:tblLook`.
+///
+/// Современный Word пишет их атрибутами (`w:firstRow="1"`), старый — битовой
+/// маской `ST_TblLook` в `w:val` (`04A0`); поддержаны оба вида, атрибуты важнее.
+#[must_use]
+fn parse_table_look(attrs: &[Attr<'_>]) -> TableLook {
+    let mask = find(attrs, "val")
+        .and_then(|raw| u32::from_str_radix(raw.trim(), 16).ok())
+        .unwrap_or(0);
+    let flag = |name: &str, bit: u32| match find(attrs, name) {
+        Some(value) => is_true(value),
+        None => mask & bit != 0,
+    };
+    TableLook {
+        first_row: flag("firstRow", 0x0020),
+        last_row: flag("lastRow", 0x0040),
+        first_column: flag("firstColumn", 0x0080),
+        last_column: flag("lastColumn", 0x0100),
+        no_h_band: flag("noHBand", 0x0200),
+        no_v_band: flag("noVBand", 0x0400),
+    }
+}
+
+/// Разобрать `w:tblBorders`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_table_borders(
+    reader: &mut XmlReader<'_>,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+) -> Result<TableBorders> {
+    let mut borders = TableBorders::default();
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `w:tblBorders`",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(borders),
+            _ => continue,
+        };
+        let attrs = attributes(element, part)?;
+        match local_name(element.name().into_inner()) {
+            b"top" => borders.top = parse_border(&attrs, ctx, part)?,
+            b"left" | b"start" => borders.left = parse_border(&attrs, ctx, part)?,
+            b"bottom" => borders.bottom = parse_border(&attrs, ctx, part)?,
+            b"right" | b"end" => borders.right = parse_border(&attrs, ctx, part)?,
+            b"insideH" => borders.inside_h = parse_border(&attrs, ctx, part)?,
+            b"insideV" => borders.inside_v = parse_border(&attrs, ctx, part)?,
+            _ => {
+                skip_element(reader, empty, part)?;
+                ctx.warn_at(
+                    WarningKind::UnknownElement,
+                    part,
+                    Some(xml_path),
+                    format!(
+                        "`{}` in `w:tblBorders` is not supported, ignored",
+                        element_name(element)
+                    ),
+                )?;
+            }
+        }
+    }
+}
+
+/// Разобрать `w:tcBorders`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_cell_borders(
+    reader: &mut XmlReader<'_>,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+) -> Result<CellBorders> {
+    let mut borders = CellBorders::default();
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `w:tcBorders`",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(borders),
+            _ => continue,
+        };
+        let attrs = attributes(element, part)?;
+        match local_name(element.name().into_inner()) {
+            b"top" => borders.top = parse_border(&attrs, ctx, part)?,
+            b"left" | b"start" => borders.left = parse_border(&attrs, ctx, part)?,
+            b"bottom" => borders.bottom = parse_border(&attrs, ctx, part)?,
+            b"right" | b"end" => borders.right = parse_border(&attrs, ctx, part)?,
+            // Диагоналей и границ `insideH`/`insideV` в модели нет: у ячейки
+            // они не выражаются, а молча терять их нельзя.
+            _ => {
+                skip_element(reader, empty, part)?;
+                ctx.warn_at(
+                    WarningKind::UnknownElement,
+                    part,
+                    Some(xml_path),
+                    format!(
+                        "`{}` in `w:tcBorders` is not supported, ignored",
+                        element_name(element)
+                    ),
+                )?;
+            }
+        }
+    }
+}
+
+/// Разобрать `w:tblCellMar` и `w:tcMar`.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_cell_margins(
+    reader: &mut XmlReader<'_>,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+) -> Result<CellMargins> {
+    let mut margins = CellMargins::default();
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside cell margins",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(margins),
+            _ => continue,
+        };
+        let attrs = attributes(element, part)?;
+        let value = attr_i32(&attrs, "w", ctx, part)?.map(Twips::new);
+        match local_name(element.name().into_inner()) {
+            b"top" => margins.top = value,
+            b"left" | b"start" => margins.left = value,
+            b"bottom" => margins.bottom = value,
+            b"right" | b"end" => margins.right = value,
+            _ => {
+                skip_element(reader, empty, part)?;
+                ctx.warn_at(
+                    WarningKind::UnknownElement,
+                    part,
+                    Some(xml_path),
+                    format!(
+                        "`{}` in cell margins is not supported, ignored",
+                        element_name(element)
+                    ),
+                )?;
+            }
+        }
+    }
+}
+
+/// Тумблер как булево: `On` и `Inherit` — «да», `Off` — явное «нет».
+#[must_use]
+fn toggle_is_on(toggle: Option<Toggle>) -> bool {
+    !matches!(toggle, Some(Toggle::Off))
 }
 
 // ---------------------------------------------------------------------------
@@ -1705,7 +2581,7 @@ mod tests {
     #[test]
     fn unknown_blocks_and_runs_are_kept_as_xml() {
         let (body, warnings) = parse_xml(
-            r#"<w:tbl><w:tr><w:tc/></w:tr></w:tbl>
+            r#"<w:sdt><w:sdtContent><w:p/></w:sdtContent></w:sdt>
                <w:p><w:r><w:drawing/><w:footnoteReference w:id="1"/></w:r></w:p>"#,
         );
 
@@ -1715,7 +2591,7 @@ mod tests {
             .all(|warning| warning.kind == WarningKind::UnknownElement));
         match &body.items[0] {
             BlockItem::Unknown { xml, .. } => {
-                assert_eq!(xml, "<w:tbl><w:tr><w:tc/></w:tr></w:tbl>");
+                assert_eq!(xml, "<w:sdt><w:sdtContent><w:p/></w:sdtContent></w:sdt>");
             }
             other => panic!("expected an unknown block, got {other:?}"),
         }
@@ -1870,6 +2746,212 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Таблицы
+    // -----------------------------------------------------------------------
+
+    /// Таблицы тела по порядку.
+    fn tables(body: &Body) -> Vec<&Table> {
+        body.items
+            .iter()
+            .filter_map(|item| match item {
+                BlockItem::Table(table) => Some(table),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Текст ячейки: абзацы склеиваются через пробел, вложенные таблицы
+    /// пропускаются — так же считает сайкар (`nested`, `alignment_widths`).
+    fn cell_text(cell: &Cell) -> String {
+        let paragraphs = cell
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                BlockItem::Paragraph(paragraph) => Some(paragraph_text(paragraph)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        paragraphs.join(" ")
+    }
+
+    #[test]
+    fn table_properties_rows_and_cells_are_read() {
+        let (body, warnings) = parse_xml(
+            r#"<w:tbl>
+                 <w:tblPr>
+                   <w:tblStyle w:val="TableGrid"/>
+                   <w:tblW w:w="5000" w:type="dxa"/>
+                   <w:tblLayout w:type="fixed"/>
+                   <w:tblBorders>
+                     <w:top w:val="single" w:sz="8" w:space="0" w:color="2F5496"/>
+                     <w:insideV w:val="dotted"/>
+                   </w:tblBorders>
+                   <w:tblLook w:firstRow="1" w:noVBand="1"/>
+                   <w:jc w:val="center"/>
+                   <w:tblInd w:w="120"/>
+                   <w:tblCellMar><w:left w:w="108"/><w:top w:w="0"/></w:tblCellMar>
+                 </w:tblPr>
+                 <w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="3000"/></w:tblGrid>
+                 <w:tr>
+                   <w:trPr>
+                     <w:trHeight w:val="400" w:hRule="atLeast"/><w:cantSplit/><w:tblHeader/>
+                   </w:trPr>
+                   <w:tc>
+                     <w:tcPr>
+                       <w:tcW w:w="2000" w:type="dxa"/>
+                       <w:gridSpan w:val="2"/>
+                       <w:vMerge w:val="restart"/>
+                       <w:vAlign w:val="center"/>
+                       <w:tcBorders><w:bottom w:val="double" w:sz="6" w:color="C00000"/></w:tcBorders>
+                       <w:shd w:val="clear" w:fill="DEEAF6"/>
+                       <w:tcMar><w:right w:w="57"/></w:tcMar>
+                     </w:tcPr>
+                     <w:p><w:r><w:t>A1</w:t></w:r></w:p>
+                   </w:tc>
+                 </w:tr>
+               </w:tbl>"#,
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let table = tables(&body)[0];
+        assert_eq!(
+            table.style_ref.as_ref().map(StyleId::as_str),
+            Some("TableGrid")
+        );
+        assert_eq!(table.layout, TableLayout::Fixed);
+        assert_eq!(table.width, Some(TableWidth::Dxa(Twips::new(5000))));
+        assert_eq!(table.jc, Some(Justification::Center));
+        assert_eq!(table.indent, Some(Twips::new(120)));
+        assert!(table.look.first_row);
+        assert!(table.look.no_v_band);
+        assert!(!table.look.last_row && !table.look.no_h_band);
+        assert_eq!(table.cell_margins.left, Some(Twips::new(108)));
+        assert_eq!(table.cell_margins.top, Some(Twips::new(0)));
+        assert_eq!(
+            table
+                .grid
+                .iter()
+                .map(|col| col.width.value())
+                .collect::<Vec<_>>(),
+            vec![2000, 3000]
+        );
+        assert_eq!(
+            table.borders.top.as_ref().map(|b| b.val.clone()),
+            Some(BorderStyle::Single)
+        );
+        assert_eq!(
+            table.borders.inside_v.as_ref().map(|b| b.val.clone()),
+            Some(BorderStyle::Dotted)
+        );
+
+        let row = &table.rows[0];
+        assert_eq!(
+            row.height,
+            Some(RowHeight {
+                value: Twips::new(400),
+                rule: HeightRule::AtLeast,
+            })
+        );
+        assert!(row.cant_split);
+        assert!(row.header);
+
+        let cell = &row.cells[0];
+        assert_eq!(cell.grid_span, 2);
+        assert_eq!(cell.v_merge, Some(VMerge::Restart));
+        assert_eq!(cell.v_align, CellVAlign::Center);
+        assert_eq!(cell.width, Some(CellWidth::Dxa(Twips::new(2000))));
+        assert_eq!(cell.margins.right, Some(Twips::new(57)));
+        let bottom = cell.borders.bottom.as_ref().expect("`w:bottom` is kept");
+        assert_eq!(bottom.val, BorderStyle::Double);
+        assert_eq!(bottom.sz, Some(6));
+        assert_eq!(bottom.color, Some(Color::Rgb(0x00C0_0000)));
+        assert_eq!(
+            cell.shading.as_ref().and_then(|shd| shd.fill),
+            Some(Color::Rgb(0x00DE_EAF6))
+        );
+        assert_eq!(cell_text(cell), "A1");
+    }
+
+    #[test]
+    fn a_v_merge_without_a_value_continues_the_merge() {
+        // Так это и пишет Word: `restart` — первой ячейке области, а
+        // продолжениям — `w:vMerge` без `w:val` (умолчание ST_Merge).
+        let (body, warnings) = parse_xml(
+            r#"<w:tbl><w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr></w:tc></w:tr>
+               <w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr></w:tc></w:tr></w:tbl>"#,
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let table = tables(&body)[0];
+        assert_eq!(table.rows[0].cells[0].v_merge, Some(VMerge::Restart));
+        assert_eq!(table.rows[1].cells[0].v_merge, Some(VMerge::Continue));
+    }
+
+    #[test]
+    fn table_look_reads_the_legacy_bitmask() {
+        let (body, warnings) = parse_xml(
+            r#"<w:tbl><w:tblPr><w:tblLook w:val="04A0"/></w:tblPr><w:tr><w:tc/></w:tr></w:tbl>"#,
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let body_tables = tables(&body);
+        let look = &body_tables[0].look;
+        // Сайкар `tables/tbl_look` ждёт от `04A0` ровно эти признаки.
+        assert!(look.first_row && look.first_column && look.no_v_band);
+        assert!(!look.last_row && !look.last_column && !look.no_h_band);
+    }
+
+    #[test]
+    fn nested_tables_get_their_own_ids() {
+        let (body, warnings) = parse_xml(
+            r"<w:tbl><w:tr><w:tc>
+                 <w:p><w:r><w:t>outer</w:t></w:r></w:p>
+                 <w:tbl><w:tr><w:tc><w:p><w:r><w:t>inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+               </w:tc></w:tr></w:tbl>",
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let outer = tables(&body)[0];
+        let items = &outer.rows[0].cells[0].items;
+        assert_eq!(items.len(), 2, "{items:?}");
+        let nested = match &items[1] {
+            BlockItem::Table(table) => table,
+            other => panic!("expected a nested table, got {other:?}"),
+        };
+        assert_eq!(cell_text(&nested.rows[0].cells[0]), "inner");
+
+        // Пространство `NodeId` общее: идентификаторы вложенной таблицы не
+        // совпадают ни с внешней, ни с её строкой и ячейкой.
+        let mut ids = vec![
+            outer.id,
+            outer.rows[0].id,
+            outer.rows[0].cells[0].id,
+            nested.id,
+        ];
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 4, "идентификаторы узлов уникальны");
+    }
+
+    #[test]
+    fn unsupported_table_parts_warn_and_do_not_break_the_table() {
+        let (body, warnings) = parse_xml(
+            r#"<w:tbl>
+                 <w:tblPr><w:tblpPr w:leftFromText="10"/></w:tblPr>
+                 <w:tr><w:tc><w:tcPr><w:textDirection w:val="btLr"/></w:tcPr>
+                   <w:p><w:r><w:t>kept</w:t></w:r></w:p></w:tc></w:tr>
+               </w:tbl>"#,
+        );
+
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(warnings
+            .iter()
+            .all(|warning| warning.kind == WarningKind::UnknownElement));
+        let table = tables(&body)[0];
+        assert_eq!(cell_text(&table.rows[0].cells[0]), "kept");
+    }
+
+    // -----------------------------------------------------------------------
     // Фикстуры
     // -----------------------------------------------------------------------
 
@@ -1947,6 +3029,358 @@ mod tests {
         assert_eq!(checked, 23, "в четырёх категориях 23 фикстуры");
     }
 
+    /// Координаты `{row, col}` из сайкара: `col` — номер ячейки в строке.
+    fn sidecar_at(path: &str, entry: &serde_json::Value) -> (usize, usize) {
+        let index = |key: &str| {
+            usize::try_from(
+                entry[key]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("{path}: в сайкаре нет `{key}`")),
+            )
+            .expect("the index fits usize")
+        };
+        (index("row"), index("col"))
+    }
+
+    /// Сверить таблицу с ожиданием сайкара.
+    ///
+    /// `cells` сайкара — текст ячеек по строкам (ячейка с `gridSpan` занимает
+    /// одну позицию), координатные списки (`gridSpan`, `vMerge`, `shading`,
+    /// `cellBorders`) — по номеру ячейки, `nested` — вложенная таблица.
+    fn check_table(path: &str, table: &Table, expected: &serde_json::Value) {
+        check_table_shape(path, table, expected);
+        check_table_spans(path, table, expected);
+        check_table_widths(path, table, expected);
+        check_table_format(path, table, expected);
+        check_table_borders(path, table, expected);
+        check_table_nested(path, table, expected);
+    }
+
+    /// Число строк, столбцов и текст ячеек.
+    fn check_table_shape(path: &str, table: &Table, expected: &serde_json::Value) {
+        let count = |key: &str| {
+            usize::try_from(
+                expected[key]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("{path}: в сайкаре нет `{key}`")),
+            )
+            .expect("the count fits usize")
+        };
+        assert_eq!(table.rows.len(), count("rows"), "{path}: число строк");
+        // Ширина в столбцах — сумма `gridSpan` самой широкой строки:
+        // `w:tblGrid` есть не во всех фикстурах.
+        let cols = table
+            .rows
+            .iter()
+            .map(|row| row.cells.iter().map(|cell| cell.grid_span).sum::<u32>())
+            .max()
+            .unwrap_or(0);
+        assert_eq!(
+            usize::try_from(cols).expect("the count fits usize"),
+            count("cols"),
+            "{path}: число столбцов"
+        );
+
+        let cells = expected["cells"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{path}: сайкар без `cells`"));
+        assert_eq!(table.rows.len(), cells.len(), "{path}: строк в `cells`");
+        for (index, (row, want)) in table.rows.iter().zip(cells).enumerate() {
+            let want = want
+                .as_array()
+                .unwrap_or_else(|| panic!("{path}: в сайкаре не список ячеек"))
+                .iter()
+                .map(|cell| {
+                    cell.as_str()
+                        .unwrap_or_else(|| panic!("{path}: текст ячейки не строка"))
+                        .to_owned()
+                })
+                .collect::<Vec<_>>();
+            let got = row.cells.iter().map(cell_text).collect::<Vec<_>>();
+            assert_eq!(got, want, "{path}: строка {index}");
+        }
+    }
+
+    /// Объединения ячеек: `w:gridSpan` и `w:vMerge`.
+    fn check_table_spans(path: &str, table: &Table, expected: &serde_json::Value) {
+        if let Some(spans) = expected["gridSpan"].as_array() {
+            for entry in spans {
+                let (row, col) = sidecar_at(path, entry);
+                assert_eq!(
+                    u64::from(table.rows[row].cells[col].grid_span),
+                    entry["span"].as_u64().expect("`span`"),
+                    "{path}: `w:gridSpan` в строке {row}"
+                );
+            }
+        }
+
+        if let Some(merges) = expected["vMerge"].as_array() {
+            for entry in merges {
+                let (row, col) = sidecar_at(path, entry);
+                let want = match entry["val"].as_str().expect("`val`") {
+                    "restart" => VMerge::Restart,
+                    other => {
+                        assert_eq!(other, "continue", "{path}: неизвестный `vMerge`");
+                        VMerge::Continue
+                    }
+                };
+                assert_eq!(
+                    table.rows[row].cells[col].v_merge,
+                    Some(want),
+                    "{path}: `w:vMerge` в строке {row}"
+                );
+            }
+        }
+    }
+
+    /// Ширины: сетка `w:tblGrid` и `w:tcW` ячеек.
+    fn check_table_widths(path: &str, table: &Table, expected: &serde_json::Value) {
+        let number = |value: &serde_json::Value| {
+            i32::try_from(
+                value
+                    .as_i64()
+                    .unwrap_or_else(|| panic!("{path}: ширина не число")),
+            )
+            .expect("the width fits i32")
+        };
+        if let Some(grid) = expected["grid"].as_array() {
+            let got = table
+                .grid
+                .iter()
+                .map(|col| col.width.value())
+                .collect::<Vec<_>>();
+            let want = grid.iter().map(number).collect::<Vec<_>>();
+            assert_eq!(got, want, "{path}: `w:tblGrid`");
+        }
+
+        if let Some(widths) = expected["widths"].as_array() {
+            for (index, (row, want)) in table.rows.iter().zip(widths).enumerate() {
+                for (cell, width) in row
+                    .cells
+                    .iter()
+                    .zip(want.as_array().expect("a row of widths"))
+                {
+                    assert_eq!(
+                        cell.width,
+                        Some(CellWidth::Dxa(Twips::new(number(width)))),
+                        "{path}: `w:tcW` в строке {index}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Выравнивание, стиль, `w:tblLook` и повтор шапки.
+    fn check_table_format(path: &str, table: &Table, expected: &serde_json::Value) {
+        if let Some(jc) = expected["jc"].as_str() {
+            assert_eq!(
+                serde_json::to_value(&table.jc).expect("justification is serializable"),
+                serde_json::json!(jc),
+                "{path}: `w:jc`"
+            );
+        }
+
+        if let Some(aligns) = expected["vAlign"].as_array() {
+            for (index, (row, want)) in table.rows.iter().zip(aligns).enumerate() {
+                for (cell, align) in row
+                    .cells
+                    .iter()
+                    .zip(want.as_array().expect("a row of aligns"))
+                {
+                    assert_eq!(
+                        serde_json::to_value(cell.v_align).expect("align is serializable"),
+                        *align,
+                        "{path}: `w:vAlign` в строке {index}"
+                    );
+                }
+            }
+        }
+
+        if let Some(style) = expected["style"].as_str() {
+            assert_eq!(
+                table.style_ref.as_ref().map(StyleId::as_str),
+                Some(style),
+                "{path}: `w:tblStyle`"
+            );
+        }
+
+        if let Some(look) = expected["tblLook"].as_object() {
+            let flag = |key: &str| {
+                look.get(key)
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+            };
+            let got = [
+                table.look.first_row,
+                table.look.last_row,
+                table.look.first_column,
+                table.look.last_column,
+                table.look.no_h_band,
+                table.look.no_v_band,
+            ];
+            let want = [
+                flag("firstRow"),
+                flag("lastRow"),
+                flag("firstColumn"),
+                flag("lastColumn"),
+                flag("noHBand"),
+                flag("noVBand"),
+            ];
+            assert_eq!(got, want, "{path}: `w:tblLook`");
+        }
+
+        if let Some(header_rows) = expected["headerRows"].as_u64() {
+            let got = table.rows.iter().filter(|row| row.header).count();
+            assert_eq!(
+                u64::try_from(got).expect("the count fits u64"),
+                header_rows,
+                "{path}: строк с `w:tblHeader`"
+            );
+        }
+        if let Some(repeat) = expected["repeatHeader"].as_bool() {
+            assert_eq!(
+                table.rows.iter().any(|row| row.header),
+                repeat,
+                "{path}: `w:tblHeader`"
+            );
+        }
+    }
+
+    /// Границы таблицы, границы ячеек и заливка.
+    fn check_table_borders(path: &str, table: &Table, expected: &serde_json::Value) {
+        if let Some(borders) = expected["borders"].as_object() {
+            let want = serde_json::Value::Object(borders.clone());
+            if borders.get("sides").and_then(serde_json::Value::as_str) == Some("all") {
+                let sides = [
+                    &table.borders.top,
+                    &table.borders.left,
+                    &table.borders.bottom,
+                    &table.borders.right,
+                    &table.borders.inside_h,
+                    &table.borders.inside_v,
+                ];
+                assert!(
+                    sides.iter().all(|side| side.is_some()),
+                    "{path}: границы заданы со всех сторон"
+                );
+            }
+            check_border(
+                path,
+                table.borders.top.as_ref().expect("`w:top` is kept"),
+                &want,
+            );
+        }
+
+        if let Some(entries) = expected["cellBorders"].as_array() {
+            for entry in entries {
+                let (row, col) = sidecar_at(path, entry);
+                let cell = &table.rows[row].cells[col];
+                for (side, want) in entry.as_object().expect("an object") {
+                    let border = match side.as_str() {
+                        "row" | "col" => continue,
+                        "top" => cell.borders.top.as_ref(),
+                        "left" => cell.borders.left.as_ref(),
+                        "bottom" => cell.borders.bottom.as_ref(),
+                        "right" => cell.borders.right.as_ref(),
+                        other => panic!("{path}: граница `{other}` в сайкаре не поддержана"),
+                    }
+                    .unwrap_or_else(|| panic!("{path}: в ячейке нет границы `{side}`"));
+                    check_border(path, border, want);
+                }
+            }
+        }
+
+        if let Some(entries) = expected["shading"].as_array() {
+            for entry in entries {
+                let (row, col) = sidecar_at(path, entry);
+                let cell = &table.rows[row].cells[col];
+                assert_eq!(
+                    cell.shading.as_ref().and_then(|shd| shd.fill),
+                    Some(sidecar_color(path, &entry["fill"])),
+                    "{path}: `w:shd/@fill` в строке {row}"
+                );
+            }
+        }
+    }
+
+    /// Вложенная таблица в ячейке, на которую указывает `at`.
+    fn check_table_nested(path: &str, table: &Table, expected: &serde_json::Value) {
+        if expected["nested"].as_object().is_none() {
+            return;
+        }
+        let (row, col) = sidecar_at(path, &expected["nested"]["at"]);
+        let nested = table.rows[row].cells[col]
+            .items
+            .iter()
+            .find_map(|item| match item {
+                BlockItem::Table(table) => Some(table),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{path}: в ячейке {row}/{col} нет вложенной таблицы"));
+        check_table(&format!("{path}: вложенная"), nested, &expected["nested"]);
+    }
+
+    /// Сверить границу с полями `{val, sz, color}` из сайкара.
+    fn check_border(path: &str, border: &Border, expected: &serde_json::Value) {
+        assert_eq!(
+            serde_json::to_value(&border.val).expect("the style is serializable"),
+            expected["val"],
+            "{path}: стиль границы"
+        );
+        if let Some(sz) = expected["sz"].as_u64() {
+            assert_eq!(
+                border.sz,
+                Some(u32::try_from(sz).expect("the size fits u32")),
+                "{path}: толщина границы"
+            );
+        }
+        if let Some(color) = expected["color"].as_str() {
+            assert_eq!(
+                border.color,
+                Some(sidecar_color(path, &serde_json::Value::from(color))),
+                "{path}: цвет границы"
+            );
+        }
+    }
+
+    /// Цвет `RRGGBB` из сайкара.
+    fn sidecar_color(path: &str, value: &serde_json::Value) -> Color {
+        let raw = value
+            .as_str()
+            .unwrap_or_else(|| panic!("{path}: цвет не строка"));
+        Color::Rgb(
+            u32::from_str_radix(raw, 16).unwrap_or_else(|_| panic!("{path}: `{raw}` не цвет")),
+        )
+    }
+
+    /// Девять фикстур таблиц — против сайкаров: строки, ячейки, `gridSpan`,
+    /// `vMerge`, ширины, выравнивание, оформление и вложенные таблицы.
+    #[test]
+    fn tables_fixtures_match_their_sidecars() {
+        let mut checked = 0;
+        for (name, xml, sidecar) in fixture_cases("tables") {
+            let path = format!("tables/{name}");
+            let (body, warnings) = parse_part(&xml);
+            assert!(warnings.is_empty(), "{path}: {warnings:?}");
+
+            let expected = sidecar["content"]["tables"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{path}: сайкар без `content.tables`"));
+            let tables = tables(&body);
+            assert_eq!(tables.len(), expected.len(), "{path}: число таблиц");
+            assert_eq!(
+                u64::try_from(tables.len()).expect("the count fits u64"),
+                sidecar["metadata"]["expectedTables"].as_u64().unwrap_or(0),
+                "{path}: `expectedTables`"
+            );
+            for (index, (table, want)) in tables.iter().zip(expected).enumerate() {
+                check_table(&format!("{path}: таблица {index}"), table, want);
+            }
+            checked += 1;
+        }
+        assert_eq!(checked, 9, "в категории `tables` девять фикстур");
+    }
+
     // -----------------------------------------------------------------------
     // Снапшоты
     // -----------------------------------------------------------------------
@@ -2002,5 +3436,19 @@ mod tests {
 
         assert_eq!(warnings.len(), 2, "{warnings:?}");
         insta::assert_json_snapshot!("rich_paragraph", body);
+    }
+
+    /// Снапшот таблицы: видно и структуру ячеек, и каждое разобранное свойство.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn snapshot_table_fixture() {
+        let (_, xml, _) = fixture_cases("tables")
+            .into_iter()
+            .find(|(name, ..)| name == "v_merge")
+            .expect("фикстура на месте");
+        let (body, warnings) = parse_part(&xml);
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        insta::assert_json_snapshot!("table_v_merge", body);
     }
 }
