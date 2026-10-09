@@ -73,6 +73,46 @@ const MIN_LARGE_BYTES = 10 * MIB;
  */
 const MIN_BUDGET_BYTES = 50 * MIB;
 
+/**
+ * Предел распакованного размера одной части из ADR-0015: `ZipLimits::default()
+ * .per_part_uncompressed` в `crates/core/src/zip_limits.rs`. Генератор не может
+ * спросить значение у Rust-крейта, поэтому держит копию — она проверяется
+ * после сборки архива.
+ */
+const MAX_PART_BYTES = 64 * MIB;
+
+/** Подпись конца центрального каталога ZIP ("PK\x05\x06"). */
+const EOCD_SIG = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+const CENTRAL_SIG = 0x02014b50;
+
+/**
+ * Самая тяжёлая распакованная часть архива.
+ *
+ * Лимит ADR-0015 считается по распакованным байтам, а не по размеру файла:
+ * фикстура на 54 МиБ, у которой `word/document.xml` разворачивается в 78 МиБ,
+ * парсером не открывается вовсе — гейт бюджета на ней просто не запустится.
+ *
+ * @param zip готовый архив
+ * @returns имя части и её распакованный размер
+ */
+const largestPart = (zip: Buffer): { name: string; size: number } => {
+    const eocd = zip.lastIndexOf(EOCD_SIG);
+    if (eocd === -1) throw new Error('no ZIP end of central directory record');
+    const count = zip.readUInt16LE(eocd + 10);
+    let at = zip.readUInt32LE(eocd + 16);
+    let biggest = { name: '', size: 0 };
+    for (let i = 0; i < count; i++) {
+        if (zip.readUInt32LE(at) !== CENTRAL_SIG) throw new Error('broken ZIP central directory');
+        const size = zip.readUInt32LE(at + 24);
+        const nameLength = zip.readUInt16LE(at + 28);
+        if (size > biggest.size) {
+            biggest = { name: zip.toString('utf8', at + 46, at + 46 + nameLength), size };
+        }
+        at += 46 + nameLength + zip.readUInt16LE(at + 30) + zip.readUInt16LE(at + 32);
+    }
+    return biggest;
+};
+
 const numberingXml = (): string =>
     XML_DECL +
     `<w:numbering xmlns:w="${W_NS}">` +
@@ -196,11 +236,20 @@ const buildMixed = (): PackageParts => {
 const PROFILE_PARAGRAPHS = 100_000;
 const PROFILE_TABLES = 500;
 const PROFILE_IMAGES = 50;
-/** ~690 знаков на абзац дают ~55 МиБ: шум из PRNG deflate жмёт лишь до ~0.75. */
-const PROFILE_PARAGRAPH_CHARS = 690;
+/**
+ * ~350 знаков на абзац: шум из PRNG deflate жмёт лишь до ~0.75, поэтому текст
+ * даёт ~42 МиБ распакованного `word/document.xml` — это ниже лимита на часть
+ * (ADR-0015, 64 МиБ) с запасом на рост профиля. Вес сверх того несут картинки:
+ * они лежат отдельными частями и лимит на `document.xml` не расходуют.
+ */
+const PROFILE_PARAGRAPH_CHARS = 350;
 const PROFILE_TABLE_ROWS = 6;
 const PROFILE_TABLE_CELLS = 4;
 const PROFILE_CELL_CHARS = 240;
+/** 448 px: шумовой PNG весит ~588 КиБ, 50 штук дают ~29 МиБ медиа. */
+const PROFILE_IMAGE_PX = 448;
+/** 448 px при 96 dpi: 448 / 96 × 914400 — размер картинки на странице. */
+const PROFILE_IMAGE_EMU = 4_266_240;
 /** 100 000 / 500 = 200 — таблица каждые 200 абзацев, ровно 500 штук. */
 const PROFILE_TABLE_EVERY = PROFILE_PARAGRAPHS / PROFILE_TABLES;
 /** 100 000 / 50 = 2000 — картинка каждые 2000 абзацев, ровно 50 штук. */
@@ -226,10 +275,15 @@ const buildProfile50MiB = (): PackageParts => {
         let runs = run(noiseText(PROFILE_PARAGRAPH_CHARS, rnd));
         if (i % PROFILE_IMAGE_EVERY === 0) {
             const fileName = `image${imageIndex + 1}.png`;
-            images[fileName] = pngBytes(160, 160, 0x5100 + imageIndex);
+            images[fileName] = pngBytes(PROFILE_IMAGE_PX, PROFILE_IMAGE_PX, 0x5100 + imageIndex);
             runs +=
                 '<w:r>' +
-                inlineImage(imageRelId(imageIndex), { id: imageIndex + 1, name: fileName, cx: 812800, cy: 812800 }) +
+                inlineImage(imageRelId(imageIndex), {
+                    id: imageIndex + 1,
+                    name: fileName,
+                    cx: PROFILE_IMAGE_EMU,
+                    cy: PROFILE_IMAGE_EMU,
+                }) +
                 '</w:r>';
             imageIndex++;
         }
@@ -349,6 +403,13 @@ export const generateLargeFixtures = async (outDir: string, only?: string): Prom
     const results: LargeFixtureResult[] = [];
     for (const fixture of selected) {
         const bytes = buildZip(fixture.build());
+        const largest = largestPart(bytes);
+        if (largest.size > MAX_PART_BYTES) {
+            throw new Error(
+                `${fixture.name}: part ${largest.name} unpacks to ${(largest.size / MIB).toFixed(1)} MiB, ` +
+                    `over the ${MAX_PART_BYTES / MIB} MiB per-part limit (ADR-0015)`,
+            );
+        }
         // Приведение — расхождение дженериков Buffer/Uint8Array в @types/node.
         await writeFile(path.join(outDir, `${fixture.name}.docx`), bytes as Uint8Array);
         results.push({ name: fixture.name, bytes: bytes.length, minBytes: fixture.minBytes });
