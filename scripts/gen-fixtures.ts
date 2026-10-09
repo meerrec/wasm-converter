@@ -1564,6 +1564,27 @@ function patchZipEntry(zip: Buffer, name: string, patch: (xml: string) => string
   return zipEntries(entries);
 }
 
+/**
+ * Дописать `paperSize="9"` (A4 по ECMA-376) в `<pageSetup>` каждого листа.
+ *
+ * Без атрибута LibreOffice берёт формат бумаги из окружения: на CI и на macOS
+ * это Letter, тогда как наш экспорт всегда A4, — оракул SSIM сравнивал разные
+ * страницы. Exceljs атрибута не пишет, поэтому он дописывается в готовый пакет.
+ */
+function setA4PaperSize(zip: Buffer): Buffer {
+  const entries = unzip(zip);
+  const sheets = entries.filter((e) => /^xl\/worksheets\/sheet\d+\.xml$/.test(e.name));
+  if (sheets.length === 0) throw new Error('в пакете нет частей листов');
+  for (const entry of sheets) {
+    const xml = entry.data.toString('utf8');
+    const count = xml.split('<pageSetup').length - 1;
+    if (count !== 1) throw new Error(`${entry.name}: <pageSetup> не найден однозначно`);
+    if (xml.includes('paperSize')) throw new Error(`${entry.name}: paperSize уже задан`);
+    entry.data = Buffer.from(xml.replace('<pageSetup', '<pageSetup paperSize="9"'), 'utf8');
+  }
+  return zipEntries(entries);
+}
+
 /** Дописать `stopIfTrue="1"` правилу с приоритетом 5 в `cf-priorities`. */
 async function addStopIfTrue(file: string): Promise<void> {
   const priority = 5;
@@ -2191,6 +2212,9 @@ async function writeFixture(fixture: Fixture, dir: string): Promise<string> {
   // фиксированной датой (zipEntries), иначе байты плывут от запуска к запуску.
   await writeFile(file, zipEntries(unzip(await readFile(file))));
   await fixture.after?.(file);
+  // Бумага — последней: after-хуки перезаписывают пакет сами, а LibreOffice
+  // читает с диска именно итоговый файл.
+  await writeFile(file, setA4PaperSize(await readFile(file)));
   return file;
 }
 
