@@ -6,6 +6,27 @@ pub enum Error {
     #[error("invalid ZIP archive: {0}")]
     Zip(#[from] zip::result::ZipError),
 
+    #[error("invalid path in ZIP entry: `{name}`")]
+    ZipInvalidPath { name: String },
+
+    #[error("ZIP entry `{name}` exceeds the compression ratio limit ({ratio}:1)")]
+    ZipRatioExceeded { name: String, ratio: u64 },
+
+    #[error("ZIP entry `{name}` is too large: {size} bytes")]
+    ZipPartTooLarge { name: String, size: u64 },
+
+    #[error("ZIP archive is too large: {size} bytes uncompressed")]
+    ZipArchiveTooLarge { size: u64 },
+
+    #[error("too many parts in the ZIP archive: {count}")]
+    ZipTooManyParts { count: u32 },
+
+    #[error("ZIP entry name is too long: `{name}`")]
+    ZipNameTooLong { name: String },
+
+    #[error("ZIP entry path is too deep: `{name}`")]
+    ZipPathTooDeep { name: String },
+
     #[error("XML parse error in `{part}` at byte {position}: {message}")]
     Xml {
         part: String,
