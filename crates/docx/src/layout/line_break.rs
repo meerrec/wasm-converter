@@ -13,6 +13,24 @@ use doc_converter_render::{
 
 use crate::model::raw::HalfPoint;
 
+/// Правило межстрочного интервала: как понимать `w:spacing w:line` (`w:lineRule`).
+///
+/// Каскад отдаёт правило раскладке в пикселях и множителях, а не в единицах XML
+/// ([`super::cascade`]): twips в абсолютных правилах переводит `super::engine::twips_to_px`,
+/// чтобы перевод остался в одном месте.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum LineRule {
+    /// `w:line` не задан: высота строки берётся из метрики шрифта.
+    #[default]
+    Single,
+    /// Множитель метрики; `w:line` в 240-х долях строки (`lineRule="auto"`).
+    Auto(f32),
+    /// Точная высота строки в пикселях (`lineRule="exact"`).
+    Exact(f32),
+    /// Высота строки не меньше значения в пикселях (`lineRule="atLeast"`).
+    AtLeast(f32),
+}
+
 /// Разбиватель строк: кэширует измерения и управляет состоянием.
 pub struct LineBreaker<'a> {
     fonts: &'a mut FontRegistry,

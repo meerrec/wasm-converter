@@ -17,6 +17,7 @@
 //! assert_eq!(layout.pages.len(), 3);
 //! ```
 
+pub mod cascade;
 pub mod engine;
 pub mod float;
 pub mod line_break;
