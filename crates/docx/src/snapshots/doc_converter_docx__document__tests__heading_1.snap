@@ -93,11 +93,113 @@ expression: body
       }
     },
     {
-      "unknown": {
-        "id": 4,
-        "xml": "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1134\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\" w:header=\"709\" w:footer=\"709\" w:gutter=\"0\"/><w:cols w:space=\"708\"/><w:docGrid w:linePitch=\"360\"/></w:sectPr>"
+      "sect_pr": {
+        "page_size": {
+          "width": 11906,
+          "height": 16838
+        },
+        "orientation": "portrait",
+        "margins": {
+          "top": 1134,
+          "right": 1134,
+          "bottom": 1134,
+          "left": 1134,
+          "header": 709,
+          "footer": 709,
+          "gutter": 0
+        },
+        "columns": {
+          "count": 1,
+          "space": 708,
+          "equal_width": true,
+          "separator": false,
+          "defs": []
+        },
+        "title_pg": false,
+        "header_default": null,
+        "header_first": null,
+        "header_even": null,
+        "footer_default": null,
+        "footer_first": null,
+        "footer_even": null,
+        "section_type": null,
+        "unknown": [
+          [
+            "docGrid",
+            "<w:docGrid w:linePitch=\"360\"/>"
+          ]
+        ]
       }
     }
   ],
-  "sections": []
+  "sections": [
+    {
+      "id": 4,
+      "properties": {
+        "page_size": {
+          "width": 11906,
+          "height": 16838
+        },
+        "orientation": "portrait",
+        "margins": {
+          "top": 1134,
+          "right": 1134,
+          "bottom": 1134,
+          "left": 1134,
+          "header": 709,
+          "footer": 709,
+          "gutter": 0
+        },
+        "columns": {
+          "count": 1,
+          "space": 708,
+          "equal_width": true,
+          "separator": false,
+          "defs": []
+        },
+        "title_pg": false,
+        "header_default": null,
+        "header_first": null,
+        "header_even": null,
+        "footer_default": null,
+        "footer_first": null,
+        "footer_even": null,
+        "section_type": null,
+        "unknown": [
+          [
+            "docGrid",
+            "<w:docGrid w:linePitch=\"360\"/>"
+          ]
+        ]
+      },
+      "header_default": null,
+      "header_first": null,
+      "header_even": null,
+      "footer_default": null,
+      "footer_first": null,
+      "footer_even": null,
+      "title_pg": false,
+      "page_size": {
+        "width": 11906,
+        "height": 16838
+      },
+      "orientation": "portrait",
+      "margins": {
+        "top": 1134,
+        "right": 1134,
+        "bottom": 1134,
+        "left": 1134,
+        "header": 709,
+        "footer": 709,
+        "gutter": 0
+      },
+      "columns": {
+        "count": 1,
+        "space": 708,
+        "equal_width": true,
+        "separator": false,
+        "defs": []
+      }
+    }
+  ]
 }

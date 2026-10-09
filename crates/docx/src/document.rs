@@ -23,13 +23,14 @@ use crate::context::ParseCtx;
 use crate::error::{Error, Result};
 use crate::model::{
     AlignH, AlignV, Anchor, BlockItem, Body, Border, BorderStyle, BreakKind, Cell, CellBorders,
-    CellMargins, CellVAlign, CellWidth, CharacterSpacing, Color, Extent, FontHint, GridCol,
-    HalfPoint, HeightRule, Highlight, Ind, Inline, InlineImage, InlineOrAnchor, Justification,
-    LineSpacing, LineSpacingRule, NumId, NumPr, Paragraph, ParagraphBorders, ParagraphSpacing,
-    PositionH, PositionV, RFonts, RawPPr, RawRPr, RelFromH, RelFromV, Relationships, Row,
-    RowHeight, Run, RunContent, Shading, ShadingPattern, StyleId, TabLeader, TabStop, TabStopKind,
-    Table, TableBorders, TableLayout, TableLook, TableWidth, Toggle, Twips, Underline, VMerge,
-    VertAlign, WrapKind,
+    CellMargins, CellVAlign, CellWidth, CharacterSpacing, Color, ColumnDef, Columns, Extent,
+    FontHint, GridCol, HalfPoint, HeightRule, Highlight, Ind, Inline, InlineImage, InlineOrAnchor,
+    Justification, LineSpacing, LineSpacingRule, Margins, NumId, NumPr, Orientation, PageSize,
+    Paragraph, ParagraphBorders, ParagraphSpacing, PartRef, PositionH, PositionV, RFonts, RawPPr,
+    RawRPr, RelFromH, RelFromV, Relationships, Row, RowHeight, Run, RunContent, Section,
+    SectionProperties, SectionType, Shading, ShadingPattern, StyleId, TabLeader, TabStop,
+    TabStopKind, Table, TableBorders, TableLayout, TableLook, TableWidth, Toggle, Twips, Underline,
+    VMerge, VertAlign, WrapKind,
 };
 use crate::xml::{
     attr_f32, attr_i32, attr_toggle, attr_u32, attributes, capture_element, find, is_true,
@@ -125,14 +126,9 @@ fn parse_block_into(
         b"tbl" => out.push(BlockItem::Table(parse_table(
             reader, empty, rels, ctx, part, xml_path,
         )?)),
-        b"sectPr" => {
-            // TODO (S7b): завершающий `w:sectPr` тела → `BlockItem::SectPr`
-            // и `Body::sections`. Пока сохраняется как есть и без
-            // предупреждения: это не мусор, а отложенный разбор.
-            let id = ctx.id();
-            let xml = capture_any(reader, element, empty, ctx, part)?;
-            out.push(BlockItem::Unknown { id, xml });
-        }
+        b"sectPr" => out.push(BlockItem::SectPr(parse_sect_pr(
+            reader, empty, rels, ctx, part, xml_path,
+        )?)),
         b"AlternateContent" if !empty => {
             // Ветка `mc:Choice` разворачивается на месте блока, как будто
             // её содержимое и было телом (ADR-0014 §1).
@@ -191,18 +187,407 @@ pub(crate) fn parse(
             b"body" if in_document => {
                 let id = ctx.id();
                 let items = parse_blocks(&mut reader, rels, ctx, part, BODY_PATH)?;
-                // TODO (S7b): `sections` соберёт разбор `w:sectPr` — концов
-                // секций из `w:pPr` абзацев и завершающего `w:sectPr` тела.
+                // Секции собираются после разбора: конец секции — это `w:sectPr`,
+                // и порядок концов в теле и есть порядок секций (план §3.1).
+                let sections = collect_sections(&items, ctx);
                 return Ok(Body {
                     id,
                     items,
-                    sections: Vec::new(),
+                    sections,
                 });
             }
             _ => {}
         }
     }
     Err(Error::malformed(part, "`w:document/w:body` is missing"))
+}
+
+// ---------------------------------------------------------------------------
+// Секции
+// ---------------------------------------------------------------------------
+
+/// Умолчание `w:pgSz` по ширине: письмо 8,5" (ECMA-376 §17.6.13).
+const DEFAULT_PAGE_WIDTH: i32 = 12240;
+
+/// Умолчание `w:pgSz` по высоте: письмо 11".
+const DEFAULT_PAGE_HEIGHT: i32 = 15840;
+
+/// Умолчание `w:pgMar`: поля в один дюйм (§17.6.11).
+const DEFAULT_MARGIN: i32 = 1440;
+
+/// Умолчание `w:pgMar/@w:header` и `@w:footer` — полдюйма.
+const DEFAULT_HEADER_MARGIN: i32 = 720;
+
+/// Умолчание `w:cols/@w:space` — полдюйма (§17.6.4).
+const DEFAULT_COLUMN_SPACE: i32 = 720;
+
+/// Свойства секции по умолчанию — то, что `WordprocessingML` подставляет молча.
+///
+/// `w:sectPr` вправе не назвать ни одного свойства: секция без `w:pgSz` — это
+/// письмо с полями в дюйм, а не страница нулевого размера.
+#[must_use]
+fn default_section_properties() -> SectionProperties {
+    SectionProperties {
+        page_size: PageSize {
+            width: Twips::new(DEFAULT_PAGE_WIDTH),
+            height: Twips::new(DEFAULT_PAGE_HEIGHT),
+        },
+        orientation: Orientation::Portrait,
+        margins: Margins {
+            top: Twips::new(DEFAULT_MARGIN),
+            right: Twips::new(DEFAULT_MARGIN),
+            bottom: Twips::new(DEFAULT_MARGIN),
+            left: Twips::new(DEFAULT_MARGIN),
+            header: Some(Twips::new(DEFAULT_HEADER_MARGIN)),
+            footer: Some(Twips::new(DEFAULT_HEADER_MARGIN)),
+            gutter: Some(Twips::new(0)),
+        },
+        columns: Columns {
+            count: 1,
+            space: Twips::new(DEFAULT_COLUMN_SPACE),
+            equal_width: true,
+            separator: false,
+            defs: Vec::new(),
+        },
+        title_pg: false,
+        header_default: None,
+        header_first: None,
+        header_even: None,
+        footer_default: None,
+        footer_first: None,
+        footer_even: None,
+        section_type: None,
+        unknown: Vec::new(),
+    }
+}
+
+/// Собрать секции тела: по одной на каждый `w:sectPr` в порядке концов.
+///
+/// Конец секции — `w:sectPr`: у последней секции он завершает `w:body`, у
+/// предыдущих стоит в `w:pPr` абзаца, которым секция кончается. Секция без
+/// явного `w:sectPr` не заводится: её свойств в файле просто нет.
+fn collect_sections(items: &[BlockItem], ctx: &mut ParseCtx) -> Vec<Section> {
+    let mut sections = Vec::new();
+    for item in items {
+        let properties = match item {
+            BlockItem::Paragraph(paragraph) => paragraph.section_break.as_ref(),
+            BlockItem::SectPr(properties) => Some(properties),
+            _ => None,
+        };
+        if let Some(properties) = properties {
+            sections.push(section_from(properties.clone(), ctx));
+        }
+    }
+    sections
+}
+
+/// Секция из разобранных свойств: удобные поля повторяют сырые (план §3.1).
+fn section_from(properties: SectionProperties, ctx: &mut ParseCtx) -> Section {
+    Section {
+        id: ctx.id(),
+        header_default: properties.header_default.clone(),
+        header_first: properties.header_first.clone(),
+        header_even: properties.header_even.clone(),
+        footer_default: properties.footer_default.clone(),
+        footer_first: properties.footer_first.clone(),
+        footer_even: properties.footer_even.clone(),
+        title_pg: properties.title_pg,
+        page_size: properties.page_size.clone(),
+        orientation: properties.orientation,
+        margins: properties.margins.clone(),
+        columns: properties.columns.clone(),
+        properties,
+    }
+}
+
+/// Разобрать `w:sectPr` — свойства секции.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_sect_pr(
+    reader: &mut XmlReader<'_>,
+    empty: bool,
+    rels: &Relationships,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+) -> Result<SectionProperties> {
+    let mut properties = default_section_properties();
+    if empty {
+        return Ok(properties);
+    }
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `w:sectPr`",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(properties),
+            _ => continue,
+        };
+        let attrs = attributes(element, part)?;
+        match local_name(element.name().into_inner()) {
+            b"pgSz" => {
+                if let Some(width) = attr_i32(&attrs, "w", ctx, part)? {
+                    properties.page_size.width = Twips::new(width);
+                }
+                if let Some(height) = attr_i32(&attrs, "h", ctx, part)? {
+                    properties.page_size.height = Twips::new(height);
+                }
+                properties.orientation = parse_orientation(&attrs, ctx, part)?;
+            }
+            b"pgMar" => apply_page_margins(&attrs, &mut properties.margins, ctx, part)?,
+            b"cols" => {
+                if let Some(count) = attr_u32(&attrs, "num", ctx, part)? {
+                    properties.columns.count = count;
+                }
+                if let Some(space) = attr_i32(&attrs, "space", ctx, part)? {
+                    properties.columns.space = Twips::new(space);
+                }
+                // `w:equalWidth` и `w:sep` — атрибуты `ST_OnOff`, а не элементы
+                // с `w:val`: `attr_toggle` их не читает.
+                properties.columns.equal_width = attr_on(&attrs, "equalWidth", true);
+                properties.columns.separator = attr_on(&attrs, "sep", false);
+                if !empty {
+                    properties.columns.defs = parse_columns(reader, ctx, part, xml_path)?;
+                }
+            }
+            b"titlePg" => {
+                properties.title_pg = toggle_is_on(attr_toggle(&attrs, ctx, part, "w:titlePg")?);
+            }
+            b"headerReference" | b"footerReference" => {
+                let is_header = local_name(element.name().into_inner()) == b"headerReference";
+                let reference = parse_part_ref(&attrs, rels, ctx, part, &element_name(element))?;
+                let Some(reference) = reference else {
+                    continue;
+                };
+                let kind = find(&attrs, "type").unwrap_or("default");
+                let slot = match (is_header, kind) {
+                    (true, "default") => &mut properties.header_default,
+                    (true, "first") => &mut properties.header_first,
+                    (true, "even") => &mut properties.header_even,
+                    (false, "default") => &mut properties.footer_default,
+                    (false, "first") => &mut properties.footer_first,
+                    (false, "even") => &mut properties.footer_even,
+                    _ => {
+                        ctx.warn(
+                            WarningKind::InvalidAttribute,
+                            part,
+                            format!(
+                                "`w:type` `{kind}` of a header/footer reference is unknown, ignored"
+                            ),
+                        )?;
+                        continue;
+                    }
+                };
+                *slot = Some(reference);
+            }
+            b"type" => {
+                properties.section_type = parse_section_type(find(&attrs, "val"), ctx, part)?;
+            }
+            b"docGrid" => {
+                // `w:docGrid` Word пишет почти в каждый документ, а модели он
+                // ничего не даёт: предупреждать о нём значило бы шуметь на
+                // целом классе файлов. XML сохраняется в `unknown`.
+                let xml = capture_any(reader, element, empty, ctx, part)?;
+                properties.unknown.push((local_name_of(element), xml));
+            }
+            _ => {
+                let xml = capture_any(reader, element, empty, ctx, part)?;
+                ctx.warn_at(
+                    WarningKind::UnknownElement,
+                    part,
+                    Some(xml_path),
+                    format!(
+                        "`{}` in `w:sectPr` is not supported, kept as unknown",
+                        element_name(element)
+                    ),
+                )?;
+                properties.unknown.push((local_name_of(element), xml));
+            }
+        }
+    }
+}
+
+/// Дописать поля страницы из `w:pgMar`.
+///
+/// Незаданное поле остаётся умолчанием схемы: `w:pgMar` вправе назвать не все.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn apply_page_margins(
+    attrs: &[Attr<'_>],
+    margins: &mut Margins,
+    ctx: &mut ParseCtx,
+    part: &str,
+) -> Result<()> {
+    for (name, slot) in [
+        ("top", &mut margins.top),
+        ("right", &mut margins.right),
+        ("bottom", &mut margins.bottom),
+        ("left", &mut margins.left),
+    ] {
+        if let Some(value) = attr_i32(attrs, name, ctx, part)? {
+            *slot = Twips::new(value);
+        }
+    }
+    for (name, slot) in [
+        ("header", &mut margins.header),
+        ("footer", &mut margins.footer),
+        ("gutter", &mut margins.gutter),
+    ] {
+        if let Some(value) = attr_i32(attrs, name, ctx, part)? {
+            *slot = Some(Twips::new(value));
+        }
+    }
+    Ok(())
+}
+
+/// Разобрать `w:cols`: явные ширины колонок (`w:col`).
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_columns(
+    reader: &mut XmlReader<'_>,
+    ctx: &mut ParseCtx,
+    part: &str,
+    xml_path: &str,
+) -> Result<Vec<ColumnDef>> {
+    let mut defs = Vec::new();
+    loop {
+        let Some(event) = reader.next_significant()? else {
+            return Err(Error::malformed(
+                part,
+                "unexpected end of input inside `w:cols`",
+            ));
+        };
+        let (element, empty) = match &event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::End(_) => return Ok(defs),
+            _ => continue,
+        };
+        let attrs = attributes(element, part)?;
+        if local_name(element.name().into_inner()) == b"col" {
+            defs.push(ColumnDef {
+                width: Twips::new(attr_i32(&attrs, "w", ctx, part)?.unwrap_or(0)),
+                space: Twips::new(attr_i32(&attrs, "space", ctx, part)?.unwrap_or(0)),
+            });
+            continue;
+        }
+        capture_any(reader, element, empty, ctx, part)?;
+        ctx.warn_at(
+            WarningKind::UnknownElement,
+            part,
+            Some(xml_path),
+            format!(
+                "`{}` in `w:cols` is not supported, ignored",
+                element_name(element)
+            ),
+        )?;
+    }
+}
+
+/// Ссылка на колонтитул: `r:id` → часть пакета через связи.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`]. Отсутствие связи — предупреждение, а не отказ:
+/// часть со ссылкой на потерянный колонтитул теряет только колонтитул.
+fn parse_part_ref(
+    attrs: &[Attr<'_>],
+    rels: &Relationships,
+    ctx: &mut ParseCtx,
+    part: &str,
+    element: &str,
+) -> Result<Option<PartRef>> {
+    let Some(rel_id) = find(attrs, "id") else {
+        ctx.warn(
+            WarningKind::InvalidAttribute,
+            part,
+            format!("`{element}` has no `r:id`, ignored"),
+        )?;
+        return Ok(None);
+    };
+    let Some(relation) = rels.get(rel_id) else {
+        ctx.warn(
+            WarningKind::MissingPart,
+            part,
+            format!("`{element}`: relationship `{rel_id}` is not declared, ignored"),
+        )?;
+        return Ok(None);
+    };
+    let external = relation.target_mode.as_deref() == Some("External");
+    // Цель разрешается от самой части: `word/header1.xml`, а не `header1.xml`.
+    let target = relation
+        .part(part)
+        .unwrap_or_else(|| relation.target.clone());
+    Ok(Some(PartRef {
+        rel_id: rel_id.to_owned(),
+        target,
+        external,
+    }))
+}
+
+/// Ориентация страницы (`w:pgSz/@w:orient`).
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_orientation(attrs: &[Attr<'_>], ctx: &mut ParseCtx, part: &str) -> Result<Orientation> {
+    match find(attrs, "orient") {
+        None | Some("portrait") => Ok(Orientation::Portrait),
+        Some("landscape") => Ok(Orientation::Landscape),
+        Some(other) => {
+            ctx.warn(
+                WarningKind::InvalidAttribute,
+                part,
+                format!("`w:pgSz`: `w:orient` `{other}` is unknown, the page counts as portrait"),
+            )?;
+            Ok(Orientation::Portrait)
+        }
+    }
+}
+
+/// Вид разрыва перед секцией (`w:type`, `ST_SectionMark`).
+///
+/// `nextColumn` в модели не выражен: колонок в ней пока нет, и секция с ним
+/// считается начинающейся с новой страницы — как и умолчание.
+///
+/// # Errors
+/// То же, что у [`parse_blocks`].
+fn parse_section_type(
+    raw: Option<&str>,
+    ctx: &mut ParseCtx,
+    part: &str,
+) -> Result<Option<SectionType>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let kind = match raw {
+        "nextPage" => SectionType::NextPage,
+        "continuous" => SectionType::Continuous,
+        "evenPage" => SectionType::EvenPage,
+        "oddPage" => SectionType::OddPage,
+        _ => {
+            ctx.warn(
+                WarningKind::InvalidAttribute,
+                part,
+                format!("`w:type`: `{raw}` is unknown, the section starts on a new page"),
+            )?;
+            return Ok(None);
+        }
+    };
+    Ok(Some(kind))
+}
+
+/// Логический атрибут `ST_OnOff` (`w:cols/@w:equalWidth`, `@w:sep`).
+///
+/// Отсутствие атрибута — умолчание схемы, а не `false`: у `w:equalWidth` оно `true`.
+fn attr_on(attrs: &[Attr<'_>], name: &str, default: bool) -> bool {
+    find(attrs, name).map_or(default, is_true)
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +627,7 @@ fn parse_paragraph(
 ) -> Result<Paragraph> {
     let id = ctx.id();
     let mut ppr = RawPPr::default();
+    let mut section_break = None;
     let mut runs = Vec::new();
     loop {
         let Some(event) = reader.next_significant()? else {
@@ -258,11 +644,13 @@ fn parse_paragraph(
         };
         match local_name(element.name().into_inner()) {
             b"pPr" => {
-                ppr = if empty {
-                    RawPPr::default()
+                let (parsed, properties) = if empty {
+                    (RawPPr::default(), None)
                 } else {
-                    parse_ppr(reader, ctx, part, xml_path)?
+                    parse_ppr(reader, rels, ctx, part, xml_path)?
                 };
+                ppr = parsed;
+                section_break = properties;
             }
             _ => {
                 parse_inline_element(reader, element, empty, rels, ctx, part, xml_path, &mut runs)?;
@@ -280,8 +668,7 @@ fn parse_paragraph(
         runs,
         style_ref,
         numbering_ref,
-        // TODO (S7b): `w:sectPr` внутри `w:pPr` — конец секции, а не её начало.
-        section_break: None,
+        section_break,
     })
 }
 
@@ -2046,15 +2433,20 @@ fn event_text<'a>(event: &'a Event<'_>) -> Option<&'a [u8]> {
 /// Незнакомые элементы не отбрасываются: их XML ложится в `RawPPr::unknown` —
 /// раскладке и отладке нужно видеть неподдержанное свойство (ADR-0014 §3).
 ///
+/// Возвращает свойства вместе с `w:sectPr`, если он здесь есть: в `RawPPr` ему
+/// места нет, а абзац хранит его отдельно — это конец секции, а не свойство знака.
+///
 /// # Errors
 /// То же, что у [`parse_blocks`].
 fn parse_ppr(
     reader: &mut XmlReader<'_>,
+    rels: &Relationships,
     ctx: &mut ParseCtx,
     part: &str,
     xml_path: &str,
-) -> Result<RawPPr> {
+) -> Result<(RawPPr, Option<SectionProperties>)> {
     let mut ppr = RawPPr::default();
+    let mut section_break = None;
     loop {
         let Some(event) = reader.next_significant()? else {
             return Err(Error::malformed(
@@ -2065,7 +2457,7 @@ fn parse_ppr(
         let (element, empty) = match &event {
             Event::Start(element) => (element, false),
             Event::Empty(element) => (element, true),
-            Event::End(_) => return Ok(ppr),
+            Event::End(_) => return Ok((ppr, section_break)),
             _ => continue,
         };
         let attrs = attributes(element, part)?;
@@ -2114,10 +2506,9 @@ fn parse_ppr(
                 });
             }
             b"sectPr" => {
-                // TODO (S7b): `w:sectPr` в `w:pPr` — конец секции (`sect_pr`).
-                // Сохраняется без предупреждения: элемент известен, отложен.
-                let xml = capture_any(reader, element, empty, ctx, part)?;
-                ppr.unknown.push(("sectPr".to_owned(), xml));
+                // `w:sectPr` в `w:pPr` завершает секцию, а не открывает её:
+                // секция тянется до этого абзаца включительно.
+                section_break = Some(parse_sect_pr(reader, empty, rels, ctx, part, xml_path)?);
             }
             _ => {
                 let xml = capture_any(reader, element, empty, ctx, part)?;
@@ -2860,6 +3251,8 @@ fn utf8(bytes: &[u8], part: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::*;
     use doc_converter_core::{NodeId, ParseWarning};
 
@@ -2894,6 +3287,20 @@ mod tests {
         let body = parse(xml, rels, &mut ctx, PART).expect("the document parses");
         let warnings = ctx.warnings().to_vec();
         (body, warnings)
+    }
+
+    /// Связи части из троек `(r:id, тип, цель)`: тип берётся полным URI, как в XML.
+    fn rels_from(entries: &[(&str, &str, &str)]) -> Relationships {
+        let mut xml = String::from("<Relationships>");
+        for (id, rel_type, target) in entries {
+            let _ = write!(
+                xml,
+                r#"<Relationship Id="{id}" Type="{rel_type}" Target="{target}"/>"#
+            );
+        }
+        xml.push_str("</Relationships>");
+        let map = doc_converter_core::rels::RelMap::parse(xml.as_bytes()).expect("rels parse");
+        Relationships::from_map(map)
     }
 
     /// Плоский текст абзаца — то, что сверяют сайдкары фикстур.
@@ -3189,17 +3596,187 @@ mod tests {
     }
 
     #[test]
-    fn body_section_properties_are_deferred_without_a_warning() {
-        let (body, warnings) = parse_xml("<w:p/><w:sectPr><w:pgSz w:w=\"11906\"/></w:sectPr>");
+    fn body_section_properties_become_a_section() {
+        let (body, warnings) = parse_xml(
+            r#"<w:p/><w:sectPr>
+                 <w:type w:val="continuous"/>
+                 <w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>
+                 <w:pgMar w:top="720" w:header="360"/>
+                 <w:cols w:num="2" w:space="425" w:equalWidth="0" w:sep="1">
+                   <w:col w:w="4000" w:space="425"/>
+                 </w:cols>
+                 <w:titlePg/>
+               </w:sectPr>"#,
+        );
 
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert!(body.sections.is_empty());
-        match &body.items[1] {
-            BlockItem::Unknown { xml, .. } => {
-                assert_eq!(xml, r#"<w:sectPr><w:pgSz w:w="11906"/></w:sectPr>"#);
-            }
-            other => panic!("expected an unknown block, got {other:?}"),
-        }
+        let BlockItem::SectPr(properties) = &body.items[1] else {
+            panic!(
+                "expected section properties in the body, got {:?}",
+                body.items[1]
+            );
+        };
+        assert_eq!(properties.orientation, Orientation::Landscape);
+        assert_eq!(properties.page_size.width.value(), 16838);
+        assert_eq!(properties.page_size.height.value(), 11906);
+        assert_eq!(properties.margins.top.value(), 720);
+        // Незаданные поля берут умолчание схемы, а не ноль.
+        assert_eq!(properties.margins.right.value(), DEFAULT_MARGIN);
+        assert_eq!(properties.margins.header, Some(Twips::new(360)));
+        assert_eq!(
+            properties.margins.footer,
+            Some(Twips::new(DEFAULT_HEADER_MARGIN))
+        );
+        assert_eq!(properties.columns.count, 2);
+        assert!(!properties.columns.equal_width);
+        assert!(properties.columns.separator);
+        assert_eq!(properties.columns.defs.len(), 1);
+        assert_eq!(properties.columns.defs[0].width.value(), 4000);
+        assert!(properties.title_pg);
+        assert_eq!(properties.section_type, Some(SectionType::Continuous));
+
+        // Секция собирается из тех же свойств: удобные поля их повторяют.
+        assert_eq!(body.sections.len(), 1);
+        let section = &body.sections[0];
+        assert_eq!(section.properties, *properties);
+        assert_eq!(section.orientation, Orientation::Landscape);
+        assert_eq!(section.page_size, properties.page_size);
+        assert_eq!(section.margins, properties.margins);
+        assert_eq!(section.columns, properties.columns);
+        assert!(section.title_pg);
+    }
+
+    #[test]
+    fn a_section_break_in_a_paragraph_ends_its_section() {
+        let (body, warnings) = parse_xml(
+            r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:pPr>
+                 <w:r><w:t>one</w:t></w:r></w:p>
+               <w:p><w:r><w:t>two</w:t></w:r></w:p>
+               <w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/></w:sectPr>"#,
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        // Разрыв стоит в `w:pPr`, а не среди блоков: конец секции абзац не разрывает.
+        assert_eq!(body.items.len(), 3);
+        let properties = paragraphs(&body)[0]
+            .section_break
+            .as_ref()
+            .expect("the first paragraph ends a section");
+        assert_eq!(properties.page_size.width.value(), 11906);
+
+        // Порядок секций — порядок концов: сначала разрыв в абзаце, потом конец тела.
+        assert_eq!(body.sections.len(), 2);
+        assert_eq!(body.sections[0].orientation, Orientation::Portrait);
+        assert_eq!(body.sections[0].page_size.width.value(), 11906);
+        assert_eq!(body.sections[1].orientation, Orientation::Landscape);
+        assert_eq!(body.sections[1].page_size.width.value(), 16838);
+    }
+
+    #[test]
+    fn header_and_footer_references_resolve_through_rels() {
+        let rels = rels_from(&[
+            (
+                "rIdHeader1",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                "header1.xml",
+            ),
+            (
+                "rIdFooter1",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer",
+                "footer1.xml",
+            ),
+        ]);
+        let (body, warnings) = parse_part_with(
+            document_xml(
+                r#"<w:sectPr>
+                     <w:headerReference w:type="default" r:id="rIdHeader1"/>
+                     <w:headerReference w:type="first" r:id="rIdHeader1"/>
+                     <w:footerReference w:type="even" r:id="rIdFooter1"/>
+                   </w:sectPr>"#,
+            )
+            .as_bytes(),
+            &rels,
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let properties = &body.sections[0].properties;
+        let header = properties
+            .header_default
+            .as_ref()
+            .expect("a default header");
+        assert_eq!(header.rel_id, "rIdHeader1");
+        assert_eq!(header.target, "word/header1.xml");
+        assert!(!header.external);
+        let first = properties
+            .header_first
+            .as_ref()
+            .expect("a first-page header");
+        assert_eq!(first.target, "word/header1.xml");
+        assert!(properties.header_even.is_none());
+        let footer = properties.footer_even.as_ref().expect("an even footer");
+        assert_eq!(footer.target, "word/footer1.xml");
+        // Удобные поля секции повторяют ссылки.
+        assert_eq!(body.sections[0].header_default.as_ref(), Some(header));
+    }
+
+    #[test]
+    fn an_undeclared_header_reference_warns_and_is_dropped() {
+        let (body, warnings) = parse_xml(
+            r#"<w:sectPr><w:headerReference w:type="default" r:id="rId404"/></w:sectPr>"#,
+        );
+
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(warnings[0].kind, WarningKind::MissingPart);
+        assert!(body.sections[0].header_default.is_none());
+    }
+
+    #[test]
+    fn doc_grid_is_kept_without_a_warning() {
+        // `w:docGrid` есть почти в каждом документе Word: предупреждение о нём
+        // было бы шумом, но XML обязан сохраниться.
+        let (body, warnings) = parse_xml(
+            r#"<w:sectPr><w:pgSz w:w="11906"/><w:docGrid w:linePitch="360"/></w:sectPr>"#,
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let BlockItem::SectPr(properties) = &body.items[0] else {
+            panic!("expected section properties, got {:?}", body.items[0]);
+        };
+        assert_eq!(
+            properties.unknown,
+            vec![(
+                "docGrid".to_owned(),
+                r#"<w:docGrid w:linePitch="360"/>"#.to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn an_unsupported_section_property_warns_and_is_kept() {
+        let (body, warnings) = parse_xml(
+            r#"<w:sectPr><w:pgSz w:w="11906"/><w:textDirection w:val="tbRl"/></w:sectPr>"#,
+        );
+
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(warnings[0].kind, WarningKind::UnknownElement);
+        let BlockItem::SectPr(properties) = &body.items[0] else {
+            panic!("expected section properties, got {:?}", body.items[0]);
+        };
+        assert_eq!(properties.unknown.len(), 1);
+        assert_eq!(properties.unknown[0].0, "textDirection");
+    }
+
+    #[test]
+    fn a_section_without_properties_gets_the_schema_defaults() {
+        let (body, warnings) = parse_xml("<w:sectPr/>");
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let section = &body.sections[0];
+        assert_eq!(section.orientation, Orientation::Portrait);
+        assert_eq!(section.page_size.width, Twips::new(DEFAULT_PAGE_WIDTH));
+        assert_eq!(section.page_size.height, Twips::new(DEFAULT_PAGE_HEIGHT));
+        assert_eq!(section.columns.count, 1);
+        assert!(section.columns.equal_width);
     }
 
     #[test]
@@ -3597,6 +4174,38 @@ mod tests {
                         .unwrap_or_else(|| panic!("{path}: абзац {index} без `text`"));
                     assert_eq!(paragraph_text(paragraph), want, "{path}: абзац {index}");
                 }
+
+                // Каталог `metadata.sections` описывает секции фикстуры; у кого
+                // его нет, тот сверяется только по абзацам.
+                if let Some(expected) = sidecar["metadata"]["sections"].as_array() {
+                    assert_eq!(body.sections.len(), expected.len(), "{path}: число секций");
+                    for (index, (section, expected)) in
+                        body.sections.iter().zip(expected).enumerate()
+                    {
+                        let want = match expected["orientation"].as_str() {
+                            Some("portrait") => Orientation::Portrait,
+                            Some("landscape") => Orientation::Landscape,
+                            other => panic!("{path}: секция {index}: ориентация {other:?}"),
+                        };
+                        assert_eq!(section.orientation, want, "{path}: секция {index}");
+                        let width = expected["widthTwips"]
+                            .as_i64()
+                            .unwrap_or_else(|| panic!("{path}: секция {index} без `widthTwips`"));
+                        assert_eq!(
+                            i64::from(section.page_size.width.value()),
+                            width,
+                            "{path}: секция {index}: ширина"
+                        );
+                        let height = expected["heightTwips"]
+                            .as_i64()
+                            .unwrap_or_else(|| panic!("{path}: секция {index} без `heightTwips`"));
+                        assert_eq!(
+                            i64::from(section.page_size.height.value()),
+                            height,
+                            "{path}: секция {index}: высота"
+                        );
+                    }
+                }
                 checked += 1;
             }
         }
@@ -3958,6 +4567,72 @@ mod tests {
     // -----------------------------------------------------------------------
     // Снапшоты
     // -----------------------------------------------------------------------
+
+    /// Пути частей, названные сайдкаром где угодно в `content`.
+    fn sidecar_parts(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, item) in map {
+                    match (key.as_str(), item.as_str()) {
+                        ("part", Some(part)) => out.push(part.to_owned()),
+                        _ => sidecar_parts(item, out),
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    sidecar_parts(item, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Колонтитулы секции — те же части, что называет сайдкар.
+    ///
+    /// Сайдкар может перечислять их и в `content.headers`, и в `content.fields`
+    /// (поле живёт в колонтитуле) — поэтому части собираются рекурсивно.
+    #[test]
+    fn section_header_and_footer_references_match_their_sidecars() {
+        let mut checked = 0;
+        for (name, xml, rels, sidecar) in fixture_cases("headers_footers") {
+            let path = format!("headers_footers/{name}");
+            let (body, warnings) = parse_part_with(&xml, &rels);
+            assert!(warnings.is_empty(), "{path}: {warnings:?}");
+            let section = body
+                .sections
+                .first()
+                .unwrap_or_else(|| panic!("{path}: у тела нет секции"));
+
+            let mut found: Vec<String> = [
+                &section.header_default,
+                &section.header_first,
+                &section.header_even,
+                &section.footer_default,
+                &section.footer_first,
+                &section.footer_even,
+            ]
+            .into_iter()
+            .flatten()
+            .map(|reference| reference.target.clone())
+            .collect();
+            found.sort();
+
+            let mut expected = Vec::new();
+            sidecar_parts(&sidecar["content"], &mut expected);
+            expected
+                .retain(|part| part.starts_with("word/header") || part.starts_with("word/footer"));
+            expected.sort();
+            expected.dedup();
+
+            assert_eq!(found, expected, "{path}: колонтитулы секции");
+            if let Some(title_pg) = sidecar["content"]["titlePg"].as_bool() {
+                assert_eq!(section.title_pg, title_pg, "{path}: `w:titlePg`");
+            }
+            checked += 1;
+        }
+        assert_eq!(checked, 5, "в категории `headers_footers` пять фикстур");
+    }
 
     /// Снапшот модели: так видно и структуру, и каждое разобранное свойство.
     #[cfg(not(target_arch = "wasm32"))]
