@@ -560,6 +560,7 @@ dependencies = [
 name = "doc-converter-docx"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "doc-converter-core",
  "doc-converter-render",
  "insta",
