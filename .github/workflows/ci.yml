@@ -259,8 +259,8 @@ jobs:
   # изображений): на ней пик разбора — 156,8 МиБ, то есть бюджет 200 МиБ
   # измеряется с запасом и запас показывает распаковку картинок, ради которой
   # бюджет и назван «DOCX с изображениями». На плотном профиле ROADMAP
-  # (`profile_50mib.docx`, 100 000 абзацев тела) тот же замер даёт ~650 МиБ: те же
-  # 200 МиБ там недостижимы без потокового разбора. Это зафиксированное
+  # (`profile_50mib.docx`, 100 000 абзацев тела) тот же замер даёт 874,6 МиБ: те
+  # же 200 МиБ там недостижимы без потокового разбора. Это зафиксированное
   # отклонение и задел Спринта 9, а не регрессия, поэтому профиль едет ниже
   # информационным прогоном — гейта на нём нет намеренно, а не забыт.
   perf-docx:
@@ -336,8 +336,9 @@ jobs:
           exit "$status"
 
       # Информационно, без гейта: на плотном профиле видно абзацы/таблицы/
-      # изображения и время, но пик RSS здесь ~650 МиБ против бюджета 200 МиБ
-      # (см. шапку джобы) — красный шаг на этом числе был бы ложной тревогой.
+      # изображения и время, но пик RSS здесь 874,6 МиБ против бюджета 200 МиБ
+      # (см. шапку джобы и docs/sprint-8/memory-report.md) — красный шаг на этом
+      # числе был бы ложной тревогой.
       - name: profile 50 MiB (info)
         run: target/release/examples/mem_probe --open-only target/fixtures/docx-large/profile_50mib.docx
 
@@ -357,3 +358,57 @@ jobs:
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
       - run: pnpm audit --audit-level=high || true
+
+  # Покрытие строк — пороги ROADMAP §9 (DoD спринта 8): ≥ 85 % для
+  # `crates/docx` и ≥ 80 % для нового кода `crates/core`. Оба гейта жёсткие:
+  # локальный замер после добора слайсов E2a–E2c — 92,75 % и 97,68 % по
+  # строкам, запас есть, а числа покрытия, в отличие от времён и памяти,
+  # детерминированы (один и тот же набор тестов даёт один и тот же процент) —
+  # красный шаг здесь означает регрессию, а не шум раннера.
+  #
+  # Каждый крейт мерится отдельным прогоном: порог привязан к крейту, а общий
+  # прогон двух сюит смешал бы числа — docx-тесты исполняют часть `crates/core`
+  # и поднимают его (в замере E1 — с 97,68 % до 98,63 %).
+  #
+  # Вне гейта осознанно, а не по недосмотру: `crates/fuzz` и `vendor/printpdf` —
+  # отдельные workspace'ы (nightly + санитайзер и вендоренный форк), не
+  # библиотечный код и в ROADMAP §9 не адресуются; `crates/wasm` целиком под
+  # `#![cfg(target_arch = "wasm32")]` — на нативном таргете пуст; у
+  # `crates/render`, `xlsx`, `pdf` порога в ROADMAP §9 нет. Доктесты не
+  # гоняются: `--doctests` в cargo-llvm-cov помечен unstable.
+  coverage:
+    name: Coverage (docx ≥ 85%, core ≥ 80%)
+    runs-on: ubuntu-latest
+    # Инструментированная сборка двух крейтов и 334 теста — холодный прогон
+    # ≈40 с локально (M3 Pro, прогретый `~/.cargo`), на 2–4-vCPU раннере в
+    # несколько раз дольше; плюс сюда же `cargo install cargo-llvm-cov`. 40
+    # минут — с запасом на порядок, а не впритык.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      # `llvm-tools-preview` (llvm-profdata/llvm-cov) — требование
+      # cargo-llvm-cov. Компонент продублирован в `rust-toolchain.toml` для
+      # локальных прогонов: в CI rustup идёт от `RUSTUP_TOOLCHAIN`, который
+      # выставил action, и файл проекта не читает.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: llvm-tools-preview
+
+      # Свой shared-key: rust-cache кэширует инструментированный `target/`
+      # этой джобы отдельно от обычных сборок.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-coverage
+
+      - run: cargo install cargo-llvm-cov --locked
+
+      # Каталог сборки отдельно не задаём: в cargo-llvm-cov 0.9.1 нет опции
+      # `--target-dir`, а на своём раннере дефолтный `target/` ни с кем не
+      # делится. Локально каталог задаётся через CARGO_TARGET_DIR.
+      - name: core ≥ 80% lines
+        run: cargo llvm-cov -p doc-converter-core --fail-under-lines 80
+
+      - name: docx ≥ 85% lines
+        run: cargo llvm-cov -p doc-converter-docx --fail-under-lines 85
