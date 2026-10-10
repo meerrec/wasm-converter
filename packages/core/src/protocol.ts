@@ -1,6 +1,9 @@
 // Wire-протокол Main ↔ Worker. Источник истины — этот файл;
 // Rust-сторона описывает только payload (JSON / SAB), не конверт.
 
+/** Формат документа, который умеет открыть воркер. */
+export type DocFormat = 'xlsx' | 'docx';
+
 export interface Viewport { x: number; y: number; w: number; h: number; scale: number }
 
 export interface RenderConfig {
@@ -42,7 +45,7 @@ export interface PdfOptions {
 export type WorkerRequest =
   | { id: number; type: 'init';      payload: { canvas: OffscreenCanvas } }
   | { id: number; type: 'resize';    payload: { width: number; height: number; dpr: number } }
-  | { id: number; type: 'open';      payload: { format: 'docx' | 'xlsx'; bytes: ArrayBuffer } }
+  | { id: number; type: 'open';      payload: { format: DocFormat; bytes: ArrayBuffer } }
   | { id: number; type: 'render';    payload: { sheet?: number; page?: number; viewport: Viewport; config: RenderConfig } }
   | { id: number; type: 'hitTest';   payload: { x: number; y: number } }
   | { id: number; type: 'exportPdf'; payload: PdfOptions }
@@ -76,6 +79,16 @@ export interface SheetInfo {
   frozenRows: number;
   frozenWidth: number;
   frozenHeight: number;
+}
+
+/**
+ * Страница открытого документа. Приходит из Rust: размеры — в пикселях
+ * раскладки, то есть до зума; по ним интерфейс строит прокрутку страницы, как
+ * по размерам листа.
+ */
+export interface PageInfo {
+  width: number;
+  height: number;
 }
 
 /**
@@ -128,14 +141,16 @@ export interface DropBitmapMsg { type: 'drop-bitmap'; id: number }
  * их: он равен зуму, умноженному на плотность пикселей экрана.
  */
 export interface RenderRequest {
+  /** Лист книги — поле кадра XLSX. У кадра DOCX вместо него `page`. */
   sheet?: number;
+  /** Страница документа — поле кадра DOCX. У кадра XLSX вместо него `sheet`. */
   page?: number;
   viewport: Viewport;
   config: RenderConfig;
 }
 
-/** Открыть книгу. Байты передаются переводом владения. */
-export interface OpenMsg { type: 'open'; format: 'xlsx'; bytes: ArrayBuffer }
+/** Открыть книгу или документ. Байты передаются переводом владения. */
+export interface OpenMsg { type: 'open'; format: DocFormat; bytes: ArrayBuffer }
 export interface CloseMsg { type: 'close' }
 export interface RenderMsg { type: 'render'; req?: RenderRequest }
 
@@ -195,6 +210,13 @@ export interface ReadyMsg {
 export interface TickMsg { type: 'tick'; stats: PaintStats }
 /** Книга разобрана: листы и их размеры. */
 export interface OpenedMsg { type: 'opened'; sheets: SheetInfo[] }
+/**
+ * Документ разложен: размеры страниц.
+ *
+ * Тег свой, а не `opened` с другим полем: сообщения с общим `type` в union не
+ * сужаются, и ветка `opened` на main-стороне потеряла бы `sheets`.
+ */
+export interface DocxOpenedMsg { type: 'docx-opened'; pages: PageInfo[] }
 /** Ответ на `hit-test`: строка и столбец либо ничего, если точка мимо. */
 export interface HitMsg { type: 'hit'; id: number; cell: [number, number] | null }
 /** Ответ на `hyperlink-at`: ссылка под точкой либо ничего. */
@@ -210,6 +232,7 @@ export type OutMsg =
   | PngMsg
   | PdfMsg
   | OpenedMsg
+  | DocxOpenedMsg
   | HitMsg
   | HyperlinkMsg
   | WorkerErrorMsg;

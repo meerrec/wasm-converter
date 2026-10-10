@@ -1,6 +1,9 @@
 /// <reference lib="webworker" />
 import init, {
   alloc_sab,
+  docx_build_display_list_sab,
+  docx_close,
+  docx_open_bytes,
   drop_bitmap,
   init_painter,
   paint_display_list_sab,
@@ -19,12 +22,14 @@ import type {
   ImageInfo,
   InMsg,
   OutMsg,
+  PageInfo,
   PaintStats,
   PdfModuleUrls,
   RenderRequest,
   SheetInfo,
 } from '../protocol.js';
 import { exportPng } from '../render/export_png.js';
+import { frameTarget, toViewport, type OpenFormat } from './frame_args.js';
 import { startFrameLoop } from './frame_loop';
 
 type Ctx = OffscreenCanvasRenderingContext2D;
@@ -38,6 +43,8 @@ let slotCapacity = 0;
 let loop: ReturnType<typeof startFrameLoop> | null = null;
 /** Последний запрос на кадр: перерисовка идёт по нему, а не по сообщению. */
 let pending: RenderRequest | null = null;
+/** Формат открытого документа: по нему разбирается запрос кадра. */
+let format: OpenFormat = null;
 /** Сколько заняла сборка последнего кадра. */
 let buildMs = 0;
 
@@ -141,21 +148,16 @@ function reregisterBitmaps(): void {
   for (const [id, bmp] of bitmaps) register_bitmap(id, bmp);
 }
 
-/** Окно и настройки в том виде, в каком их ждёт Rust. */
-const renderArgs = (req: RenderRequest) => ({
-  viewport: {
-    scrollX: req.viewport.x,
-    scrollY: req.viewport.y,
-    width: req.viewport.w,
-    height: req.viewport.h,
-    scale: req.viewport.scale,
-  },
-  options: {
-    showGrid: req.config.showGrid,
-    showHeaders: req.config.showHeaders,
-    dark: req.config.theme === 'dark',
-  },
-});
+/**
+ * Отпустить разобранный документ прежнего формата.
+ *
+ * Книга XLSX живёт в wasm до следующего `xlsx_open`, а у DOCX память держат
+ * раскладка и реестр шрифтов: отпускает их только `docx_close`.
+ */
+function releaseDocument(): void {
+  if (format === 'docx') docx_close();
+  format = null;
+}
 
 self.onmessage = async (ev: MessageEvent<InMsg>) => {
   const msg = ev.data;
@@ -188,13 +190,17 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         loop = startFrameLoop({
           build: () => {
             if (!pending || !sab) return false;
-            const { viewport, options } = renderArgs(pending);
-            const stats = xlsx_build_display_list_sab(
-              sab,
-              slotCapacity,
-              pending.sheet ?? 0,
-              viewport,
-              options,
+            const target = frameTarget(format, pending);
+            const stats = (
+              target.kind === 'docx'
+                ? docx_build_display_list_sab(sab, slotCapacity, target.page, target.viewport)
+                : xlsx_build_display_list_sab(
+                    sab,
+                    slotCapacity,
+                    target.sheet,
+                    target.viewport,
+                    target.options,
+                  )
             ) as { written: boolean; cmds: number; buildMs: number };
             buildMs = stats.buildMs;
             // Свободного слота не было — кадр пропущен намеренно.
@@ -231,8 +237,25 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     }
     case 'open': {
       try {
-        // wasm-bindgen отдаёт JsValue: разбирает его serde, тип знает только Rust.
+        // Формат выбирает и былл-функцию разбора, и форму ответа. Открытие
+        // отдаёт JsValue: разбирает его serde, тип знает только Rust.
+        if (msg.format === 'docx') {
+          const pages = docx_open_bytes(new Uint8Array(msg.bytes)) as PageInfo[];
+          format = 'docx';
+          pending = null;
+          // Документ уходит в wasm целиком, а PDF-экспорт пока умеет только
+          // книгу: байты прежней книги держать незачем.
+          bookBytes = null;
+          // Картинки прежней книги больше не нужны, а id нового документа могут с ними совпасть.
+          dropBookBitmaps();
+          post({ type: 'docx-opened', pages });
+          loop?.request();
+          break;
+        }
         const sheets = xlsx_open(new Uint8Array(msg.bytes)) as SheetInfo[];
+        // Раскладку прежнего документа отпускаем: книга займёт место в wasm.
+        releaseDocument();
+        format = 'xlsx';
         // Байты остаются в воркере до закрытия книги: их просит ленивый
         // PDF-модуль. Прежняя книга отпускается здесь же.
         bookBytes = msg.bytes;
@@ -242,7 +265,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         const gen = bitmapsGen;
         // Ждём картинки до `opened`: к первому кадру они уже в painter'е.
         await loadBookBitmaps(gen);
-        if (gen !== bitmapsGen) return;
+        if (gen !== bitmapsGen) break;
         post({ type: 'opened', sheets });
         // Пока декодировались картинки, мог прийти кадр — просим показать полный.
         loop?.request();
@@ -258,11 +281,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     }
     case 'hit-test': {
       try {
-        const { viewport, options } = renderArgs({
-          sheet: msg.sheet,
-          viewport: msg.viewport,
-          config: msg.config,
-        });
+        const viewport = toViewport(msg.viewport);
         const cell = xlsx_hit_test(msg.sheet, viewport, msg.x, msg.y) as [number, number];
         post({ type: 'hit', id: msg.id, cell: cell ?? null });
       } catch {
@@ -273,11 +292,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     }
     case 'hyperlink-at': {
       try {
-        const { viewport, options } = renderArgs({
-          sheet: msg.sheet,
-          viewport: msg.viewport,
-          config: msg.config,
-        });
+        const viewport = toViewport(msg.viewport);
         const link = xlsx_hyperlink_at(msg.sheet, viewport, msg.x, msg.y) as HyperlinkInfo | null;
         post({ type: 'hyperlink', id: msg.id, link: link ?? null });
       } catch {
@@ -328,6 +343,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       pending = null;
       bookBytes = null;
       dropBookBitmaps();
+      releaseDocument();
       break;
     }
   }
