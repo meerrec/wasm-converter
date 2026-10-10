@@ -1,9 +1,10 @@
 //! Движок раскладки DOCX: преобразование модели в страницы.
 //!
-//!Central module that orchestrates the layout process:
-//! - Takes a DOCX document model
-//! - Uses text measurement from render crate
-//! - Produces paginated layout with positions
+//! Обходит блоки тела документа по порядку, раскладывает абзацы и таблицы, а
+//! постраничную разбивку ведёт [`Paginator`](super::pagination::Paginator):
+//! он же — единственный источник текущей позиции Y. Текст измеряется средствами
+//! `doc-converter-render`, чтобы точки разрыва не разъезжались между canvas
+//! и PDF (ADR-0005).
 
 use doc_converter_core::NodeId;
 use doc_converter_render::{
@@ -12,6 +13,7 @@ use doc_converter_render::{
 };
 
 use crate::layout::line_break::LineBreaker;
+use crate::layout::pagination::Paginator;
 
 use crate::model::raw::HalfPoint;
 use crate::model::{
@@ -19,7 +21,7 @@ use crate::model::{
 };
 use crate::{Columns, Twips};
 
-/// Пاتحاد в puncts per inch: 96 DPI / 72 DPI = 4/3.
+/// Пикселей в типографском пункте: 96 DPI / 72 DPI = 4/3.
 pub const PX_PER_POINT: f32 = 96.0 / 72.0;
 
 /// Преобразовать twips в пиксели: 1 twip = 1/1440 дюйма, 1 пиксель = 1/96 дюйма.
@@ -40,7 +42,7 @@ pub fn half_points_to_px(half_points: i32) -> f32 {
     (half_points as f32 / 2.0) * PX_PER_POINT
 }
 
-/// страна в пикселях от левого края.
+/// Прямоугольник в пикселях от левого верхнего угла страницы.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rect {
     /// Левая граница.
@@ -255,7 +257,7 @@ impl LayoutOptions {
 
 /// Контекст рендеринга для измерения текста.
 ///
-/// Обер Öffa `.FontRegistry` из render, чтобы не таскать его через все функции.
+/// Обёртка над `.FontRegistry` из render, чтобы не таскать его через все функции.
 pub struct RenderContext<'a> {
     pub fonts: &'a mut doc_converter_render::font::FontRegistry,
     pub default_font_id: doc_converter_render::font::FontId,
@@ -300,18 +302,12 @@ pub fn layout_document(
     options: &LayoutOptions,
     fonts: &mut FontRegistry,
 ) -> Result<PageLayout, LayoutError> {
-    let mut pages = Vec::new();
+    let mut pages: Vec<Page> = Vec::new();
     let mut placed_floats: Vec<crate::layout::float::FloatElement> = Vec::new();
 
-    let first_section = document
-        .body
-        .sections
-        .first()
-        .cloned()
-        .unwrap_or_else(default_section);
-    let mut current_page = create_page(&first_section, 1);
-    let mut current_y = current_page.margins.top;
-    let mut state = LayoutState::for_page(&current_page, &first_section);
+    let first_section = section_at(document, 0);
+    let mut paginator = Paginator::new(&first_section);
+    let mut state = LayoutState::for_page(paginator.current_page(), &first_section);
     let default_font_id = FontId::default();
 
     // Process all blocks
@@ -321,7 +317,7 @@ pub fn layout_document(
                 // Курсор страницы — источник истины: состояние возвращается к нему перед
                 // каждым абзацем, иначе элементы получают координаты от прошлого блока.
                 state.x = state.column_x;
-                state.y = current_y;
+                state.y = paginator.current_y();
 
                 // Layout paragraph
                 let mut line_breaker = LineBreaker::new(fonts, default_font_id);
@@ -329,27 +325,15 @@ pub fn layout_document(
                     layout_paragraph(paragraph, &mut state, options, &mut line_breaker);
 
                 // Check if we need a new page
-                if current_y + content_height > current_page.height - current_page.margins.bottom {
-                    pages.push(current_page);
+                if !paginator.fits(content_height) {
+                    let next_section = next_page_section(document, pages.len());
+                    pages.push(paginator.push_page_with_section(&next_section));
                     placed_floats.clear(); // Reset floats for new page
-                    let next_section = document
-                        .body
-                        .sections
-                        .get(pages.len())
-                        .cloned()
-                        .unwrap_or_else(default_section);
-                    current_page = create_page(
-                        &next_section,
-                        u32::try_from(pages.len()).unwrap_or(u32::MAX) + 1,
-                    );
-                    current_y = current_page.margins.top;
-                    state = LayoutState::for_page(&current_page, &next_section);
+                    state = LayoutState::for_page(paginator.current_page(), &next_section);
                 }
 
-                for item in layout_items {
-                    current_page.items.push(item);
-                }
-                current_y += content_height;
+                paginator.current_page_mut().items.extend(layout_items);
+                paginator.advance(content_height);
             }
             BlockItem::Table(table) => {
                 // Layout table
@@ -357,44 +341,24 @@ pub fn layout_document(
                 let table_height = layout_table(table, &mut state, options, fonts, table_width);
 
                 // Check if table fits on current page
-                if current_y + table_height > current_page.height - current_page.margins.bottom {
-                    pages.push(current_page);
+                if !paginator.fits(table_height) {
+                    let next_section = next_page_section(document, pages.len());
+                    pages.push(paginator.push_page_with_section(&next_section));
                     placed_floats.clear();
-                    let next_section = document
-                        .body
-                        .sections
-                        .get(pages.len())
-                        .cloned()
-                        .unwrap_or_else(default_section);
-                    current_page = create_page(
-                        &next_section,
-                        u32::try_from(pages.len()).unwrap_or(u32::MAX) + 1,
-                    );
-                    current_y = current_page.margins.top;
-                    state = LayoutState::for_page(&current_page, &next_section);
+                    state = LayoutState::for_page(paginator.current_page(), &next_section);
                 }
 
                 // TODO: Add table to current page
-                current_y += table_height;
+                paginator.advance(table_height);
             }
             BlockItem::SectPr(_sect_pr) => {
                 // Handle section break
                 // Force new page if needed
                 if crate::layout::pagination::block_needs_page_break(block, None) {
-                    pages.push(current_page);
+                    let next_section = next_page_section(document, pages.len());
+                    pages.push(paginator.push_page_with_section(&next_section));
                     placed_floats.clear();
-                    let next_section = document
-                        .body
-                        .sections
-                        .get(pages.len())
-                        .cloned()
-                        .unwrap_or_else(default_section);
-                    current_page = create_page(
-                        &next_section,
-                        u32::try_from(pages.len()).unwrap_or(u32::MAX) + 1,
-                    );
-                    current_y = current_page.margins.top;
-                    state = LayoutState::for_page(&current_page, &next_section);
+                    state = LayoutState::for_page(paginator.current_page(), &next_section);
                 }
             }
             BlockItem::Unknown { .. } => {
@@ -403,9 +367,11 @@ pub fn layout_document(
         }
     }
 
-    pages.push(current_page);
+    // Текущая страница отдаётся как есть, даже пустая: правка этой части меняет
+    // число страниц, а здесь движок переезжает на пагинатор без смены поведения.
+    pages.push(paginator.current_page().clone());
 
-    let total_height = pages.iter().map(|p| p.height).sum();
+    let total_height = pages.iter().map(|page| page.height).sum();
 
     Ok(PageLayout {
         pages,
@@ -413,20 +379,26 @@ pub fn layout_document(
     })
 }
 
-/// Создать страницу с заданными параметрами.
-fn create_page(section: &Section, number: u32) -> Page {
-    let width = twips_to_px(section.page_size.width);
-    let height = twips_to_px(section.page_size.height);
+/// Секция номер `index` или секция по умолчанию.
+///
+/// Секций в теле может не быть вовсе — у документа без `w:sectPr` или собранного
+/// вручную: тогда раскладка берёт A4 с полями в дюйм.
+fn section_at(document: &Document, index: usize) -> Section {
+    document
+        .body
+        .sections
+        .get(index)
+        .cloned()
+        .unwrap_or_else(default_section)
+}
 
-    let margins = MarginsLayout::from_margins(&section.margins);
-
-    Page {
-        number,
-        width,
-        height,
-        items: Vec::new(),
-        margins,
-    }
+/// Секция для страницы, начинающейся после `finished_pages` завершённых.
+///
+/// Номер новой страницы — `finished_pages + 1`, и прежний движок брал секцию
+/// именно по нему. Порядок секций в теле документа — отдельная правка; этот
+/// слайс переезжает на пагинатор, не меняя раскладку.
+fn next_page_section(document: &Document, finished_pages: usize) -> Section {
+    section_at(document, finished_pages + 1)
 }
 
 /// Разложить абзац.

@@ -161,6 +161,16 @@ impl Paginator {
         Rect::new(self.content_left(), self.current_y, width, height)
     }
 
+    /// Продвинуть курсор на `height`, не проверяя переполнение.
+    ///
+    /// Нужен блоку, который уже разложен по текущей позиции: [`Paginator::add_item`]
+    /// на переполнении начал бы новую страницу и оставил бы координаты элементов
+    /// от прежней. Блок выше полосы набора так и остаётся на этой странице —
+    /// содержимое просто выходит за нижнее поле.
+    pub fn advance(&mut self, height: f32) {
+        self.current_y += height;
+    }
+
     /// Проверить, нужно ли начинать новую страницу по типу разрыва секции.
     #[must_use]
     pub fn needs_section_break(
@@ -435,6 +445,27 @@ mod tests {
         let mut paginator = Paginator::new(&a4());
         assert!(paginator.add_item(10.0, false));
         assert!((paginator.current_y() - (paginator.content_top() + 10.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_advance_keeps_the_block_on_the_page() {
+        let mut paginator = Paginator::new(&a4());
+        // На единицу больше, чем осталось до нижней границы: add_item начал бы
+        // новую страницу, advance — нет.
+        let past_the_bottom = paginator.content_bottom() - paginator.current_y() + 1.0;
+
+        paginator.advance(past_the_bottom);
+
+        assert_eq!(
+            paginator.current_page().number,
+            1,
+            "новая страница не начата"
+        );
+        assert!(
+            paginator.current_y() > paginator.content_bottom(),
+            "курсор ушёл за нижнюю границу полосы набора"
+        );
+        assert!(!paginator.fits(1.0));
     }
 
     #[test]
