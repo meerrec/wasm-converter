@@ -16,7 +16,9 @@ use std::ops::Range;
 use doc_converter_render::font::FontId;
 
 use crate::model::raw::HalfPoint;
-use crate::model::{Anchor, Document, Inline, Justification, Paragraph, Run, RunContent};
+use crate::model::{
+    Anchor, Document, Inline, InlineOrAnchor, Justification, Paragraph, Run, RunContent,
+};
 
 use super::cascade::{resolve_paragraph, resolve_run, ResolvedParagraph, StyleCache};
 use super::engine::{LayoutOptions, LayoutState};
@@ -207,8 +209,46 @@ pub fn layout_paragraph(
         keep_next: resolved.ppr.keep_next,
         keep_lines: resolved.ppr.keep_lines,
         widow_control: resolved.ppr.widow_control,
-        // Плавающие объекты разберёт отдельный слайс.
-        anchors: Vec::new(),
+        anchors: collect_anchors(paragraph),
+    }
+}
+
+/// Собрать плавающие рисунки абзаца в порядке появления.
+///
+/// Встроенные рисунки (`wp:inline`) пропускаются: их место — в строке текста, а
+/// не в списке размещаемых объектов. `w:drawing` встречается на двух уровнях —
+/// прямо в абзаце (`Inline::Drawing`) и внутри run'а (`RunContent::Drawing`), —
+/// поэтому обход рекурсивный.
+fn collect_anchors(paragraph: &Paragraph) -> Vec<Anchor> {
+    let mut anchors = Vec::new();
+    collect_inline_anchors(&paragraph.runs, &mut anchors);
+    anchors
+}
+
+/// Обойти `Inline` и собрать анкоры; вложенные списки (гиперссылка, поле)
+/// обходятся тем же порядком, что и текст в них.
+fn collect_inline_anchors(inlines: &[Inline], anchors: &mut Vec<Anchor>) {
+    for inline in inlines {
+        match inline {
+            Inline::Drawing(drawing) => push_anchor(drawing, anchors),
+            Inline::Run(run) => {
+                for content in &run.content {
+                    if let RunContent::Drawing(drawing) = content {
+                        push_anchor(drawing, anchors);
+                    }
+                }
+            }
+            Inline::Hyperlink(hyperlink) => collect_inline_anchors(&hyperlink.runs, anchors),
+            Inline::Field(field) => collect_inline_anchors(&field.result, anchors),
+            _ => {}
+        }
+    }
+}
+
+/// Добавить анкор рисунка; у встроенной картинки его нет.
+fn push_anchor(drawing: &InlineOrAnchor, anchors: &mut Vec<Anchor>) {
+    if let Some(anchor) = &drawing.anchor {
+        anchors.push(anchor.clone());
     }
 }
 
@@ -241,12 +281,15 @@ mod tests {
 
     use super::*;
     use crate::layout::engine::twips_to_px;
+    use crate::layout::float::emu_to_px;
     use crate::model::raw::{
         Color, HalfPoint, Ind, LineSpacing, LineSpacingRule, ParagraphSpacing, RawPPr, RawRPr,
         Toggle,
     };
     use crate::model::{
-        BlockItem, Body, DocDefaults, Metadata, NumberingTable, Relationships, Settings, StyleTable,
+        BlockItem, Body, DocDefaults, Extent, Hyperlink, InlineImage, InlineOrAnchor, Metadata,
+        NumberingTable, PositionH, PositionV, RelFromH, RelFromV, Relationships, Settings,
+        StyleTable, WrapKind,
     };
     use crate::Twips;
     use doc_converter_core::NodeId;
@@ -362,7 +405,10 @@ mod tests {
         );
         assert_px(layout.space_before, 16.0, "before 240 twips");
         assert_px(layout.space_after, 8.0, "after 120 twips");
-        assert!(layout.anchors.is_empty(), "плавающих объектов пока нет");
+        assert!(
+            layout.anchors.is_empty(),
+            "в текстовом абзаце плавающих рисунков нет"
+        );
         assert_eq!(layout.lines.len(), 1, "короткий текст — одна строка");
         assert_eq!(layout.lines[0].text, "hello");
         assert_px(layout.lines[0].x, 0.0, "без отступов строка у левого края");
@@ -733,5 +779,180 @@ mod tests {
             16.0 * 96.0 / 72.0 * 1.2 * 259.0 / 240.0,
             "кегль run'а `w:sz 32`",
         );
+    }
+
+    /// Плавающий рисунок с заданным номером узла: раскладке анкоров важен только он.
+    fn anchor(id: u64) -> Anchor {
+        let extent = Extent {
+            cx: 914_400,
+            cy: 457_200,
+        };
+        Anchor {
+            id: NodeId::new(id),
+            extent: extent.clone(),
+            horizontal: PositionH {
+                relative_from: RelFromH::Column,
+                align: None,
+                offset: Some(0),
+                percent: None,
+            },
+            vertical: PositionV {
+                relative_from: RelFromV::Paragraph,
+                align: None,
+                offset: Some(0),
+                percent: None,
+            },
+            wrap: WrapKind::Square,
+            behind_text: false,
+            image: InlineImage {
+                id: NodeId::new(id),
+                rel_id: format!("rId{id}"),
+                part: None,
+                name: None,
+                description: None,
+                extent,
+            },
+        }
+    }
+
+    /// `InlineOrAnchor` с плавающим рисунком.
+    fn anchored(id: u64) -> InlineOrAnchor {
+        InlineOrAnchor {
+            id: NodeId::new(id),
+            inline: None,
+            anchor: Some(anchor(id)),
+        }
+    }
+
+    /// `w:drawing` с плавающим рисунком на верхнем уровне абзаца или в гиперссылке.
+    fn anchored_drawing(id: u64) -> Inline {
+        Inline::Drawing(anchored(id))
+    }
+
+    /// `w:drawing` со встроенной картинкой: анкора у неё нет.
+    fn inline_drawing(id: u64) -> RunContent {
+        let extent = Extent {
+            cx: 914_400,
+            cy: 685_800,
+        };
+        RunContent::Drawing(InlineOrAnchor {
+            id: NodeId::new(id),
+            inline: Some(InlineImage {
+                id: NodeId::new(id),
+                rel_id: format!("rId{id}"),
+                part: None,
+                name: None,
+                description: None,
+                extent,
+            }),
+            anchor: None,
+        })
+    }
+
+    /// Run из одного рисунка-анкора.
+    fn anchored_run(id: u64) -> Inline {
+        Inline::Run(Run {
+            id: NodeId::new(id),
+            content: vec![RunContent::Drawing(anchored(id))],
+            ..Run::default()
+        })
+    }
+
+    /// `w:drawing` лежит и в run'е, и в гиперссылке: анкоры собираются обходом обоих
+    /// уровней и в порядке появления, а встроенная картинка в список не попадает.
+    #[test]
+    fn anchors_follow_inline_order_across_nesting() {
+        let paragraph = Paragraph {
+            runs: vec![
+                anchored_run(2),
+                Inline::Hyperlink(Hyperlink {
+                    id: NodeId::new(3),
+                    runs: vec![anchored_drawing(4), anchored_run(5)],
+                    ..Hyperlink::default()
+                }),
+                anchored_drawing(6),
+                Inline::Run(Run {
+                    id: NodeId::new(7),
+                    content: vec![inline_drawing(8)],
+                    ..Run::default()
+                }),
+            ],
+            ..Paragraph::default()
+        };
+
+        let layout = layout(&document(), &paragraph, &state());
+        let ids: Vec<u64> = layout.anchors.iter().map(|item| item.id.value()).collect();
+
+        assert_eq!(ids, [2, 4, 5, 6], "плавающие рисунки по порядку обхода");
+    }
+
+    /// Сайдекары `images/*.json` дают размеры в EMU; 914400 EMU = 96 px.
+    #[test]
+    fn fixture_anchored_drawings_keep_their_sidecar_metrics() {
+        let cases = [
+            (
+                "images/anchor_wrap_square.docx",
+                120.0,
+                90.0,
+                WrapKind::Square,
+                false,
+            ),
+            (
+                "images/anchor_behind_text.docx",
+                144.0,
+                96.0,
+                WrapKind::None,
+                true,
+            ),
+            (
+                "images/anchor_top_and_bottom.docx",
+                288.0,
+                72.0,
+                WrapKind::TopAndBottom,
+                false,
+            ),
+            (
+                "images/anchor_wrap_tight.docx",
+                72.0,
+                72.0,
+                WrapKind::Tight,
+                false,
+            ),
+        ];
+
+        for (name, width, height, wrap, behind) in cases {
+            let layout = layout_fixture(name, 0);
+            assert_eq!(layout.anchors.len(), 1, "{name}: один плавающий рисунок");
+            let anchor = &layout.anchors[0];
+            assert_px(emu_to_px(anchor.extent.cx), width, name);
+            assert_px(emu_to_px(anchor.extent.cy), height, name);
+            assert_eq!(anchor.wrap, wrap, "{name}: обтекание");
+            assert_eq!(anchor.behind_text, behind, "{name}: под текстом");
+            assert!(
+                !anchor.image.rel_id.is_empty(),
+                "{name}: ссылка на картинку"
+            );
+        }
+    }
+
+    /// Встроенные рисунки остаются в потоке текста и анкорами не становятся.
+    #[test]
+    fn fixture_inline_drawings_are_not_anchors() {
+        for name in ["images/inline.docx", "images/multiple_sizes.docx"] {
+            let document = fixture(name);
+            let state = fixture_state(&document);
+            let anchors: Vec<Anchor> = document
+                .body
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    BlockItem::Paragraph(paragraph) => Some(paragraph),
+                    _ => None,
+                })
+                .flat_map(|paragraph| layout(&document, paragraph, &state).anchors)
+                .collect();
+
+            assert!(anchors.is_empty(), "{name}: встроенные рисунки не плавают");
+        }
     }
 }
