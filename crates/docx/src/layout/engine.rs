@@ -302,15 +302,16 @@ pub fn layout_document(
     options: &LayoutOptions,
     fonts: &mut FontRegistry,
 ) -> Result<PageLayout, LayoutError> {
-    let mut pages: Vec<Page> = Vec::new();
     let mut placed_floats: Vec<crate::layout::float::FloatElement> = Vec::new();
 
     let first_section = section_at(document, 0);
     let mut paginator = Paginator::new(&first_section);
     let mut state = LayoutState::for_page(paginator.current_page(), &first_section);
     let default_font_id = FontId::default();
+    // Секция, в которой идёт раскладка: `sections[i]` описывает секцию, которую
+    // закрывает i-й по порядку конец секции (`collect_sections` в `document.rs`).
+    let mut section_index = 0usize;
 
-    // Process all blocks
     for block in &document.body.items {
         match block {
             BlockItem::Paragraph(paragraph) => {
@@ -326,14 +327,30 @@ pub fn layout_document(
 
                 // Check if we need a new page
                 if !paginator.fits(content_height) {
-                    let next_section = next_page_section(document, pages.len());
-                    pages.push(paginator.push_page_with_section(&next_section));
+                    // Содержимое не влезло: следующая страница той же секции.
+                    paginator.push_page();
                     placed_floats.clear(); // Reset floats for new page
-                    state = LayoutState::for_page(paginator.current_page(), &next_section);
+                    state = LayoutState::for_page(
+                        paginator.current_page(),
+                        paginator.current_section(),
+                    );
                 }
 
                 paginator.current_page_mut().items.extend(layout_items);
                 paginator.advance(content_height);
+
+                // Абзац со встроенным `w:sectPr` закрывает секцию: он сам ещё
+                // принадлежит ей, а следующая начинается после него.
+                if paragraph.section_break.is_some() {
+                    section_index += 1;
+                    enter_section(
+                        document,
+                        section_index,
+                        &mut paginator,
+                        &mut placed_floats,
+                        &mut state,
+                    );
+                }
             }
             BlockItem::Table(table) => {
                 // Layout table
@@ -342,24 +359,29 @@ pub fn layout_document(
 
                 // Check if table fits on current page
                 if !paginator.fits(table_height) {
-                    let next_section = next_page_section(document, pages.len());
-                    pages.push(paginator.push_page_with_section(&next_section));
+                    paginator.push_page();
                     placed_floats.clear();
-                    state = LayoutState::for_page(paginator.current_page(), &next_section);
+                    state = LayoutState::for_page(
+                        paginator.current_page(),
+                        paginator.current_section(),
+                    );
                 }
 
                 // TODO: Add table to current page
                 paginator.advance(table_height);
             }
             BlockItem::SectPr(_sect_pr) => {
-                // Handle section break
-                // Force new page if needed
-                if crate::layout::pagination::block_needs_page_break(block, None) {
-                    let next_section = next_page_section(document, pages.len());
-                    pages.push(paginator.push_page_with_section(&next_section));
-                    placed_floats.clear();
-                    state = LayoutState::for_page(paginator.current_page(), &next_section);
-                }
+                // Блочный `w:sectPr` закрывает последнюю секцию и описывает её
+                // свойства, а не разрывает документ: новой секции за ним нет,
+                // поэтому лишней пустой страницы не появляется.
+                section_index += 1;
+                enter_section(
+                    document,
+                    section_index,
+                    &mut paginator,
+                    &mut placed_floats,
+                    &mut state,
+                );
             }
             BlockItem::Unknown { .. } => {
                 // Skip unknown
@@ -367,9 +389,7 @@ pub fn layout_document(
         }
     }
 
-    // Текущая страница отдаётся как есть, даже пустая: правка этой части меняет
-    // число страниц, а здесь движок переезжает на пагинатор без смены поведения.
-    pages.push(paginator.current_page().clone());
+    let pages = paginator.finish();
 
     let total_height = pages.iter().map(|page| page.height).sum();
 
@@ -392,13 +412,34 @@ fn section_at(document: &Document, index: usize) -> Section {
         .unwrap_or_else(default_section)
 }
 
-/// Секция для страницы, начинающейся после `finished_pages` завершённых.
+/// Перейти к секции `index`: с разрывом страницы или без него.
 ///
-/// Номер новой страницы — `finished_pages + 1`, и прежний движок брал секцию
-/// именно по нему. Порядок секций в теле документа — отдельная правка; этот
-/// слайс переезжает на пагинатор, не меняя раскладку.
-fn next_page_section(document: &Document, finished_pages: usize) -> Section {
-    section_at(document, finished_pages + 1)
+/// Тип перехода задаёт сама секция (`w:type` описывает, как она начинается):
+/// `Continuous` меняет геометрию на текущей странице, остальные типы начинают
+/// новую. Если концы секций исчерпаны, текущая секция — последняя, и переходить
+/// некуда: так закрывается финальный `w:sectPr` тела.
+fn enter_section(
+    document: &Document,
+    index: usize,
+    paginator: &mut Paginator,
+    placed_floats: &mut Vec<crate::layout::float::FloatElement>,
+    state: &mut LayoutState,
+) {
+    let Some(section) = document.body.sections.get(index) else {
+        return;
+    };
+    let needs_break = Paginator::needs_section_break(
+        section.properties.section_type,
+        paginator.current_page().number,
+    );
+
+    if needs_break {
+        paginator.push_page_with_section(section);
+        placed_floats.clear(); // Обтекание живёт в пределах страницы
+    } else {
+        paginator.set_section(section);
+    }
+    *state = LayoutState::for_page(paginator.current_page(), section);
 }
 
 /// Разложить абзац.
@@ -623,30 +664,31 @@ impl LayoutState {
 mod tests {
     use super::*;
     use crate::model::{
-        Body, Inline, Metadata, NumberingTable, Relationships, Run, RunContent, Settings,
-        StyleTable,
+        Body, Inline, Metadata, NumberingTable, Relationships, Run, RunContent, SectionType,
+        Settings, StyleTable,
     };
 
-    /// Документ из одного абзаца с текстом.
-    ///
-    /// `sections` пуст намеренно: раскладка обязана взять секцию по умолчанию —
-    /// так же, как для документа без заключительного `w:sectPr`.
-    fn document_with_text(text: &str) -> Document {
-        let paragraph = Paragraph {
-            id: NodeId::new(1),
+    /// Абзац из одного run'а; идентификаторы произвольные — раскладка их не сверяет.
+    fn paragraph(id: u64, text: &str) -> Paragraph {
+        Paragraph {
+            id: NodeId::new(id),
             runs: vec![Inline::Run(Run {
-                id: NodeId::new(2),
+                id: NodeId::new(id + 1),
                 content: vec![RunContent::Text(text.to_owned())],
                 ..Run::default()
             })],
             ..Paragraph::default()
-        };
+        }
+    }
+
+    /// Документ из готовых блоков и секций — так же, как их собрал бы парсер.
+    fn document_with(items: Vec<BlockItem>, sections: Vec<Section>) -> Document {
         Document {
             id: NodeId::ROOT,
             body: Body {
                 id: NodeId::new(3),
-                items: vec![BlockItem::Paragraph(paragraph)],
-                sections: Vec::new(),
+                items,
+                sections,
             },
             styles: StyleTable::default(),
             numbering: NumberingTable::default(),
@@ -661,6 +703,75 @@ mod tests {
             warnings: Vec::new(),
         }
     }
+
+    /// Документ из одного абзаца с текстом.
+    ///
+    /// `sections` пуст намеренно: раскладка обязана взять секцию по умолчанию —
+    /// так же, как для документа без заключительного `w:sectPr`.
+    fn document_with_text(text: &str) -> Document {
+        document_with(vec![BlockItem::Paragraph(paragraph(1, text))], Vec::new())
+    }
+
+    /// Документ из `count` однострочных абзацев в секции `section`.
+    fn document_in_section(section: Section, count: usize) -> Document {
+        let items = (0..count)
+            .map(|index| {
+                // Сдвиг на единицу: идентификатор абзаца не должен совпасть с run'ом.
+                let id = u64::try_from(index).unwrap_or(u64::MAX) * 2 + 1;
+                BlockItem::Paragraph(paragraph(id, &format!("line {index}")))
+            })
+            .collect();
+        document_with(items, vec![section])
+    }
+
+    /// Секция с заданными размерами и типом разрыва (`w:type`).
+    fn section_of(
+        width_twips: i32,
+        height_twips: i32,
+        section_type: Option<SectionType>,
+    ) -> Section {
+        let mut section = default_section();
+        let page_size = PageSize {
+            width: Twips::new(width_twips),
+            height: Twips::new(height_twips),
+        };
+        section.page_size = page_size.clone();
+        section.properties.page_size = page_size;
+        section.properties.section_type = section_type;
+        section
+    }
+
+    /// Секция без полей заданной высоты: полоса набора — вся страница.
+    ///
+    /// Высота [`TWO_LINE_PAGE_TWIPS`] выбрана так, чтобы сумма высот двух строк
+    /// в f32 совпала с нижней границей полосы бит в бит: иначе тест ловил бы
+    /// округление, а не правило «ровно по нижнему краю — помещается».
+    fn section_without_margins(height_twips: i32) -> Section {
+        let mut section = section_of(11_906, height_twips, None);
+        let margins = Margins {
+            top: Twips::new(0),
+            right: Twips::new(0),
+            bottom: Twips::new(0),
+            left: Twips::new(0),
+            header: None,
+            footer: None,
+            gutter: None,
+        };
+        section.margins = margins.clone();
+        section.properties.margins = margins;
+        section
+    }
+
+    /// Число элементов-абзацев на странице.
+    fn paragraphs_on(page: &Page) -> usize {
+        page.items
+            .iter()
+            .filter(|item| matches!(item, LayoutItem::Paragraph { .. }))
+            .count()
+    }
+
+    /// Две строки по 19.2 px: 2 × 19.2 = 38.4 px = 576 twips.
+    const TWO_LINE_PAGE_TWIPS: i32 = 576;
 
     /// Блокер S1.1: абзац с текстом обязан попасть на страницу внутри полей.
     // Координаты копируются из полей страницы без арифметики — сравнение точное.
@@ -698,5 +809,79 @@ mod tests {
         );
         assert!(rect.width > 0.0, "ширина строки: {}", rect.width);
         assert_eq!(laid_out.as_str(), text);
+    }
+
+    /// Блокер S4: контент ровно по нижнему краю полосы остаётся на странице.
+    #[test]
+    fn content_exactly_at_the_content_bottom_stays_on_the_page() {
+        let document = document_in_section(section_without_margins(TWO_LINE_PAGE_TWIPS), 2);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(
+            paragraphs_on(&layout.pages[0]),
+            2,
+            "каждый абзац — одна строка"
+        );
+        assert_eq!(
+            layout.pages.len(),
+            1,
+            "две строки ровно по нижнюю границу остаются на первой странице"
+        );
+    }
+
+    /// Одна строка сверх полосы набора начинает вторую страницу.
+    #[test]
+    fn a_line_past_the_content_bottom_starts_a_second_page() {
+        let document = document_in_section(section_without_margins(TWO_LINE_PAGE_TWIPS), 3);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(layout.pages.len(), 2, "третья строка не помещается");
+        assert_eq!(paragraphs_on(&layout.pages[0]), 2);
+        assert_eq!(
+            paragraphs_on(&layout.pages[1]),
+            1,
+            "лишняя строка уходит на вторую страницу"
+        );
+    }
+
+    /// `Continuous` меняет геометрию, не начиная новую страницу.
+    #[test]
+    fn a_continuous_section_changes_geometry_without_a_page_break() {
+        // Первая секция — книжная A4; вторая объявлена `Continuous`: содержимое
+        // продолжается на той же странице, но лист уже альбомный.
+        let portrait = section_of(11_906, 16_838, Some(SectionType::NextPage));
+        let landscape = section_of(16_838, 11_906, Some(SectionType::Continuous));
+        let mut first = paragraph(1, "First section");
+        first.section_break = Some(Box::new(portrait.properties.clone()));
+        let document = document_with(
+            vec![
+                BlockItem::Paragraph(first),
+                BlockItem::Paragraph(paragraph(3, "Second section")),
+                BlockItem::SectPr(landscape.properties.clone()),
+            ],
+            vec![portrait, landscape],
+        );
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(layout.pages.len(), 1, "Continuous не начинает страницу");
+        assert_eq!(
+            paragraphs_on(&layout.pages[0]),
+            2,
+            "оба абзаца остались на той же странице"
+        );
+        assert!(
+            (layout.pages[0].width - twips_to_px(Twips::new(16_838))).abs() < 0.01,
+            "ширина страницы — уже из второй секции: {}",
+            layout.pages[0].width
+        );
     }
 }

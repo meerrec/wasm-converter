@@ -46,15 +46,6 @@ fn paragraph_items(layout: &PageLayout) -> usize {
         .count()
 }
 
-/// Число страниц, на которых есть хотя бы один элемент.
-fn pages_with_items(layout: &PageLayout) -> usize {
-    layout
-        .pages
-        .iter()
-        .filter(|page| !page.items.is_empty())
-        .count()
-}
-
 /// Сравнить пиксельный размер с ожидаемым: `f32` из twips на равенство не проверяем.
 fn assert_px(actual: f32, expected: f32, what: &str) {
     assert!(
@@ -80,7 +71,7 @@ fn test_layout_simple_document() {
         "Один однострочный абзац должен дать ровно один элемент-абзац"
     );
     assert_eq!(
-        pages_with_items(&layout),
+        layout.pages.len(),
         1,
         "Единственный абзац должен лежать на одной странице"
     );
@@ -104,7 +95,7 @@ fn test_layout_multiple_paragraphs() {
         "Пять однострочных абзацев должны дать ровно пять элементов-абзацев"
     );
     assert_eq!(
-        pages_with_items(&layout),
+        layout.pages.len(),
         1,
         "Пять коротких абзацев должны уместиться на одной странице"
     );
@@ -120,10 +111,12 @@ fn test_layout_empty_document() {
         load_fixture(&path).unwrap_or_else(|_| panic!("Не удалось разобрать {}", path.display()));
     let layout = layout_document(&doc, &options, fonts).expect("Раскладка не удалась");
 
-    // Даже пустой документ должен иметь хотя бы одну страницу.
-    assert!(
-        !layout.pages.is_empty(),
-        "Пустой документ должен иметь хотя бы одну страницу"
+    // Пустой документ — ровно одна страница: тело закрывает `w:sectPr`, но он
+    // описывает последнюю секцию, а не разрыв, и лишнего листа за ним нет.
+    assert_eq!(
+        layout.pages.len(),
+        1,
+        "Пустой документ должен иметь ровно одну страницу"
     );
     // simple/empty.json: expectedParagraphs = 0 — тело пустое, элементов быть не должно.
     assert_eq!(
@@ -312,4 +305,66 @@ fn test_layout_item_positions() {
             }
         }
     }
+}
+
+#[test]
+fn test_layout_sections_in_document_order() {
+    let fonts = &mut FontRegistry::new(64);
+    let options = LayoutOptions::default();
+
+    let path = fixture_path("basic/sections.docx");
+    let doc =
+        load_fixture(&path).unwrap_or_else(|_| panic!("Не удалось разобрать {}", path.display()));
+
+    // Фикстура: первый абзац несёт `w:sectPr` внутри `w:pPr` и завершает книжную
+    // секцию A4 (11906×16838 twips), финальный `w:sectPr` тела описывает
+    // альбомную (16838×11906 twips). Поля обеих — 1134 twips.
+    assert_eq!(doc.body.sections.len(), 2, "В теле две секции");
+
+    let layout = layout_document(&doc, &options, fonts).expect("Раскладка не удалась");
+
+    assert_eq!(layout.pages.len(), 2, "Двум секциям — две страницы");
+    assert_px(
+        layout.pages[0].width,
+        11906.0 / 15.0,
+        "ширина книжной страницы",
+    );
+    assert_px(
+        layout.pages[0].height,
+        16838.0 / 15.0,
+        "высота книжной страницы",
+    );
+    assert_px(
+        layout.pages[1].width,
+        16838.0 / 15.0,
+        "ширина альбомной страницы",
+    );
+    assert_px(
+        layout.pages[1].height,
+        11906.0 / 15.0,
+        "высота альбомной страницы",
+    );
+
+    // Абзац с концом секции принадлежит текущей секции, следующий — уже новой:
+    // «First section» на книжной странице, «Second section» на альбомной.
+    let texts_on = |index: usize| -> Vec<String> {
+        layout.pages[index]
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                LayoutItem::Paragraph { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        texts_on(0),
+        ["First section: portrait A4"],
+        "Первый абзац остаётся на книжной странице"
+    );
+    assert_eq!(
+        texts_on(1),
+        ["Second section: landscape A4"],
+        "Второй абзац уходит на альбомную страницу"
+    );
 }

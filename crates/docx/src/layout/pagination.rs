@@ -120,6 +120,26 @@ impl Paginator {
         self.break_page(next)
     }
 
+    /// Секция, в геометрии которой идёт раскладка.
+    #[must_use]
+    pub fn current_section(&self) -> &Section {
+        &self.current_section
+    }
+
+    /// Перейти к геометрии другой секции, не завершая страницу.
+    ///
+    /// Нужен для `Continuous`-разрыва: содержимое продолжается на той же
+    /// странице, поэтому уже разложенные элементы и позиция курсора
+    /// сохраняются, а размеры листа и поля берутся у новой секции.
+    pub fn set_section(&mut self, section: &Section) {
+        self.current_section = section.clone();
+
+        let items = std::mem::take(&mut self.current_page.items);
+        let mut page = page_for(self.current_page.number, section);
+        page.items = items;
+        self.current_page = page;
+    }
+
     /// Отдать все страницы документа, включая текущую.
     ///
     /// Пустая текущая страница в результат не попадает: документ, который
@@ -209,30 +229,23 @@ pub enum BreakType {
 }
 
 /// Определить, требует ли блок разрыва страницы.
+///
+/// Блочный `w:sectPr` — это свойства последней секции тела, а не её конец:
+/// разрыв за ним дал бы документу лишнюю пустую страницу. Абзац со `w:sectPr`
+/// внутри `w:pPr` секцию закрывает, но нужен ли за ним разрыв, решает тип
+/// следующей секции ([`Paginator::needs_section_break`]), а не сам абзац.
 #[must_use]
 pub fn block_needs_page_break(
     block: &crate::model::BlockItem,
     _next_block: Option<&crate::model::BlockItem>,
 ) -> bool {
     match block {
-        crate::model::BlockItem::SectPr(sect_pr) => {
-            // Проверяем тип разрыва секции
-            match sect_pr.section_type {
-                Some(SectionType::NextPage | SectionType::EvenPage | SectionType::OddPage)
-                | None => true,
-                Some(SectionType::Continuous) => false,
-            }
-        }
         crate::model::BlockItem::Paragraph(p) => {
-            // Проверяем, содержит ли абзац разрыв страницы
-            if p.section_break.is_some() {
-                return true;
-            }
-
-            // Проверяем свойства абзаца
-            p.ppr.sect_pr.is_some()
+            p.section_break.is_some() || p.ppr.sect_pr.is_some()
         }
-        crate::model::BlockItem::Table(_) | crate::model::BlockItem::Unknown { .. } => false,
+        crate::model::BlockItem::SectPr(_)
+        | crate::model::BlockItem::Table(_)
+        | crate::model::BlockItem::Unknown { .. } => false,
     }
 }
 
@@ -445,6 +458,74 @@ mod tests {
         let mut paginator = Paginator::new(&a4());
         assert!(paginator.add_item(10.0, false));
         assert!((paginator.current_y() - (paginator.content_top() + 10.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_set_section_changes_geometry_without_a_break() {
+        let mut paginator = Paginator::new(&a4());
+        paginator.advance(10.0);
+        paginator
+            .current_page_mut()
+            .items
+            .push(LayoutItem::PageBreak);
+        let y_before = paginator.current_y();
+
+        // Та же бумага, повёрнутая; поля вдвое уже (720 twips = 48 px).
+        let mut landscape = section(16_838, 11_906, 720);
+        landscape.orientation = Orientation::Landscape;
+        paginator.set_section(&landscape);
+
+        assert_eq!(paginator.current_page().number, 1, "страница не завершена");
+        assert_eq!(
+            paginator.current_page().items.len(),
+            1,
+            "уже разложенные элементы остаются"
+        );
+        assert!(
+            (paginator.current_y() - y_before).abs() < 0.01,
+            "курсор не сдвигается: содержимое продолжается"
+        );
+        assert!(
+            (paginator.current_page().width - twips_to_px(Twips::new(16_838))).abs() < 0.01,
+            "ширина берётся из новой секции"
+        );
+        assert!((paginator.current_page().height - twips_to_px(Twips::new(11_906))).abs() < 0.01);
+        assert!((paginator.content_left() - 48.0).abs() < 0.01);
+        assert_eq!(
+            paginator.current_section().page_size.width.value(),
+            16_838,
+            "дальше раскладка идёт в новой секции"
+        );
+
+        // Следующая страница наследует уже ландшафтную секцию.
+        let finished = paginator.push_page();
+        assert_eq!(finished.number, 1);
+        assert!((paginator.current_page().width - twips_to_px(Twips::new(16_838))).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_body_sect_pr_is_not_a_page_break() {
+        // Блочный `w:sectPr` описывает последнюю секцию: разрыва за ним нет.
+        let properties = SectionProperties {
+            section_type: Some(SectionType::NextPage),
+            ..SectionProperties::default()
+        };
+        assert!(!block_needs_page_break(
+            &crate::model::BlockItem::SectPr(properties),
+            None
+        ));
+
+        // Абзац со своим `w:sectPr` секцию закрывает.
+        let mut paragraph = crate::model::Paragraph::default();
+        assert!(!block_needs_page_break(
+            &crate::model::BlockItem::Paragraph(paragraph.clone()),
+            None
+        ));
+        paragraph.section_break = Some(Box::new(SectionProperties::default()));
+        assert!(block_needs_page_break(
+            &crate::model::BlockItem::Paragraph(paragraph),
+            None
+        ));
     }
 
     #[test]
