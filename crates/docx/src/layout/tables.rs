@@ -99,7 +99,7 @@ pub fn compute_column_widths(table: &Table, available_width: f32) -> Vec<f32> {
 /// Вектор высот строк в пикселях. `0.0` означает «высота по содержимому»
 /// (`w:trHeight` отсутствует или `w:hRule="auto"`): содержимого эта функция не
 /// видит, высоту считает [`layout_table`], там же применяется и минимум
-/// [`MIN_ROW_HEIGHT`].
+/// `MIN_ROW_HEIGHT` (приватен, поэтому без ссылки).
 #[must_use]
 pub fn compute_row_heights(rows: &[Row]) -> Vec<f32> {
     rows.iter()
