@@ -13,17 +13,26 @@ use doc_converter_render::{
 };
 
 use crate::layout::cascade::StyleCache;
+use crate::layout::float::FloatElement;
 use crate::layout::line_break::LineBreaker;
 use crate::layout::pagination::Paginator;
-use crate::layout::paragraph::layout_paragraph;
+use crate::layout::paragraph::{layout_paragraph, Line, ParagraphLayout};
 
+use crate::model::raw::HalfPoint;
 use crate::model::{
-    BlockItem, Document, Margins, Orientation, PageSize, Section, SectionProperties,
+    BlockItem, BreakKind, Document, Inline, Margins, Orientation, PageSize, Paragraph, RunContent,
+    Section, SectionProperties, Table,
 };
 use crate::{Columns, Twips};
 
 /// Пикселей в типографском пункте: 96 DPI / 72 DPI = 4/3.
 pub const PX_PER_POINT: f32 = 96.0 / 72.0;
+
+/// Кегль по умолчанию, пока каскад не отдаёт размер знака: 12 pt.
+///
+/// Тот же, что берёт [`layout_paragraph`] для строк: иначе пустая строка
+/// разошлась бы по высоте со строкой текста.
+const DEFAULT_HALF_POINTS: i32 = 24;
 
 /// Преобразовать twips в пиксели: 1 twip = 1/1440 дюйма, 1 пиксель = 1/96 дюйма.
 /// Отношение: (1/1440) / (1/96) = 96/1440 = 1/15.
@@ -333,37 +342,30 @@ pub fn layout_document(
                     &mut line_breaker,
                 );
 
-                // Высота абзаца — его интервалы и высоты строк в порядке отрисовки.
-                let content_height = layout.space_before
-                    + layout.lines.iter().map(|line| line.height).sum::<f32>()
-                    + layout.space_after;
+                // Пустой `w:p` всё равно занимает строку высотой шрифта: ноль
+                // схлопнул бы абзацы и набрал страницу плотнее, чем в Word.
+                let empty_line = Line {
+                    text: String::new(),
+                    x: state.x,
+                    width: 0.0,
+                    height: line_breaker
+                        .line_height_with_spacing(HalfPoint::new(DEFAULT_HALF_POINTS), None),
+                    color: None,
+                };
+                let lines: Vec<&Line> = if layout.lines.is_empty() {
+                    vec![&empty_line]
+                } else {
+                    layout.lines.iter().collect()
+                };
 
-                // Check if we need a new page
-                if !paginator.fits(content_height) {
-                    // Содержимое не влезло: следующая страница той же секции.
-                    paginator.push_page();
-                    placed_floats.clear(); // Reset floats for new page
-                    state = LayoutState::for_page(
-                        paginator.current_page(),
-                        paginator.current_section(),
-                    );
-                }
-
-                let mut line_y = paginator.current_y() + layout.space_before;
-                for line in &layout.lines {
-                    paginator
-                        .current_page_mut()
-                        .items
-                        .push(LayoutItem::Paragraph {
-                            node_id: paragraph.id,
-                            rect: Rect::new(line.x, line_y, line.width, line.height),
-                            text: line.text.clone(),
-                            line_height: line.height,
-                            color: line.color,
-                        });
-                    line_y += line.height;
-                }
-                paginator.advance(content_height);
+                place_lines(
+                    &mut paginator,
+                    paragraph,
+                    &lines,
+                    &layout,
+                    &mut placed_floats,
+                    &mut state,
+                );
 
                 // Абзац со встроенным `w:sectPr` закрывает секцию: он сам ещё
                 // принадлежит ей, а следующая начинается после него.
@@ -379,29 +381,7 @@ pub fn layout_document(
                 }
             }
             BlockItem::Table(table) => {
-                // Layout table
-                let table_width = state.column_width;
-                let table_layout = crate::layout::tables::layout_table(
-                    table,
-                    state.column_x,
-                    paginator.current_y(),
-                    table_width,
-                    fonts,
-                );
-                let table_height = table_layout.height;
-
-                // Check if table fits on current page
-                if !paginator.fits(table_height) {
-                    paginator.push_page();
-                    placed_floats.clear();
-                    state = LayoutState::for_page(
-                        paginator.current_page(),
-                        paginator.current_section(),
-                    );
-                }
-
-                // TODO: Add table to current page
-                paginator.advance(table_height);
+                place_table(table, fonts, &mut paginator, &mut placed_floats, &mut state);
             }
             BlockItem::SectPr(_sect_pr) => {
                 // Блочный `w:sectPr` закрывает последнюю секцию и описывает её
@@ -429,6 +409,191 @@ pub fn layout_document(
     Ok(PageLayout {
         pages,
         total_height,
+    })
+}
+
+/// Положить строки абзаца на страницы: строка за строкой.
+///
+/// Абзац переполняет страницу строкой, а не целиком: что не влезло — уходит
+/// на следующую. Явный `w:br w:type="page"` закрывает страницу до строк
+/// абзаца, а `w:keepLines` и висячие строки переносят его целиком.
+fn place_lines(
+    paginator: &mut Paginator,
+    paragraph: &Paragraph,
+    lines: &[&Line],
+    layout: &ParagraphLayout,
+    placed_floats: &mut Vec<FloatElement>,
+    state: &mut LayoutState,
+) {
+    // Явный разрыв стоит до строк абзаца: знак абзаца Word оставляет
+    // уже на новой странице.
+    if has_page_break(paragraph) {
+        paginator
+            .current_page_mut()
+            .items
+            .push(LayoutItem::PageBreak);
+        break_page(paginator, placed_floats, state);
+    }
+
+    // Сколько строк остаётся на текущей странице; хвост — на следующей.
+    let kept = lines_kept_on_page(paginator, lines, layout);
+
+    for (index, line) in lines.iter().enumerate() {
+        if index == kept {
+            break_page(paginator, placed_floats, state);
+        }
+        let first = index == 0;
+        let last = index + 1 == lines.len();
+        // Интервалы идут в те же единицы, что и `advance`: место занимает
+        // не только строка, но и промежуток вокруг неё.
+        let mut height = line.height;
+        if first {
+            height += layout.space_before;
+        }
+        if last {
+            height += layout.space_after;
+        }
+        // `w:pageBreakBefore` — разрыв перед абзацем, флагом в `add_item`;
+        // после уже сделанного разрыва он не нужен: страница и так новая.
+        let needs_break = first && layout.page_break_before && kept > 0;
+        place(paginator, height, needs_break, placed_floats, state);
+
+        // Верх строки: курсор стоит за её нижней границей, а интервал перед
+        // абзацем уже учтён в `height` — он сдвигает только эту строку.
+        let top = paginator.current_y() - line.height;
+        paginator
+            .current_page_mut()
+            .items
+            .push(LayoutItem::Paragraph {
+                node_id: paragraph.id,
+                rect: Rect::new(line.x, top, line.width, line.height),
+                text: line.text.clone(),
+                line_height: line.height,
+                color: line.color,
+            });
+    }
+}
+
+/// Положить таблицу: не поместилась — уходит на следующую страницу.
+fn place_table(
+    table: &Table,
+    fonts: &mut FontRegistry,
+    paginator: &mut Paginator,
+    placed_floats: &mut Vec<FloatElement>,
+    state: &mut LayoutState,
+) {
+    let table_layout = crate::layout::tables::layout_table(
+        table,
+        state.column_x,
+        paginator.current_y(),
+        state.column_width,
+        fonts,
+    );
+
+    // TODO: Add table to current page
+    place(paginator, table_layout.height, false, placed_floats, state);
+}
+
+/// Положить на страницу фрагмент высотой `height` и продвинуть курсор.
+///
+/// `add_item` на разрыве открывает новую страницу, но высоту не учитывает:
+/// фрагмент встаёт в её полосу набора, поэтому положить его нужно ещё раз.
+/// Если он не помещается и там, второго разрыва подряд не будет — фрагмент
+/// остаётся на новой странице и выходит за нижнее поле.
+fn place(
+    paginator: &mut Paginator,
+    height: f32,
+    page_break: bool,
+    placed_floats: &mut Vec<FloatElement>,
+    state: &mut LayoutState,
+) {
+    if paginator.add_item(height, page_break) {
+        return;
+    }
+    reset_page_state(paginator, placed_floats, state);
+    if !paginator.add_item(height, false) {
+        paginator.advance(height);
+    }
+}
+
+/// Начать новую страницу: обтекание и координаты живут в её пределах.
+fn break_page(
+    paginator: &mut Paginator,
+    placed_floats: &mut Vec<FloatElement>,
+    state: &mut LayoutState,
+) {
+    paginator.push_page();
+    reset_page_state(paginator, placed_floats, state);
+}
+
+/// Вернуть состояние к началу полосы набора текущей страницы.
+///
+/// Единственная точка сброса: смена страницы где угодно обязана пройти здесь,
+/// иначе обтекание предыдущей страницы переехало бы на следующую.
+fn reset_page_state(
+    paginator: &mut Paginator,
+    placed_floats: &mut Vec<FloatElement>,
+    state: &mut LayoutState,
+) {
+    placed_floats.clear();
+    *state = LayoutState::for_page(paginator.current_page(), paginator.current_section());
+}
+
+/// Сколько строк абзаца остаётся на текущей странице.
+///
+/// Абзац, влезающий целиком, отдаёт все строки; `0` означает, что он уходит
+/// на следующую страницу весь — так ведут себя `w:keepLines` и висячие строки:
+/// ни одна строка при этом не остаётся на прежней странице.
+fn lines_kept_on_page(paginator: &Paginator, lines: &[&Line], layout: &ParagraphLayout) -> usize {
+    let mut height = layout.space_before;
+    let mut fit = 0;
+    for (index, line) in lines.iter().enumerate() {
+        height += line.height;
+        if index + 1 == lines.len() {
+            height += layout.space_after;
+        }
+        if !paginator.fits(height) {
+            break;
+        }
+        fit += 1;
+    }
+
+    if fit == lines.len() {
+        return fit;
+    }
+    // На пустой странице делить нечего: разрыв зациклил бы раскладку, поэтому
+    // абзац начинается здесь, даже если строка выходит за нижнее поле.
+    if paginator.current_y() <= paginator.content_top() {
+        return fit.max(1);
+    }
+    if layout.keep_lines {
+        return 0;
+    }
+
+    let mut kept = fit;
+    if layout.widow_control {
+        // Word оставляет не меньше двух строк с каждой стороны разрыва.
+        if kept == 1 {
+            kept = 0;
+        } else if lines.len() - kept == 1 {
+            kept -= 1;
+            if kept == 1 {
+                kept = 0;
+            }
+        }
+    }
+    kept
+}
+
+/// Есть ли в абзаце явный разрыв страницы (`w:br w:type="page"`).
+fn has_page_break(paragraph: &Paragraph) -> bool {
+    paragraph.runs.iter().any(|inline| match inline {
+        Inline::Break(BreakKind::Page) => true,
+        Inline::Run(run) => run
+            .content
+            .iter()
+            .any(|content| matches!(content, RunContent::Break(BreakKind::Page))),
+        _ => false,
     })
 }
 
@@ -468,11 +633,11 @@ fn enter_section(
 
     if needs_break {
         paginator.push_page_with_section(section);
-        placed_floats.clear(); // Обтекание живёт в пределах страницы
+        reset_page_state(paginator, placed_floats, state);
     } else {
         paginator.set_section(section);
+        *state = LayoutState::for_page(paginator.current_page(), section);
     }
-    *state = LayoutState::for_page(paginator.current_page(), section);
 }
 
 /// Ошибка раскладки.
@@ -598,9 +763,10 @@ impl LayoutState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::raw::Toggle;
     use crate::model::{
-        Body, Inline, Metadata, NumberingTable, Paragraph, Relationships, Run, RunContent,
-        SectionType, Settings, StyleTable,
+        Body, BreakKind, Inline, Metadata, NumberingTable, Paragraph, Relationships, Run,
+        RunContent, SectionType, Settings, StyleTable,
     };
 
     /// Абзац из одного run'а; идентификаторы произвольные — раскладка их не сверяет.
@@ -782,6 +948,342 @@ mod tests {
             paragraphs_on(&layout.pages[1]),
             1,
             "лишняя строка уходит на вторую страницу"
+        );
+    }
+
+    /// Секция с одинаковыми полями: полоса набора — страница без верхнего и нижнего поля.
+    fn section_with_margins(width_twips: i32, height_twips: i32, margin_twips: i32) -> Section {
+        let mut section = section_of(width_twips, height_twips, None);
+        let margins = Margins {
+            top: Twips::new(margin_twips),
+            right: Twips::new(margin_twips),
+            bottom: Twips::new(margin_twips),
+            left: Twips::new(margin_twips),
+            header: None,
+            footer: None,
+            gutter: None,
+        };
+        section.margins = margins.clone();
+        section.properties.margins = margins;
+        section
+    }
+
+    /// Размеры и поля A4 из фикстур: 1134 twips = 75.6 px.
+    const A4_WIDTH_TWIPS: i32 = 11_906;
+    const A4_HEIGHT_TWIPS: i32 = 16_838;
+    const FIXTURE_MARGIN_TWIPS: i32 = 1_134;
+
+    /// Высота строки текста: её задаёт кегль из каскада стилей, а не литерал
+    /// в тесте — кегль уже менялся, и полоса набора менялась вместе с ним.
+    fn body_line_height() -> f32 {
+        let document = document_with_text("hello");
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        layout.pages[0]
+            .items
+            .iter()
+            .find_map(|item| match item {
+                LayoutItem::Paragraph { line_height, .. } => Some(*line_height),
+                _ => None,
+            })
+            .expect("абзац с текстом даёт строку")
+    }
+
+    /// Сколько строк высотой `line_height` влезает в полосу набора страницы.
+    ///
+    /// Считается тем же накоплением и с тем же нестрогим сравнением, что
+    /// `Paginator::fits`: иначе тест ловил бы округление f32, а не правило.
+    fn line_capacity(height_twips: i32, margin_twips: i32, line_height: f32) -> usize {
+        let content_bottom =
+            twips_to_px(Twips::new(height_twips)) - twips_to_px(Twips::new(margin_twips));
+        let mut y = twips_to_px(Twips::new(margin_twips));
+        let mut count = 0;
+        while y + line_height <= content_bottom {
+            y += line_height;
+            count += 1;
+        }
+        count
+    }
+
+    /// Все элементы-абзацы документа.
+    fn total_paragraphs(layout: &PageLayout) -> usize {
+        layout.pages.iter().map(paragraphs_on).sum()
+    }
+
+    /// Абзац с флагами `w:pPr`: `keep_lines` — `w:keepLines`, `widow_control` — `w:widowControl`.
+    fn paragraph_with_flags(
+        id: u64,
+        text: &str,
+        keep_lines: bool,
+        widow_control: bool,
+    ) -> Paragraph {
+        let mut p = paragraph(id, text);
+        p.ppr.keep_lines = keep_lines.then_some(Toggle::On);
+        p.ppr.widow_control = widow_control.then_some(Toggle::On);
+        p
+    }
+
+    /// Блокер S6: страницу переполняет строка, а не абзац целиком.
+    #[test]
+    fn a_line_past_the_page_bottom_splits_the_flow() {
+        let line_height = body_line_height();
+        let capacity = line_capacity(A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS, line_height);
+        assert!(
+            capacity > 2,
+            "полоса набора вмещает {capacity} строк — мало"
+        );
+
+        let section = section_with_margins(A4_WIDTH_TWIPS, A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS);
+        let document = document_in_section(section, capacity + 1);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(
+            layout.pages.len(),
+            2,
+            "строка сверх полосы набора начинает вторую страницу"
+        );
+        assert_eq!(
+            paragraphs_on(&layout.pages[0]),
+            capacity,
+            "первая страница набирается до нижней границы"
+        );
+        assert_eq!(total_paragraphs(&layout), capacity + 1);
+    }
+
+    /// Пустой абзац занимает строку высотой шрифта, а не ноль.
+    #[test]
+    fn an_empty_paragraph_takes_one_line() {
+        let document = document_with(
+            vec![
+                BlockItem::Paragraph(paragraph(1, "")),
+                BlockItem::Paragraph(paragraph(3, "Non-empty")),
+                BlockItem::Paragraph(paragraph(5, "")),
+            ],
+            Vec::new(),
+        );
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(
+            total_paragraphs(&layout),
+            3,
+            "каждый абзац оставляет строку, включая пустые"
+        );
+        let heights: Vec<f32> = layout.pages[0]
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                LayoutItem::Paragraph { line_height, .. } => Some(*line_height),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            heights.iter().all(|height| *height > 0.0),
+            "высота строки не ноль: {heights:?}"
+        );
+        assert!(
+            (heights[0] - heights[1]).abs() < 0.01,
+            "пустая строка — той же высоты, что строка текста: {heights:?}"
+        );
+    }
+
+    /// Явный `w:br w:type="page"` начинает новую страницу.
+    #[test]
+    fn an_explicit_page_break_starts_a_new_page() {
+        let mut breaker = paragraph(3, "");
+        breaker.runs.push(Inline::Run(Run {
+            id: NodeId::new(4),
+            content: vec![RunContent::Break(BreakKind::Page)],
+            ..Run::default()
+        }));
+        let document = document_with(
+            vec![
+                BlockItem::Paragraph(paragraph(1, "Before the break")),
+                BlockItem::Paragraph(breaker),
+                BlockItem::Paragraph(paragraph(5, "After the page break")),
+            ],
+            Vec::new(),
+        );
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(
+            layout.pages.len(),
+            2,
+            "разрыв добавляет ровно одну страницу"
+        );
+        assert!(
+            layout.pages[0]
+                .items
+                .iter()
+                .any(|item| matches!(item, LayoutItem::PageBreak)),
+            "разрыв отмечен на странице, которую он закрывает"
+        );
+        assert!(
+            layout.pages[1].items.iter().any(|item| matches!(
+                item,
+                LayoutItem::Paragraph { text, .. } if text == "After the page break"
+            )),
+            "текст после разрыва — на второй странице"
+        );
+    }
+
+    /// Документ из `filler` однострочных абзацев и завершающего абзаца.
+    ///
+    /// `filler` берётся от вместимости страницы, а не из литерала: сколько
+    /// строк в полосе набора, решает кегль — его задаёт каскад стилей.
+    fn document_with_filler(filler: usize, trailing: Paragraph) -> Document {
+        let line_height = body_line_height();
+        let capacity = line_capacity(A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS, line_height);
+        assert!(capacity > filler, "полоса набора: {capacity} строк");
+
+        let section = section_with_margins(A4_WIDTH_TWIPS, A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS);
+        let mut document = document_in_section(section, filler);
+        document.body.items.push(BlockItem::Paragraph(trailing));
+        document
+    }
+
+    /// Вместимость полосы набора в строках — от той же высоты строки, что и в раскладке.
+    fn a4_capacity() -> usize {
+        line_capacity(A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS, body_line_height())
+    }
+
+    /// Раскладка документа: тесты ниже падают с сообщением, а не с паникой внутри.
+    fn layout_of(document: &Document) -> PageLayout {
+        let mut fonts = FontRegistry::new(64);
+        layout_document(document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать")
+    }
+
+    /// Трёхстрочный абзац без флагов переносится построчно: что влезло — внизу,
+    /// остаток — на новой странице.
+    #[test]
+    fn a_paragraph_splits_between_pages_line_by_line() {
+        // Под абзац остаётся полоса ровно в две строки, третья уходит на новую.
+        let filler = a4_capacity() - 2;
+        let document = document_with_filler(filler, paragraph(1, "aaa\nbbb\nccc"));
+
+        let layout = layout_of(&document);
+
+        assert_eq!(
+            paragraphs_on(&layout.pages[0]),
+            filler + 2,
+            "две строки абзаца остаются на первой странице"
+        );
+        assert_eq!(
+            paragraphs_on(&layout.pages[1]),
+            1,
+            "третья строка — на второй"
+        );
+    }
+
+    /// `w:keepLines`: абзац, не влезающий целиком, уходит на следующую страницу весь.
+    #[test]
+    fn keep_lines_moves_a_paragraph_to_the_next_page_whole() {
+        let filler = a4_capacity() - 2;
+        let kept = paragraph_with_flags(1, "aaa\nbbb\nccc", true, false);
+        let document = document_with_filler(filler, kept);
+
+        let layout = layout_of(&document);
+
+        assert_eq!(
+            paragraphs_on(&layout.pages[0]),
+            filler,
+            "ни одной строки абзаца на первой странице"
+        );
+        assert_eq!(
+            paragraphs_on(&layout.pages[1]),
+            3,
+            "абзац целиком — на второй"
+        );
+    }
+
+    /// `w:widowControl`: одна строка не остаётся ни в конце, ни в начале страницы.
+    #[test]
+    fn widow_control_moves_a_lone_line_to_the_next_page() {
+        // Две строки из трёх влезли бы, третья осталась бы одна на новой странице.
+        let filler = a4_capacity() - 2;
+        let widowed = paragraph_with_flags(1, "aaa\nbbb\nccc", false, true);
+        let document = document_with_filler(filler, widowed);
+
+        let layout = layout_of(&document);
+
+        assert_eq!(
+            paragraphs_on(&layout.pages[0]),
+            filler,
+            "абзац не начинается"
+        );
+        assert_eq!(
+            paragraphs_on(&layout.pages[1]),
+            3,
+            "абзац целиком — на второй"
+        );
+    }
+
+    /// `w:widowControl` убирает и одинокую строку внизу страницы.
+    #[test]
+    fn widow_control_moves_an_orphan_line_too() {
+        // Остаётся полоса ровно в одну строку: она была бы сиротой внизу.
+        let filler = a4_capacity() - 1;
+        let widowed = paragraph_with_flags(1, "aaa\nbbb\nccc", false, true);
+        let document = document_with_filler(filler, widowed);
+
+        let layout = layout_of(&document);
+
+        assert_eq!(paragraphs_on(&layout.pages[0]), filler);
+        assert_eq!(
+            paragraphs_on(&layout.pages[1]),
+            3,
+            "абзац целиком — на второй"
+        );
+    }
+
+    /// Фикстура `basic/breaks_and_tabs`: явный разрыв начинает вторую страницу.
+    #[test]
+    fn breaks_and_tabs_fixture_starts_a_second_page() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-fixtures/docx/basic/breaks_and_tabs.docx");
+        assert!(path.exists(), "нет фикстуры {}", path.display());
+        let document = crate::open(std::fs::read(&path).expect("фикстура читается"))
+            .expect("фикстура разбирается");
+
+        let layout = layout_of(&document);
+
+        assert_eq!(layout.pages.len(), 2, "разрыв в фикстуре начинает страницу");
+        assert!(
+            layout.pages[1].items.iter().any(|item| matches!(
+                item,
+                LayoutItem::Paragraph { text, .. } if text == "After the page break"
+            )),
+            "текст после разрыва — на второй странице"
+        );
+    }
+
+    /// Фикстура `edge_cases/empty_paragraphs`: строку оставляет каждый абзац.
+    #[test]
+    fn empty_paragraphs_fixture_keeps_every_paragraph() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-fixtures/docx/edge_cases/empty_paragraphs.docx");
+        assert!(path.exists(), "нет фикстуры {}", path.display());
+        let document = crate::open(std::fs::read(&path).expect("фикстура читается"))
+            .expect("фикстура разбирается");
+
+        let layout = layout_of(&document);
+
+        assert_eq!(
+            total_paragraphs(&layout),
+            3,
+            "в фикстуре три абзаца, включая пустые"
         );
     }
 
