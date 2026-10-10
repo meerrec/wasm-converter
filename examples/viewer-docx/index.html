@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>doc-converter: просмотр DOCX</title>
+    <!-- Pages не отдаёт COOP/COEP, поэтому в проде заголовки подставляет service worker;
+         в dev и preview он выходит сразу — crossOriginIsolated уже true. -->
+    <script src="%BASE_URL%coi-serviceworker.js"></script>
+    <style>
+      :root {
+        color-scheme: light;
+        --line: #d8d8d8;
+        --muted: #666;
+        --accent: #1a6fd4;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        background: #fafafa;
+      }
+      header {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--line);
+        background: #fff;
+      }
+      header h1 { font-size: 14px; margin: 0 12px 0 0; font-weight: 600; }
+      label { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+      select, button { font: inherit; font-size: 13px; padding: 4px 8px; }
+      #page-info {
+        color: #222;
+        font-variant-numeric: tabular-nums;
+        min-width: 48px;
+        text-align: center;
+      }
+      #viewer { position: relative; overflow: hidden; }
+      #viewer.dragover { outline: 2px dashed var(--accent); outline-offset: -4px; }
+      /* Поля страницы серые: белый лист должен отличимо лежать на фоне. */
+      #viewer > div { background: #eceff1; }
+      footer {
+        padding: 6px 12px;
+        border-top: 1px solid var(--line);
+        background: #fff;
+        font-size: 12px;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      footer b { color: #222; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>doc-converter</h1>
+      <input id="file" type="file" accept=".docx" />
+      <label>
+        Фикстура
+        <select id="fixture"><option value="">— выберите —</option></select>
+      </label>
+      <label>
+        Страница
+        <button id="page-prev" type="button" disabled title="Предыдущая страница">←</button>
+        <span id="page-info">—</span>
+        <button id="page-next" type="button" disabled title="Следующая страница">→</button>
+      </label>
+      <label>
+        Зум
+        <select id="zoom">
+          <option value="0.5">50 %</option>
+          <option value="0.75">75 %</option>
+          <option value="1" selected>100 %</option>
+          <option value="1.5">150 %</option>
+          <option value="2">200 %</option>
+        </select>
+      </label>
+      <span id="hint">перетащите .docx в окно</span>
+    </header>
+
+    <main id="viewer"></main>
+
+    <footer>
+      <span>страниц: <b id="pages">0</b></span>
+      <span>команд: <b id="cmds">0</b></span>
+      <span>сборка: <b id="build">—</b></span>
+      <span>рисование: <b id="paint">—</b></span>
+      <span>кадр: <b id="frame">0</b></span>
+      <span id="status"></span>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
