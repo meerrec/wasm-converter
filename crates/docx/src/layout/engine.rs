@@ -13,11 +13,12 @@ use doc_converter_render::{
 };
 
 use crate::layout::cascade::StyleCache;
-use crate::layout::float::FloatElement;
+use crate::layout::float::{layout_floats_on_page, FloatElement};
 use crate::layout::line_break::LineBreaker;
 use crate::layout::pagination::Paginator;
 use crate::layout::paragraph::{layout_paragraph, Line, ParagraphLayout};
 
+use crate::model::drawing::Anchor;
 use crate::model::raw::HalfPoint;
 use crate::model::{
     BlockItem, BreakKind, Document, Inline, Margins, Orientation, PageSize, Paragraph, RunContent,
@@ -133,6 +134,8 @@ pub enum LayoutItem {
     PageBreak,
     /// Разрыв колонки.
     ColumnBreak,
+    /// Плавающий рисунок (`wp:anchor`).
+    Float(FloatElement),
 }
 
 /// Раскладка одной ячейки таблицы.
@@ -313,6 +316,9 @@ pub fn layout_document(
     fonts: &mut FontRegistry,
 ) -> Result<PageLayout, LayoutError> {
     let mut placed_floats: Vec<crate::layout::float::FloatElement> = Vec::new();
+    // Анкоры, которым не хватило места на их странице: очередь переживает
+    // смену страницы, в отличие от `placed_floats`, которые она очищает.
+    let mut deferred_floats: Vec<DeferredFloat> = Vec::new();
 
     let first_section = section_at(document, 0);
     let mut paginator = Paginator::new(&first_section);
@@ -358,12 +364,23 @@ pub fn layout_document(
                     layout.lines.iter().collect()
                 };
 
-                place_lines(
+                let placement = place_lines(
                     &mut paginator,
                     paragraph,
                     &lines,
                     &layout,
                     &mut placed_floats,
+                    &mut state,
+                );
+
+                // Плавающие рисунки встают после строк абзаца: их база —
+                // фрагмент, в который абзац лёг.
+                place_floats(
+                    &mut paginator,
+                    &layout.anchors,
+                    placement,
+                    &mut placed_floats,
+                    &mut deferred_floats,
                     &mut state,
                 );
 
@@ -424,7 +441,7 @@ fn place_lines(
     layout: &ParagraphLayout,
     placed_floats: &mut Vec<FloatElement>,
     state: &mut LayoutState,
-) {
+) -> ParagraphPlacement {
     // Явный разрыв стоит до строк абзаца: знак абзаца Word оставляет
     // уже на новой странице.
     if has_page_break(paragraph) {
@@ -438,9 +455,16 @@ fn place_lines(
     // Сколько строк остаётся на текущей странице; хвост — на следующей.
     let kept = lines_kept_on_page(paginator, lines, layout);
 
+    // Верх фрагмента абзаца на странице, где он закончится: у разорванного
+    // абзаца `relativeFrom="paragraph"` отсчитывается от полосы набора той
+    // страницы, а не от начала абзаца на предыдущей.
+    let mut fragment_top = paginator.current_y();
+    let mut page_number = paginator.current_page().number;
+
     for (index, line) in lines.iter().enumerate() {
         if index == kept {
             break_page(paginator, placed_floats, state);
+            fragment_top = state.y;
         }
         let first = index == 0;
         let last = index + 1 == lines.len();
@@ -458,6 +482,13 @@ fn place_lines(
         let needs_break = first && layout.page_break_before && kept > 0;
         place(paginator, height, needs_break, placed_floats, state);
 
+        // Строка, открывшая новую страницу, начинает на ней фрагмент абзаца.
+        // `state.y` — полоса набора этой страницы: её ставит `reset_page_state`.
+        if paginator.current_page().number != page_number {
+            page_number = paginator.current_page().number;
+            fragment_top = state.y;
+        }
+
         // Верх строки: курсор стоит за её нижней границей, а интервалы абзаца
         // учтены в `height`. Интервал перед сдвигает первую строку, интервал
         // после остаётся под последней — из `height` его нужно вычесть.
@@ -474,6 +505,103 @@ fn place_lines(
                 color: line.color,
             });
     }
+
+    ParagraphPlacement {
+        top: fragment_top,
+        height: paginator.current_y() - fragment_top,
+    }
+}
+
+/// Куда лёг абзац: база его плавающих элементов.
+#[derive(Debug, Clone, Copy)]
+struct ParagraphPlacement {
+    /// Верх фрагмента абзаца на странице, где он закончился.
+    top: f32,
+    /// Высота этого фрагмента.
+    height: f32,
+}
+
+/// Анкор, ждущий следующей страницы.
+#[derive(Debug, Clone)]
+struct DeferredFloat {
+    /// Плавающий рисунок из модели.
+    anchor: Anchor,
+    /// Высота абзаца-якоря: конец его базы по вертикали.
+    paragraph_height: f32,
+}
+
+/// Разместить анкоры абзаца и накопленную очередь отложенных.
+///
+/// Не поместившиеся переезжают на следующую страницу: `placed_floats` разрыв
+/// очищает, а очередь — нет. Очередь заканчивается, когда страница пуста:
+/// элемент выше полосы набора не влезет и в следующие, а разрыв под него
+/// зациклил бы раскладку.
+fn place_floats(
+    paginator: &mut Paginator,
+    anchors: &[Anchor],
+    placement: ParagraphPlacement,
+    placed_floats: &mut Vec<FloatElement>,
+    deferred_floats: &mut Vec<DeferredFloat>,
+    state: &mut LayoutState,
+) {
+    let mut queue: Vec<DeferredFloat> = std::mem::take(deferred_floats);
+    // Анкоры текущего абзаца встают в конец: отложенные ждут дольше всех.
+    queue.extend(anchors.iter().map(|anchor| DeferredFloat {
+        anchor: anchor.clone(),
+        paragraph_height: placement.height,
+    }));
+
+    let mut text_y = placement.top;
+    loop {
+        let placed_before = placed_floats.len();
+        queue = place_floats_on_page(paginator, queue, text_y, placed_floats);
+        for float in placed_floats[placed_before..].iter().cloned() {
+            paginator
+                .current_page_mut()
+                .items
+                .push(LayoutItem::Float(float));
+        }
+        if queue.is_empty() {
+            break;
+        }
+        // Пустая страница — предел: элемент выше полосы набора, новых страниц
+        // под него не будет, и он останется в очереди до конца документа.
+        if paginator.current_y() <= paginator.content_top() {
+            break;
+        }
+        break_page(paginator, placed_floats, state);
+        // На новой странице абзац-якорь начинается от её полосы набора.
+        text_y = paginator.content_top();
+    }
+
+    *deferred_floats = queue;
+}
+
+/// Попробовать положить очередь на текущую страницу.
+///
+/// Каждый анкор примеряется отдельно: у отложенных базы разные, а
+/// [`layout_floats_on_page`] размещает пачку с общей базой. Не поместившиеся
+/// возвращаются — очередь доберётся до них на следующей странице.
+fn place_floats_on_page(
+    paginator: &Paginator,
+    queue: Vec<DeferredFloat>,
+    text_y: f32,
+    placed_floats: &mut Vec<FloatElement>,
+) -> Vec<DeferredFloat> {
+    let mut deferred = Vec::new();
+    for item in queue {
+        let not_fit = layout_floats_on_page(
+            std::slice::from_ref(&item.anchor),
+            paginator.current_page(),
+            text_y,
+            item.paragraph_height,
+            placed_floats,
+        );
+        if !not_fit.is_empty() {
+            deferred.push(item);
+        }
+    }
+    deferred
 }
 
 /// Положить таблицу: не поместилась — уходит на следующую страницу.
@@ -787,8 +915,9 @@ mod tests {
     use super::*;
     use crate::model::raw::{ParagraphSpacing, Toggle};
     use crate::model::{
-        Body, BreakKind, Inline, Metadata, NumberingTable, Paragraph, Relationships, Run,
-        RunContent, SectionType, Settings, StyleTable,
+        Body, BreakKind, Extent, Inline, InlineImage, InlineOrAnchor, Metadata, NumberingTable,
+        Paragraph, PositionH, PositionV, RelFromH, RelFromV, Relationships, Run, RunContent,
+        SectionType, Settings, StyleTable, WrapKind,
     };
 
     /// Абзац из одного run'а; идентификаторы произвольные — раскладка их не сверяет.
@@ -1704,6 +1833,239 @@ mod tests {
         assert!(
             rect.y + rect.height <= second.height - second.margins.bottom + 0.01,
             "таблица влезает в полосу набора второй страницы"
+        );
+    }
+
+    /// Путь к фикстуре от корня репозитория.
+    fn fixture_path(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-fixtures/docx")
+            .join(name)
+    }
+
+    /// Разложить фикстуру; её отсутствие роняет тест, а не пропускает его.
+    fn layout_fixture(name: &str) -> PageLayout {
+        let path = fixture_path(name);
+        let bytes =
+            std::fs::read(&path).unwrap_or_else(|_| panic!("нет фикстуры {}", path.display()));
+        layout_of(&crate::open(bytes).expect("фикстура разбирается"))
+    }
+
+    /// Плавающие элементы всех страниц в порядке рендеринга.
+    fn floats_of(layout: &PageLayout) -> Vec<&FloatElement> {
+        layout
+            .pages
+            .iter()
+            .flat_map(|page| page.items.iter())
+            .filter_map(|item| match item {
+                LayoutItem::Float(float) => Some(float),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Сравнить пиксельный размер: `f32` из EMU на равенство не проверяем.
+    fn assert_px(actual: f32, expected: f32, what: &str) {
+        assert!(
+            (actual - expected).abs() < 0.01,
+            "{what}: ожидалось {expected} px, получено {actual} px"
+        );
+    }
+
+    /// Анкор `cx`×`cy` EMU, привязанный к абзацу; `offset_v` — сдвиг по вертикали.
+    fn anchored(id: u64, cx: i64, cy: i64, offset_v: i64) -> Anchor {
+        Anchor {
+            id: NodeId::new(id),
+            extent: Extent { cx, cy },
+            horizontal: PositionH {
+                relative_from: RelFromH::Column,
+                align: None,
+                offset: Some(0),
+                percent: None,
+            },
+            vertical: PositionV {
+                relative_from: RelFromV::Paragraph,
+                align: None,
+                offset: Some(offset_v),
+                percent: None,
+            },
+            wrap: WrapKind::Square,
+            behind_text: false,
+            image: InlineImage {
+                id: NodeId::new(id),
+                rel_id: format!("rId{id}"),
+                part: None,
+                name: None,
+                description: None,
+                extent: Extent { cx, cy },
+            },
+        }
+    }
+
+    /// Абзац из одного run'а с плавающими рисунками.
+    fn paragraph_with_floats(id: u64, anchors: Vec<Anchor>) -> Paragraph {
+        Paragraph {
+            id: NodeId::new(id),
+            runs: vec![Inline::Run(Run {
+                id: NodeId::new(id + 1),
+                content: anchors
+                    .into_iter()
+                    .map(|anchor| {
+                        RunContent::Drawing(InlineOrAnchor {
+                            id: anchor.id,
+                            inline: None,
+                            anchor: Some(anchor),
+                        })
+                    })
+                    .collect(),
+                ..Run::default()
+            })],
+            ..Paragraph::default()
+        }
+    }
+
+    /// Сайдекары `images/*.json` дают размеры в EMU; 914400 EMU = 96 px.
+    #[test]
+    fn fixture_anchors_become_floats_on_the_page() {
+        let cases = [
+            (
+                "images/anchor_wrap_square.docx",
+                120.0,
+                90.0,
+                WrapKind::Square,
+                false,
+            ),
+            (
+                "images/anchor_behind_text.docx",
+                144.0,
+                96.0,
+                WrapKind::None,
+                true,
+            ),
+            (
+                "images/anchor_top_and_bottom.docx",
+                288.0,
+                72.0,
+                WrapKind::TopAndBottom,
+                false,
+            ),
+            (
+                "images/anchor_wrap_tight.docx",
+                72.0,
+                72.0,
+                WrapKind::Tight,
+                false,
+            ),
+        ];
+
+        for (name, width, height, wrap, behind_text) in cases {
+            let layout = layout_fixture(name);
+            let floats = floats_of(&layout);
+            assert_eq!(floats.len(), 1, "{name}: ровно один плавающий рисунок");
+            let float = floats[0];
+            assert_px(float.rect.width, width, name);
+            assert_px(float.rect.height, height, name);
+            assert_eq!(float.wrap, wrap, "{name}: обтекание");
+            assert_eq!(float.behind_text, behind_text, "{name}: под текстом");
+        }
+    }
+
+    /// Встроенные рисунки остаются в потоке: элементов `Float` не появляется.
+    #[test]
+    fn fixture_inline_drawings_stay_in_the_flow() {
+        for name in ["images/inline.docx", "images/multiple_sizes.docx"] {
+            let layout = layout_fixture(name);
+            assert!(
+                floats_of(&layout).is_empty(),
+                "{name}: встроенные рисунки не плавают"
+            );
+        }
+    }
+
+    /// Два пересекающихся анкора: второй сдвигается под нижнюю границу первого.
+    #[test]
+    fn overlapping_anchors_shift_the_second_down() {
+        // 952500×476250 EMU — это 100×50 px, как в тестах `float`.
+        let document = document_with(
+            vec![BlockItem::Paragraph(paragraph_with_floats(
+                1,
+                vec![
+                    anchored(2, 952_500, 476_250, 0),
+                    anchored(4, 952_500, 476_250, 0),
+                ],
+            ))],
+            Vec::new(),
+        );
+
+        let layout = layout_of(&document);
+        let floats = floats_of(&layout);
+
+        assert_eq!(floats.len(), 2, "оба анкора на странице");
+        let (first, second) = (floats[0], floats[1]);
+        assert_eq!(first.id, 2, "первым — анкор, появившийся раньше");
+        assert_eq!(second.id, 4);
+        assert_px(second.rect.x, first.rect.x, "сдвиг только по вертикали");
+        assert_px(
+            second.rect.y,
+            first.rect.y + first.rect.height,
+            "второй анкор — под первым",
+        );
+    }
+
+    /// Анкор, которому не хватило места внизу страницы, переезжает на следующую.
+    #[test]
+    fn an_anchor_that_does_not_fit_moves_to_the_next_page() {
+        let section = section_with_margins(A4_WIDTH_TWIPS, A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS);
+        let mut items: Vec<BlockItem> = (0..a4_capacity() - 1)
+            .map(|index| {
+                let id = u64::try_from(index).unwrap_or(u64::MAX) * 2 + 1;
+                BlockItem::Paragraph(paragraph(id, &format!("line {index}")))
+            })
+            .collect();
+        // Анкор-абзац встаёт последней строкой страницы: его рисунку (50 px)
+        // места под строкой уже не остаётся.
+        let anchor_id = 10_000;
+        items.push(BlockItem::Paragraph(paragraph_with_floats(
+            anchor_id,
+            vec![anchored(7, 952_500, 476_250, 0)],
+        )));
+
+        let layout = layout_of(&document_with(items, vec![section]));
+
+        assert_eq!(
+            layout.pages.len(),
+            2,
+            "под плавающий рисунок — вторая страница"
+        );
+        assert!(
+            !layout.pages[0]
+                .items
+                .iter()
+                .any(|item| matches!(item, LayoutItem::Float(_))),
+            "на первой странице рисунка нет: он не поместился"
+        );
+        assert!(
+            layout.pages[0].items.iter().any(|item| matches!(
+                item,
+                LayoutItem::Paragraph { node_id, .. } if *node_id == NodeId::new(anchor_id)
+            )),
+            "абзац-якорь остался на первой странице"
+        );
+
+        let second = &layout.pages[1];
+        let floats: Vec<&FloatElement> = second
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                LayoutItem::Float(float) => Some(float),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(floats.len(), 1, "рисунок переехал целиком");
+        assert_px(
+            floats[0].rect.y,
+            second.margins.top,
+            "на новой странице рисунок встаёт от её полосы набора",
         );
     }
 }
