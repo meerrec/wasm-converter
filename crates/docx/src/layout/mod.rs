@@ -22,6 +22,7 @@ pub mod engine;
 pub mod float;
 pub mod line_break;
 pub mod pagination;
+pub mod paragraph;
 pub mod tables;
 
 pub use engine::{

@@ -12,12 +12,13 @@ use doc_converter_render::{
     text_measure,
 };
 
+use crate::layout::cascade::StyleCache;
 use crate::layout::line_break::LineBreaker;
 use crate::layout::pagination::Paginator;
+use crate::layout::paragraph::layout_paragraph;
 
-use crate::model::raw::HalfPoint;
 use crate::model::{
-    BlockItem, Document, Margins, Orientation, PageSize, Paragraph, Section, SectionProperties,
+    BlockItem, Document, Margins, Orientation, PageSize, Section, SectionProperties,
 };
 use crate::{Columns, Twips};
 
@@ -307,6 +308,7 @@ pub fn layout_document(
     let first_section = section_at(document, 0);
     let mut paginator = Paginator::new(&first_section);
     let mut state = LayoutState::for_page(paginator.current_page(), &first_section);
+    let mut cache = StyleCache::new();
     let default_font_id = FontId::default();
     // Секция, в которой идёт раскладка: `sections[i]` описывает секцию, которую
     // закрывает i-й по порядку конец секции (`collect_sections` в `document.rs`).
@@ -322,8 +324,19 @@ pub fn layout_document(
 
                 // Layout paragraph
                 let mut line_breaker = LineBreaker::new(fonts, default_font_id);
-                let (content_height, layout_items) =
-                    layout_paragraph(paragraph, &mut state, options, &mut line_breaker);
+                let layout = layout_paragraph(
+                    document,
+                    paragraph,
+                    &state,
+                    options,
+                    &mut cache,
+                    &mut line_breaker,
+                );
+
+                // Высота абзаца — его интервалы и высоты строк в порядке отрисовки.
+                let content_height = layout.space_before
+                    + layout.lines.iter().map(|line| line.height).sum::<f32>()
+                    + layout.space_after;
 
                 // Check if we need a new page
                 if !paginator.fits(content_height) {
@@ -336,7 +349,20 @@ pub fn layout_document(
                     );
                 }
 
-                paginator.current_page_mut().items.extend(layout_items);
+                let mut line_y = paginator.current_y() + layout.space_before;
+                for line in &layout.lines {
+                    paginator
+                        .current_page_mut()
+                        .items
+                        .push(LayoutItem::Paragraph {
+                            node_id: paragraph.id,
+                            rect: Rect::new(line.x, line_y, line.width, line.height),
+                            text: line.text.clone(),
+                            line_height: line.height,
+                            color: line.color,
+                        });
+                    line_y += line.height;
+                }
                 paginator.advance(content_height);
 
                 // Абзац со встроенным `w:sectPr` закрывает секцию: он сам ещё
@@ -355,7 +381,14 @@ pub fn layout_document(
             BlockItem::Table(table) => {
                 // Layout table
                 let table_width = state.column_width;
-                let table_height = layout_table(table, &mut state, options, fonts, table_width);
+                let table_layout = crate::layout::tables::layout_table(
+                    table,
+                    state.column_x,
+                    paginator.current_y(),
+                    table_width,
+                    fonts,
+                );
+                let table_height = table_layout.height;
 
                 // Check if table fits on current page
                 if !paginator.fits(table_height) {
@@ -440,104 +473,6 @@ fn enter_section(
         paginator.set_section(section);
     }
     *state = LayoutState::for_page(paginator.current_page(), section);
-}
-
-/// Разложить абзац.
-///
-/// Использует `LineBreaker` для разбивки текста на строки с учётом ширины страницы.
-fn layout_paragraph(
-    paragraph: &Paragraph,
-    state: &mut LayoutState,
-    options: &LayoutOptions,
-    line_breaker: &mut LineBreaker,
-) -> (f32, Vec<LayoutItem>) {
-    // Collect text from all runs
-    let text: String = paragraph
-        .runs
-        .iter()
-        .filter_map(|inline| {
-            if let crate::model::Inline::Run(run) = inline {
-                Some(
-                    run.content
-                        .iter()
-                        .filter_map(|content| {
-                            if let crate::model::RunContent::Text(text) = content {
-                                Some(text.as_str())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .concat(),
-                )
-            } else {
-                None
-            }
-        })
-        .collect::<String>();
-
-    // Get font size from paragraph properties or use default
-    // TODO: extract actual font size from run properties
-    let font_size_half_points = HalfPoint::new(24); // 12pt default
-    let default_font_id = FontId::default();
-    let line_height = line_breaker.line_height_with_spacing(font_size_half_points, None);
-
-    // Calculate available width
-    let available_width = options.effective_width(state.column_width);
-
-    // Break text into lines
-    let line_ranges = line_breaker.break_lines(
-        &text,
-        default_font_id,
-        font_size_half_points,
-        available_width,
-    );
-
-    // Measure each line and calculate total height
-    let mut total_height = 0.0;
-    let mut items = Vec::new();
-    let current_x = state.x;
-    let mut current_y = state.y;
-
-    for line_range in line_ranges {
-        let line_text = &text[line_range];
-        let line_width =
-            line_breaker.measure_text(line_text, default_font_id, font_size_half_points);
-
-        total_height += line_height;
-
-        items.push(LayoutItem::Paragraph {
-            node_id: paragraph.id,
-            rect: Rect::new(current_x, current_y, line_width, line_height),
-            text: line_text.to_string(),
-            line_height,
-            color: None,
-        });
-
-        current_y += line_height;
-    }
-
-    (total_height, items)
-}
-
-/// Разложить таблицу.
-fn layout_table(
-    table: &crate::model::Table,
-    _state: &mut LayoutState,
-    _options: &LayoutOptions,
-    _fonts: &mut FontRegistry,
-    available_width: f32,
-) -> f32 {
-    use crate::layout::tables::{compute_column_widths, compute_row_heights};
-
-    // Compute column widths
-    let _col_widths = compute_column_widths(table, available_width);
-
-    // Compute row heights
-    let row_heights = compute_row_heights(&table.rows);
-
-    // Total height is sum of all row heights
-    row_heights.iter().sum()
 }
 
 /// Ошибка раскладки.
@@ -664,8 +599,8 @@ impl LayoutState {
 mod tests {
     use super::*;
     use crate::model::{
-        Body, Inline, Metadata, NumberingTable, Relationships, Run, RunContent, SectionType,
-        Settings, StyleTable,
+        Body, Inline, Metadata, NumberingTable, Paragraph, Relationships, Run, RunContent,
+        SectionType, Settings, StyleTable,
     };
 
     /// Абзац из одного run'а; идентификаторы произвольные — раскладка их не сверяет.
