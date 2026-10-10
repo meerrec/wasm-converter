@@ -484,16 +484,34 @@ fn place_table(
     placed_floats: &mut Vec<FloatElement>,
     state: &mut LayoutState,
 ) {
-    let table_layout = crate::layout::tables::layout_table(
-        table,
-        state.column_x,
-        paginator.current_y(),
-        state.column_width,
-        fonts,
-    );
+    let left = state.column_x;
+    let top = paginator.current_y();
+    let table_layout =
+        crate::layout::tables::layout_table(table, left, top, state.column_width, fonts);
 
-    // TODO: Add table to current page
+    // `place` переносит таблицу целиком, если та не поместилась: курсор после
+    // него стоит под таблицей на той странице, куда она в итоге легла.
     place(paginator, table_layout.height, false, placed_floats, state);
+
+    // Ячейки разложены от прежнего верха страницы; на новой странице сдвиг
+    // тот же, что у самой таблицы, — иначе содержимое осталось бы на прежнем месте.
+    let table_top = paginator.current_y() - table_layout.height;
+    let dy = table_top - top;
+    let cells = table_layout
+        .rows
+        .into_iter()
+        .flat_map(|row| row.cells)
+        .map(|cell| TableCellLayout {
+            rect: cell.rect.offset(0.0, dy),
+            content: cell.content,
+        })
+        .collect();
+
+    paginator.current_page_mut().items.push(LayoutItem::Table {
+        node_id: table.id,
+        rect: Rect::new(left, table_top, table_layout.width, table_layout.height),
+        cells,
+    });
 }
 
 /// Положить на страницу фрагмент высотой `height` и продвинуть курсор.
@@ -1501,6 +1519,191 @@ mod tests {
             (layout.pages[0].width - twips_to_px(Twips::new(16_838))).abs() < 0.01,
             "ширина страницы — уже из второй секции: {}",
             layout.pages[0].width
+        );
+    }
+
+    /// Раскладка фикстуры с единственной таблицей.
+    fn fixture_table_item(name: &str) -> (Rect, Vec<TableCellLayout>) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-fixtures/docx")
+            .join(name);
+        let document = crate::open(std::fs::read(&path).expect("фикстура читается"))
+            .expect("фикстура разбирается");
+        let layout = layout_of(&document);
+
+        let tables: Vec<(Rect, Vec<TableCellLayout>)> = layout
+            .pages
+            .iter()
+            .flat_map(|page| page.items.iter())
+            .filter_map(|item| match item {
+                LayoutItem::Table { rect, cells, .. } => Some((*rect, cells.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tables.len(), 1, "в фикстуре {name} ровно одна таблица");
+        tables.into_iter().next().expect("таблица уже проверена")
+    }
+
+    /// Тексты строк ячейки по порядку.
+    fn cell_texts(cell: &TableCellLayout) -> Vec<String> {
+        cell.content
+            .iter()
+            .filter_map(|item| match item {
+                LayoutItem::Paragraph { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Содержимое ячейки не выходит за её прямоугольник.
+    fn content_inside(cell: &TableCellLayout) -> bool {
+        cell.content.iter().all(|item| match item {
+            LayoutItem::Paragraph { rect, .. } => {
+                rect.x + 0.01 >= cell.rect.x
+                    && rect.y + 0.01 >= cell.rect.y
+                    && rect.x + rect.width <= cell.rect.x + cell.rect.width + 0.01
+                    && rect.y + rect.height <= cell.rect.y + cell.rect.height + 0.01
+            }
+            _ => true,
+        })
+    }
+
+    /// Таблица попадает на страницу элементом с ячейками и их текстом.
+    ///
+    /// Поля фикстур — 1134 twips = 75.6 px, таков же левый край полосы набора.
+    #[test]
+    fn a_two_by_two_table_lands_with_its_cells() {
+        let (rect, cells) = fixture_table_item("tables/simple_2x2.docx");
+
+        assert_eq!(cells.len(), 4, "в таблице 2×2 четыре ячейки");
+        assert!(
+            (rect.x - 75.6).abs() < 0.01,
+            "таблица начинается на левом поле: {}",
+            rect.x
+        );
+
+        let texts: Vec<Vec<String>> = cells.iter().map(cell_texts).collect();
+        assert_eq!(
+            texts,
+            vec![vec!["A1"], vec!["A2"], vec!["B1"], vec!["B2"]],
+            "ячейки идут построчно, каждая со своим текстом"
+        );
+        for cell in &cells {
+            assert!(
+                !cell.content.is_empty(),
+                "у непустой ячейки есть содержимое"
+            );
+            assert!(content_inside(cell), "содержимое не выходит за ячейку");
+        }
+    }
+
+    /// Таблица 3×3 отдаёт все девять ячеек, а не только высоту.
+    #[test]
+    fn a_three_by_three_table_lands_with_nine_cells() {
+        let (_, cells) = fixture_table_item("tables/simple_3x3.docx");
+
+        assert_eq!(cells.len(), 9, "в таблице 3×3 девять ячеек");
+        assert!(
+            cells.iter().all(content_inside),
+            "содержимое каждой ячейки — внутри её прямоугольника"
+        );
+    }
+
+    /// Таблица идёт за текстом: её ячейки несут заголовок `H1`/`H2` и строку `C1`/`C2`.
+    #[test]
+    fn a_table_after_a_paragraph_keeps_its_cells() {
+        let (rect, cells) = fixture_table_item("complex/text_and_table.docx");
+
+        assert_eq!(cells.len(), 4, "в таблице 2×2 четыре ячейки");
+        assert!(
+            (rect.x - 75.6).abs() < 0.01,
+            "таблица начинается на левом поле: {}",
+            rect.x
+        );
+        let texts: Vec<Vec<String>> = cells.iter().map(cell_texts).collect();
+        assert_eq!(
+            texts,
+            vec![vec!["H1"], vec!["H2"], vec!["C1"], vec!["C2"]],
+            "заголовок и строка данных — в своих ячейках"
+        );
+    }
+
+    /// Таблица, не помещающаяся на странице, уходит на следующую целиком.
+    #[test]
+    fn a_table_that_does_not_fit_moves_to_the_next_page_whole() {
+        use crate::model::CellVAlign;
+        use crate::{Cell, CellBorders, CellMargins, GridCol, Row, TableLayout, TableLook};
+
+        let section = section_with_margins(A4_WIDTH_TWIPS, A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS);
+        // Строк текста на странице — без одной: таблице остаётся меньше строки.
+        let mut document = document_in_section(section, a4_capacity() - 1);
+        document.body.items.push(BlockItem::Table(Table {
+            id: NodeId::new(900),
+            style_ref: None,
+            grid: vec![GridCol {
+                width: Twips::new(6000),
+            }],
+            rows: vec![Row {
+                id: NodeId::new(901),
+                cells: vec![Cell {
+                    id: NodeId::new(902),
+                    grid_span: 1,
+                    v_merge: None,
+                    width: None,
+                    margins: CellMargins::default(),
+                    v_align: CellVAlign::Top,
+                    borders: Box::new(CellBorders::default()),
+                    shading: None,
+                    items: vec![
+                        BlockItem::Paragraph(paragraph(903, "row one")),
+                        BlockItem::Paragraph(paragraph(904, "row two")),
+                    ],
+                }],
+                height: None,
+                cant_split: false,
+                header: false,
+            }],
+            layout: TableLayout::Autofit,
+            width: None,
+            borders: crate::TableBorders::default(),
+            look: TableLook::default(),
+            jc: None,
+            indent: None,
+            cell_margins: CellMargins::default(),
+        }));
+
+        let layout = layout_of(&document);
+
+        assert_eq!(
+            layout.pages.len(),
+            2,
+            "таблица не влезла — страниц стало две"
+        );
+        assert!(
+            !layout.pages[0]
+                .items
+                .iter()
+                .any(|item| matches!(item, LayoutItem::Table { .. })),
+            "на первой странице таблицы нет: она ушла целиком"
+        );
+        let second = &layout.pages[1];
+        let (rect, cells) = second
+            .items
+            .iter()
+            .find_map(|item| match item {
+                LayoutItem::Table { rect, cells, .. } => Some((*rect, cells)),
+                _ => None,
+            })
+            .expect("таблица — на второй странице");
+        assert_eq!(cells.len(), 1, "ячейка таблицы доехала вместе с таблицей");
+        assert!(
+            (rect.y - second.margins.top).abs() < 0.01,
+            "таблица начинается от верхнего поля новой страницы: {}",
+            rect.y
+        );
+        assert!(
+            rect.y + rect.height <= second.height - second.margins.bottom + 0.01,
+            "таблица влезает в полосу набора второй страницы"
         );
     }
 }

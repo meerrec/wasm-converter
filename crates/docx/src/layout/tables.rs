@@ -10,7 +10,7 @@
 use doc_converter_render::font::{FontId, FontRegistry};
 
 use crate::layout::line_break::LineBreaker;
-use crate::model::raw::HalfPoint;
+use crate::model::raw::{Color, HalfPoint};
 use crate::model::{BlockItem, Inline, Paragraph, RunContent};
 use crate::{Cell, Row, Table, Twips, VMerge};
 
@@ -23,7 +23,7 @@ fn twips_to_px(twips: Twips) -> f32 {
     twips.value() as f32 / 15.0
 }
 
-use super::engine::Rect;
+use super::engine::{LayoutItem, Rect, TableCellLayout};
 
 /// Минимальная высота строки таблицы в пикселях.
 ///
@@ -44,6 +44,8 @@ const DEFAULT_SIZE_HALF_POINTS: HalfPoint = HalfPoint::new(24);
 pub struct TableLayoutResult {
     /// Общая высота таблицы.
     pub height: f32,
+    /// Ширина таблицы: сумма ширин колонок.
+    pub width: f32,
     /// Раскладка строк.
     pub rows: Vec<TableRowLayout>,
 }
@@ -55,15 +57,6 @@ pub struct TableRowLayout {
     pub height: f32,
     /// Раскладка ячеек.
     pub cells: Vec<TableCellLayout>,
-}
-
-/// Раскладка одной ячейки таблицы.
-#[derive(Debug, Clone)]
-pub struct TableCellLayout {
-    /// Прямоугольник положения.
-    pub rect: Rect,
-    /// Содержимое ячейки (абзацы).
-    pub content_height: f32,
 }
 
 /// Вычислить ширину колонок таблицы.
@@ -174,8 +167,10 @@ pub fn layout_table(
             let cell_x = current_x;
             let cell_width = compute_cell_width(cell, col_width, &col_widths, cell_idx);
 
-            // Раскладываем содержимое ячейки
-            let content_height = layout_cell_content(cell, cell_width, fonts);
+            // Содержимое ложится от верхнего левого угла ячейки, поэтому его
+            // раскладка от высоты ячейки не зависит: высота считается после.
+            let (content, content_height) =
+                layout_cell_items(cell, cell_x, current_y, cell_width, fonts);
 
             // Определяем высоту ячейки
             let cell_height = if cell.v_merge == Some(VMerge::Restart) {
@@ -187,7 +182,7 @@ pub fn layout_table(
 
             row_cells.push(TableCellLayout {
                 rect: Rect::new(cell_x, current_y, cell_width, cell_height),
-                content_height,
+                content,
             });
 
             current_x += cell_width;
@@ -204,6 +199,7 @@ pub fn layout_table(
 
     TableLayoutResult {
         height: total_height,
+        width: col_widths.iter().sum(),
         rows: result_rows,
     }
 }
@@ -220,7 +216,7 @@ fn compute_cell_width(cell: &Cell, col_width: f32, col_widths: &[f32], cell_idx:
     }
 }
 
-/// Вычислить высоту содержимого ячейки.
+/// Разложить содержимое ячейки в элементы: стопка строк от её верхнего левого угла.
 ///
 /// Абзацы ячейки переносятся [`LineBreaker`]-ом — тем же кодом, что и абзацы
 /// тела (ADR-0005); кегль — умолчание раскладки. Ширина для переноса — ширина
@@ -228,13 +224,24 @@ fn compute_cell_width(cell: &Cell, col_width: f32, col_widths: &[f32], cell_idx:
 /// к высоте. Незаполненный абзац занимает строку: пустая ячейка не должна
 /// схлопываться в ноль.
 ///
+/// Высоту содержимого отдаёт вместе с элементами та же функция: отдельный
+/// счётчик разошёлся бы с тем, что легло в элементы, и строка таблицы
+/// перестала бы совпадать с содержимым.
+///
 /// Не учтены (вне слайса): межстрочный интервал и отступы абзаца из каскада,
-/// `w:rFonts`/`w:sz` (реестр не ищет шрифт по имени), вложенные таблицы и
-/// рисунки в ячейке.
+/// `w:rFonts`/`w:sz` (реестр не ищет шрифт по имени), выравнивание и
+/// вертикальное выравнивание содержимого, вложенные таблицы и рисунки в ячейке.
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
-fn layout_cell_content(cell: &Cell, width: f32, fonts: &mut FontRegistry) -> f32 {
-    let padding_x = side_margin(cell.margins.left) + side_margin(cell.margins.right);
+fn layout_cell_items(
+    cell: &Cell,
+    x: f32,
+    y: f32,
+    width: f32,
+    fonts: &mut FontRegistry,
+) -> (Vec<LayoutItem>, f32) {
+    let padding_left = side_margin(cell.margins.left);
+    let padding_x = padding_left + side_margin(cell.margins.right);
     let padding_y = side_margin(cell.margins.top) + side_margin(cell.margins.bottom);
 
     // Узкая колонка с широкими полями даёт нулевую (и отрицательную) ширину:
@@ -245,25 +252,87 @@ fn layout_cell_content(cell: &Cell, width: f32, fonts: &mut FontRegistry) -> f32
     let mut breaker = LineBreaker::new(fonts, FontId::default());
     let line_height = breaker.line_height(DEFAULT_SIZE_HALF_POINTS);
 
+    let mut content = Vec::new();
     let mut content_height = 0.0;
+    let mut line_top = y + side_margin(cell.margins.top);
+
     for item in &cell.items {
         let BlockItem::Paragraph(paragraph) = item else {
             continue;
         };
         let text = paragraph_text(paragraph);
-        let line_count = breaker
-            .break_lines(
-                &text,
-                FontId::default(),
-                DEFAULT_SIZE_HALF_POINTS,
-                inner_width,
-            )
-            .len()
-            .max(1);
-        content_height += line_count as f32 * line_height;
+        let mut ranges = breaker.break_lines(
+            &text,
+            FontId::default(),
+            DEFAULT_SIZE_HALF_POINTS,
+            inner_width,
+        );
+        // Пустой абзац — одна строка нулевой ширины, как и в абзацах тела.
+        if ranges.is_empty() {
+            ranges.push(0..0);
+        }
+        content_height += ranges.len() as f32 * line_height;
+
+        let color = paragraph_color(paragraph);
+        for range in ranges {
+            let line_text = &text[range];
+            let line_width =
+                breaker.measure_text(line_text, FontId::default(), DEFAULT_SIZE_HALF_POINTS);
+            content.push(LayoutItem::Paragraph {
+                node_id: paragraph.id,
+                rect: Rect::new(x + padding_left, line_top, line_width, line_height),
+                text: line_text.to_owned(),
+                line_height,
+                color,
+            });
+            line_top += line_height;
+        }
     }
 
-    content_height + padding_y
+    (content, content_height + padding_y)
+}
+
+/// Вычислить высоту содержимого ячейки.
+///
+/// Считает та же [`layout_cell_items`], что отдаёт элементы: свой счётчик
+/// разошёлся бы с раскладкой, и высота строки перестала бы её покрывать.
+#[must_use]
+fn layout_cell_content(cell: &Cell, width: f32, fonts: &mut FontRegistry) -> f32 {
+    layout_cell_items(cell, 0.0, 0.0, width, fonts).1
+}
+
+/// Цвет текста абзаца ячейки — первый явный `w:color` среди его runs.
+///
+/// Каскад до ячеек пока не доходит, поэтому читается собственный `w:rPr` run'а;
+/// `auto` и `none` цвета не задают. Строка несёт один цвет, а run'ы ячейки не
+/// разбиваются по метрикам, поэтому из нескольких цветов берётся первый.
+#[must_use]
+fn paragraph_color(paragraph: &Paragraph) -> Option<u32> {
+    fn first_color(inlines: &[Inline]) -> Option<u32> {
+        for inline in inlines {
+            match inline {
+                Inline::Run(run) => {
+                    if let Some(Color::Rgb(value)) = &run.rpr.color {
+                        return Some(*value);
+                    }
+                }
+                Inline::Hyperlink(link) => {
+                    if let Some(value) = first_color(&link.runs) {
+                        return Some(value);
+                    }
+                }
+                Inline::Field(field) => {
+                    if let Some(value) = first_color(&field.result) {
+                        return Some(value);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    first_color(&paragraph.runs)
 }
 
 /// Поле ячейки в пикселях; незаданное поле — ноль.
@@ -382,6 +451,17 @@ mod tests {
             cant_split: false,
             header: false,
         }
+    }
+
+    /// Высота содержимого ячейки: насколько его элементы уходят ниже её верха.
+    fn content_height(cell: &TableCellLayout) -> f32 {
+        cell.content
+            .iter()
+            .fold(cell.rect.y, |bottom, item| match item {
+                LayoutItem::Paragraph { rect, .. } => bottom.max(rect.y + rect.height),
+                _ => bottom,
+            })
+            - cell.rect.y
     }
 
     /// Таблица из одной колонки заданной ширины.
@@ -506,10 +586,10 @@ mod tests {
         let table = one_column_table(Twips::new(900), vec![row(vec![cell(&"word ".repeat(40))])]);
 
         let result = layout_table(&table, 0.0, 0.0, 500.0, &mut fonts);
-        let content_height = result.rows[0].cells[0].content_height;
+        let height = content_height(&result.rows[0].cells[0]);
         assert!(
-            content_height > 20.0,
-            "высота по содержимому должна превысить константу 20.0, получено {content_height}"
+            height > 20.0,
+            "высота по содержимому должна превысить константу 20.0, получено {height}"
         );
     }
 
@@ -568,11 +648,11 @@ mod tests {
         let table = fixture_table("simple_2x2.docx");
 
         let result = layout_table(&table, 0.0, 0.0, 500.0, &mut fonts);
-        let content_height = result.rows[0].cells[0].content_height;
+        let height = content_height(&result.rows[0].cells[0]);
         // «A1» — одна строка 12 pt: 19.2 px, а не прежняя константа 20.0 px.
         assert!(
-            content_height > 0.0 && content_height < MIN_ROW_HEIGHT,
-            "ожидалась измеренная одна строка текста, получено {content_height}"
+            height > 0.0 && height < MIN_ROW_HEIGHT,
+            "ожидалась измеренная одна строка текста, получено {height}"
         );
     }
 
