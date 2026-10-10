@@ -57,13 +57,45 @@ jobs:
       # Turborepo здесь не используется намеренно — в strict-режиме он не
       # пробрасывает незадекларированные env-переменные, а VITE_BASE как раз такая.
       - run: pnpm -F @doc-converter/core build
+
+      # Просмотрщик XLSX остаётся в корне сайта: этот адрес записан в README как
+      # адрес примера, а переезд сломал бы ссылку, которую отсюда не поправить.
       - run: pnpm -F @doc-converter/example-viewer-xlsx build
+
+      # Пример DOCX — подкаталогом. У него свой VITE_BASE, поэтому base
+      # перебивается на шаге: ассеты, фикстуры и `public/coi-serviceworker.js`
+      # (единственный способ получить COOP/COEP на Pages) уезжают по этому
+      # префиксу, а scope сервис-воркера совпадает с каталогом примера.
+      - name: build viewer-docx
+        env:
+          VITE_BASE: /${{ github.event.repository.name }}/viewer-docx/
+        run: pnpm -F @doc-converter/example-viewer-docx build
+
+      # `upload-pages-artifact` публикует ровно один каталог, поэтому сайт
+      # собирается в `_site`: XLSX — в корень, DOCX — в свой подкаталог.
+      - name: assemble site
+        run: |
+          set -euo pipefail
+          mkdir -p _site/viewer-docx
+          cp -R examples/viewer-xlsx/dist/. _site/
+          cp -R examples/viewer-docx/dist/. _site/viewer-docx/
+
+      # Обход COOP/COEP на Pages — это service worker, который отдаёт заголовки
+      # сам; без него SharedArrayBuffer не поднимется и пример покажет пустой
+      # лист. Публикуемый каталог — ручная сборка, так что проверяем его здесь,
+      # а не после деплоя.
+      - name: check coi service workers
+        run: |
+          set -euo pipefail
+          for f in _site/coi-serviceworker.js _site/viewer-docx/coi-serviceworker.js; do
+            [ -s "$f" ] || { echo "::error::$f не попал в публикуемый каталог"; exit 1; }
+          done
 
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: examples/viewer-xlsx/dist
+          path: _site
 
   deploy:
     name: Deploy
