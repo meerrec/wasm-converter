@@ -4,10 +4,11 @@
 //! страниц только сообщает (`w:keepNext`, `w:keepLines`, `w:pageBreakBefore`,
 //! `w:widowControl`): решения принимает движок, у которого есть страница целиком.
 //!
-//! Метрики приходят из каскада ([`super::cascade`]): кегль, цвет, интервалы и
-//! отступы резолвятся из `docDefaults`, стиля абзаца и прямого форматирования.
-//! Строка [`Line`] несёт один кегль и один цвет, поэтому текст абзаца режется на
-//! отрезки по этим двум метрикам, и каждый отрезок переносится сам по себе:
+//! Метрики и начертание приходят из каскада ([`super::cascade`]): кегль, цвет,
+//! гарнитура, жирный/курсив/подчёркивание, интервалы и отступы резолвятся из
+//! `docDefaults`, стиля абзаца и прямого форматирования. Строка [`Line`] несёт
+//! одну метрику и один стиль знака, поэтому текст абзаца режется на отрезки по
+//! кеглю и цвету (см. `segments`), и каждый отрезок переносится сам по себе:
 //! смешанное форматирование внутри строки потребует спанов — их добавит
 //! отдельный слайс.
 
@@ -15,7 +16,7 @@ use std::ops::Range;
 
 use doc_converter_render::font::FontId;
 
-use crate::model::raw::HalfPoint;
+use crate::model::raw::{HalfPoint, Underline};
 use crate::model::{
     Anchor, Document, Inline, InlineOrAnchor, Justification, Paragraph, Run, RunContent,
 };
@@ -37,6 +38,20 @@ pub struct Line {
     pub height: f32,
     /// Цвет текста; `None` — цвет по умолчанию.
     pub color: Option<u32>,
+    /// Гарнитура (`w:rFonts`); `None` — гарнитура по умолчанию.
+    ///
+    /// Стиль знака берётся у первого run'а отрезка (см. `Segment`).
+    pub font_family: Option<String>,
+    /// Кегль (`w:sz`); в пиксели переводит [`half_points_to_px`].
+    ///
+    /// [`half_points_to_px`]: super::engine::half_points_to_px
+    pub size: HalfPoint,
+    /// Полужирный (`w:b`).
+    pub bold: bool,
+    /// Курсив (`w:i`).
+    pub italic: bool,
+    /// Подчёркивание (`w:u`), сведённое к факту: вид линии несёт только `DisplayList`.
+    pub underline: bool,
 }
 
 /// Результат раскладки абзаца.
@@ -70,21 +85,50 @@ struct PendingLine {
     band: f32,
 }
 
-/// Отрезок абзаца с одними метриками: текст, кегль и цвет.
+/// Отрезок абзаца с одними метриками: текст, кегль, цвет и стиль знака.
 ///
 /// Строка [`Line`] несёт один кегль и один цвет, поэтому соседние run'ы с теми же
 /// метриками раскладываются как один текст: абзац из сотни однородных run'ов
 /// (обычное дело — так их оставляет Word) иначе рассыпался бы на сотню строк.
+///
+/// Гарнитура и начертание на слияние не влияют и берутся у первого run'а
+/// отрезка — долг: пока у строки нет спанов, «обычный **жирный** обычный»
+/// рисуется начертанием первого слова.
 struct Segment {
     /// Текст отрезка.
     text: String,
-    /// Кегль (`w:sz`).
+    /// Гарнитура (`w:rFonts`).
+    font_family: Option<String>,
+    /// Кегль (`w:sz`), полупункты.
     size: HalfPoint,
+    /// Полужирный (`w:b`).
+    bold: bool,
+    /// Курсив (`w:i`).
+    italic: bool,
+    /// Подчёркивание (`w:u`).
+    underline: bool,
     /// Цвет текста (`w:color`).
     color: Option<u32>,
 }
 
+/// Подчёркивание знака, сведённое к факту.
+///
+/// У `ResolvedRPr.underline` три состояния, а не два: `None` — наследование не
+/// тронуто, `Some(Underline::None)` — подчёркивание снято явно (`w:val="none"`).
+/// Раскладке важен только факт, поэтому оба «нет» дают `false`.
+fn is_underlined(underline: Option<&Underline>) -> bool {
+    match underline {
+        None | Some(Underline::None) => false,
+        Some(_) => true,
+    }
+}
+
 /// Собрать отрезки абзаца: текст run'ов, слитый по кеглю и цвету.
+///
+/// Ключ слияния — только кегль и цвет, и начертание в него не входит намеренно:
+/// строки ломаются по отдельным отрезкам, и нарезка по стилю знака развалила бы
+/// «обычный **жирный** обычный» на три строки вместо одной. Начертание отрезка
+/// берётся у его первого run'а.
 fn segments(
     document: &Document,
     paragraph: &Paragraph,
@@ -108,7 +152,11 @@ fn segments(
             }
             _ => segments.push(Segment {
                 text,
+                font_family: rpr.font_family,
                 size: rpr.size,
+                bold: rpr.bold,
+                italic: rpr.italic,
+                underline: is_underlined(rpr.underline.as_ref()),
                 color: rpr.color,
             }),
         }
@@ -184,6 +232,11 @@ pub fn layout_paragraph(
                 width,
                 height,
                 color: segment.color,
+                font_family: segment.font_family.clone(),
+                size: segment.size,
+                bold: segment.bold,
+                italic: segment.italic,
+                underline: segment.underline,
             });
         }
     }
@@ -198,6 +251,13 @@ pub fn layout_paragraph(
             width: 0.0,
             height: line_breaker.line_height_for(resolved.rpr.size, resolved.ppr.spacing.line),
             color: None,
+            // Пустая строка — метка абзаца: её стиль знака берётся из абзаца,
+            // откуда пришла и высота, а не из умолчания движка.
+            font_family: resolved.rpr.font_family.clone(),
+            size: resolved.rpr.size,
+            bold: resolved.rpr.bold,
+            italic: resolved.rpr.italic,
+            underline: is_underlined(resolved.rpr.underline.as_ref()),
         });
     }
 
@@ -280,11 +340,11 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
-    use crate::layout::engine::twips_to_px;
+    use crate::layout::engine::{half_points_to_px, twips_to_px};
     use crate::layout::float::emu_to_px;
     use crate::model::raw::{
-        Color, HalfPoint, Ind, LineSpacing, LineSpacingRule, ParagraphSpacing, RawPPr, RawRPr,
-        Toggle,
+        Color, HalfPoint, Ind, LineSpacing, LineSpacingRule, ParagraphSpacing, RFonts, RawPPr,
+        RawRPr, Toggle, Underline,
     };
     use crate::model::{
         BlockItem, Body, DocDefaults, Extent, Hyperlink, InlineImage, InlineOrAnchor, Metadata,
@@ -599,6 +659,133 @@ mod tests {
         let layout = layout(&document(), &paragraph, &state());
 
         assert_eq!(layout.lines[0].color, Some(0xFF_0000), "цвет run'а");
+    }
+
+    /// Абзац из одного run'а с заданными `w:rPr`: проверяются свойства знака,
+    /// а не абзаца.
+    fn styled_paragraph(text: &str, r_pr: RawRPr) -> Paragraph {
+        Paragraph {
+            runs: vec![Inline::Run(Run {
+                id: NodeId::new(2),
+                content: vec![RunContent::Text(text.to_owned())],
+                rpr: Box::new(r_pr),
+                ..Run::default()
+            })],
+            ..Paragraph::default()
+        }
+    }
+
+    /// Стиль знака run'а доезжает до строки: гарнитура, курсив и подчёркивание.
+    ///
+    /// Кегль здесь — умолчание каскада (12 pt); кегль из `docDefaults` проверяет
+    /// соседний тест, а `bold` — тест заголовка.
+    #[test]
+    fn run_style_reaches_the_line() {
+        let paragraph = styled_paragraph(
+            "styled",
+            RawRPr {
+                r_fonts: Some(RFonts {
+                    ascii: Some("Georgia".to_owned()),
+                    ..RFonts::default()
+                }),
+                i: Some(Toggle::On),
+                u: Some(Underline::Single),
+                ..RawRPr::default()
+            },
+        );
+
+        let layout = layout(&document(), &paragraph, &state());
+        let line = &layout.lines[0];
+
+        assert_eq!(
+            line.font_family.as_deref(),
+            Some("Georgia"),
+            "w:rFonts w:ascii"
+        );
+        assert!(line.italic, "w:i");
+        assert!(line.underline, "w:u single");
+        assert!(!line.bold, "w:b не задан");
+        assert_eq!(line.size, HalfPoint::new(24), "12 pt по умолчанию");
+        assert_px(
+            half_points_to_px(line.size.value()),
+            16.0,
+            "кегль в пикселях",
+        );
+    }
+
+    /// Подчёркивание сводится к факту: `None` и явное `w:val="none"` — «нет».
+    #[test]
+    fn underline_value_is_reduced_to_a_flag() {
+        let cases = [
+            (None, false, "не задано"),
+            (Some(Underline::None), false, "снято явно"),
+            (Some(Underline::Single), true, "одинарное"),
+            (Some(Underline::Wave), true, "волнистое"),
+        ];
+
+        for (u, expected, what) in cases {
+            let paragraph = styled_paragraph(
+                "underlined",
+                RawRPr {
+                    u: u.clone(),
+                    ..RawRPr::default()
+                },
+            );
+            let layout = layout(&document(), &paragraph, &state());
+
+            assert_eq!(layout.lines[0].underline, expected, "w:u {what}");
+        }
+    }
+
+    /// `formatting/heading_1.docx`: абзац целиком набран жирным стилем, все его
+    /// run'ы жирные — единственный отрезок несёт начертание заголовка.
+    #[test]
+    fn fixture_heading_style_reaches_the_line() {
+        let heading = layout_fixture("formatting/heading_1.docx", 0);
+        let line = &heading.lines[0];
+
+        assert!(line.bold, "жирный из стиля Heading1");
+        assert!(!line.italic, "курсива в стиле нет");
+        assert!(!line.underline, "подчёркивания в стиле нет");
+        assert_eq!(line.size, HalfPoint::new(32), "16 pt из стиля");
+        assert_px(
+            half_points_to_px(line.size.value()),
+            16.0 * 96.0 / 72.0,
+            "кегль в пикселях",
+        );
+        assert_eq!(
+            line.font_family.as_deref(),
+            Some("Calibri"),
+            "гарнитура docDefaults"
+        );
+    }
+
+    /// `basic/multiple_runs.docx`: обычный, жирный, курсивный и подчёркнутый
+    /// run'ы сливаются по кеглю и цвету в один отрезок, и начертание берётся
+    /// у первого из них — долг: внутри предложения начертание не появится,
+    /// пока у строки нет спанов.
+    #[test]
+    fn fixture_merged_segment_takes_the_first_run_style() {
+        let layout = layout_fixture("basic/multiple_runs.docx", 0);
+        let merged = &layout.lines[0];
+
+        assert_eq!(
+            merged.text, "Plain bold italic underlined",
+            "слитый отрезок"
+        );
+        assert!(!merged.bold, "первый run отрезка обычный");
+        assert!(
+            !merged.italic,
+            "курсив второго run'а отрезок не подхватывает"
+        );
+        assert!(
+            !merged.underline,
+            "подчёркивание третьего run'а отрезок не подхватывает"
+        );
+
+        let emphasized = &layout.lines[3];
+        assert_eq!(emphasized.text, "emphasized");
+        assert!(emphasized.italic, "курсив из стиля знака Emphasis");
     }
 
     /// Путь к фикстуре от корня репозитория.
