@@ -50,6 +50,12 @@ export interface DocxViewerOptions {
 
 const DEFAULT_SLOT_CAPACITY = 1 << 20;
 const DEFAULT_PAGE_GAP = 16;
+/**
+ * Допуск на округление прокрутки браузером, экранные пиксели. Округление вниз
+ * теряет меньше пикселя, так что этот допуск покрывает и его, и округление к
+ * ближайшему.
+ */
+const SCROLL_EPSILON_PX = 1;
 
 /**
  * Вьюер DOCX: холст над областью прокрутки, страницы — стопкой по вертикали.
@@ -128,7 +134,7 @@ export async function createDocxViewer(
         pages = msg.pages;
         layoutStack();
         applyStackSize();
-        pageIndex = pageAt(scroller.scrollTop / zoom);
+        pageIndex = pageAt(scroller.scrollTop);
         for (const p of pendingOpen) p.resolve(msg.pages);
         pendingOpen.clear();
         schedule();
@@ -209,12 +215,21 @@ export async function createDocxViewer(
    * Страница, занимающая верх видимой области: последняя, чей верх не ниже
    * прокрутки. В зазоре между страницами это страница выше — верх области
    * показывает её конец, а не пустоту.
+   *
+   * `scrollPx` — `scrollTop`, как его отдаёт браузер, в экранных пикселях.
+   * WebKit хранит прокрутку целым, округляя вниз: `showPage` ставит её на
+   * верх страницы, а обратно приходит на доли пикселя меньше (у страницы
+   * высотой 1122.5333 верх второй — 1138.5333, а прокрутка — 1138). Строгое
+   * сравнение сочло бы такую страницу ещё не начавшейся и нарисовало
+   * предыдущую. Дробная высота страниц — норма, ошибка округления вниз — до
+   * целого пикселя, поэтому попадание в его пределах относится к странице
+   * ниже. Сравнение идёт в экранных пикселях: квантует браузер именно их.
    */
-  function pageAt(scrollY: number): number {
+  function pageAt(scrollPx: number): number {
     let index = 0;
     for (let i = 1; i < pageTops.length; i++) {
       const top = pageTops[i];
-      if (top === undefined || top > scrollY) break;
+      if (top === undefined || top * zoom > scrollPx + SCROLL_EPSILON_PX) break;
       index = i;
     }
     return index;
@@ -247,7 +262,7 @@ export async function createDocxViewer(
 
   function render(): void {
     if (pages.length === 0) return;
-    pageIndex = pageAt(scroller.scrollTop / zoom);
+    pageIndex = pageAt(scroller.scrollTop);
     worker.postMessage({
       type: 'render',
       req: { page: pageIndex, viewport: viewport(), config: frameConfig() },

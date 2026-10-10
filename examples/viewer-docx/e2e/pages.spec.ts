@@ -7,15 +7,7 @@
 import { expect, test } from '@playwright/test';
 import { boot, frameId, frameStats, openFixture, pageCount, waitForFrame } from './canvas.js';
 
-test('кнопки переключают страницу и возвращают назад', async ({ page, browserName }) => {
-  // В WebKit `scrollTop` округляется вниз, а верх второй страницы лежит на
-  // 1122.53 + 16 зазора = 1138.53: `showPage` ставит прокрутку на 1138, и
-  // `pageAt` в `docx_viewer.ts` считает текущей прежнюю страницу — кадр
-  // остаётся пустым. Это баг `@doc-converter/core`, а не примера: он описан в
-  // отчёте слайса, чинить его здесь нельзя. Прокрутку колесом (соседний тест)
-  // он не задевает — там прокрутка уходит за границу, а не встаёт на неё.
-  test.skip(browserName === 'webkit', 'showPage: scrollTop округляется ниже верха страницы');
-
+test('кнопки переключают страницу и возвращают назад', async ({ page }) => {
   const errors = await boot(page);
 
   const first = await openFixture(page, 'basic/sections.docx');
