@@ -11,6 +11,7 @@ export type {
   FrameTimings,
   PaintStats,
   SheetInfo,
+  PageInfo,
   HyperlinkInfo,
 } from './protocol.js';
 
@@ -27,5 +28,11 @@ export {
   type XlsxViewerHandle,
   type XlsxViewerOptions,
 } from './render/xlsx_viewer.js';
+
+export {
+  createDocxViewer,
+  type DocxViewerHandle,
+  type DocxViewerOptions,
+} from './render/docx_viewer.js';
 
 export const VERSION = '0.1.0';
