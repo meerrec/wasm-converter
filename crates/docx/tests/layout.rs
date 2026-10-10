@@ -1,23 +1,29 @@
-//! Тесты раскладки DOCX: layout_document и связанные функции.
+//! Тесты раскладки DOCX: `layout_document` и связанные функции.
 //!
-//! Проверяем:
-//! - Корректность раскладки простых документов
-//! - Число страниц ±1 vs MS Word на 50 фикстурах
-//! - Пагинация: 100 страниц < 500 мс
-//! - Переносы совпадают с canvas-рендером
+//! Каждый тест опирается на существующую фикстуру и падает, если её нет:
+//! молчаливый `return` делал бы зелёный прогон ничего не значащим.
+//! Ожидаемые числа берутся из самой фикстуры — `w:sectPr` в `document.xml`
+//! и сайдкара `*.json` (`expectedParagraphs`, `expectedTables`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use doc_converter_docx::{
-    layout::{layout_document, LayoutOptions},
-    model::Document,
+    layout::{layout_document, LayoutItem, LayoutOptions, PageLayout},
+    model::{BlockItem, Document},
     open, Error,
 };
 use doc_converter_render::font::FontRegistry;
 
 /// Каталог с фикстурами.
-fn fixtures_dir() -> std::path::PathBuf {
+fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-fixtures/docx")
+}
+
+/// Путь к фикстуре; отсутствие фикстуры роняет тест, а не пропускает его.
+fn fixture_path(name: &str) -> PathBuf {
+    let path = fixtures_dir().join(name);
+    assert!(path.exists(), "нет фикстуры {}", path.display());
+    path
 }
 
 /// Загрузить фикстуру как DOCX.
@@ -27,33 +33,56 @@ fn load_fixture(path: &Path) -> Result<Document, Error> {
     open(bytes)
 }
 
+/// Число элементов-абзацев в раскладке.
+///
+/// `layout_paragraph` кладёт элемент на каждую строку абзаца, поэтому счётчик
+/// равен числу строк, а не числу абзацев: у однострочного абзаца элемент один.
+fn paragraph_items(layout: &PageLayout) -> usize {
+    layout
+        .pages
+        .iter()
+        .flat_map(|page| page.items.iter())
+        .filter(|item| matches!(item, LayoutItem::Paragraph { .. }))
+        .count()
+}
+
+/// Число страниц, на которых есть хотя бы один элемент.
+fn pages_with_items(layout: &PageLayout) -> usize {
+    layout
+        .pages
+        .iter()
+        .filter(|page| !page.items.is_empty())
+        .count()
+}
+
+/// Сравнить пиксельный размер с ожидаемым: `f32` из twips на равенство не проверяем.
+fn assert_px(actual: f32, expected: f32, what: &str) {
+    assert!(
+        (actual - expected).abs() < 0.01,
+        "{what}: ожидалось {expected} px, получено {actual} px"
+    );
+}
+
 #[test]
 fn test_layout_simple_document() {
     let fonts = &mut FontRegistry::new(64);
     let options = LayoutOptions::default();
 
-    // Тест с простым документом
-    let path = fixtures_dir().join("simple/hello.docx");
-    if !path.exists() {
-        // Пропускаем если фикстуры нет
-        return;
-    }
-
+    let path = fixture_path("simple/one_paragraph.docx");
     let doc =
         load_fixture(&path).unwrap_or_else(|_| panic!("Не удалось разобрать {}", path.display()));
     let layout = layout_document(&doc, &options, fonts).expect("Раскладка не удалась");
 
-    // Проверяем, что есть хотя бы одна страница
-    assert!(
-        !layout.pages.is_empty(),
-        "Документ должен иметь хотя бы одну страницу"
+    // simple/one_paragraph.json: expectedParagraphs = 1 — «Hello, World!» в одну строку.
+    assert_eq!(
+        paragraph_items(&layout),
+        1,
+        "Один однострочный абзац должен дать ровно один элемент-абзац"
     );
-
-    // Проверяем, что на странице есть элементы
-    let first_page = &layout.pages[0];
-    assert!(
-        !first_page.items.is_empty(),
-        "Первая страница должна содержать элементы"
+    assert_eq!(
+        pages_with_items(&layout),
+        1,
+        "Единственный абзац должен лежать на одной странице"
     );
 }
 
@@ -62,34 +91,22 @@ fn test_layout_multiple_paragraphs() {
     let fonts = &mut FontRegistry::new(64);
     let options = LayoutOptions::default();
 
-    let path = fixtures_dir().join("simple/two_paragraphs.docx");
-    if !path.exists() {
-        return;
-    }
-
+    let path = fixture_path("simple/multiple_paragraphs_0.docx");
     let doc =
         load_fixture(&path).unwrap_or_else(|_| panic!("Не удалось разобрать {}", path.display()));
     let layout = layout_document(&doc, &options, fonts).expect("Раскладка не удалась");
 
-    assert!(!layout.pages.is_empty(), "Документ должен иметь страницы");
-
-    // Считаем количество абзацев в layout
-    let paragraph_count = layout
-        .pages
-        .iter()
-        .flat_map(|page| page.items.iter())
-        .filter(|item| {
-            matches!(
-                item,
-                doc_converter_docx::layout::LayoutItem::Paragraph { .. }
-            )
-        })
-        .count();
-
-    // В двух абзацах должно быть как минимум один элемент на странице
-    assert!(
-        paragraph_count >= 1,
-        "Должен быть хотя бы один абзац в раскладке"
+    // simple/multiple_paragraphs_0.json: expectedParagraphs = 5, каждый абзац —
+    // «Paragraph N» в одну строку, значит и элементов-абзацев ровно пять.
+    assert_eq!(
+        paragraph_items(&layout),
+        5,
+        "Пять однострочных абзацев должны дать ровно пять элементов-абзацев"
+    );
+    assert_eq!(
+        pages_with_items(&layout),
+        1,
+        "Пять коротких абзацев должны уместиться на одной странице"
     );
 }
 
@@ -98,19 +115,21 @@ fn test_layout_empty_document() {
     let fonts = &mut FontRegistry::new(64);
     let options = LayoutOptions::default();
 
-    let path = fixtures_dir().join("simple/empty.docx");
-    if !path.exists() {
-        return;
-    }
-
+    let path = fixture_path("simple/empty.docx");
     let doc =
         load_fixture(&path).unwrap_or_else(|_| panic!("Не удалось разобрать {}", path.display()));
     let layout = layout_document(&doc, &options, fonts).expect("Раскладка не удалась");
 
-    // Даже пустой документ должен иметь хотя бы одну страницу
+    // Даже пустой документ должен иметь хотя бы одну страницу.
     assert!(
         !layout.pages.is_empty(),
         "Пустой документ должен иметь хотя бы одну страницу"
+    );
+    // simple/empty.json: expectedParagraphs = 0 — тело пустое, элементов быть не должно.
+    assert_eq!(
+        paragraph_items(&layout),
+        0,
+        "В пустом документе не должно быть элементов-абзацев"
     );
 }
 
@@ -119,42 +138,61 @@ fn test_layout_with_tables() {
     let fonts = &mut FontRegistry::new(64);
     let options = LayoutOptions::default();
 
-    let path = fixtures_dir().join("tables/simple_table.docx");
-    if !path.exists() {
-        return;
-    }
-
+    let path = fixture_path("tables/simple_2x2.docx");
     let doc =
         load_fixture(&path).unwrap_or_else(|_| panic!("Не удалось разобрать {}", path.display()));
+
+    // tables/simple_2x2.json: expectedTables = 1 — без таблицы в модели тест
+    // проверял бы не то, что заявлено.
+    let tables = doc
+        .body
+        .items
+        .iter()
+        .filter(|block| matches!(block, BlockItem::Table(_)))
+        .count();
+    assert_eq!(tables, 1, "Фикстура должна содержать ровно одну таблицу");
+
     let layout = layout_document(&doc, &options, fonts).expect("Раскладка не удалась");
 
     assert!(
         !layout.pages.is_empty(),
         "Документ с таблицей должен иметь страницы"
     );
+    // Элементов `LayoutItem::Table` пока нет вовсе: `layout_table` считает высоту
+    // таблицы для потока, но на страницу её не кладёт (`TODO: Add table to current
+    // page` в `layout/engine.rs`). Проверять здесь нечего, поэтому проверено только
+    // то, что таблица доехала до модели, а раскладка не упала.
 }
 
 #[test]
 fn test_layout_pagination() {
-    // Тест на пагинацию: создаём документ с большим количеством абзацев
-    // и проверяем, что он разбивается на несколько страниц
+    // Пагинация на длинном тексте: абзац из ста прогонов обязан перенестись
+    // на несколько строк, а не схлопнуться в одну.
     let fonts = &mut FontRegistry::new(64);
     let options = LayoutOptions::default();
 
-    // Пока что тестируем с имеющейся фикстурой
-    let path = fixtures_dir().join("formatting/long_paragraph.docx");
-    if !path.exists() {
-        return;
-    }
-
+    let path = fixture_path("basic/many_runs_paragraph.docx");
     let doc =
         load_fixture(&path).unwrap_or_else(|_| panic!("Не удалось разобрать {}", path.display()));
+
+    // basic/many_runs_paragraph.json: expectedParagraphs = 1.
+    let paragraphs = doc
+        .body
+        .items
+        .iter()
+        .filter(|block| matches!(block, BlockItem::Paragraph(_)))
+        .count();
+    assert_eq!(paragraphs, 1, "Фикстура должна содержать ровно один абзац");
+
     let layout = layout_document(&doc, &options, fonts).expect("Раскладка не удалась");
 
-    // Документ должен иметь как минимум одну страницу
     assert!(
         !layout.pages.is_empty(),
         "Длинный документ должен иметь хотя бы одну страницу"
+    );
+    assert!(
+        paragraph_items(&layout) > 1,
+        "Абзац из ста прогонов должен переноситься на несколько строк"
     );
 }
 
@@ -163,27 +201,41 @@ fn test_layout_page_dimensions() {
     let fonts = &mut FontRegistry::new(64);
     let options = LayoutOptions::default();
 
-    let path = fixtures_dir().join("simple/hello.docx");
-    if !path.exists() {
-        return;
-    }
-
+    let path = fixture_path("simple/one_paragraph.docx");
     let doc =
         load_fixture(&path).unwrap_or_else(|_| panic!("Не удалось разобрать {}", path.display()));
     let layout = layout_document(&doc, &options, fonts).expect("Раскладка не удалась");
 
-    // Проверяем, что размеры страницы положительные
-    for page in &layout.pages {
-        assert!(
-            page.width > 0.0,
-            "Ширина страницы должна быть положительной"
-        );
-        assert!(
-            page.height > 0.0,
-            "Высота страницы должна быть положительной"
-        );
+    // Фикстура задаёт A4: `w:pgSz w="11906" h="16838"`, `w:pgMar` по 1134 twips
+    // на все поля, `w:header`/`w:footer` по 709, `w:gutter` = 0. Один пиксель —
+    // это 1/96 дюйма, один twip — 1/1440, значит 1 px = 15 twips.
+    let page_width = 11906.0 / 15.0;
+    let page_height = 16838.0 / 15.0;
+    let margin = 1134.0 / 15.0;
 
-        // Проверяем поля
+    let first_page = &layout.pages[0];
+    assert_px(first_page.width, page_width, "ширина страницы");
+    assert_px(first_page.height, page_height, "высота страницы");
+    assert_px(first_page.margins.left, margin, "левое поле");
+    assert_px(first_page.margins.right, margin, "правое поле");
+    assert_px(first_page.margins.top, margin, "верхнее поле");
+    assert_px(first_page.margins.bottom, margin, "нижнее поле");
+    assert_px(
+        first_page.margins.header,
+        709.0 / 15.0,
+        "поле верхнего колонтитула",
+    );
+    assert_px(
+        first_page.margins.footer,
+        709.0 / 15.0,
+        "поле нижнего колонтитула",
+    );
+    assert_px(first_page.margins.gutter, 0.0, "переплётный отступ");
+
+    // Размер листа у всех страниц документа один и тот же.
+    for page in &layout.pages {
+        assert_px(page.width, page_width, "ширина страницы");
+        assert_px(page.height, page_height, "высота страницы");
         assert!(
             page.margins.left >= 0.0,
             "Левое поле не может быть отрицательным"
@@ -208,41 +260,52 @@ fn test_layout_item_positions() {
     let fonts = &mut FontRegistry::new(64);
     let options = LayoutOptions::default();
 
-    let path = fixtures_dir().join("simple/hello.docx");
-    if !path.exists() {
-        return;
-    }
-
+    let path = fixture_path("simple/one_paragraph.docx");
     let doc =
         load_fixture(&path).unwrap_or_else(|_| panic!("Не удалось разобрать {}", path.display()));
     let layout = layout_document(&doc, &options, fonts).expect("Раскладка не удалась");
 
-    // Проверяем, что все элементы имеют корректные позиции
+    // Первый (и единственный) абзац начинается в левом верхнем углу полосы набора.
+    let first_page = &layout.pages[0];
+    let first_item = first_page
+        .items
+        .first()
+        .expect("На странице должен быть элемент");
+    match first_item {
+        LayoutItem::Paragraph { rect, .. } => {
+            assert_px(rect.x, first_page.margins.left, "отступ абзаца слева");
+            assert_px(rect.y, first_page.margins.top, "отступ абзаца сверху");
+        }
+        other => panic!("Ожидался элемент-абзац, получено {other:?}"),
+    }
+
+    // Текст не вылезает за поля: начало — не левее левого поля и не выше верхнего,
+    // конец строки — не правее правого.
     for page in &layout.pages {
         for item in &page.items {
             match item {
-                doc_converter_docx::layout::LayoutItem::Paragraph { rect, .. } => {
+                LayoutItem::Paragraph { rect, .. } | LayoutItem::Table { rect, .. } => {
                     assert!(rect.x >= 0.0, "Позиция X должна быть неотрицательной");
                     assert!(rect.y >= 0.0, "Позиция Y должна быть неотрицательной");
                     assert!(rect.width >= 0.0, "Ширина должна быть неотрицательной");
                     assert!(rect.height >= 0.0, "Высота должна быть неотрицательной");
-                }
-                doc_converter_docx::layout::LayoutItem::Table { rect, .. } => {
                     assert!(
-                        rect.x >= 0.0,
-                        "Позиция X таблицы должна быть неотрицательной"
+                        rect.x + 0.01 >= page.margins.left,
+                        "Элемент заходит левее левого поля: x = {}, поле = {}",
+                        rect.x,
+                        page.margins.left
                     );
                     assert!(
-                        rect.y >= 0.0,
-                        "Позиция Y таблицы должна быть неотрицательной"
+                        rect.y + 0.01 >= page.margins.top,
+                        "Элемент заходит выше верхнего поля: y = {}, поле = {}",
+                        rect.y,
+                        page.margins.top
                     );
                     assert!(
-                        rect.width >= 0.0,
-                        "Ширина таблицы должна быть неотрицательной"
-                    );
-                    assert!(
-                        rect.height >= 0.0,
-                        "Высота таблицы должна быть неотрицательной"
+                        rect.x + rect.width <= page.width - page.margins.right + 0.01,
+                        "Элемент вылезает правее правого поля: {} > {}",
+                        rect.x + rect.width,
+                        page.width - page.margins.right
                     );
                 }
                 _ => {}
