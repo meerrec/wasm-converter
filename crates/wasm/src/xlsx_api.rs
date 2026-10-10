@@ -76,6 +76,8 @@ pub struct SheetInfo {
 }
 
 /// Что вышло из попытки собрать кадр.
+///
+/// Общая форма для обоих форматов: и XLSX, и DOCX отдают её интерфейсу.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildStats {
@@ -85,8 +87,19 @@ pub struct BuildStats {
     build_ms: f64,
 }
 
+impl BuildStats {
+    /// Заполняется мостами форматов (`xlsx_api`, `docx_api`).
+    pub(crate) fn new(written: bool, cmds: u32, build_ms: f64) -> Self {
+        Self {
+            written,
+            cmds,
+            build_ms,
+        }
+    }
+}
+
 /// Ошибка разбора — сообщением для человека: показывать её будет интерфейс.
-fn to_js(error: impl std::fmt::Display) -> JsValue {
+pub(crate) fn to_js(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 
@@ -193,8 +206,8 @@ pub fn xlsx_image_bytes(id: u32) -> Result<js_sys::Uint8Array, JsValue> {
     })
 }
 
-/// Перевести окно из JS в представление рендера.
-fn viewport_of(value: JsValue) -> Result<Viewport, JsValue> {
+/// Перевести окно из JS в представление рендера. Форма окна общая с DOCX.
+pub(crate) fn viewport_of(value: JsValue) -> Result<Viewport, JsValue> {
     let js: ViewportJs = serde_wasm_bindgen::from_value(value).map_err(to_js)?;
     Ok(Viewport::new(
         js.scroll_x,
