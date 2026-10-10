@@ -100,7 +100,7 @@ impl<'a> LineBreaker<'a> {
     ///
     /// # Arguments
     /// * `font_size_half_points` - размер шрифта
-    /// * `line_spacing` - межстрочный интервал (None = 1.0, Some(240) = 2.4, etc.)
+    /// * `line_spacing` - межстрочный интервал в 240-х долях (None = 1.0, Some(240) = 1.0, Some(480) = 2.0)
     #[must_use]
     #[allow(clippy::cast_possible_truncation)]
     pub fn line_height_with_spacing(
