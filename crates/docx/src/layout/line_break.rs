@@ -119,6 +119,30 @@ impl<'a> LineBreaker<'a> {
             None => base_height,
         }
     }
+
+    /// Вычислить высоту строки по правилу `w:line` (`w:lineRule`).
+    ///
+    /// Единицы приходят из каскада ([`super::cascade`]): `Auto` — множитель
+    /// базового интерлиньяжа, `Exact`/`AtLeast` — пиксели.
+    #[must_use]
+    pub fn line_height_for(&self, size: HalfPoint, rule: LineRule) -> f32 {
+        let base_height = self.line_height(size);
+
+        match rule {
+            LineRule::Single => base_height,
+            LineRule::Auto(multiplier) => base_height * multiplier,
+            LineRule::Exact(height) => {
+                // Ноль в `Exact` — испорченный документ: строка нулевой высоты
+                // схлопнула бы весь абзац, поэтому базовый интервал.
+                if height > 0.0 {
+                    height
+                } else {
+                    base_height
+                }
+            }
+            LineRule::AtLeast(height) => base_height.max(height),
+        }
+    }
 }
 
 /// Преобразовать полупункты в пиксели: 1 pt = 1/72 дюйма, 1 px = 1/96 дюйма.
@@ -176,6 +200,28 @@ mod tests {
     use doc_converter_render::font::DEFAULT_FONT_ID;
 
     const PX_11PT: f32 = 11.0 * 96.0 / 72.0;
+
+    /// Сравнение пикселей с допуском: `f32` в `assert_eq!` не пройдёт `clippy::float_cmp`.
+    #[track_caller]
+    fn assert_px(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() < 0.01, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn line_height_follows_the_rule() {
+        let mut fonts = FontRegistry::new(64);
+        let breaker = LineBreaker::new(&mut fonts, DEFAULT_FONT_ID);
+        // 12 pt = 16 px раскладки, базовый интерлиньяж — 19.2 px.
+        let size = HalfPoint::new(24);
+
+        assert_px(breaker.line_height_for(size, LineRule::Single), 19.2);
+        assert_px(breaker.line_height_for(size, LineRule::Auto(2.0)), 38.4);
+        assert_px(breaker.line_height_for(size, LineRule::Auto(1.0)), 19.2);
+        assert_px(breaker.line_height_for(size, LineRule::Exact(24.0)), 24.0);
+        assert_px(breaker.line_height_for(size, LineRule::AtLeast(10.0)), 19.2);
+        assert_px(breaker.line_height_for(size, LineRule::AtLeast(30.0)), 30.0);
+        assert_px(breaker.line_height_for(size, LineRule::Exact(0.0)), 19.2);
+    }
 
     #[test]
     fn test_half_points_to_px() {
