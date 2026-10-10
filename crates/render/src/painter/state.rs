@@ -73,13 +73,24 @@ impl PaintState {
         true
     }
 
-    pub fn reset(&mut self) {
-        self.clip_depth = 0;
-        self.transform_depth = 0;
+    /// Забывает стили кисти, не трогая глубины клипа и трансформа: нужна там,
+    /// где контекст откатился сам.
+    ///
+    /// `ctx.restore()` возвращает заливку, обводку и штриховку к состоянию на
+    /// `save()`, а кэш об этом не знает — следующий `needs_fill` с тем же цветом
+    /// пропустил бы установку и нарисовал чужим цветом. Кэши строк (`style_cache`,
+    /// `font_cache`) от контекста не зависят и остаются на месте.
+    pub fn invalidate_styles(&mut self) {
         self.current_fill = None;
         self.current_stroke = None;
         self.current_line_width = 0.0;
         self.current_line_style = None;
+    }
+
+    pub fn reset(&mut self) {
+        self.clip_depth = 0;
+        self.transform_depth = 0;
+        self.invalidate_styles();
     }
 }
 
@@ -114,6 +125,24 @@ mod tests {
         assert!(s.needs_stroke(red, 2.0, LineStyle::Dashed));
         assert!(!s.needs_stroke(red, 2.0, LineStyle::Dashed));
         assert!(s.needs_stroke(red, 2.0, LineStyle::Solid));
+    }
+
+    #[test]
+    fn invalidate_styles_keeps_depths() {
+        let mut s = PaintState::new();
+        s.clip_depth = 1;
+        s.transform_depth = 2;
+        let red = Color::rgba(255, 0, 0, 255);
+        assert!(s.needs_fill(red));
+        assert!(s.needs_stroke(red, 2.0, LineStyle::Dashed));
+
+        // Контекст вернулся к состоянию на `save()`: стили спрашиваются заново,
+        // а стек клипа и трансформа остаётся на месте.
+        s.invalidate_styles();
+        assert!(s.needs_fill(red));
+        assert!(s.needs_stroke(red, 2.0, LineStyle::Dashed));
+        assert_eq!(s.clip_depth, 1);
+        assert_eq!(s.transform_depth, 2);
     }
 
     #[test]

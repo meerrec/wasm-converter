@@ -24,6 +24,9 @@ web-sys = { version = "0.3", features = [
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+# `ImageData` нужен только `get_image_data` в тестах: пиксели читают
+# регрессию кэша стилей. В релизной сборке фича не участвует.
+web-sys = { version = "0.3", features = ["ImageData"] }
 
 # rustc эмитит bulk-memory, а bundled wasm-opt в wasm-pack его не понимает.
 # Оптимизацию делает scripts/build-wasm.sh системным wasm-opt, если он есть.
