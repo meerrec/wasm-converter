@@ -458,9 +458,11 @@ fn place_lines(
         let needs_break = first && layout.page_break_before && kept > 0;
         place(paginator, height, needs_break, placed_floats, state);
 
-        // Верх строки: курсор стоит за её нижней границей, а интервал перед
-        // абзацем уже учтён в `height` — он сдвигает только эту строку.
-        let top = paginator.current_y() - line.height;
+        // Верх строки: курсор стоит за её нижней границей, а интервалы абзаца
+        // учтены в `height`. Интервал перед сдвигает первую строку, интервал
+        // после остаётся под последней — из `height` его нужно вычесть.
+        let after = if last { layout.space_after } else { 0.0 };
+        let top = paginator.current_y() - line.height - after;
         paginator
             .current_page_mut()
             .items
@@ -765,7 +767,7 @@ impl LayoutState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::raw::Toggle;
+    use crate::model::raw::{ParagraphSpacing, Toggle};
     use crate::model::{
         Body, BreakKind, Inline, Metadata, NumberingTable, Paragraph, Relationships, Run,
         RunContent, SectionType, Settings, StyleTable,
@@ -1094,6 +1096,28 @@ mod tests {
         }
     }
 
+    /// Абзац с интервалами `w:spacing` в twips — их разрешает каскад.
+    fn paragraph_with_spacing(id: u64, text: &str, before: i32, after: i32) -> Paragraph {
+        let mut p = paragraph(id, text);
+        p.ppr.spacing = Some(ParagraphSpacing {
+            before: Some(Twips::new(before)),
+            after: Some(Twips::new(after)),
+            ..ParagraphSpacing::default()
+        });
+        p
+    }
+
+    /// Прямоугольники строк сверху вниз.
+    fn line_rects(page: &Page) -> Vec<Rect> {
+        page.items
+            .iter()
+            .filter_map(|item| match item {
+                LayoutItem::Paragraph { rect, .. } => Some(*rect),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Блокер S6: страницу переполняет строка, а не абзац целиком.
     #[test]
     fn a_line_past_the_page_bottom_splits_the_flow() {
@@ -1159,6 +1183,75 @@ mod tests {
         assert!(
             (heights[0] - heights[1]).abs() < 0.01,
             "пустая строка — той же высоты, что строка текста: {heights:?}"
+        );
+    }
+
+    /// Интервал после абзаца остаётся под последней строкой, а не над ней.
+    #[test]
+    fn the_space_after_a_paragraph_stays_below_its_last_line() {
+        let document = document_with(
+            vec![BlockItem::Paragraph(paragraph_with_spacing(
+                1, "hello", 240, 120,
+            ))],
+            Vec::new(),
+        );
+        let layout = layout_of(&document);
+        let page = &layout.pages[0];
+        let rects = line_rects(page);
+
+        let expected = page.margins.top + twips_to_px(Twips::new(240));
+        assert!(
+            (rects[0].y - expected).abs() < 0.01,
+            "строка — на верхнем поле плюс интервал перед абзацем ({expected} px), получено {}",
+            rects[0].y
+        );
+    }
+
+    /// Шаг строк абзаца ровный: интервал после не подтягивает последнюю строку.
+    #[test]
+    fn the_lines_of_a_paragraph_keep_an_even_pitch() {
+        let document = document_with(
+            vec![BlockItem::Paragraph(paragraph_with_spacing(
+                1,
+                "aaa\nbbb\nccc",
+                0,
+                120,
+            ))],
+            Vec::new(),
+        );
+        let layout = layout_of(&document);
+        let rects = line_rects(&layout.pages[0]);
+
+        assert_eq!(rects.len(), 3, "абзац из трёх строк");
+        let line_height = rects[0].height;
+        let tops: Vec<f32> = rects.iter().map(|rect| rect.y).collect();
+        for pair in rects.windows(2) {
+            assert!(
+                (pair[1].y - pair[0].y - line_height).abs() < 0.01,
+                "шаг строк равен их высоте {line_height}, а не строке с интервалом: {tops:?}"
+            );
+        }
+    }
+
+    /// Фикстура `basic/paragraph_spacing`: у первого абзаца `w:before=240`
+    /// (16 px) — строка стоит на верхнем поле плюс интервал перед; `w:after`
+    /// её не сдвигает. Эталон `LibreOffice` для этой фикстуры: 68.7 pt = 91.6 px.
+    #[test]
+    fn paragraph_spacing_fixture_keeps_the_first_line_under_its_before() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-fixtures/docx/basic/paragraph_spacing.docx");
+        assert!(path.exists(), "нет фикстуры {}", path.display());
+        let document = crate::open(std::fs::read(&path).expect("фикстура читается"))
+            .expect("фикстура разбирается");
+
+        let layout = layout_of(&document);
+        let rects = line_rects(&layout.pages[0]);
+
+        let expected = layout.pages[0].margins.top + twips_to_px(Twips::new(240));
+        assert!(
+            (rects[0].y - expected).abs() < 0.01,
+            "первый абзац — на поле плюс 240 twips ({expected} px), получено {}",
+            rects[0].y
         );
     }
 
