@@ -144,7 +144,9 @@ impl Painter2D {
                 self.ctx.set_font(&font);
 
                 let css = self.state.css_for(color).to_owned();
-                self.ctx.set_fill_style_str(&css);
+                if self.state.needs_fill(color) {
+                    self.ctx.set_fill_style_str(&css);
+                }
                 self.ctx.set_text_align(text::text_align_str(align));
 
                 // Canvas подчёркивания не рисует, а его положение берётся из
@@ -201,6 +203,9 @@ impl Painter2D {
                 if self.state.clip_depth > 0 {
                     self.ctx.restore();
                     self.state.clip_depth -= 1;
+                    // `restore()` откатил и стили кисти — кэш обязан забыть их,
+                    // иначе следующая заливка уйдёт цветом из `save()`.
+                    self.state.invalidate_styles();
                 }
             }
             DrawCommand::PushTransform { a, b, c, d, e, f } => {
@@ -214,6 +219,7 @@ impl Painter2D {
                 if self.state.transform_depth > 0 {
                     self.ctx.restore();
                     self.state.transform_depth -= 1;
+                    self.state.invalidate_styles();
                 }
             }
         }
