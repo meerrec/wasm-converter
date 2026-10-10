@@ -136,6 +136,53 @@ jobs:
           name: wasm-pdf-pkg
           path: packages/wasm-pdf/pkg
 
+  # Браузерные wasm-bindgen-тесты до этой джобы не запускались нигде: в
+  # crates/wasm/tests/ живут мост DOCX и регрессия кэша стилей painter'а, а
+  # CLAUDE.md требует покрывать новые wasm-функции через `wasm-bindgen-test`.
+  #
+  # `needs` нет намеренно: `wasm-pack test` собирает тестовые артефакты из
+  # исходников и `pkg/` из джобы wasm ему не нужен, так что джоба идёт
+  # параллельно и критический путь не удлиняет.
+  wasm-test:
+    name: Wasm browser tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-wasm-test
+
+      # ChromeDriver ищет браузер по именам (`chrome`, потом `google-chrome`)
+      # сначала в /usr/local/sbin, /usr/local/bin, /usr/sbin, /usr/bin, /sbin,
+      # /bin и /opt/google/chrome — и только потом в PATH (chrome_finder.cc:
+      # GetApplicationDirs + GetPathsFromEnvironment). То есть на раннере
+      # выигрывает предустановленный Chrome образа, а не тот, что ставит action,
+      # поэтому драйвер берём ровно под него: скачанный wasm-pack'ом «самый
+      # свежий» уже разъезжался с браузером (локально — 155 при Chrome 154).
+      - name: chrome version
+        id: chrome
+        run: |
+          version=$(google-chrome --version 2>/dev/null | awk '{print $NF}')
+          echo "version=${version:-stable}" >> "$GITHUB_OUTPUT"
+
+      - uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: ${{ steps.chrome.outputs.version }}
+          install-chromedriver: true
+
+      - run: cargo install wasm-pack --locked
+
+      # wasm-pack берёт chromedriver из PATH, если он там есть, и качает свой
+      # только при его отсутствии — на PATH его как раз и кладёт action.
+      - name: wasm-pack test
+        run: wasm-pack test --headless --chrome crates/wasm
+
   js:
     name: JS (node ${{ matrix.node }})
     needs: wasm
@@ -169,10 +216,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 
-      # Сквозные тесты примера идут в настоящем браузере: без него они падают
+      # Сквозные тесты примеров идут в настоящем браузере: без него они падают
       # не от ошибки в коде, а от отсутствия браузера. Ставится на обе ноги
       # матрицы — `turbo run test` запускает их при любой версии Node.
-      - run: pnpm --filter @doc-converter/example-viewer-xlsx exec playwright install --with-deps chromium firefox webkit
+      # Оба примера идут одной командой: браузеры складываются в общий кэш, а
+      # `turbo run test` гоняет `test` всякого пакета, у которого он есть, —
+      # включая пример DOCX (он в workspace с самого добавления).
+      - run: pnpm --filter @doc-converter/example-viewer-xlsx --filter @doc-converter/example-viewer-docx exec playwright install --with-deps chromium firefox webkit
 
       - run: pnpm turbo run typecheck test build
       # Гейт: регрессия бюджета блокирует merge (ROADMAP §9). Строка про wasm
