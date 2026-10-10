@@ -573,9 +573,11 @@ fn lines_kept_on_page(paginator: &Paginator, lines: &[&Line], layout: &Paragraph
     let mut kept = fit;
     if layout.widow_control {
         // Word оставляет не меньше двух строк с каждой стороны разрыва.
+        // При `kept == 0` сдвигать нечего: абзац уже уходит целиком, а `kept - 1`
+        // ушло бы в минус по `usize` (абзац из одной строки).
         if kept == 1 {
             kept = 0;
-        } else if lines.len() - kept == 1 {
+        } else if kept > 0 && lines.len() - kept == 1 {
             kept -= 1;
             if kept == 1 {
                 kept = 0;
@@ -973,39 +975,92 @@ mod tests {
     const A4_HEIGHT_TWIPS: i32 = 16_838;
     const FIXTURE_MARGIN_TWIPS: i32 = 1_134;
 
-    /// Высота строки текста: её задаёт кегль из каскада стилей, а не литерал
-    /// в тесте — кегль уже менялся, и полоса набора менялась вместе с ним.
-    fn body_line_height() -> f32 {
-        let document = document_with_text("hello");
-        let mut fonts = FontRegistry::new(64);
-
-        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
-            .expect("раскладка не должна падать");
-
-        layout.pages[0]
-            .items
-            .iter()
-            .find_map(|item| match item {
-                LayoutItem::Paragraph { line_height, .. } => Some(*line_height),
-                _ => None,
-            })
-            .expect("абзац с текстом даёт строку")
+    /// Метрики строки тела: высота строки и интервалы абзаца из каскада стилей.
+    ///
+    /// Интервалы приходят из `docDefaults`, поэтому измеряются по раскладке —
+    /// литералом их не задать.
+    #[derive(Clone, Copy)]
+    struct BodyMetrics {
+        line_height: f32,
+        space_before: f32,
+        space_after: f32,
     }
 
-    /// Сколько строк высотой `line_height` влезает в полосу набора страницы.
-    ///
-    /// Считается тем же накоплением и с тем же нестрогим сравнением, что
-    /// `Paginator::fits`: иначе тест ловил бы округление f32, а не правило.
-    fn line_capacity(height_twips: i32, margin_twips: i32, line_height: f32) -> usize {
-        let content_bottom =
-            twips_to_px(Twips::new(height_twips)) - twips_to_px(Twips::new(margin_twips));
-        let mut y = twips_to_px(Twips::new(margin_twips));
+    impl BodyMetrics {
+        /// Шаг однострочного абзаца: строка и оба её интервала.
+        fn pitch(self) -> f32 {
+            self.space_before + self.line_height + self.space_after
+        }
+    }
+
+    /// Нижняя граница полосы набора фикстурной страницы A4.
+    fn content_bottom() -> f32 {
+        twips_to_px(Twips::new(A4_HEIGHT_TWIPS)) - twips_to_px(Twips::new(FIXTURE_MARGIN_TWIPS))
+    }
+
+    /// Измерить метрики по двум однострочным абзацам: расстояние между их
+    /// строками — это высота строки плюс интервалы абзаца.
+    fn body_metrics() -> BodyMetrics {
+        let section = section_with_margins(A4_WIDTH_TWIPS, A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS);
+        let layout = layout_of(&document_in_section(section, 2));
+        let page = &layout.pages[0];
+        let rows: Vec<(f32, f32)> = page
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                LayoutItem::Paragraph {
+                    rect, line_height, ..
+                } => Some((rect.y, *line_height)),
+                _ => None,
+            })
+            .collect();
+        let space_before = rows[0].0 - page.margins.top;
+        let line_height = rows[0].1;
+        BodyMetrics {
+            line_height,
+            space_before,
+            space_after: rows[1].0 - rows[0].0 - line_height - space_before,
+        }
+    }
+
+    /// Вместимость полосы набора в однострочных абзацах — вместе с интервалами.
+    fn a4_capacity() -> usize {
+        let metrics = body_metrics();
+        let mut y = twips_to_px(Twips::new(FIXTURE_MARGIN_TWIPS));
         let mut count = 0;
-        while y + line_height <= content_bottom {
-            y += line_height;
+        while y + metrics.pitch() <= content_bottom() {
+            y += metrics.pitch();
             count += 1;
         }
         count
+    }
+
+    /// Сколько строк абзаца помещается после `filler` однострочных абзацев.
+    ///
+    /// Считается так же, как `lines_kept_on_page`: `space_before` уходит в высоту
+    /// первой строки, `space_after` — последней. Правила переноса (висячие строки,
+    /// `w:keepLines`) сюда не входят — их проверяют тесты ниже.
+    fn lines_fitting_after(filler: usize, lines: usize) -> usize {
+        let metrics = body_metrics();
+        let mut y = twips_to_px(Twips::new(FIXTURE_MARGIN_TWIPS));
+        for _ in 0..filler {
+            y += metrics.pitch();
+        }
+
+        let mut fit = 0;
+        // Высоты набираются так же, как в `lines_kept_on_page`.
+        let mut height = metrics.space_before;
+        for index in 1..=lines {
+            height += metrics.line_height;
+            if index == lines {
+                height += metrics.space_after;
+            }
+            if y + height > content_bottom() {
+                break;
+            }
+            fit = index;
+        }
+        fit
     }
 
     /// Все элементы-абзацы документа.
@@ -1014,6 +1069,10 @@ mod tests {
     }
 
     /// Абзац с флагами `w:pPr`: `keep_lines` — `w:keepLines`, `widow_control` — `w:widowControl`.
+    ///
+    /// Тумблеры ставятся явно в обоих положениях: `None` каскад разрешил бы
+    /// по-своему (`w:widowControl` по умолчанию включён), и тест проверял бы
+    /// не то, что задумано.
     fn paragraph_with_flags(
         id: u64,
         text: &str,
@@ -1021,19 +1080,27 @@ mod tests {
         widow_control: bool,
     ) -> Paragraph {
         let mut p = paragraph(id, text);
-        p.ppr.keep_lines = keep_lines.then_some(Toggle::On);
-        p.ppr.widow_control = widow_control.then_some(Toggle::On);
+        p.ppr.keep_lines = Some(toggle(keep_lines));
+        p.ppr.widow_control = Some(toggle(widow_control));
         p
+    }
+
+    /// Тумблер в явном положении.
+    fn toggle(on: bool) -> Toggle {
+        if on {
+            Toggle::On
+        } else {
+            Toggle::Off
+        }
     }
 
     /// Блокер S6: страницу переполняет строка, а не абзац целиком.
     #[test]
     fn a_line_past_the_page_bottom_splits_the_flow() {
-        let line_height = body_line_height();
-        let capacity = line_capacity(A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS, line_height);
+        let capacity = a4_capacity();
         assert!(
             capacity > 2,
-            "полоса набора вмещает {capacity} строк — мало"
+            "полоса набора вмещает {capacity} абзацев — мало"
         );
 
         let section = section_with_margins(A4_WIDTH_TWIPS, A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS);
@@ -1141,21 +1208,17 @@ mod tests {
     /// Документ из `filler` однострочных абзацев и завершающего абзаца.
     ///
     /// `filler` берётся от вместимости страницы, а не из литерала: сколько
-    /// строк в полосе набора, решает кегль — его задаёт каскад стилей.
+    /// абзацев влезает в полосу набора, решает каскад стилей.
     fn document_with_filler(filler: usize, trailing: Paragraph) -> Document {
-        let line_height = body_line_height();
-        let capacity = line_capacity(A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS, line_height);
-        assert!(capacity > filler, "полоса набора: {capacity} строк");
+        assert!(
+            a4_capacity() > filler,
+            "полоса набора меньше {filler} абзацев"
+        );
 
         let section = section_with_margins(A4_WIDTH_TWIPS, A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS);
         let mut document = document_in_section(section, filler);
         document.body.items.push(BlockItem::Paragraph(trailing));
         document
-    }
-
-    /// Вместимость полосы набора в строках — от той же высоты строки, что и в раскладке.
-    fn a4_capacity() -> usize {
-        line_capacity(A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS, body_line_height())
     }
 
     /// Раскладка документа: тесты ниже падают с сообщением, а не с паникой внутри.
@@ -1165,25 +1228,28 @@ mod tests {
             .expect("раскладка не должна падать")
     }
 
-    /// Трёхстрочный абзац без флагов переносится построчно: что влезло — внизу,
-    /// остаток — на новой странице.
+    /// Трёхстрочный абзац переносится построчно: что влезло — внизу, остаток — сверху.
     #[test]
     fn a_paragraph_splits_between_pages_line_by_line() {
-        // Под абзац остаётся полоса ровно в две строки, третья уходит на новую.
+        // Висячие строки выключены явно: тест про перенос строк, а не про них.
+        let splitter = paragraph_with_flags(1, "aaa\nbbb\nccc", false, false);
+        // Место под хвост считаем от той же геометрии, что и `lines_kept_on_page`.
         let filler = a4_capacity() - 2;
-        let document = document_with_filler(filler, paragraph(1, "aaa\nbbb\nccc"));
+        let fits = lines_fitting_after(filler, 3);
+        assert_eq!(fits, 2, "под абзац остаётся ровно две строки");
 
+        let document = document_with_filler(filler, splitter);
         let layout = layout_of(&document);
 
         assert_eq!(
             paragraphs_on(&layout.pages[0]),
-            filler + 2,
-            "две строки абзаца остаются на первой странице"
+            filler + fits,
+            "начало абзаца остаётся на первой странице"
         );
         assert_eq!(
             paragraphs_on(&layout.pages[1]),
-            1,
-            "третья строка — на второй"
+            3 - fits,
+            "остаток абзаца — на второй"
         );
     }
 
@@ -1245,6 +1311,29 @@ mod tests {
             paragraphs_on(&layout.pages[1]),
             3,
             "абзац целиком — на второй"
+        );
+    }
+
+    /// По умолчанию `w:widowControl` включён: абзацу, которому из четырёх строк
+    /// не хватает места под три, остаётся две — 3/1 не допускается.
+    #[test]
+    fn widow_control_by_default_splits_two_and_two() {
+        let filler = a4_capacity() - 3;
+        let fits = lines_fitting_after(filler, 4);
+        assert_eq!(fits, 3, "под абзац остаётся три строки");
+
+        let document = document_with_filler(filler, paragraph(1, "aaa\nbbb\nccc\nddd"));
+        let layout = layout_of(&document);
+
+        assert_eq!(
+            paragraphs_on(&layout.pages[0]),
+            filler + 2,
+            "одна строка не остаётся внизу страницы"
+        );
+        assert_eq!(
+            paragraphs_on(&layout.pages[1]),
+            2,
+            "одна строка не остаётся вверху страницы"
         );
     }
 
