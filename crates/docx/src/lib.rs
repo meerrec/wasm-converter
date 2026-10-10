@@ -16,6 +16,7 @@
 pub mod error;
 pub mod layout;
 pub mod model;
+pub mod render;
 
 // Парсеры частей пакета и общий контекст разбора.
 mod comments;

@@ -1,0 +1,607 @@
+//! Сборка кадра страницы DOCX в [`DisplayList`].
+//!
+//! [`build`] переводит готовую раскладку ([`PageLayout`]) в команды рисования —
+//! тот же путь, который проходит лист XLSX (`xlsx::paint::build`): кадр
+//! собирается в пикселях canvas, painter читает его из ring'а и про DOCX не
+//! знает ничего.
+//!
+//! Соглашение о координатах взято у xlsx. Раскладка живёт в пикселях от левого
+//! верхнего угла страницы, команды — в физических пикселях canvas, поэтому
+//! каждую точку переводит [`Viewport::layout_to_screen`], а размеры (кегль,
+//! толщина линий) умножаются на `viewport.scale`, в который уже входят и зум,
+//! и DPR.
+
+use doc_converter_render::display_list::{
+    Color, DisplayList, DrawCommand, LineStyle, StringRef, TextAlign, TextBaseline,
+};
+use doc_converter_render::geometry::Point;
+use doc_converter_render::viewport::Viewport;
+
+use crate::layout::engine::{half_points_to_px, LayoutItem, PageLayout, Rect, TableCellLayout};
+
+/// Гарнитура, которой раскладка мерила текст.
+///
+/// Меряется всё шрифтом по умолчанию [`doc_converter_render::font::FontRegistry`]
+/// (`FontId::default()`), а это Carlito — метрически совместимый с Calibri
+/// запасной шрифт реестра. В кадр идёт именно он, а не `w:rFonts` элемента:
+/// painter ставит canvas'у имя семейства строкой, и любая другая гарнитура
+/// нарисовала бы строку другими ширинами, чем те, по которым посчитаны
+/// переносы. Поэтому `LayoutItem::Paragraph::font_family` здесь намеренно не
+/// используется — каскад отдаёт гарнитуру документа, а рисовать ею пока нечем:
+/// реестр знает один шрифт. Имя продублировано строкой, потому что `DisplayList`
+/// самодостаточен и на реестр шрифтов не ссылается.
+const LAYOUT_FONT_FAMILY: &str = "Carlito";
+
+/// Толщина рамки ячейки в пикселях раскладки.
+///
+/// Границы до элемента раскладки не доезжают — `LayoutItem::Table` несёт только
+/// прямоугольники ячеек, — поэтому берётся толщина одинарной границы по
+/// умолчанию: `w:sz="4"` это полпункта, то есть меньше пикселя при 96 dpi, и
+/// в пиксель её округляет уже рисование.
+const CELL_BORDER_W: f32 = 1.0;
+
+/// Обводка плейсхолдера плавающего элемента.
+const PLACEHOLDER_STROKE: Color = Color::rgba(0x80, 0x80, 0x80, 0xFF);
+
+/// Толщина обводки плейсхолдера в пикселях раскладки.
+const PLACEHOLDER_STROKE_W: f32 = 1.0;
+
+/// Собрать страницу `page` в `DisplayList`.
+///
+/// `page` — индекс страницы с нуля; номера приходят из UI, поэтому отсутствующая
+/// страница даёт пустой кадр ([`DrawCommand::Clear`]), а не панику.
+///
+/// Координаты `layout` — пиксели от левого верхнего угла страницы, координаты
+/// команд — физические пиксели canvas (см. модульный комментарий).
+pub fn build(layout: &PageLayout, page: usize, viewport: Viewport, out: &mut DisplayList) {
+    // Список команд переиспользуется между кадрами: без очистки следующий кадр
+    // лёг бы поверх предыдущего.
+    out.clear();
+    out.push(DrawCommand::Clear);
+
+    let Some(page) = layout.pages.get(page) else {
+        return;
+    };
+
+    let font = out.intern(LAYOUT_FONT_FAMILY);
+
+    // Страница шире окна, и без клипа её содержимое выползало бы на соседние
+    // элементы интерфейса за пределами canvas.
+    out.push(DrawCommand::PushClip {
+        x: 0.0,
+        y: 0.0,
+        w: viewport.w,
+        h: viewport.h,
+    });
+
+    let (page_x, page_y) = to_screen(&viewport, 0.0, 0.0);
+    fill_rect(
+        out,
+        page_x,
+        page_y,
+        page.width * viewport.scale,
+        page.height * viewport.scale,
+        Color::WHITE,
+    );
+
+    draw_items(&page.items, &viewport, font, out);
+
+    out.push(DrawCommand::PopClip);
+}
+
+/// Нарисовать элементы в порядке раскладки.
+fn draw_items(items: &[LayoutItem], viewport: &Viewport, font: StringRef, out: &mut DisplayList) {
+    for item in items {
+        match item {
+            LayoutItem::Paragraph {
+                rect,
+                text,
+                color,
+                size,
+                bold,
+                italic,
+                underline,
+                ..
+            } => {
+                let (x, y) = to_screen(viewport, rect.x, rect.y);
+                let text = out.intern(text);
+                out.push(DrawCommand::Text {
+                    x,
+                    y,
+                    text,
+                    font,
+                    // Кегль — в тех же физических пикселях, что и координаты:
+                    // `half_points_to_px` даёт пиксели раскладки, масштаб их
+                    // домножает, как это делает xlsx для шрифта ячейки.
+                    size: half_points_to_px(size.value()) * viewport.scale,
+                    color: text_color(*color),
+                    // Выравнивание уже учтено в `rect.x` (`align_shift` в
+                    // раскладке абзаца), поэтому повторно его применять нельзя.
+                    align: TextAlign::Left,
+                    // `rect.y` — верх строки: движок отсчитывает его от курсора
+                    // вниз за вычетом высоты строки и интервала после неё.
+                    baseline: TextBaseline::Top,
+                    bold: *bold,
+                    italic: *italic,
+                    underline: *underline,
+                });
+            }
+            LayoutItem::Table { cells, .. } => draw_table(cells, viewport, font, out),
+            LayoutItem::Float(float) => draw_float_placeholder(&float.rect, viewport, out),
+            // Разрывы — метки раскладки, рисовать нечего.
+            LayoutItem::PageBreak | LayoutItem::ColumnBreak => {}
+        }
+    }
+}
+
+/// Таблица: рамки ячеек и их содержимое.
+///
+/// Рамки рисуются первыми и все сразу: иначе границы следующей ячейки легли бы
+/// поверх текста предыдущей.
+///
+/// Содержимое ячейки лежит в тех же абсолютных координатах страницы, что и её
+/// прямоугольник (`layout_cell_items` получает верхний левый угол ячейки), —
+/// сдвигать его при отрисовке не нужно и нечем.
+fn draw_table(
+    cells: &[TableCellLayout],
+    viewport: &Viewport,
+    font: StringRef,
+    out: &mut DisplayList,
+) {
+    for cell in cells {
+        draw_cell_borders(&cell.rect, viewport, out);
+    }
+    for cell in cells {
+        draw_items(&cell.content, viewport, font, out);
+    }
+}
+
+/// Контур ячейки: четыре сплошные линии по её прямоугольнику.
+///
+/// Общее ребро соседних ячеек рисуется дважды — так же, как в таблице с
+/// `border-collapse`, где линия одна на двоих.
+fn draw_cell_borders(rect: &Rect, viewport: &Viewport, out: &mut DisplayList) {
+    let (x, y) = to_screen(viewport, rect.x, rect.y);
+    let w = rect.width * viewport.scale;
+    let h = rect.height * viewport.scale;
+    let stroke_w = CELL_BORDER_W * viewport.scale;
+    let stroke = Color::BLACK;
+
+    let segments = [
+        (x, y, x + w, y),
+        (x, y + h, x + w, y + h),
+        (x, y, x, y + h),
+        (x + w, y, x + w, y + h),
+    ];
+    for (x1, y1, x2, y2) in segments {
+        out.push(DrawCommand::Line {
+            x1,
+            y1,
+            x2,
+            y2,
+            stroke,
+            stroke_w,
+            style: LineStyle::Solid,
+        });
+    }
+}
+
+/// Плейсхолдер плавающего элемента — прямоугольник с контуром.
+///
+/// Рисунки не рисуются: им нужна выемка медиа из архива и `register_bitmap` в
+/// painter'е — это следующий слайс. Пока на месте картинки видно её габариты,
+/// так что раскладка и обтекание проверяемы на глаз.
+fn draw_float_placeholder(rect: &Rect, viewport: &Viewport, out: &mut DisplayList) {
+    let (x, y) = to_screen(viewport, rect.x, rect.y);
+    out.push(DrawCommand::Rect {
+        x,
+        y,
+        w: rect.width * viewport.scale,
+        h: rect.height * viewport.scale,
+        fill: Color::TRANSPARENT,
+        stroke: PLACEHOLDER_STROKE,
+        stroke_w: PLACEHOLDER_STROKE_W * viewport.scale,
+        radius: [0.0; 4],
+    });
+}
+
+/// Прямоугольник одним `Rect` без рамки и скруглений.
+fn fill_rect(out: &mut DisplayList, x: f32, y: f32, w: f32, h: f32, fill: Color) {
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    out.push(DrawCommand::Rect {
+        x,
+        y,
+        w,
+        h,
+        fill,
+        stroke: Color::TRANSPARENT,
+        stroke_w: 0.0,
+        radius: [0.0; 4],
+    });
+}
+
+/// Цвет знака: раскладка хранит `w:color` как `RRGGBB`, `DisplayList` ждёт
+/// `RRGGBBAA` — каналы меняются местами, альфа добавляется непрозрачная.
+///
+/// Значение без `w:color` — чёрный: `auto` в OOXML и есть цвет текста по
+/// умолчанию.
+fn text_color(rgb: Option<u32>) -> Color {
+    match rgb {
+        Some(rgb) => Color(((rgb & 0x00FF_FFFF) << 8) | 0xFF),
+        None => Color::BLACK,
+    }
+}
+
+/// Точка раскладки → физические пиксели canvas.
+fn to_screen(viewport: &Viewport, x: f32, y: f32) -> (f32, f32) {
+    let point = viewport.layout_to_screen(Point::new(x, y));
+    (point.x, point.y)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use doc_converter_render::font::FontRegistry;
+
+    use super::*;
+    use crate::layout::{layout_document, LayoutOptions, Page};
+
+    /// Путь к фикстуре от корня репозитория.
+    fn fixture_path(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-fixtures/docx")
+            .join(name)
+    }
+
+    /// Разложить фикстуру; её отсутствие роняет тест, а не пропускает его.
+    fn fixture_layout(name: &str) -> PageLayout {
+        let path = fixture_path(name);
+        let bytes =
+            std::fs::read(&path).unwrap_or_else(|_| panic!("нет фикстуры {}", path.display()));
+        let document = crate::open(bytes).expect("фикстура разбирается");
+        layout_document(
+            &document,
+            &LayoutOptions::default(),
+            &mut FontRegistry::new(64),
+        )
+        .expect("раскладка не должна падать")
+    }
+
+    /// Окно с прокруткой и зумом: перевод координат виден, а не совпадает с
+    /// тождественным.
+    fn viewport() -> Viewport {
+        Viewport::new(10.0, 20.0, 800.0, 600.0, 2.0)
+    }
+
+    /// Собрать кадр страницы.
+    fn frame(layout: &PageLayout, page: usize) -> DisplayList {
+        let mut out = DisplayList::new();
+        build(layout, page, viewport(), &mut out);
+        out
+    }
+
+    /// Абзацы страницы в порядке раскладки.
+    fn paragraphs(page: &Page) -> Vec<&LayoutItem> {
+        page.items
+            .iter()
+            .filter(|item| matches!(item, LayoutItem::Paragraph { .. }))
+            .collect()
+    }
+
+    /// Текст элемента-абзаца.
+    fn paragraph_text(item: &LayoutItem) -> &str {
+        match item {
+            LayoutItem::Paragraph { text, .. } => text,
+            _ => unreachable!("вызывается только для абзаца"),
+        }
+    }
+
+    /// Команда `Text`, разобранная по полям: так утверждения читаются.
+    #[derive(Debug)]
+    struct DrawnText {
+        text: String,
+        font: String,
+        x: f32,
+        y: f32,
+        size: f32,
+        color: Color,
+        align: TextAlign,
+        baseline: TextBaseline,
+        bold: bool,
+    }
+
+    /// Все команды `Text` кадра в порядке рисования.
+    fn drawn_texts(dl: &DisplayList) -> Vec<DrawnText> {
+        (0..dl.len())
+            .filter_map(|i| match dl.cmd(i) {
+                Some(DrawCommand::Text {
+                    x,
+                    y,
+                    text,
+                    font,
+                    size,
+                    color,
+                    align,
+                    baseline,
+                    bold,
+                    ..
+                }) => Some(DrawnText {
+                    text: dl.string(*text).to_owned(),
+                    font: dl.string(*font).to_owned(),
+                    x: *x,
+                    y: *y,
+                    size: *size,
+                    color: *color,
+                    align: *align,
+                    baseline: *baseline,
+                    bold: *bold,
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Число команд, подходящих под условие.
+    fn count(dl: &DisplayList, pred: impl Fn(&DrawCommand) -> bool) -> usize {
+        (0..dl.len())
+            .filter(|i| dl.cmd(*i).is_some_and(&pred))
+            .count()
+    }
+
+    /// Ячейки первой таблицы раскладки.
+    fn first_table_cells(layout: &PageLayout) -> &[TableCellLayout] {
+        layout
+            .pages
+            .iter()
+            .flat_map(|page| page.items.iter())
+            .find_map(|item| match item {
+                LayoutItem::Table { cells, .. } => Some(cells.as_slice()),
+                _ => None,
+            })
+            .expect("в раскладке есть таблица")
+    }
+
+    /// Абзацы среди элементов ячейки.
+    fn paragraphs_in(items: &[LayoutItem]) -> impl Iterator<Item = &LayoutItem> {
+        items
+            .iter()
+            .filter(|item| matches!(item, LayoutItem::Paragraph { .. }))
+    }
+
+    /// Сравнить координату или размер: `f32` на равенство не проверяем.
+    fn assert_px(actual: f32, expected: f32, what: &str) {
+        assert!(
+            (actual - expected).abs() < 0.01,
+            "{what}: ожидалось {expected} px, получено {actual} px"
+        );
+    }
+
+    /// Каждая строка абзаца — ровно одна команда `Text`, и она же несёт текст
+    /// строки.
+    #[test]
+    fn every_paragraph_line_becomes_one_text_command() {
+        let layout = fixture_layout("simple/multiple_paragraphs_0.docx");
+        let dl = frame(&layout, 0);
+
+        let lines = paragraphs(&layout.pages[0]);
+        assert!(!lines.is_empty(), "на первой странице есть абзацы");
+        assert_eq!(
+            drawn_texts(&dl).len(),
+            lines.len(),
+            "одна команда на строку абзаца"
+        );
+
+        let drawn: Vec<String> = drawn_texts(&dl).into_iter().map(|t| t.text).collect();
+        let expected: Vec<String> = lines
+            .iter()
+            .map(|item| paragraph_text(item).to_owned())
+            .collect();
+        assert_eq!(drawn, expected);
+    }
+
+    /// Координаты команды — раскладка, переведённая окном: прокрутка вычитается,
+    /// масштаб умножается.
+    #[test]
+    fn text_is_transformed_into_canvas_pixels() {
+        let layout = fixture_layout("simple/one_paragraph.docx");
+        let dl = frame(&layout, 0);
+        let viewport = viewport();
+
+        let Some(LayoutItem::Paragraph { rect, .. }) = layout.pages[0].items.first() else {
+            panic!("первый элемент страницы — абзац");
+        };
+        let drawn = &drawn_texts(&dl)[0];
+
+        assert_px(drawn.x, (rect.x - viewport.x) * viewport.scale, "x");
+        assert_px(drawn.y, (rect.y - viewport.y) * viewport.scale, "y");
+        assert_px(
+            drawn.size,
+            half_points_to_px(22) * viewport.scale,
+            "кегль 11 pt в физических пикселях",
+        );
+    }
+
+    /// `formatting/heading_1.docx`: заголовок рисуется жирным кеглем стиля и
+    /// гарнитурой раскладки.
+    #[test]
+    fn a_heading_is_drawn_bold_and_sized() {
+        let layout = fixture_layout("formatting/heading_1.docx");
+        let dl = frame(&layout, 0);
+
+        let drawn = &drawn_texts(&dl)[0];
+        assert_eq!(drawn.text, "Heading 1");
+        assert!(drawn.bold, "жирный из стиля Heading1");
+        assert_px(
+            drawn.size,
+            half_points_to_px(32) * viewport().scale,
+            "16 pt",
+        );
+        assert_eq!(drawn.font, LAYOUT_FONT_FAMILY, "шрифт раскладки");
+        assert_eq!(drawn.baseline, TextBaseline::Top, "верх строки");
+        assert_eq!(drawn.align, TextAlign::Left, "выравнивание уже в rect.x");
+    }
+
+    /// Страница выбирается по индексу: вторая страница рисует свои строки и не
+    /// несёт строк первой.
+    #[test]
+    fn the_requested_page_is_the_one_drawn() {
+        let layout = fixture_layout("basic/sections.docx");
+        assert!(layout.pages.len() >= 2, "фикстура двухстраничная");
+
+        let first: Vec<String> = drawn_texts(&frame(&layout, 0))
+            .into_iter()
+            .map(|t| t.text)
+            .collect();
+        let second: Vec<String> = drawn_texts(&frame(&layout, 1))
+            .into_iter()
+            .map(|t| t.text)
+            .collect();
+
+        let expected: Vec<String> = paragraphs(&layout.pages[1])
+            .iter()
+            .map(|item| paragraph_text(item).to_owned())
+            .collect();
+        assert!(!expected.is_empty(), "вторая страница не пуста");
+        assert_eq!(second, expected);
+        assert_ne!(second, first, "страницы рисуют разное");
+        assert!(
+            !second.contains(&first[0]),
+            "строки первой страницы на второй не рисуются"
+        );
+    }
+
+    /// Номера приходят из UI: страницы за пределами документа дают пустой кадр.
+    #[test]
+    fn a_missing_page_yields_an_empty_frame() {
+        let layout = fixture_layout("simple/one_paragraph.docx");
+        assert_eq!(layout.pages.len(), 1, "фикстура одностраничная");
+
+        let dl = frame(&layout, 1);
+        assert_eq!(dl.len(), 1, "пустой кадр — только Clear");
+        assert!(matches!(dl.cmd(0), Some(DrawCommand::Clear)));
+
+        assert!(
+            !drawn_texts(&frame(&layout, 0)).is_empty(),
+            "на своей странице текст есть"
+        );
+    }
+
+    /// `w:color` доезжает до команды как `RRGGBBAA`, а не как `AARRGGBB`.
+    #[test]
+    fn an_explicit_color_becomes_rrggbbaa() {
+        let layout = fixture_layout("basic/multiple_runs.docx");
+        let dl = frame(&layout, 0);
+        let texts = drawn_texts(&dl);
+
+        let red = texts
+            .iter()
+            .find(|t| t.color == Color(0xFF00_00FF))
+            .expect("красный run из фикстуры");
+        // Пробел в конце строки раскладка отбрасывает при переносе.
+        assert_eq!(red.text, "colored", "красный — только этот run");
+        assert_eq!(red.color, Color::rgba(0xFF, 0x00, 0x00, 0xFF));
+
+        let plain = texts
+            .iter()
+            .find(|t| t.text.starts_with("Plain"))
+            .expect("первый run фикстуры");
+        assert_eq!(plain.color, Color::BLACK, "без `w:color` — чёрный");
+    }
+
+    /// Таблица: контур на каждую ячейку и текст ячейки внутри.
+    #[test]
+    fn a_table_draws_cell_borders_and_content() {
+        let layout = fixture_layout("tables/simple_2x2.docx");
+        let dl = frame(&layout, 0);
+
+        let cells = first_table_cells(&layout);
+        assert_eq!(cells.len(), 4, "таблица 2×2");
+        assert_eq!(
+            count(&dl, |cmd| matches!(cmd, DrawCommand::Line { .. })),
+            cells.len() * 4,
+            "по четыре линии на ячейку"
+        );
+        assert_eq!(
+            drawn_texts(&dl).len(),
+            cells
+                .iter()
+                .map(|cell| paragraphs_in(&cell.content).count())
+                .sum::<usize>(),
+            "содержимое ячеек нарисовано"
+        );
+    }
+
+    /// Ячейки лежат в тех же координатах, что и их содержимое: раскладка кладёт
+    /// содержимое от верхнего левого угла ячейки, а не в её локальной системе.
+    #[test]
+    fn cell_content_lands_inside_its_cell() {
+        let layout = fixture_layout("tables/simple_2x2.docx");
+
+        for cell in first_table_cells(&layout) {
+            for item in &cell.content {
+                let LayoutItem::Paragraph { rect, .. } = item else {
+                    continue;
+                };
+                assert!(
+                    rect.x + 0.01 >= cell.rect.x
+                        && rect.x + rect.width <= cell.rect.x + cell.rect.width + 0.01
+                        && rect.y + 0.01 >= cell.rect.y
+                        && rect.y + rect.height <= cell.rect.y + cell.rect.height + 0.01,
+                    "строка {:?} выходит за ячейку {:?}",
+                    rect,
+                    cell.rect
+                );
+            }
+        }
+    }
+
+    /// Плавающий элемент — пока прямоугольник-плейсхолдер: `Image` в кадре не
+    /// появляется, медиа для него ещё не вынимается из архива.
+    #[test]
+    fn a_float_becomes_a_placeholder_rect() {
+        let layout = fixture_layout("images/anchor_wrap_square.docx");
+        let dl = frame(&layout, 0);
+
+        let drawn = (0..dl.len())
+            .filter_map(|i| match dl.cmd(i) {
+                Some(DrawCommand::Rect {
+                    w, h, fill, stroke, ..
+                }) if *fill == Color::TRANSPARENT => Some((*w, *h, *stroke)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(drawn.len(), 1, "ровно один плейсхолдер");
+        assert_px(drawn[0].0, 120.0 * viewport().scale, "ширина");
+        assert_px(drawn[0].1, 90.0 * viewport().scale, "высота");
+        assert_ne!(drawn[0].2, Color::TRANSPARENT, "контур виден");
+        assert_eq!(
+            count(&dl, |cmd| matches!(cmd, DrawCommand::Image { .. })),
+            0,
+            "рисунки отложены"
+        );
+    }
+
+    /// Кадр переживает сериализацию: painter получает его из ring'а байтами.
+    #[test]
+    fn the_frame_survives_serialization() {
+        let layout = fixture_layout("simple/multiple_paragraphs_0.docx");
+        let dl = frame(&layout, 0);
+
+        let bytes = dl.to_bytes();
+        let reader = DisplayList::from_bytes(&bytes).expect("кадр декодируется");
+        let decoded = reader
+            .iter()
+            .collect::<Result<Vec<DrawCommand>, _>>()
+            .expect("команды декодируются");
+
+        assert_eq!(decoded.len(), dl.len());
+        let decoded_texts = decoded
+            .iter()
+            .filter(|cmd| matches!(cmd, DrawCommand::Text { .. }))
+            .count();
+        assert_eq!(decoded_texts, drawn_texts(&dl).len());
+    }
+}
