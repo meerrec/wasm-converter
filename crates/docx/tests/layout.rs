@@ -151,10 +151,21 @@ fn test_layout_with_tables() {
         !layout.pages.is_empty(),
         "Документ с таблицей должен иметь страницы"
     );
-    // Элементов `LayoutItem::Table` пока нет вовсе: `layout_table` считает высоту
-    // таблицы для потока, но на страницу её не кладёт (`TODO: Add table to current
-    // page` в `layout/engine.rs`). Проверять здесь нечего, поэтому проверено только
-    // то, что таблица доехала до модели, а раскладка не упала.
+    // Таблица доезжает и до страницы: `tables::layout_table` кладёт её элементом
+    // с ячейками, а не только занимает высоту в потоке.
+    let table_items: Vec<&LayoutItem> = layout
+        .pages
+        .iter()
+        .flat_map(|page| page.items.iter())
+        .filter(|item| matches!(item, LayoutItem::Table { .. }))
+        .collect();
+    assert_eq!(table_items.len(), 1, "Таблица должна попасть на страницу");
+    match table_items[0] {
+        LayoutItem::Table { cells, .. } => {
+            assert_eq!(cells.len(), 4, "В таблице 2×2 должно быть четыре ячейки");
+        }
+        other => panic!("Ожидался элемент-таблица, получено {other:?}"),
+    }
 }
 
 #[test]
