@@ -284,6 +284,13 @@ fn layout_cell_items(
                 text: line_text.to_owned(),
                 line_height,
                 color,
+                // Ячейки не проходят каскад (см. выше): гарнитура и начертание
+                // берутся не из `w:rPr`, а из умолчания движка.
+                font_family: None,
+                size: DEFAULT_SIZE_HALF_POINTS,
+                bold: false,
+                italic: false,
+                underline: false,
             });
             line_top += line_height;
         }

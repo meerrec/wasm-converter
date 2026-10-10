@@ -120,6 +120,16 @@ pub enum LayoutItem {
         line_height: f32,
         /// Цвет текста.
         color: Option<u32>,
+        /// Гарнитура (`w:rFonts`); `None` — гарнитура по умолчанию.
+        font_family: Option<String>,
+        /// Кегль (`w:sz`) в полупунктах; в пиксели переводит [`half_points_to_px`].
+        size: HalfPoint,
+        /// Полужирный (`w:b`).
+        bold: bool,
+        /// Курсив (`w:i`).
+        italic: bool,
+        /// Подчёркивание (`w:u`).
+        underline: bool,
     },
     /// Таблица.
     Table {
@@ -357,6 +367,14 @@ pub fn layout_document(
                     height: line_breaker
                         .line_height_with_spacing(HalfPoint::new(DEFAULT_HALF_POINTS), None),
                     color: None,
+                    // Текста в строке нет: рисовать нечего, а каскада, откуда
+                    // берёт стиль `layout_paragraph`, у движка под рукой нет —
+                    // то же умолчание, из которого взята и высота строки.
+                    font_family: None,
+                    size: HalfPoint::new(DEFAULT_HALF_POINTS),
+                    bold: false,
+                    italic: false,
+                    underline: false,
                 };
                 let lines: Vec<&Line> = if layout.lines.is_empty() {
                     vec![&empty_line]
@@ -503,6 +521,11 @@ fn place_lines(
                 text: line.text.clone(),
                 line_height: line.height,
                 color: line.color,
+                font_family: line.font_family.clone(),
+                size: line.size,
+                bold: line.bold,
+                italic: line.italic,
+                underline: line.underline,
             });
     }
 
@@ -2066,6 +2089,76 @@ mod tests {
             floats[0].rect.y,
             second.margins.top,
             "на новой странице рисунок встаёт от её полосы набора",
+        );
+    }
+
+    /// Первый элемент-абзац раскладки.
+    fn first_paragraph_item(layout: &PageLayout) -> &LayoutItem {
+        layout
+            .pages
+            .iter()
+            .flat_map(|page| page.items.iter())
+            .find(|item| matches!(item, LayoutItem::Paragraph { .. }))
+            .expect("в раскладке есть элемент-абзац")
+    }
+
+    /// `formatting/heading_1.docx`: начертание и кегль доезжают до элемента
+    /// раскладки — рендер нарисует заголовок жирным 16 pt.
+    #[test]
+    fn fixture_heading_item_carries_the_run_style() {
+        let heading = layout_fixture("formatting/heading_1.docx");
+        let LayoutItem::Paragraph {
+            font_family,
+            size,
+            bold,
+            italic,
+            underline,
+            ..
+        } = first_paragraph_item(&heading)
+        else {
+            unreachable!("first_paragraph_item отдаёт абзац")
+        };
+
+        assert!(*bold, "жирный из стиля Heading1");
+        assert!(!*italic, "курсива в стиле нет");
+        assert!(!*underline, "подчёркивания в стиле нет");
+        assert_eq!(*size, HalfPoint::new(32), "16 pt из стиля");
+        assert_px(
+            half_points_to_px(size.value()),
+            16.0 * 96.0 / 72.0,
+            "кегль в пикселях",
+        );
+        assert_eq!(
+            font_family.as_deref(),
+            Some("Calibri"),
+            "гарнитура docDefaults"
+        );
+    }
+
+    /// `simple/one_paragraph.docx`: обычный текст остаётся нежирным, а кегль
+    /// в элементе — `w:sz` из `docDefaults`, переведённый в пиксели.
+    #[test]
+    fn fixture_plain_item_stays_unstyled() {
+        let plain = layout_fixture("simple/one_paragraph.docx");
+        let LayoutItem::Paragraph {
+            size,
+            bold,
+            italic,
+            underline,
+            ..
+        } = first_paragraph_item(&plain)
+        else {
+            unreachable!("first_paragraph_item отдаёт абзац")
+        };
+
+        assert!(!*bold, "w:b не задан");
+        assert!(!*italic, "w:i не задан");
+        assert!(!*underline, "w:u не задан");
+        assert_eq!(*size, HalfPoint::new(22), "11 pt из docDefaults");
+        assert_px(
+            half_points_to_px(size.value()),
+            11.0 * 96.0 / 72.0,
+            "кегль в пикселях",
         );
     }
 }
