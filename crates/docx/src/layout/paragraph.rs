@@ -6,13 +6,17 @@
 //!
 //! Метрики и начертание приходят из каскада ([`super::cascade`]): кегль, цвет,
 //! гарнитура, жирный/курсив/подчёркивание, интервалы и отступы резолвятся из
-//! `docDefaults`, стиля абзаца и прямого форматирования. Строка [`Line`] несёт
-//! одну метрику и один стиль знака, поэтому текст абзаца режется на отрезки по
-//! кеглю и цвету (см. `segments`), и каждый отрезок переносится сам по себе:
-//! смешанное форматирование внутри строки потребует спанов — их добавит
-//! отдельный слайс.
-
-use std::ops::Range;
+//! `docDefaults`, стиля абзаца и прямого форматирования. Гарнитура резолвится в
+//! шрифт реестра по имени семейства (`w:rFonts`), а строка несёт имя того лица,
+//! которым измерена: painter ставит canvas'у ровно его, поэтому точки переноса
+//! совпадают с картинкой.
+//!
+//! Абзац раскладывается как один поток текста: прогоны с разным кеглем,
+//! начертанием и гарнитурой складываются в одну строку, пока её суммарная ширина
+//! помещается в полосу набора ([`LineBreaker::break_spanned`]). Стиль знака
+//! строка берёт у первого прогона (`Segment::at`): пока у строки нет спанов —
+//! отдельного слайса, — «обычный **жирный** обычный» рисуется начертанием
+//! первого слова, но переносится уже целиком.
 
 use doc_converter_render::font::FontId;
 
@@ -23,7 +27,7 @@ use crate::model::{
 
 use super::cascade::{resolve_paragraph, resolve_run, ResolvedParagraph, StyleCache};
 use super::engine::{LayoutOptions, LayoutState};
-use super::line_break::LineBreaker;
+use super::line_break::{LineBreaker, MetricSpan};
 
 /// Строка абзаца после раскладки.
 #[derive(Debug, Clone)]
@@ -38,9 +42,14 @@ pub struct Line {
     pub height: f32,
     /// Цвет текста; `None` — цвет по умолчанию.
     pub color: Option<u32>,
-    /// Гарнитура (`w:rFonts`); `None` — гарнитура по умолчанию.
+    /// Имя гарнитуры, которым строка измерена и будет нарисована.
     ///
-    /// Стиль знака берётся у первого run'а отрезка (см. `Segment`).
+    /// Это `w:rFonts` прогона, если реестр знает такое семейство, и имя
+    /// запасного лица ([`doc_converter_render::font::DEFAULT_FONT_FAMILY`]),
+    /// если не знает: в кадр уходит ровно то имя, которое разрешилось в
+    /// измеренный шрифт. `None` — документ гарнитуры не называл, и обе стороны
+    /// берут умолчание реестра. Стиль знака берётся у первого прогона строки
+    /// (см. `Segment::at`).
     pub font_family: Option<String>,
     /// Кегль (`w:sz`); в пиксели переводит [`half_points_to_px`].
     ///
@@ -75,30 +84,24 @@ pub struct ParagraphLayout {
     pub anchors: Vec<Anchor>,
 }
 
-/// Строка до измерения: диапазон в тексте run'а, левый край её полосы и ширина полосы.
-struct PendingLine {
-    /// Байтовый диапазон строки в тексте run'а.
-    range: Range<usize>,
-    /// Позиция X полосы набора строки.
-    x: f32,
-    /// Ширина полосы набора строки.
-    band: f32,
-}
-
-/// Отрезок абзаца с одними метриками: текст, кегль, цвет и стиль знака.
+/// Отрезок абзаца с одним стилем знака: текст, метрики и начертание.
 ///
-/// Строка [`Line`] несёт один кегль и один цвет, поэтому соседние run'ы с теми же
-/// метриками раскладываются как один текст: абзац из сотни однородных run'ов
-/// (обычное дело — так их оставляет Word) иначе рассыпался бы на сотню строк.
+/// Абзац Word — один поток текста, а не набор независимых отрезков: отрезки
+/// склеиваются в общий текст ([`ParagraphText`]), перенос идёт по суммарной
+/// ширине ([`LineBreaker::break_spanned`]), и лишь метрики у частей строки
+/// разные. Отрезок отвечает за две вещи: своими шрифтом и кеглем он меряет свою
+/// часть строки, а его стиль знака строка берёт, если он её открыл.
 ///
-/// Гарнитура и начертание на слияние не влияют и берутся у первого run'а
-/// отрезка — долг: пока у строки нет спанов, «обычный **жирный** обычный»
-/// рисуется начертанием первого слова.
+/// Цвет, начертание и подчёркивание на ширину не влияют намеренно: одна система
+/// ширин на экран и PDF держится на regular (ADR-0007), и нарезка по стилю знака
+/// развалила бы «обычный **жирный** обычный» на три строки.
 struct Segment {
     /// Текст отрезка.
     text: String,
-    /// Гарнитура (`w:rFonts`).
-    font_family: Option<String>,
+    /// Шрифт отрезка: разрешённый `w:rFonts` или запасное лицо реестра.
+    font_id: FontId,
+    /// Имя, которым отрезок уходит в кадр: совпадает с измеренным лицом.
+    draw_family: Option<String>,
     /// Кегль (`w:sz`), полупункты.
     size: HalfPoint,
     /// Полужирный (`w:b`).
@@ -109,6 +112,60 @@ struct Segment {
     underline: bool,
     /// Цвет текста (`w:color`).
     color: Option<u32>,
+}
+
+impl Segment {
+    /// Отрезок, к которому относится байт `pos`.
+    ///
+    /// Строка начинается с него, и его стиль знака она несёт: спанов внутри
+    /// строки пока нет, поэтому у строки один стиль на всю ширину.
+    fn at<'a>(segments: &'a [Segment], starts: &[usize], pos: usize) -> &'a Segment {
+        let index = starts
+            .partition_point(|start| *start <= pos)
+            .saturating_sub(1);
+        &segments[index.min(segments.len() - 1)]
+    }
+}
+
+/// Абзац как один текст: склеенные отрезки и спаны метрик по нему.
+struct ParagraphText {
+    /// Общий текст всех отрезков — то, по чему идёт перенос.
+    text: String,
+    /// Начало каждого отрезка в `text`: строка находит по нему свой стиль знака.
+    starts: Vec<usize>,
+    /// Спаны метрик по `text`: соседние отрезки с одним шрифтом и кеглем слиты,
+    /// чтобы измерение слова не перебирало сотню прогонов абзаца.
+    spans: Vec<MetricSpan>,
+}
+
+impl ParagraphText {
+    /// Склеить отрезки в один текст и собрать спаны метрик.
+    fn new(segments: &[Segment]) -> Self {
+        let mut text = String::new();
+        let mut starts = Vec::with_capacity(segments.len());
+        let mut spans: Vec<MetricSpan> = Vec::new();
+
+        for segment in segments {
+            let start = text.len();
+            text.push_str(&segment.text);
+            starts.push(start);
+            match spans.last_mut() {
+                Some(last) if last.font_id == segment.font_id && last.size == segment.size => {
+                    last.range.end = text.len();
+                }
+                _ => spans.push(MetricSpan {
+                    range: start..text.len(),
+                    font_id: segment.font_id,
+                    size: segment.size,
+                }),
+            }
+        }
+        Self {
+            text,
+            starts,
+            spans,
+        }
+    }
 }
 
 /// Подчёркивание знака, сведённое к факту.
@@ -123,17 +180,18 @@ fn is_underlined(underline: Option<&Underline>) -> bool {
     }
 }
 
-/// Собрать отрезки абзаца: текст run'ов, слитый по кеглю и цвету.
+/// Собрать отрезки абзаца: текст прогонов с резолвленными метриками и стилем.
 ///
-/// Ключ слияния — только кегль и цвет, и начертание в него не входит намеренно:
-/// строки ломаются по отдельным отрезкам, и нарезка по стилю знака развалила бы
-/// «обычный **жирный** обычный» на три строки вместо одной. Начертание отрезка
-/// берётся у его первого run'а.
+/// Гарнитура прогона разрешается в шрифт реестра по имени семейства — тем же
+/// именем строка потом рисуется. Незарегистрированное семейство даёт запасное
+/// лицо, и строка несёт его имя, а не имя из документа: иначе painter поставил
+/// бы canvas'у шрифт, которым раскладка не мерила.
 fn segments(
     document: &Document,
     paragraph: &Paragraph,
     resolved: &ResolvedParagraph,
     cache: &mut StyleCache,
+    line_breaker: &LineBreaker,
 ) -> Vec<Segment> {
     let mut segments: Vec<Segment> = Vec::new();
     for inline in &paragraph.runs {
@@ -146,20 +204,17 @@ fn segments(
             continue;
         }
         let rpr = resolve_run(document, resolved, run, cache);
-        match segments.last_mut() {
-            Some(last) if last.size == rpr.size && last.color == rpr.color => {
-                last.text.push_str(&text);
-            }
-            _ => segments.push(Segment {
-                text,
-                font_family: rpr.font_family,
-                size: rpr.size,
-                bold: rpr.bold,
-                italic: rpr.italic,
-                underline: is_underlined(rpr.underline.as_ref()),
-                color: rpr.color,
-            }),
-        }
+        let family = rpr.font_family.as_deref();
+        segments.push(Segment {
+            text,
+            font_id: line_breaker.resolve_family(family),
+            draw_family: line_breaker.drawable_family(family).map(str::to_owned),
+            size: rpr.size,
+            bold: rpr.bold,
+            italic: rpr.italic,
+            underline: is_underlined(rpr.underline.as_ref()),
+            color: rpr.color,
+        });
     }
     segments
 }
@@ -190,55 +245,51 @@ pub fn layout_paragraph(
     let origin = state.x + ind.left_px;
 
     let mut lines = Vec::new();
-    for segment in &segments(document, paragraph, &resolved, cache) {
-        let text = segment.text.as_str();
-        let height = line_breaker.line_height_for(segment.size, resolved.ppr.spacing.line);
+    let segments = segments(document, paragraph, &resolved, cache, line_breaker);
+    let flow = ParagraphText::new(&segments);
 
-        // Первую строку абзаца отрезаем её полосой отдельно: `break_lines`
-        // разбивает весь текст одной шириной, а у первой строки она другая.
-        let mut pending = Vec::new();
-        let mut laid_out = 0;
-        if lines.is_empty() && ind.first_line_px != 0.0 {
-            if let Some(range) = line_breaker
-                .break_lines(text, FontId::default(), segment.size, first_line_band)
-                .first()
-                .cloned()
-            {
-                laid_out = range.end;
-                pending.push(PendingLine {
-                    range,
-                    x: origin + ind.first_line_px,
-                    band: first_line_band,
-                });
-            }
+    // Первую строку абзаца отрезаем её полосой отдельно: перенос идёт по всему
+    // тексту, а у первой строки ширина другая (`w:firstLine`/`w:hanging`).
+    let mut broken = Vec::new();
+    let mut laid_out = 0usize;
+    if ind.first_line_px != 0.0 && !flow.text.is_empty() {
+        if let Some(first) = line_breaker
+            .break_spanned(&flow.text, &flow.spans, first_line_band, 0, Some(1))
+            .into_iter()
+            .next()
+        {
+            laid_out = first.range.end;
+            broken.push((first, origin + ind.first_line_px, first_line_band));
         }
-        pending.extend(
-            line_breaker
-                .break_lines(&text[laid_out..], FontId::default(), segment.size, band)
-                .into_iter()
-                .map(|range| PendingLine {
-                    range: range.start + laid_out..range.end + laid_out,
-                    x: origin,
-                    band,
-                }),
-        );
+    }
+    broken.extend(
+        line_breaker
+            .break_spanned(&flow.text, &flow.spans, band, laid_out, None)
+            .into_iter()
+            .map(|line| (line, origin, band)),
+    );
 
-        for line in pending {
-            let line_text = &text[line.range];
-            let width = line_breaker.measure_text(line_text, FontId::default(), segment.size);
-            lines.push(Line {
-                text: line_text.to_owned(),
-                x: line.x + align_shift(jc, line.band, width),
-                width,
-                height,
-                color: segment.color,
-                font_family: segment.font_family.clone(),
-                size: segment.size,
-                bold: segment.bold,
-                italic: segment.italic,
-                underline: segment.underline,
-            });
-        }
+    for (line, x, line_band) in broken {
+        let style = Segment::at(&segments, &flow.starts, line.range.start);
+        // Высота строки — по самому крупному её прогону, а если спанов на
+        // диапазон не нашлось (быть такого не должно) — по кеглю стиля.
+        let size = if line.max_size.value() > 0 {
+            line.max_size
+        } else {
+            style.size
+        };
+        lines.push(Line {
+            text: flow.text[line.range].to_owned(),
+            x: x + align_shift(jc, line_band, line.width),
+            width: line.width,
+            height: line_breaker.line_height_for(size, resolved.ppr.spacing.line),
+            color: style.color,
+            font_family: style.draw_family.clone(),
+            size: style.size,
+            bold: style.bold,
+            italic: style.italic,
+            underline: style.underline,
+        });
     }
 
     // Абзац без текста всё равно занимает строку — как метка абзаца в Word.
@@ -253,7 +304,9 @@ pub fn layout_paragraph(
             color: None,
             // Пустая строка — метка абзаца: её стиль знака берётся из абзаца,
             // откуда пришла и высота, а не из умолчания движка.
-            font_family: resolved.rpr.font_family.clone(),
+            font_family: line_breaker
+                .drawable_family(resolved.rpr.font_family.as_deref())
+                .map(str::to_owned),
             size: resolved.rpr.size,
             bold: resolved.rpr.bold,
             italic: resolved.rpr.italic,
@@ -423,8 +476,17 @@ mod tests {
 
     /// Разложить абзац в заданной полосе набора.
     fn layout(document: &Document, paragraph: &Paragraph, state: &LayoutState) -> ParagraphLayout {
-        let mut fonts = FontRegistry::new(64);
-        let mut line_breaker = LineBreaker::new(&mut fonts, FontId::default());
+        layout_with(document, paragraph, state, &mut FontRegistry::new(64))
+    }
+
+    /// Разложить абзац реестром с зарегистрированными семействами.
+    fn layout_with(
+        document: &Document,
+        paragraph: &Paragraph,
+        state: &LayoutState,
+        fonts: &mut FontRegistry,
+    ) -> ParagraphLayout {
+        let mut line_breaker = LineBreaker::new(fonts, FontId::default());
         layout_paragraph(
             document,
             paragraph,
@@ -433,6 +495,44 @@ mod tests {
             &mut StyleCache::new(),
             &mut line_breaker,
         )
+    }
+
+    /// Полоса набора заданной ширины: ею проверяется перенос.
+    fn state_with_width(column_width: f32) -> LayoutState {
+        LayoutState {
+            column_width,
+            ..state()
+        }
+    }
+
+    /// Абзац из прогонов: у каждого свой текст и свои `w:rPr`.
+    fn paragraph_of_runs(runs: &[(&str, RawRPr)]) -> Paragraph {
+        Paragraph {
+            runs: runs
+                .iter()
+                .enumerate()
+                .map(|(index, (text, r_pr))| {
+                    Inline::Run(Run {
+                        id: NodeId::new(index as u64 + 2),
+                        content: vec![RunContent::Text((*text).to_owned())],
+                        rpr: Box::new(r_pr.clone()),
+                        ..Run::default()
+                    })
+                })
+                .collect(),
+            ..Paragraph::default()
+        }
+    }
+
+    /// `w:rFonts` с одной гарнитурой.
+    fn family(name: &str) -> RawRPr {
+        RawRPr {
+            r_fonts: Some(RFonts {
+                ascii: Some(name.to_owned()),
+                ..RFonts::default()
+            }),
+            ..RawRPr::default()
+        }
     }
 
     /// Длинный текст: на 600 px он переносится, иначе проверить первую строку не на чем.
@@ -694,8 +794,22 @@ mod tests {
             },
         );
 
-        let layout = layout(&document(), &paragraph, &state());
-        let line = &layout.lines[0];
+        let fallback = layout(&document(), &paragraph, &state());
+        assert_eq!(
+            fallback.lines[0].font_family.as_deref(),
+            Some(doc_converter_render::font::DEFAULT_FONT_FAMILY),
+            "гарнитуры нет в реестре — строка несёт имя запасного лица"
+        );
+
+        let mut fonts = FontRegistry::new(64);
+        fonts
+            .register_family(
+                "Georgia",
+                doc_converter_render::font::default_font_bytes().to_vec(),
+            )
+            .expect("Georgia регистрируется");
+        let styled = layout_with(&document(), &paragraph, &state(), &mut fonts);
+        let line = &styled.lines[0];
 
         assert_eq!(
             line.font_family.as_deref(),
@@ -710,6 +824,186 @@ mod tests {
             half_points_to_px(line.size.value()),
             16.0,
             "кегль в пикселях",
+        );
+    }
+
+    /// Гарнитура решает, где строке переноситься: одно и то же предложение в
+    /// разных семействах ломается по-разному, и меряет его то самое лицо,
+    /// которым строка названа.
+    ///
+    /// Байты для семейств берутся готовые — regular и bold Carlito: проверяется
+    /// не конкретный шрифт, а то, что имя `w:rFonts` доводит до измерения и до кадра.
+    #[test]
+    fn family_decides_where_the_line_breaks() {
+        let text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor";
+        let size = HalfPoint::new(24);
+        let mut fonts = FontRegistry::new(1024);
+        let narrow = fonts
+            .register_family(
+                "Arial",
+                doc_converter_render::font::default_font_bytes().to_vec(),
+            )
+            .expect("Arial регистрируется");
+        let wide = fonts
+            .register_family(
+                "Times New Roman",
+                doc_converter_render::font::bold_font_bytes().to_vec(),
+            )
+            .expect("Times New Roman регистрируется");
+        assert_ne!(narrow, wide, "семейства — разные лица реестра");
+
+        // Полосу берём между ширинами одного и того же куска у двух лиц: узкому
+        // он влезает, широкому — нет, и первые строки обязаны разойтись.
+        // Половина предложения этого не даёт: разница в считаные проценты тонет
+        // в запасе до границы соседнего слова, и перенос совпадает.
+        let clause = "Lorem ipsum dolor sit amet,";
+        let (narrow_clause, wide_clause) = {
+            let mut breaker = LineBreaker::new(&mut fonts, FontId::default());
+            (
+                breaker.measure_text(clause, narrow, size),
+                breaker.measure_text(clause, wide, size),
+            )
+        };
+        assert!(
+            (narrow_clause - wide_clause).abs() > 1.0,
+            "тест вырождается, если лица меряют одинаково: {narrow_clause} и {wide_clause}"
+        );
+
+        let band = (narrow_clause + wide_clause) / 2.0;
+        let arial = layout_with(
+            &document(),
+            &paragraph_of_runs(&[(text, family("Arial"))]),
+            &state_with_width(band),
+            &mut fonts,
+        );
+        let times = layout_with(
+            &document(),
+            &paragraph_of_runs(&[(text, family("Times New Roman"))]),
+            &state_with_width(band),
+            &mut fonts,
+        );
+
+        assert_eq!(
+            arial.lines[0].font_family.as_deref(),
+            Some("Arial"),
+            "строка названа семейством документа"
+        );
+        assert_eq!(
+            times.lines[0].font_family.as_deref(),
+            Some("Times New Roman"),
+            "и второе — своим"
+        );
+        let arial_lines: Vec<&str> = arial.lines.iter().map(|line| line.text.as_str()).collect();
+        let times_lines: Vec<&str> = times.lines.iter().map(|line| line.text.as_str()).collect();
+        assert_ne!(
+            arial_lines, times_lines,
+            "разные лица — разные точки переноса"
+        );
+        assert!(
+            times_lines.len() > 1,
+            "предложение шире полосы — строка обязана переноситься"
+        );
+        // И мерена каждая строка своим лицом: ширина равна измерению тем
+        // шрифтом, которым строка названа.
+        let mut breaker = LineBreaker::new(&mut fonts, FontId::default());
+        for (layout, font_id) in [(&arial, narrow), (&times, wide)] {
+            for line in &layout.lines {
+                assert_px(
+                    line.width,
+                    breaker.measure_text(&line.text, font_id, size),
+                    "ширина строки мерена её лицом",
+                );
+            }
+        }
+    }
+
+    /// Ширина строки — сумма ширин её частей: ровно столько места она займёт на
+    /// картинке, и по этой ширине её выравнивают.
+    #[test]
+    fn line_width_is_the_sum_of_its_parts() {
+        let mut fonts = FontRegistry::new(1024);
+        fonts
+            .register_family(
+                "Times New Roman",
+                doc_converter_render::font::bold_font_bytes().to_vec(),
+            )
+            .expect("Times New Roman регистрируется");
+
+        let mut small = RawRPr {
+            sz: Some(HalfPoint::new(22)),
+            ..RawRPr::default()
+        };
+        small.r_fonts = None;
+        let mut big = family("Times New Roman");
+        big.sz = Some(HalfPoint::new(44));
+
+        let paragraph = paragraph_of_runs(&[("Мелкий ", small), ("Крупный конец", big)]);
+        let layout = layout_with(&document(), &paragraph, &state(), &mut fonts);
+        assert_eq!(layout.lines.len(), 1, "оба прогона помещаются в полосу");
+
+        let times = fonts.resolve_family(Some("Times New Roman"));
+        let mut breaker = LineBreaker::new(&mut fonts, FontId::default());
+        let expected = breaker.measure_text("Мелкий ", FontId::default(), HalfPoint::new(22))
+            + breaker.measure_text("Крупный конец", times, HalfPoint::new(44));
+        assert_px(layout.lines[0].width, expected, "ширина строки");
+    }
+
+    /// Кегль прогона (`w:sz`) влияет на перенос: крупное слово занимает больше
+    /// места и выдавливает следующее на другую строку.
+    #[test]
+    fn run_size_decides_where_the_line_breaks() {
+        // Прогон без `w:sz` получает кегль умолчания документа — 12 pt
+        // (`DEFAULT_SIZE_HALF_POINTS`); им же надо мерить и полосу, иначе
+        // «aaa bbb» в неё не влезет уже в раскладке.
+        let default_size = HalfPoint::new(24);
+        let band = {
+            let mut fonts = FontRegistry::new(64);
+            let mut breaker = LineBreaker::new(&mut fonts, FontId::default());
+            breaker.measure_text("aaa bbb", FontId::default(), default_size)
+        };
+
+        let mut plain = FontRegistry::new(64);
+        let default_layout = layout_with(
+            &document(),
+            &paragraph_of_runs(&[("aaa bbb ccc", RawRPr::default())]),
+            &state_with_width(band),
+            &mut plain,
+        );
+        assert_eq!(
+            default_layout.lines.len(),
+            2,
+            "одним кеглем «aaa bbb» влезает целиком"
+        );
+
+        let sized = RawRPr {
+            sz: Some(HalfPoint::new(44)),
+            ..RawRPr::default()
+        };
+        let mut fonts = FontRegistry::new(64);
+        let sized_layout = layout_with(
+            &document(),
+            &paragraph_of_runs(&[
+                ("aaa ", RawRPr::default()),
+                ("bbb", sized),
+                (" ccc", RawRPr::default()),
+            ]),
+            &state_with_width(band),
+            &mut fonts,
+        );
+        let texts: Vec<&str> = sized_layout
+            .lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(
+            texts,
+            ["aaa", "bbb", "ccc"],
+            "крупный прогон не влезает в остаток строки"
+        );
+        assert_px(
+            sized_layout.lines[1].height,
+            half_points_to_px(44) * 1.2,
+            "высота строки — по крупному прогону",
         );
     }
 
@@ -760,32 +1054,33 @@ mod tests {
         );
     }
 
-    /// `basic/multiple_runs.docx`: обычный, жирный, курсивный и подчёркнутый
-    /// run'ы сливаются по кеглю и цвету в один отрезок, и начертание берётся
-    /// у первого из них — долг: внутри предложения начертание не появится,
-    /// пока у строки нет спанов.
+    /// `basic/multiple_runs.docx`: семь прогонов с разным начертанием, кеглем и
+    /// цветом — один поток текста, и весь он помещается в полосу: строка одна,
+    /// как в Word. Стиль знака строка берёт у первого прогона — долг: пока у
+    /// строки нет спанов, начертание и цвет внутри неё не появятся.
     #[test]
-    fn fixture_merged_segment_takes_the_first_run_style() {
+    fn fixture_runs_of_one_paragraph_share_a_line() {
         let layout = layout_fixture("basic/multiple_runs.docx", 0);
-        let merged = &layout.lines[0];
 
         assert_eq!(
-            merged.text, "Plain bold italic underlined",
-            "слитый отрезок"
+            layout.lines.len(),
+            1,
+            "семь прогонов абзаца — одна строка, а не четыре"
         );
-        assert!(!merged.bold, "первый run отрезка обычный");
+        let line = &layout.lines[0];
+        assert_eq!(
+            line.text, "Plain bold italic underlined colored sized emphasized",
+            "текст строки — все прогоны подряд"
+        );
+        assert!(!line.bold, "первый прогон строки обычный");
         assert!(
-            !merged.italic,
-            "курсив второго run'а отрезок не подхватывает"
+            !line.italic,
+            "курсив второго прогона строка не подхватывает"
         );
         assert!(
-            !merged.underline,
-            "подчёркивание третьего run'а отрезок не подхватывает"
+            !line.underline,
+            "подчёркивание третьего прогона строка не подхватывает"
         );
-
-        let emphasized = &layout.lines[3];
-        assert_eq!(emphasized.text, "emphasized");
-        assert!(emphasized.italic, "курсив из стиля знака Emphasis");
     }
 
     /// Путь к фикстуре от корня репозитория.
@@ -932,39 +1227,27 @@ mod tests {
         assert_px(heading.space_before, 16.0, "before 240 twips из стиля");
     }
 
-    /// `basic/multiple_runs.docx`: у run'ов разные кегль и цвет, и строка несёт
-    /// метрики того отрезка, из которого она собрана.
+    /// `basic/multiple_runs.docx`: у прогонов разный кегль и цвет, а строка одна —
+    /// её метрики берутся у прогона, который её открыл (цвет и кегль docDefaults),
+    /// а высота — по самому крупному прогону (`w:sz 32`), как считает строку Word.
     #[test]
-    fn fixture_run_metrics_reach_their_lines() {
+    fn fixture_run_metrics_reach_the_line() {
         let layout = layout_fixture("basic/multiple_runs.docx", 0);
-        let texts: Vec<&str> = layout.lines.iter().map(|line| line.text.as_str()).collect();
+        let line = &layout.lines[0];
 
-        // `w:b`, `w:i` и `w:u` метрик строки не меняют, поэтому четыре первых run'а
-        // сливаются в один отрезок; дальше цвет, кегль и стиль знака режут по-своему.
         assert_eq!(
-            texts,
-            [
-                "Plain bold italic underlined",
-                "colored",
-                "sized",
-                "emphasized"
-            ],
-            "отрезки абзаца"
+            line.color, None,
+            "цвет строки — у первого прогона, `w:color` нет"
         );
         assert_eq!(
-            layout.lines[0].color, None,
-            "у run'ов без `w:color` цвета нет"
+            line.size,
+            HalfPoint::new(22),
+            "кегль строки — у первого прогона, 11 pt из docDefaults"
         );
         assert_px(
-            layout.lines[0].height,
-            17.6 * 259.0 / 240.0,
-            "кегль docDefaults",
-        );
-        assert_eq!(layout.lines[1].color, Some(0xFF_0000), "цвет run'а");
-        assert_px(
-            layout.lines[2].height,
+            line.height,
             16.0 * 96.0 / 72.0 * 1.2 * 259.0 / 240.0,
-            "кегль run'а `w:sz 32`",
+            "высота — по прогону `w:sz 32`, а не по первому",
         );
     }
 
@@ -1140,6 +1423,35 @@ mod tests {
                 .collect();
 
             assert!(anchors.is_empty(), "{name}: встроенные рисунки не плавают");
+        }
+    }
+
+    /// Строки абзаца собираются из прогонов, а не режутся по одному на прогон:
+    /// семь прогонов `basic/multiple_runs.docx` дают одну строку, а сотня
+    /// прогонов `basic/many_runs_paragraph.docx` — семь строк, а не сто.
+    #[test]
+    fn fixture_runs_share_lines_within_the_page() {
+        for (name, lines) in [
+            ("basic/multiple_runs.docx", 1usize),
+            ("basic/many_runs_paragraph.docx", 7),
+        ] {
+            let document = fixture(name);
+            let layout = crate::layout::layout_document(
+                &document,
+                &LayoutOptions::default(),
+                &mut FontRegistry::new(64),
+            )
+            .expect("раскладка не должна падать");
+            let texts: Vec<&str> = layout
+                .pages
+                .iter()
+                .flat_map(|page| page.items.iter())
+                .filter_map(|item| match item {
+                    crate::layout::LayoutItem::Paragraph { text, .. } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(texts.len(), lines, "{name}: строк в раскладке документа");
         }
     }
 }

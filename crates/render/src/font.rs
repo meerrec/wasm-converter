@@ -8,6 +8,12 @@
 //! Политика подстановки (решение Спринта 5.5): id без зарегистрированного
 //! шрифта измеряется шрифтом по умолчанию, это не ошибка — у реестра всегда
 //! есть хотя бы один рабочий шрифт, и измерение не может «не выйти».
+//!
+//! Шрифт ищется не только по [`FontId`], но и по имени семейства
+//! ([`FontRegistry::resolve_family`]): так `w:rFonts` документа попадает в
+//! измерение, а [`FontRegistry::drawable_family`] отдаёт раскладке ровно то имя,
+//! которое уезжает в кадр. Имя в кадре и имя, по которому реестр нашёл лицо, —
+//! одно и то же, поэтому точки переноса не разъезжаются с картинкой.
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -21,6 +27,21 @@ pub type FontId = u32;
 
 /// Шрифт по умолчанию: метрический запас для вызовов с незарегистрированным id.
 pub const DEFAULT_FONT_ID: FontId = 0;
+
+/// Имя семейства шрифта по умолчанию.
+///
+/// Им меряется и рисуется всё, чью гарнитуру документ не назвал или назвал
+/// незарегистрированным: у реестра всегда есть хотя бы это лицо, и строка кадра
+/// несёт ровно это имя — painter ставит его canvas'у.
+pub const DEFAULT_FONT_FAMILY: &str = "Carlito";
+
+/// Синонимы имени по умолчанию: `Calibri` — метрический оригинал Carlito.
+///
+/// Документ, набранный Calibri (умолчание Word), меряется тем же лицом — ширины
+/// совпадают до квантования, — а строка кадра остаётся названа `Calibri`: так
+/// подстановка не выдаёт себя за другую гарнитуру и на системе с настоящим
+/// Calibri рисуется им же.
+const DEFAULT_FONT_ALIASES: &[&str] = &["Calibri"];
 
 /// Carlito, подрезанный до ASCII + Latin-1 + кириллицы и знаков пунктуации.
 ///
@@ -113,9 +134,15 @@ pub enum FontError {
     InvalidFont(String),
 }
 
-/// Реестр шрифтов: байты по [`FontId`] и LRU-кэши метрик.
+/// Реестр шрифтов: байты по [`FontId`], имена семейств и LRU-кэши метрик.
 pub struct FontRegistry {
     faces: HashMap<FontId, Vec<u8>>,
+    /// Имена семейств в нижнем регистре → шрифт: по ним `w:rFonts` документа
+    /// находит лицо. Синонимы указывают на то же лицо, что и каноническое имя.
+    families: HashMap<String, FontId>,
+    /// Каноническое имя лица: им строка рисуется, когда документ назвал
+    /// незарегистрированное семейство.
+    canonical: HashMap<FontId, String>,
     glyph_cache: LruCache<GlyphKey, f32>,
     /// `(font_id, size_bits) -> (ascent, descent, line_gap)`; линейные метрики
     /// у шрифта одни на кегль, отдельный HashMap их дешевле LRU по глифам.
@@ -130,12 +157,23 @@ impl FontRegistry {
     pub fn new(cache_size: usize) -> Self {
         let mut registry = Self {
             faces: HashMap::new(),
+            families: HashMap::new(),
+            canonical: HashMap::new(),
             glyph_cache: LruCache::new(NonZeroUsize::new(cache_size).unwrap_or(NonZeroUsize::MIN)),
             line_cache: HashMap::new(),
         };
         registry
             .faces
             .insert(DEFAULT_FONT_ID, DEFAULT_FONT.to_vec());
+        registry
+            .canonical
+            .insert(DEFAULT_FONT_ID, DEFAULT_FONT_FAMILY.to_owned());
+        registry
+            .families
+            .insert(name_key(DEFAULT_FONT_FAMILY), DEFAULT_FONT_ID);
+        for alias in DEFAULT_FONT_ALIASES {
+            registry.families.insert(name_key(alias), DEFAULT_FONT_ID);
+        }
         registry
     }
 
@@ -145,6 +183,9 @@ impl FontRegistry {
     /// зарегистрированный под этим id шрифт остаётся на месте. Замена чистит
     /// кэши метрик — старые advance'ы к новому шрифту отношения не имеют, а
     /// выборочно выселять LRU по id дороже полной очистки при редкой замене.
+    ///
+    /// Имени семейства у такого шрифта нет: документ его не найдёт
+    /// ([`Self::register_family`] — то, чем регистрируют шрифт для `w:rFonts`).
     ///
     /// # Errors
     /// [`FontError::InvalidFont`], если байты — не TTF/OTF.
@@ -158,10 +199,90 @@ impl FontRegistry {
         Ok(())
     }
 
+    /// Регистрирует шрифт под именем семейства и возвращает его [`FontId`].
+    ///
+    /// Имя — ключ, которым документ называет шрифт (`w:rFonts`) и которым
+    /// строка потом рисуется: одно и то же имя разрешается в одно и то же лицо,
+    /// поэтому измерение и картинка не разъезжаются. Повторная регистрация
+    /// имени заменяет байты, сохраняя id; новое имя получает свободный id.
+    ///
+    /// # Errors
+    /// [`FontError::InvalidFont`], если байты — не TTF/OTF.
+    pub fn register_family(&mut self, family: &str, bytes: Vec<u8>) -> Result<FontId, FontError> {
+        if FontRef::new(&bytes).is_err() {
+            return Err(FontError::InvalidFont("not a TTF/OTF font".to_owned()));
+        }
+        let key = name_key(family);
+        let id = match self.families.get(&key) {
+            Some(id) => *id,
+            None => self.free_id(),
+        };
+        // Синоним дефолтного имени (`Calibri`) перенаправляется на новое лицо:
+        // явно зарегистрированный Calibri — уже не Carlito.
+        self.families.insert(key, id);
+        self.canonical.insert(id, family.to_owned());
+        self.faces.insert(id, bytes);
+        self.glyph_cache.clear();
+        self.line_cache.clear();
+        Ok(id)
+    }
+
     /// Есть ли шрифт под `id`.
     #[must_use]
     pub fn has(&self, id: FontId) -> bool {
         self.faces.contains_key(&id)
+    }
+
+    /// Знает ли реестр такое имя семейства (без учёта регистра).
+    #[must_use]
+    pub fn has_family(&self, family: &str) -> bool {
+        self.families.contains_key(&name_key(family))
+    }
+
+    /// Шрифт по имени семейства; `None` и неизвестное имя — шрифт по умолчанию.
+    ///
+    /// Фолбэк детерминирован: у реестра всегда есть лицо по умолчанию, поэтому
+    /// строка не может остаться без метрик из-за чужой гарнитуры.
+    #[must_use]
+    pub fn resolve_family(&self, family: Option<&str>) -> FontId {
+        family
+            .and_then(|name| self.families.get(&name_key(name)).copied())
+            .unwrap_or(DEFAULT_FONT_ID)
+    }
+
+    /// Имя, под которым лицо `id` рисуется.
+    ///
+    /// У шрифта, зарегистрированного по id ([`Self::register`]), имени нет —
+    /// он и меряется, и рисуется как шрифт по умолчанию.
+    #[must_use]
+    pub fn family_name(&self, id: FontId) -> &str {
+        self.canonical
+            .get(&id)
+            .map_or(DEFAULT_FONT_FAMILY, String::as_str)
+    }
+
+    /// Имя, которым шрифт семейства `family` уходит в кадр.
+    ///
+    /// Известное имя остаётся собой; неизвестное заменяется каноническим именем
+    /// запасного лица — того самого, которым такая строка измерена. `None`
+    /// (документ гарнитуры не называл) остаётся `None`: обе стороны берут
+    /// умолчание реестра.
+    #[must_use]
+    pub fn drawable_family<'a>(&'a self, family: Option<&'a str>) -> Option<&'a str> {
+        let family = family?;
+        Some(if self.has_family(family) {
+            family
+        } else {
+            self.family_name(self.resolve_family(Some(family)))
+        })
+    }
+
+    /// Свободный id: следующий за наибольшим занятым.
+    fn free_id(&self) -> FontId {
+        self.faces
+            .keys()
+            .max()
+            .map_or(DEFAULT_FONT_ID + 1, |id| id + 1)
     }
 
     /// Метрика одного глифа: advance из `hmtx`, линейные — из таблиц шрифта.
@@ -292,6 +413,11 @@ impl FontRegistry {
         self.line_cache.insert(key, metrics);
         metrics
     }
+}
+
+/// Ключ имени семейства: поиск не зависит от регистра, как в Windows.
+fn name_key(family: &str) -> String {
+    family.to_lowercase()
 }
 
 /// Консервативная ширина символа, глифа для которого в шрифте нет.

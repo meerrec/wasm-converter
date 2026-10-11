@@ -19,18 +19,16 @@ use doc_converter_render::viewport::Viewport;
 
 use crate::layout::engine::{half_points_to_px, LayoutItem, PageLayout, Rect, TableCellLayout};
 
-/// Гарнитура, которой раскладка мерила текст.
+/// Гарнитура по умолчанию: ей рисовано всё, чью гарнитуру раскладка не назвала.
 ///
-/// Меряется всё шрифтом по умолчанию [`doc_converter_render::font::FontRegistry`]
-/// (`FontId::default()`), а это Carlito — метрически совместимый с Calibri
-/// запасной шрифт реестра. В кадр идёт именно он, а не `w:rFonts` элемента:
-/// painter ставит canvas'у имя семейства строкой, и любая другая гарнитура
-/// нарисовала бы строку другими ширинами, чем те, по которым посчитаны
-/// переносы. Поэтому `LayoutItem::Paragraph::font_family` здесь намеренно не
-/// используется — каскад отдаёт гарнитуру документа, а рисовать ею пока нечем:
-/// реестр знает один шрифт. Имя продублировано строкой, потому что `DisplayList`
-/// самодостаточен и на реестр шрифтов не ссылается.
-const LAYOUT_FONT_FAMILY: &str = "Carlito";
+/// Имя берётся у реестра шрифтов ([`doc_converter_render::font::DEFAULT_FONT_FAMILY`]),
+/// а не пишется строкой на месте: это то же лицо, которым мерит раскладка.
+/// `LayoutItem::Paragraph::font_family` при этом несёт имя измеренного лица —
+/// известное реестру семейство либо запасное (см. `layout::paragraph`), — так
+/// что painter ставит canvas'у ровно тот шрифт, по метрикам которого посчитаны
+/// переносы. Элементы без гарнитуры (ячейки таблиц, пустые абзацы) рисуются
+/// запасным лицом: `DisplayList` самодостаточен и на реестр не ссылается.
+const LAYOUT_FONT_FAMILY: &str = doc_converter_render::font::DEFAULT_FONT_FAMILY;
 
 /// Толщина рамки ячейки в пикселях раскладки.
 ///
@@ -97,6 +95,7 @@ fn draw_items(items: &[LayoutItem], viewport: &Viewport, font: StringRef, out: &
                 rect,
                 text,
                 color,
+                font_family,
                 size,
                 bold,
                 italic,
@@ -105,6 +104,13 @@ fn draw_items(items: &[LayoutItem], viewport: &Viewport, font: StringRef, out: &
             } => {
                 let (x, y) = to_screen(viewport, rect.x, rect.y);
                 let text = out.intern(text);
+                // Гарнитура строки — та, которой её мерила раскладка; имя
+                // приходит из `w:rFonts` через реестр шрифтов. Без имени
+                // (ячейка таблицы, пустой абзац) рисует запасное лицо.
+                let font = match font_family {
+                    Some(family) => out.intern(family),
+                    None => font,
+                };
                 out.push(DrawCommand::Text {
                     x,
                     y,
@@ -439,7 +445,10 @@ mod tests {
             half_points_to_px(32) * viewport().scale,
             "16 pt",
         );
-        assert_eq!(drawn.font, LAYOUT_FONT_FAMILY, "шрифт раскладки");
+        // Гарнитуру строка берёт у прогона: заголовок набран Calibri, и это имя
+        // уходит в кадр. Лицо то же, что у запасного Carlito: Calibri
+        // зарегистрирован алиасом, поэтому ширины сходятся.
+        assert_eq!(drawn.font, "Calibri", "гарнитура строки из стиля");
         assert_eq!(drawn.baseline, TextBaseline::Top, "верх строки");
         assert_eq!(drawn.align, TextAlign::Left, "выравнивание уже в rect.x");
     }
@@ -492,18 +501,24 @@ mod tests {
     /// `w:color` доезжает до команды как `RRGGBBAA`, а не как `AARRGGBB`.
     #[test]
     fn an_explicit_color_becomes_rrggbbaa() {
-        let layout = fixture_layout("basic/multiple_runs.docx");
+        // Первый прогон абзаца зелёный (`w:color 008000`) — его цвет и несёт
+        // строка: стиль знака строка берёт у того прогона, который её открыл.
+        let layout = fixture_layout("styles/direct_formatting_override.docx");
         let dl = frame(&layout, 0);
         let texts = drawn_texts(&dl);
 
-        let red = texts
+        let green = texts
             .iter()
-            .find(|t| t.color == Color(0xFF00_00FF))
-            .expect("красный run из фикстуры");
-        // Пробел в конце строки раскладка отбрасывает при переносе.
-        assert_eq!(red.text, "colored", "красный — только этот run");
-        assert_eq!(red.color, Color::rgba(0xFF, 0x00, 0x00, 0xFF));
+            .find(|t| t.text.starts_with("Прямое форматирование"))
+            .expect("абзац фикстуры");
+        assert_eq!(
+            green.color,
+            Color::rgba(0x00, 0x80, 0x00, 0xFF),
+            "`w:color` доезжает как RGBA, а не AARRGGBB"
+        );
 
+        let layout = fixture_layout("basic/multiple_runs.docx");
+        let texts = drawn_texts(&frame(&layout, 0));
         let plain = texts
             .iter()
             .find(|t| t.text.starts_with("Plain"))

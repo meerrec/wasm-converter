@@ -268,11 +268,20 @@ impl ResolvedRPr {
     fn apply(&mut self, rpr: &RawRPr) {
         if let Some(fonts) = &rpr.r_fonts {
             // Внутри слоя побеждает `w:ascii`: это гарнитура латиницы, а `w:hAnsi` — запасная.
-            if let Some(h_ansi) = &fonts.h_ansi {
-                self.font_family = Some(h_ansi.clone());
-            }
-            if let Some(ascii) = &fonts.ascii {
-                self.font_family = Some(ascii.clone());
+            // `w:cs` и `w:eastAsia` — последний рубеж, и только когда гарнитуры
+            // нет ни в этом слое, ни в унаследованной: прямое `w:cs` не должно
+            // менять шрифт кириллицы, набранной латинской гарнитурой стиля.
+            let latin = fonts.ascii.as_ref().or(fonts.h_ansi.as_ref());
+            let other = fonts.cs.as_ref().or(fonts.east_asia.as_ref());
+            let family = latin.or_else(|| {
+                if self.font_family.is_none() {
+                    other
+                } else {
+                    None
+                }
+            });
+            if let Some(family) = family {
+                self.font_family = Some(family.clone());
             }
         }
         if let Some(size) = rpr.sz {

@@ -3,6 +3,12 @@
 //! Использует [`doc_converter_render::text_measure`] для измерения ширин
 //! (ADR-0005). Логика та же, что и для XLSX, чтобы точки разрыва не
 //! разъезжались между canvas и PDF.
+//!
+//! Абзац Word — один поток текста, а не набор независимых отрезков: прогоны с
+//! разным кеглем и гарнитурой складываются в одну строку, пока её суммарная
+//! ширина помещается в полосу набора ([`LineBreaker::break_spanned`]). Поэтому
+//! абзац режется по границам слов, а не по границам прогонов; метрики частей
+//! строки приходят спанами [`MetricSpan`].
 
 use std::ops::Range;
 
@@ -37,6 +43,32 @@ pub struct LineBreaker<'a> {
     _default_font_id: FontId,
 }
 
+/// Отрезок текста абзаца с одной метрикой: шрифт и кегль.
+///
+/// Спаны покрывают общий текст абзаца без дыр и наложений; их границы — стыки
+/// прогонов, поэтому они всегда лежат на границах символов.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetricSpan {
+    /// Байтовый диапазон в общем тексте абзаца.
+    pub range: Range<usize>,
+    /// Шрифт отрезка в реестре.
+    pub font_id: FontId,
+    /// Кегль отрезка в полупунктах.
+    pub size: HalfPoint,
+}
+
+/// Строка после переноса составного текста.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpannedLine {
+    /// Байтовый диапазон строки в общем тексте абзаца.
+    pub range: Range<usize>,
+    /// Ширина строки — сумма ширин её частей.
+    pub width: f32,
+    /// Наибольший кегль среди частей строки: по нему Word считает высоту строки,
+    /// а не по кеглю первого прогона.
+    pub max_size: HalfPoint,
+}
+
 impl<'a> LineBreaker<'a> {
     /// Создать новый разбиватель строк.
     #[must_use]
@@ -45,6 +77,22 @@ impl<'a> LineBreaker<'a> {
             fonts,
             _default_font_id: default_font_id,
         }
+    }
+
+    /// Шрифт по имени семейства (`w:rFonts`): неизвестное имя и `None` — шрифт
+    /// по умолчанию, как в [`FontRegistry::resolve_family`].
+    #[must_use]
+    pub fn resolve_family(&self, family: Option<&str>) -> FontId {
+        self.fonts.resolve_family(family)
+    }
+
+    /// Имя, которым строка с такой гарнитурой уходит в кадр.
+    ///
+    /// То же имя, по которому [`Self::resolve_family`] нашёл лицо: измеренное и
+    /// нарисованное не разъезжаются (см. [`FontRegistry::drawable_family`]).
+    #[must_use]
+    pub fn drawable_family<'b>(&'b self, family: Option<&'b str>) -> Option<&'b str> {
+        self.fonts.drawable_family(family)
     }
 
     /// Измерить ширину текста в пикселях.
@@ -62,6 +110,29 @@ impl<'a> LineBreaker<'a> {
     ) -> f32 {
         let size_px = half_points_to_px(font_size_half_points.value());
         text_measure::measure_text(self.fonts, font_id, size_px, text)
+    }
+
+    /// Ширина диапазона составного текста: сумма ширин его частей.
+    ///
+    /// Каждая часть меряется своим шрифтом и кеглем — ширина строки не может
+    /// быть посчитана одним лицом, если внутри неё их несколько.
+    #[must_use]
+    pub fn measure_spanned(
+        &mut self,
+        text: &str,
+        spans: &[MetricSpan],
+        range: Range<usize>,
+    ) -> f32 {
+        let mut width = 0.0;
+        for span in spans {
+            let start = span.range.start.max(range.start);
+            let end = span.range.end.min(range.end);
+            if start >= end {
+                continue;
+            }
+            width += self.measure_text(&text[start..end], span.font_id, span.size);
+        }
+        width
     }
 
     /// Разбить текст на строки, которые помещаются в `max_width`.
@@ -85,6 +156,183 @@ impl<'a> LineBreaker<'a> {
     ) -> Vec<Range<usize>> {
         let size_px = half_points_to_px(font_size_half_points.value());
         text_measure::break_lines(self.fonts, font_id, size_px, text, max_width)
+    }
+
+    /// Разбить составной текст на строки от байта `from`.
+    ///
+    /// Ширина строки — сумма ширин её частей ([`Self::measure_spanned`]): перенос
+    /// идёт по суммарной ширине, поэтому прогоны с разным кеглем, начертанием и
+    /// гарнитурой складываются в одну строку, а не ломаются каждый сам по себе.
+    /// Интервалы между словами меряются тем прогоном, в котором записаны.
+    ///
+    /// Правила переноса — те же, что у [`text_measure::break_lines`]: слова не
+    /// разрываются, слишком широкое слово режется по символам, `\n` форсирует
+    /// разрыв, пробелы по краям строки в диапазон не входят.
+    ///
+    /// `limit` ограничивает число строк: первую строку абзаца отрезают своей,
+    /// более узкой полосой набора (`w:firstLine`/`w:hanging`), и остальной текст
+    /// разбирается со следующего за ней байта.
+    #[must_use]
+    pub fn break_spanned(
+        &mut self,
+        text: &str,
+        spans: &[MetricSpan],
+        max_width: f32,
+        from: usize,
+        limit: Option<usize>,
+    ) -> Vec<SpannedLine> {
+        let mut lines = Vec::new();
+        if spans.is_empty() || from >= text.len() || max_width <= 0.0 {
+            return lines;
+        }
+
+        // Байтовый диапазон собираемой строки: от первого символа первого слова
+        // до последнего символа последнего; пробелы в диапазон не входят.
+        let mut line_start: Option<usize> = None;
+        let mut line_end = 0usize;
+        let mut line_width = 0.0;
+
+        let mut byte = from;
+        while byte < text.len() {
+            let ch = text[byte..]
+                .chars()
+                .next()
+                .expect("byte is a char boundary");
+            if ch == '\n' {
+                byte += 1;
+                if let Some(start) = line_start.take() {
+                    lines.push(self.spanned_line(spans, start..line_end, line_width));
+                    if limit.is_some_and(|limit| lines.len() >= limit) {
+                        return lines;
+                    }
+                }
+                line_width = 0.0;
+                continue;
+            }
+            if ch.is_whitespace() {
+                byte += ch.len_utf8();
+                continue;
+            }
+
+            // Слово — до первого пробела или перевода строки.
+            let word_start = byte;
+            let mut word_end = byte + ch.len_utf8();
+            while word_end < text.len() {
+                let next = text[word_end..]
+                    .chars()
+                    .next()
+                    .expect("byte is a char boundary");
+                if next.is_whitespace() {
+                    break;
+                }
+                word_end += next.len_utf8();
+            }
+            let width = self.measure_spanned(text, spans, word_start..word_end);
+            byte = word_end;
+
+            // Слово встаёт в текущую строку; слишком широкое для пустой строки
+            // режется посимвольно, для занятой — открывает новую.
+            let fits = width <= max_width;
+            match line_start {
+                None => {
+                    if fits {
+                        line_start = Some(word_start);
+                        line_end = word_end;
+                        line_width = width;
+                    } else {
+                        self.break_wide_word(
+                            text,
+                            spans,
+                            word_start..word_end,
+                            max_width,
+                            &mut lines,
+                        );
+                    }
+                }
+                Some(start) => {
+                    // Пробелы и табуляции между словами занимают место в строке:
+                    // их ширина — часть суммарной.
+                    let gap = self.measure_spanned(text, spans, line_end..word_start);
+                    if line_width + gap + width <= max_width {
+                        line_width += gap + width;
+                        line_end = word_end;
+                    } else {
+                        lines.push(self.spanned_line(spans, start..line_end, line_width));
+                        if limit.is_some_and(|limit| lines.len() >= limit) {
+                            return lines;
+                        }
+                        line_start = None;
+                        line_width = 0.0;
+                        if fits {
+                            line_start = Some(word_start);
+                            line_end = word_end;
+                            line_width = width;
+                        } else {
+                            self.break_wide_word(
+                                text,
+                                spans,
+                                word_start..word_end,
+                                max_width,
+                                &mut lines,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(start) = line_start {
+            lines.push(self.spanned_line(spans, start..line_end, line_width));
+        }
+        lines
+    }
+
+    /// Собрать строку: диапазон, измеренную ширину и наибольший кегль.
+    fn spanned_line(
+        &mut self,
+        spans: &[MetricSpan],
+        range: Range<usize>,
+        width: f32,
+    ) -> SpannedLine {
+        SpannedLine {
+            max_size: largest_size(spans, &range),
+            range,
+            width,
+        }
+    }
+
+    /// Режет слово шире `max_width` по символам; каждый кусок непустой.
+    fn break_wide_word(
+        &mut self,
+        text: &str,
+        spans: &[MetricSpan],
+        word: Range<usize>,
+        max_width: f32,
+        lines: &mut Vec<SpannedLine>,
+    ) {
+        let mut chunk_start: Option<usize> = None;
+        let mut chunk_end = 0usize;
+        let mut chunk_width = 0.0;
+
+        for (byte, ch) in text[word.clone()].char_indices() {
+            let start = word.start + byte;
+            let end = start + ch.len_utf8();
+            let advance = self.measure_spanned(text, spans, start..end);
+            if chunk_start.is_some() && chunk_width + advance > max_width {
+                let start = chunk_start.expect("chunk has a start");
+                lines.push(self.spanned_line(spans, start..chunk_end, chunk_width));
+                chunk_start = None;
+                chunk_width = 0.0;
+            }
+            // Один символ шире строки всё равно образует кусок.
+            if chunk_start.is_none() {
+                chunk_start = Some(start);
+            }
+            chunk_end = end;
+            chunk_width += advance;
+        }
+        if let Some(start) = chunk_start {
+            lines.push(self.spanned_line(spans, start..chunk_end, chunk_width));
+        }
     }
 
     /// Вычислить высоту строки на основе размера шрифта.
@@ -154,6 +402,21 @@ impl<'a> LineBreaker<'a> {
 #[allow(clippy::cast_possible_truncation)]
 pub fn half_points_to_px(half_points: i32) -> f32 {
     (f64::from(half_points) / 2.0 * (96.0 / 72.0)) as f32
+}
+
+/// Наибольший кегль среди спанов, пересекающих диапазон.
+///
+/// Высота строки в Word — по самому крупному прогону строки, а не по первому:
+/// иначе крупное слово провалилось бы в высоту соседей. Диапазон без спанов
+/// (пустая строка) даёт нулевой кегль — высоту ей считать не по чему.
+#[must_use]
+fn largest_size(spans: &[MetricSpan], range: &Range<usize>) -> HalfPoint {
+    spans
+        .iter()
+        .filter(|span| span.range.start < range.end && range.start < span.range.end)
+        .map(|span| span.size)
+        .max_by_key(|size| size.value())
+        .unwrap_or(HalfPoint::new(0))
 }
 
 /// Информация о строке после разбивки.
