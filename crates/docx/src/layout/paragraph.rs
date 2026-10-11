@@ -870,7 +870,7 @@ mod tests {
             "тест вырождается, если лица меряют одинаково: {narrow_clause} и {wide_clause}"
         );
 
-        let band = (narrow_clause + wide_clause) / 2.0;
+        let band = f32::midpoint(narrow_clause, wide_clause);
         let arial = layout_with(
             &document(),
             &paragraph_of_runs(&[(text, family("Arial"))]),

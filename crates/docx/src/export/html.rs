@@ -15,7 +15,7 @@ use crate::layout::cascade::{ResolvedParagraph, StyleCache};
 use crate::model::inline::Paragraph;
 use crate::model::numbering::NumId;
 use crate::model::raw::{
-    Border, BorderStyle, CellVAlign, Color, Justification, Shading, ShadingPattern,
+    Border, BorderStyle, CellVAlign, Color, Justification, Shading, ShadingPattern, Twips,
 };
 use crate::model::table::{Cell, Table, TableLayout, TableWidth};
 use crate::model::BlockItem;
@@ -828,19 +828,19 @@ fn padding(table: &Table, cell: &Cell) -> Option<String> {
         cell.margins
             .top
             .or(table_margins.top)
-            .map_or(0, |twips| twips.value()),
+            .map_or(0, Twips::value),
         cell.margins
             .right
             .or(table_margins.right)
-            .map_or(108, |twips| twips.value()),
+            .map_or(108, Twips::value),
         cell.margins
             .bottom
             .or(table_margins.bottom)
-            .map_or(0, |twips| twips.value()),
+            .map_or(0, Twips::value),
         cell.margins
             .left
             .or(table_margins.left)
-            .map_or(108, |twips| twips.value()),
+            .map_or(108, Twips::value),
     ];
     if twips == [0, 108, 0, 108] {
         return None;

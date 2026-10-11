@@ -213,6 +213,9 @@ pub fn compute_column_widths(table: &Table, available_width: f32) -> Vec<f32> {
     if widths.len() < needed {
         let extra = needed - widths.len();
         let total: f32 = widths.iter().sum();
+        // Число недостающих колонок заведомо много меньше мантиссы f32 (2^24),
+        // так что приведение счётчика к f32 идёт без потери точности.
+        #[allow(clippy::cast_precision_loss)]
         let share = (available - total).max(0.0) / extra as f32;
         widths.resize(needed, share);
     }
@@ -254,6 +257,9 @@ fn base_column_widths(table: &Table, available: f32) -> Vec<f32> {
         for cell in &row.cells {
             let span = grid_span(cell);
             if let Some(width) = cell_width_px(cell, available) {
+                // `span` — счётчик колонок `w:gridSpan`, много меньше 2^24:
+                // приведение к f32 идёт без потери точности.
+                #[allow(clippy::cast_precision_loss)]
                 let share = width / span as f32;
                 for width in widths.iter_mut().skip(col).take(span) {
                     *width = share;
@@ -268,7 +274,10 @@ fn base_column_widths(table: &Table, available: f32) -> Vec<f32> {
         widths
     } else {
         // Строка есть, а ширин в ней нет: колонки поровну.
-        vec![available / count as f32; count]
+        // `count` — число колонок, много меньше 2^24: приведение к f32 точно.
+        #[allow(clippy::cast_precision_loss)]
+        let even = available / count as f32;
+        vec![even; count]
     }
 }
 
@@ -475,10 +484,7 @@ pub fn layout_table_fragments(
             }
         }
 
-        loop {
-            let Some(measure) = measured.get(row) else {
-                break;
-            };
+        while let Some(measure) = measured.get(row) {
             let remainder = if partial {
                 row_rest_height(measure, &start)
             } else {
@@ -1949,8 +1955,8 @@ mod tests {
     }
 
     /// Цвет заливки, если ячейка залита.
-    fn fill(shading: &Option<Shading>) -> Option<u32> {
-        match shading.as_ref()?.fill? {
+    fn fill(shading: Option<&Shading>) -> Option<u32> {
+        match shading?.fill? {
             Color::Rgb(value) => Some(value),
             Color::Auto | Color::None => None,
         }
@@ -2108,9 +2114,9 @@ mod tests {
             ..TableLook::default()
         };
         let rows = shading(&table(2, 2, Some("Banded"), looked), &styles);
-        assert_eq!(fill(&rows[0][0]), Some(0x00FF_FF00), "шапка залита");
-        assert_eq!(fill(&rows[0][1]), Some(0x00FF_FF00));
-        assert_eq!(fill(&rows[1][0]), None, "тело не залито");
+        assert_eq!(fill(rows[0][0].as_ref()), Some(0x00FF_FF00), "шапка залита");
+        assert_eq!(fill(rows[0][1].as_ref()), Some(0x00FF_FF00));
+        assert_eq!(fill(rows[1][0].as_ref()), None, "тело не залито");
 
         // Без флага условный формат не применяется: им управляет `w:tblLook`.
         let plain = shading(&table(2, 2, Some("Banded"), TableLook::default()), &styles);
@@ -2142,8 +2148,8 @@ mod tests {
         });
 
         let rows = shading(&table, &styles);
-        assert_eq!(fill(&rows[0][0]), Some(0x0012_3456));
-        assert_eq!(fill(&rows[0][1]), Some(0x00FF_FF00));
+        assert_eq!(fill(rows[0][0].as_ref()), Some(0x0012_3456));
+        assert_eq!(fill(rows[0][1].as_ref()), Some(0x00FF_FF00));
     }
 
     /// Полосы строк: первая полоса идёт сразу под шапкой, `noHBand` их выключает.
@@ -2164,10 +2170,22 @@ mod tests {
         };
         let rows = shading(&table(4, 1, Some("Banded"), looked), &styles);
 
-        assert_eq!(fill(&rows[0][0]), None, "шапка в полосы не входит");
-        assert_eq!(fill(&rows[1][0]), Some(0x0000_FF00), "первая полоса");
-        assert_eq!(fill(&rows[2][0]), Some(0x0000_00FF), "вторая полоса");
-        assert_eq!(fill(&rows[3][0]), Some(0x0000_FF00), "полосы чередуются");
+        assert_eq!(fill(rows[0][0].as_ref()), None, "шапка в полосы не входит");
+        assert_eq!(
+            fill(rows[1][0].as_ref()),
+            Some(0x0000_FF00),
+            "первая полоса"
+        );
+        assert_eq!(
+            fill(rows[2][0].as_ref()),
+            Some(0x0000_00FF),
+            "вторая полоса"
+        );
+        assert_eq!(
+            fill(rows[3][0].as_ref()),
+            Some(0x0000_FF00),
+            "полосы чередуются"
+        );
 
         let banded_off = TableLook {
             first_row: true,
@@ -2178,8 +2196,7 @@ mod tests {
         assert!(
             rows.iter()
                 .flatten()
-                .flat_map(|shd| fill(shd))
-                .next()
+                .find_map(|shd| fill(shd.as_ref()))
                 .is_none(),
             "`noHBand` выключает полосы"
         );

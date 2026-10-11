@@ -172,6 +172,9 @@ impl<'a> LineBreaker<'a> {
     /// `limit` ограничивает число строк: первую строку абзаца отрезают своей,
     /// более узкой полосой набора (`w:firstLine`/`w:hanging`), и остальной текст
     /// разбирается со следующего за ней байта.
+    ///
+    /// # Panics
+    /// Паникует, если `from` не совпадает с границей символа UTF-8.
     #[must_use]
     pub fn break_spanned(
         &mut self,
@@ -201,7 +204,7 @@ impl<'a> LineBreaker<'a> {
             if ch == '\n' {
                 byte += 1;
                 if let Some(start) = line_start.take() {
-                    lines.push(self.spanned_line(spans, start..line_end, line_width));
+                    lines.push(Self::spanned_line(spans, start..line_end, line_width));
                     if limit.is_some_and(|limit| lines.len() >= limit) {
                         return lines;
                     }
@@ -257,7 +260,7 @@ impl<'a> LineBreaker<'a> {
                         line_width += gap + width;
                         line_end = word_end;
                     } else {
-                        lines.push(self.spanned_line(spans, start..line_end, line_width));
+                        lines.push(Self::spanned_line(spans, start..line_end, line_width));
                         if limit.is_some_and(|limit| lines.len() >= limit) {
                             return lines;
                         }
@@ -281,18 +284,13 @@ impl<'a> LineBreaker<'a> {
             }
         }
         if let Some(start) = line_start {
-            lines.push(self.spanned_line(spans, start..line_end, line_width));
+            lines.push(Self::spanned_line(spans, start..line_end, line_width));
         }
         lines
     }
 
     /// Собрать строку: диапазон, измеренную ширину и наибольший кегль.
-    fn spanned_line(
-        &mut self,
-        spans: &[MetricSpan],
-        range: Range<usize>,
-        width: f32,
-    ) -> SpannedLine {
+    fn spanned_line(spans: &[MetricSpan], range: Range<usize>, width: f32) -> SpannedLine {
         SpannedLine {
             max_size: largest_size(spans, &range),
             range,
@@ -319,7 +317,7 @@ impl<'a> LineBreaker<'a> {
             let advance = self.measure_spanned(text, spans, start..end);
             if chunk_start.is_some() && chunk_width + advance > max_width {
                 let start = chunk_start.expect("chunk has a start");
-                lines.push(self.spanned_line(spans, start..chunk_end, chunk_width));
+                lines.push(Self::spanned_line(spans, start..chunk_end, chunk_width));
                 chunk_start = None;
                 chunk_width = 0.0;
             }
@@ -331,7 +329,7 @@ impl<'a> LineBreaker<'a> {
             chunk_width += advance;
         }
         if let Some(start) = chunk_start {
-            lines.push(self.spanned_line(spans, start..chunk_end, chunk_width));
+            lines.push(Self::spanned_line(spans, start..chunk_end, chunk_width));
         }
     }
 
