@@ -1,0 +1,369 @@
+//! PDF-экспорт DOCX: страницы готовой раскладки в точки PDF.
+//!
+//! Раскладка приходит целиком от `doc-converter-docx`
+//! ([`doc_converter_docx::layout::layout_document`]): движок уже разбил абзацы
+//! на строки и по страницам, а координаты отдал в пикселях при 96 dpi от
+//! левого верхнего угла страницы. Здесь они переводятся в точки той же
+//! геометрией, что и лист XLSX ([`PageGeometry`]): вторая конвенция пересчёта
+//! разошлась бы с первой на первой же правке.
+//!
+//! Шрифт один — Carlito из `doc-converter-render`, тот же, которым раскладка
+//! мерила текст, поэтому точки переноса в PDF совпадают с canvas-путём по
+//! построению (ADR-0005). По той же причине не используется
+//! `LayoutItem::Paragraph::font_family`: реестр знает одну гарнитуру, а рисовать
+//! строку другой значило бы разойтись с её измеренной шириной — так же решает
+//! и canvas-путь (`doc_converter_docx::render`).
+//!
+//! Подчёркивание в PDF пока не рисуется: printpdf линию сам не ставит, а
+//! отдельный срез для неё ещё не сделан — ровно как у ячеек XLSX
+//! (`crate::styles::CellStyle::underline`).
+
+mod floats;
+mod tables;
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use doc_converter_docx::layout::{LayoutItem, Page, PageLayout, Rect};
+use doc_converter_docx::{Document, HalfPoint, LayoutOptions};
+use doc_converter_render::display_list::Color;
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
+use printpdf::streaming::StreamSession;
+use printpdf::{
+    FontId, Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg, Point, Pt, TextItem,
+};
+
+use crate::fonts::{self, EmbeddedFonts, Face, FaceSet};
+use crate::layout::PageGeometry;
+use crate::options::{Margins, PageConfig, PageSize, PdfOptions};
+use crate::styles::to_pdf_color;
+use crate::PdfError;
+
+/// Размер LRU-кэша метрик: тот же, что у XLSX-пути (`painter::FONT_CACHE`).
+const FONT_CACHE: usize = 4096;
+
+/// Миллиметров в пикселе раскладки: 96 dpi против 25.4 мм в дюйме.
+///
+/// Единственный вход [`PageGeometry`] для произвольной страницы —
+/// [`PageSize::Custom`] в миллиметрах, поэтому размер раскладки переводится
+/// сперва в миллиметры; обратно в точки его вернёт сама геометрия
+/// (`PT_PER_MM`), и `Page.width` дойдёт до PDF без второй константы.
+const MM_PER_PX: f32 = 25.4 / 96.0;
+
+/// Собрать PDF из всех страниц документа.
+///
+/// # Errors
+/// [`PdfError::DocxLayout`], если раскладка не собралась; [`PdfError::NoPages`],
+/// если она не дала ни одной страницы; [`PdfError::Font`], если printpdf не
+/// принял байты шрифта; [`PdfError::Io`], если приёмник вернул ошибку записи.
+pub(crate) fn export(doc: &Document, options: &PdfOptions) -> Result<Vec<u8>, PdfError> {
+    let mut registry = FontRegistry::new(FONT_CACHE);
+    let layout =
+        doc_converter_docx::layout::layout_document(doc, &LayoutOptions::default(), &mut registry)
+            .map_err(PdfError::DocxLayout)?;
+    // PDF без страниц невалиден: у него нет каталога страниц.
+    let first_page = layout.pages.first().ok_or(PdfError::NoPages)?;
+
+    let mut warnings: Vec<PdfWarnMsg> = Vec::new();
+    let mut pdf = PdfDocument::new(&title(doc, options));
+    apply_metadata(&mut pdf, doc, options);
+    let embedded = fonts::embed(&mut pdf, &mut warnings, collect_faces(&layout))?;
+
+    // Шрифты подрезаются до записи первой страницы (`StreamSession::begin`), а
+    // подрезка перенумеровывает глифы: символ, не попавший в зонды, вывелся бы
+    // нулевым глифом — молча. Поэтому символы собираются первой отрисовкой, той
+    // же `draw_page`, что пойдёт в PDF, — так же, как у листа XLSX
+    // (`painter::collect_glyphs`).
+    let probe = probe_pages(
+        collect_glyphs(&layout, &embedded, &mut registry),
+        first_page,
+    );
+
+    let save = PdfSaveOptions {
+        // `optimize` у printpdf сжимает потоки — это и есть `compress`.
+        optimize: options.compress,
+        ..PdfSaveOptions::default()
+    };
+    let mut out = Vec::new();
+    let mut session = StreamSession::begin(
+        &pdf,
+        &probe,
+        BTreeSet::new(),
+        layout.pages.len(),
+        &save,
+        &mut out,
+        &mut warnings,
+    )?;
+    for page in &layout.pages {
+        let geometry = geometry(page);
+        let ops = draw_page(page, &geometry, &embedded, &mut registry);
+        let pdf_page = PdfPage::new(
+            Mm::from(Pt(geometry.width_pt())),
+            Mm::from(Pt(geometry.height_pt())),
+            ops,
+        );
+        session.write_page(&pdf_page, &mut warnings)?;
+    }
+    session.finish()?;
+    Ok(out)
+}
+
+/// Заголовок документа: заданный пользователем перебивает книжный.
+fn title(doc: &Document, options: &PdfOptions) -> String {
+    if !options.title.is_empty() {
+        return options.title.clone();
+    }
+    doc.metadata.title.clone().unwrap_or_default()
+}
+
+/// Подставить свойства пакета `docProps/core.xml`, если настройки не заданы.
+///
+/// Ключевые слова не переносятся: в модели это одна строка, а в
+/// [`PdfOptions::keywords`] — список, и делить её по запятым значило бы гадать о
+/// формате исходника.
+fn apply_metadata(doc: &mut PdfDocument, source: &Document, options: &PdfOptions) {
+    let info = &mut doc.metadata.info;
+    info.author = pick(&options.author, source.metadata.creator.as_deref());
+    info.subject = pick(&options.subject, source.metadata.subject.as_deref());
+    info.keywords.clone_from(&options.keywords);
+}
+
+/// Непустая настройка, иначе значение из документа.
+fn pick(option: &str, fallback: Option<&str>) -> String {
+    if option.is_empty() {
+        fallback.unwrap_or_default().to_owned()
+    } else {
+        option.to_owned()
+    }
+}
+
+/// Геометрия страницы: раскладка DOCX уже в пикселях 96 dpi, а координаты
+/// элементов — от левого верхнего угла самой страницы.
+///
+/// Поэтому поля нулевые: полосу набора движок учёл сам, и геометрии остаётся
+/// только пересчёт единиц. Ориентация не задаётся отдельно — раскладка уже
+/// отдала повернутые `width`/`height` секции.
+fn geometry(page: &Page) -> PageGeometry {
+    let cfg = PageConfig {
+        size: PageSize::Custom {
+            w_mm: page.width * MM_PER_PX,
+            h_mm: page.height * MM_PER_PX,
+        },
+        margins: Margins {
+            top_mm: 0.0,
+            right_mm: 0.0,
+            bottom_mm: 0.0,
+            left_mm: 0.0,
+        },
+        scale: 1.0,
+        ..PageConfig::default()
+    };
+    PageGeometry::new(&cfg)
+}
+
+/// Страницы-зонды для подрезки шрифтов: по одной на встроенное начертание, с
+/// одной текстовой операцией из всех его символов.
+///
+/// Размер страницы-зонда printpdf не читает, но он берётся с первой страницы
+/// документа — как у листа-донора в `painter::probe_pages_from`.
+fn probe_pages(glyphs: BTreeMap<FontId, BTreeSet<char>>, page: &Page) -> Vec<PdfPage> {
+    let geometry = geometry(page);
+    glyphs
+        .into_iter()
+        .map(|(font, chars)| {
+            PdfPage::new(
+                Mm::from(Pt(geometry.width_pt())),
+                Mm::from(Pt(geometry.height_pt())),
+                vec![Op::WriteText {
+                    items: vec![TextItem::Text(chars.into_iter().collect())],
+                    font,
+                }],
+            )
+        })
+        .collect()
+}
+
+/// Начертания, встретившиеся на страницах: ими подрезаются встроенные шрифты.
+///
+/// Обход рекурсивный: содержимое ячеек таблицы — такие же элементы раскладки, и
+/// начертание из ячейки обязано попасть в набор, даже пока таблицы не рисуются.
+fn collect_faces(layout: &PageLayout) -> FaceSet {
+    fn walk(items: &[LayoutItem], faces: &mut FaceSet) {
+        for item in items {
+            match item {
+                LayoutItem::Paragraph { bold, italic, .. } => {
+                    faces.insert(Face::of(*bold, *italic));
+                }
+                LayoutItem::Table { cells, .. } => {
+                    for cell in cells {
+                        walk(&cell.content, faces);
+                    }
+                }
+                LayoutItem::Float(_) | LayoutItem::PageBreak | LayoutItem::ColumnBreak => {}
+            }
+        }
+    }
+
+    let mut faces = FaceSet::default();
+    for page in &layout.pages {
+        walk(&page.items, &mut faces);
+    }
+    faces
+}
+
+/// Символы каждой страницы по начертаниям: то, что реально попадёт в PDF.
+///
+/// Источник — те же операции, что уйдут в запись ([`draw_page`]): пре-скан
+/// текста по элементам раскладки разошёлся бы с отрисовкой при первой же правке
+/// (например, когда таблицы начнут рисовать своё содержимое).
+fn collect_glyphs(
+    layout: &PageLayout,
+    embedded: &EmbeddedFonts,
+    registry: &mut FontRegistry,
+) -> BTreeMap<FontId, BTreeSet<char>> {
+    let mut glyphs: BTreeMap<FontId, BTreeSet<char>> = BTreeMap::new();
+    for page in &layout.pages {
+        let geometry = geometry(page);
+        for op in draw_page(page, &geometry, embedded, registry) {
+            if let Op::WriteText { font, items } = op {
+                let set = glyphs.entry(font.clone()).or_default();
+                for item in items {
+                    if let TextItem::Text(text) = item {
+                        set.extend(text.chars());
+                    }
+                }
+            }
+        }
+    }
+    glyphs
+}
+
+/// Операции одной страницы в порядке рисования.
+fn draw_page(
+    page: &Page,
+    geometry: &PageGeometry,
+    embedded: &EmbeddedFonts,
+    registry: &mut FontRegistry,
+) -> Vec<Op> {
+    let mut ops = Vec::new();
+    draw_items(&page.items, &mut ops, geometry, embedded, registry);
+    ops
+}
+
+/// Диспетчер по вариантам [`LayoutItem`].
+///
+/// Ячейки таблицы сюда не спускаются: их содержимое рисует сам слайс таблиц
+/// (`tables::draw`) — иначе он не смог бы разложить содержимое по ячейкам.
+fn draw_items(
+    items: &[LayoutItem],
+    ops: &mut Vec<Op>,
+    page: &PageGeometry,
+    embedded: &EmbeddedFonts,
+    registry: &mut FontRegistry,
+) {
+    for item in items {
+        match item {
+            LayoutItem::Paragraph {
+                rect,
+                text,
+                size,
+                color,
+                bold,
+                italic,
+                ..
+            } => draw_line(
+                ops,
+                page,
+                embedded,
+                registry,
+                LineRun {
+                    rect: *rect,
+                    text,
+                    size: *size,
+                    color: *color,
+                    bold: *bold,
+                    italic: *italic,
+                },
+            ),
+            LayoutItem::Table { cells, .. } => tables::draw(ops, cells, page, embedded, registry),
+            LayoutItem::Float(float) => floats::draw(ops, float, page, embedded, registry),
+            // Разрывы — метки раскладки: страницы уже разрезаны, рисовать нечего.
+            LayoutItem::PageBreak | LayoutItem::ColumnBreak => {}
+        }
+    }
+}
+
+/// Строка абзаца для отрисовки: поля [`LayoutItem::Paragraph`] без
+/// идентификатора узла и гарнитуры (шрифт у экспорта один).
+#[derive(Clone, Copy)]
+struct LineRun<'a> {
+    /// Прямоугольник строки: `y` — её верх.
+    rect: Rect,
+    /// Текст строки, уже разбитый раскладкой по словам.
+    text: &'a str,
+    /// Кегль в полупунктах.
+    size: HalfPoint,
+    /// Цвет знаков (`RRGGBB`); `None` — цвет по умолчанию.
+    color: Option<u32>,
+    /// Полужирный.
+    bold: bool,
+    /// Курсив.
+    italic: bool,
+}
+
+/// Нарисовать строку абзаца.
+///
+/// PDF ставит текст по базовой линии, а раскладка знает верх строки: подъём
+/// берётся из метрик того же шрифта, каким мерила раскладка (`DEFAULT_FONT_ID`),
+/// — так же считает [`crate::text`] для ячейки XLSX. Выравнивание повторно не
+/// применяется: оно уже учтено в `rect.x` при раскладке.
+fn draw_line(
+    ops: &mut Vec<Op>,
+    page: &PageGeometry,
+    embedded: &EmbeddedFonts,
+    registry: &mut FontRegistry,
+    run: LineRun<'_>,
+) {
+    if run.text.is_empty() || run.rect.width <= 0.0 || run.rect.height <= 0.0 {
+        return;
+    }
+    let size_px = doc_converter_docx::layout::half_points_to_px(run.size.value());
+    let metrics = registry.measure(DEFAULT_FONT_ID, size_px, "");
+    let cursor_x_pt = page.px_to_pt(run.rect.x);
+    let baseline_pt = page.px_to_pt(run.rect.y + metrics.ascent);
+    let font = embedded.id(Face::of(run.bold, run.italic)).clone();
+
+    ops.push(Op::SetFillColor {
+        col: to_pdf_color(text_color(run.color)),
+    });
+    // Каждая строка — своё `BT`/`ET`: `Td` внутри текстовой секции смещает
+    // начало относительно предыдущего, а координаты у нас абсолютные.
+    ops.push(Op::StartTextSection);
+    ops.push(Op::SetTextCursor {
+        pos: Point {
+            x: Pt(cursor_x_pt),
+            y: Pt(page.height_pt() - baseline_pt),
+        },
+    });
+    ops.push(Op::SetFontSize {
+        size: Pt(page.px_to_pt(size_px)),
+        font: font.clone(),
+    });
+    ops.push(Op::WriteText {
+        items: vec![TextItem::Text(run.text.to_owned())],
+        font,
+    });
+    ops.push(Op::EndTextSection);
+}
+
+/// Цвет знака: раскладка хранит `w:color` как `RRGGBB`, printpdf ждёт `RRGGBBAA`
+/// в [`Color`] — каналы меняются местами, альфа добавляется непрозрачная.
+///
+/// Значение без `w:color` — чёрный: `auto` в OOXML и есть цвет текста по
+/// умолчанию. То же преобразование, что у canvas-пути
+/// (`doc_converter_docx::render`).
+fn text_color(rgb: Option<u32>) -> Color {
+    match rgb {
+        Some(rgb) => Color(((rgb & 0x00FF_FFFF) << 8) | 0xFF),
+        None => Color::BLACK,
+    }
+}

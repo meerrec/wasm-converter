@@ -12,6 +12,7 @@ mod annot;
 mod background;
 mod border;
 pub mod chart;
+mod docx;
 mod fonts;
 pub mod image;
 mod layout;
@@ -37,6 +38,12 @@ pub(crate) enum PdfError {
     /// В книге нет ни одного листа.
     #[error("workbook has no sheets")]
     NoSheets,
+    /// Раскладка DOCX не собралась.
+    #[error("docx layout failed: {0}")]
+    DocxLayout(#[from] doc_converter_docx::LayoutError),
+    /// Раскладка DOCX не дала ни одной страницы: PDF без страниц невалиден.
+    #[error("docx layout has no pages")]
+    NoPages,
     /// Шрифт не разобран `printpdf`.
     #[error("invalid font data: {0}")]
     Font(String),
@@ -55,10 +62,19 @@ impl PdfExporter {
         Self { opts }
     }
 
+    /// Экспортировать документ DOCX в PDF.
+    ///
+    /// Страницы берутся готовыми у раскладки `doc-converter-docx`: сколько их
+    /// вернул движок, столько попадёт в PDF, и того же размера. Один шрифт на
+    /// экран и PDF (Carlito из `doc-converter-render`) — залог совпадения точек
+    /// переноса (ADR-0007).
+    ///
     /// # Errors
-    /// TODO (Спринт 10): ошибки раскладки и записи PDF.
-    pub fn export_docx(&mut self, _doc: &doc_converter_docx::Document) -> Result<Vec<u8>> {
-        todo!("PDF export for DOCX (Фаза 4)")
+    /// [`doc_converter_core::Error::Export`], если раскладка не собралась, не
+    /// дала ни одной страницы или printpdf не смог собрать документ.
+    pub fn export_docx(&mut self, doc: &doc_converter_docx::Document) -> Result<Vec<u8>> {
+        docx::export(doc, &self.opts)
+            .map_err(|err| doc_converter_core::Error::Export(format!("pdf: {err}")))
     }
 
     /// Экспортировать лист книги (индекс в `wb.sheets()`) в PDF.
