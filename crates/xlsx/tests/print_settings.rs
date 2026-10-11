@@ -137,3 +137,42 @@ fn print_titles_for_an_unknown_sheet_are_ignored() {
         assert_eq!(sheet.print, PrintSettings::default());
     }
 }
+
+/// Поля страницы приходят из `<pageMargins>`; в файле они записаны дюймами, а
+/// модель хранит миллиметры — перевод здесь и проверяется (0.7" = 17.78 мм).
+#[test]
+fn page_margins_come_from_the_part() {
+    let book = open(package(
+        r#"<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>"#,
+        "<sheetData/>",
+        "",
+    ))
+    .unwrap();
+
+    let margins = book.sheets()[0].print.margins.expect("поля листа");
+    // Дюймы файла в миллиметрах: сравнение с допуском — 0.7" в f32 не круглое.
+    for (got, want) in [
+        (margins.left_mm, 17.78),
+        (margins.right_mm, 17.78),
+        (margins.top_mm, 19.05),
+        (margins.bottom_mm, 19.05),
+    ] {
+        assert!((got - want).abs() < 1e-3, "поле {got} мм вместо {want} мм");
+    }
+    // Лист без элемента полей не задаёт: их выбирает печатающее приложение.
+    assert_eq!(book.sheets()[1].print.margins, None);
+}
+
+/// Неполный набор атрибутов полей не задаёт: половина полей сдвинула бы лист
+/// сильнее, чем их отсутствие.
+#[test]
+fn incomplete_page_margins_are_ignored() {
+    let book = open(package(
+        r#"<pageMargins left="0.7" right="0.7"/>"#,
+        "<sheetData/>",
+        "",
+    ))
+    .unwrap();
+
+    assert_eq!(book.sheets()[0].print.margins, None);
+}

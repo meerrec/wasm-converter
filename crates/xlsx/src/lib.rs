@@ -65,7 +65,7 @@ pub use model::{
     WorksheetMeta, THEME_COLOR_COUNT,
 };
 pub use paint::{build as paint_sheet, PaintOptions};
-pub use print_settings::{Orientation, PrintSettings, PrintTitles, Span};
+pub use print_settings::{Orientation, PageMargins, PrintSettings, PrintTitles, Span};
 pub use sheet_meta::{Hyperlink, HyperlinkTarget, Merges, Pane, PaneKind, PaneState, SheetView};
 pub use strings::SharedStrings;
 pub use workbook::WorkbookMeta;

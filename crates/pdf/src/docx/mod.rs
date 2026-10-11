@@ -161,12 +161,12 @@ fn geometry(page: &Page) -> PageGeometry {
             w_mm: page.width * MM_PER_PX,
             h_mm: page.height * MM_PER_PX,
         },
-        margins: Margins {
+        margins: Some(Margins {
             top_mm: 0.0,
             right_mm: 0.0,
             bottom_mm: 0.0,
             left_mm: 0.0,
-        },
+        }),
         scale: 1.0,
         ..PageConfig::default()
     };

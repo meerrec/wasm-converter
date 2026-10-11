@@ -35,7 +35,7 @@ use printpdf::{
 use crate::fonts::{EmbeddedFonts, Face};
 use crate::image;
 use crate::layout::{PageGeometry, RectPx};
-use crate::options::PdfOptions;
+use crate::options::{Margins, PdfOptions};
 use crate::overlay::{self, Align, OverlayMargins, PageContext, Watermark, WatermarkLayer};
 use crate::pagination::{paginate, print_scale, PageSlice, PaintedCell, SheetPage};
 use crate::styles::to_pdf_color;
@@ -543,7 +543,10 @@ struct StampBase<'a> {
 
 impl<'a> StampBase<'a> {
     fn from_options(options: &'a PdfOptions) -> Self {
-        let margins = options.page.margins;
+        // Колонтитул живёт в поле страницы; поля листа, если их не задал
+        // вызывающий, здесь не читаются — полоса колонтитула общая на
+        // документ, а поля листов книги разные.
+        let margins = options.page.margins.unwrap_or_default();
         Self {
             margins: OverlayMargins::from_mm(
                 margins.top_mm,
@@ -780,6 +783,17 @@ struct PreparedSheet<'a> {
     images: Vec<Vec<Op>>,
 }
 
+/// Поля страницы, объявленные листом (`<pageMargins>`), в терминах
+/// [`PageConfig`]; `None` — лист их не объявляет.
+fn sheet_margins(sheet: &Sheet) -> Option<Margins> {
+    sheet.print.margins.map(|margins| Margins {
+        top_mm: margins.top_mm,
+        right_mm: margins.right_mm,
+        bottom_mm: margins.bottom_mm,
+        left_mm: margins.left_mm,
+    })
+}
+
 /// Подготовить лист к записи: раскладка, геометрия, срезы, диаграммы.
 ///
 /// Масштаб считается на лист: `fit_to_width`/`fit_to_height` — настройка
@@ -796,9 +810,13 @@ fn prepare_sheet<'a>(
         .get(sheet_index)
         .ok_or(PdfError::NoSuchSheet(sheet_index))?;
     let layout = SheetLayout::new(sheet);
+    let mut page_cfg = options.page.clone();
+    // Поля лист несёт сам (`<pageMargins>`): приложение печатает лист с ними, и
+    // без этой подстановки лист уезжает от эталона на разницу полей. Заданные
+    // вызывающим поля сильнее — он печатает не «как Excel», а как ему сказали.
+    page_cfg.margins = page_cfg.margins.or_else(|| sheet_margins(sheet));
     // `fit_to_width` пересчитывает масштаб до сборки геометрии: от него зависят
     // и полосы, и координаты ячеек.
-    let mut page_cfg = options.page.clone();
     page_cfg.scale = print_scale(&page_cfg, sheet, &layout);
     let page = PageGeometry::new(&page_cfg);
     // `page_cfg` несёт и масштаб, и повтор шапки/первых столбцов: пагинация

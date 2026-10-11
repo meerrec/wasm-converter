@@ -226,18 +226,24 @@ fn page_counts_are_pinned() {
 /// `max_x`) и `layout-column-widths` (пятый столбец шириной 60 символов уехал
 /// на вторую полосу).
 ///
+/// Все эталоны, кроме `content-empty-sheet` (там нечего сдвигать), пересчитаны
+/// вместе с выравниванием листа по эталонной печати: поля страницы берутся из
+/// `<pageMargins>` листа, а вставка текста в ячейке — точка (см.
+/// `xlsx::paint::TEXT_PADDING`). До этого лист печатался с полями приложения и
+/// начинался на 14–19 px @150 dpi левее эталона.
+///
 /// `edge-merged-styled` пересчитан после починки заливок: полигон строился от
 /// верхней кромки (`Rect::to_polygon` в вендоренной 0.8.2), и каждая заливка
 /// уезжала вниз на высоту своего прямоугольника. Эталон был снят с багованной
 /// отрисовки — потому баг и не ловился.
 const DRAWING: &[(&str, u64)] = &[
-    ("scale-ten-pages.xlsx", 0xc427_d500_5031_3cb4),
-    ("edge-many-rows.xlsx", 0x8451_e5a1_99cc_39e7),
-    ("content-dense.xlsx", 0x2ec6_1b78_f99d_8b35),
-    ("size-20x100x1.xlsx", 0xd2eb_fa1b_4c50_b1a7),
-    ("values-strings.xlsx", 0xc9ad_db68_a27a_67f7),
-    ("layout-column-widths.xlsx", 0xc279_e1d4_8bc9_ace5),
-    ("edge-merged-styled.xlsx", 0xb63d_5a61_2eb5_544e),
+    ("scale-ten-pages.xlsx", 0x3bf0_903d_d1d3_8661),
+    ("edge-many-rows.xlsx", 0xc3e5_d8ee_f8a4_8594),
+    ("content-dense.xlsx", 0x5015_7836_f1fb_005b),
+    ("size-20x100x1.xlsx", 0x16ce_a0a3_828a_5d4b),
+    ("values-strings.xlsx", 0x4d43_ca4c_6296_2b61),
+    ("layout-column-widths.xlsx", 0xe441_31e2_0ecc_ad13),
+    ("edge-merged-styled.xlsx", 0x6463_5275_1058_4c2d),
     ("content-empty-sheet.xlsx", 0x615d_6ab3_aa58_b40f),
 ];
 

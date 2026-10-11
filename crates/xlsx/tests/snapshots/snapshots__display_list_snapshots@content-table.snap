@@ -36,302 +36,302 @@ Line x1=300 y1=20 x2=300 y2=460 stroke=Color(3654932991) sw=1 style=Solid
 Line x1=364 y1=20 x2=364 y2=460 stroke=Color(3654932991) sw=1 style=Solid
 Line x1=428 y1=20 x2=428 y2=460 stroke=Color(3654932991) sw=1 style=Solid
 PushClip x=44 y=20 w=64 h=20
-Text x=47 y=37 text="Наименование" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=38.666668 text="Наименование" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=20 w=64 h=20
-Text x=111 y=37 text="Количество" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=109.333336 y=38.666668 text="Количество" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=20 w=64 h=20
-Text x=175 y=37 text="Цена" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=173.33333 y=38.666668 text="Цена" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=20 w=64 h=20
-Text x=239 y=37 text="Сумма" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=237.33333 y=38.666668 text="Сумма" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
-Text x=303 y=37 text="Дата" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=301.33334 y=38.666668 text="Дата" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PushClip x=300 y=40 w=64 h=20
-Text x=361 y=57 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=58.666668 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=60 w=64 h=20
-Text x=47 y=77 text="Позиция 2" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=78.666664 text="Позиция 2" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=60 w=64 h=20
-Text x=169 y=77 text="2" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=78.666664 text="2" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=60 w=64 h=20
-Text x=233 y=77 text="115" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=78.666664 text="115" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=60 w=64 h=20
-Text x=297 y=77 text="230" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=78.666664 text="230" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=60 w=64 h=20
-Text x=361 y=77 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=78.666664 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=80 w=64 h=20
-Text x=47 y=97 text="Позиция 3" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=98.666664 text="Позиция 3" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=80 w=64 h=20
-Text x=169 y=97 text="3" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=98.666664 text="3" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=80 w=64 h=20
-Text x=233 y=97 text="122.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=98.666664 text="122.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=80 w=64 h=20
-Text x=297 y=97 text="367.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=98.666664 text="367.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=80 w=64 h=20
-Text x=361 y=97 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=98.666664 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=100 w=64 h=20
-Text x=47 y=117 text="Позиция 4" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=118.666664 text="Позиция 4" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=100 w=64 h=20
-Text x=169 y=117 text="4" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=118.666664 text="4" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=100 w=64 h=20
-Text x=233 y=117 text="130" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=118.666664 text="130" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=100 w=64 h=20
-Text x=297 y=117 text="520" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=118.666664 text="520" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=100 w=64 h=20
-Text x=361 y=117 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=118.666664 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=120 w=64 h=20
-Text x=47 y=137 text="Позиция 5" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=138.66667 text="Позиция 5" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=120 w=64 h=20
-Text x=169 y=137 text="5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=138.66667 text="5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=120 w=64 h=20
-Text x=233 y=137 text="137.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=138.66667 text="137.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=120 w=64 h=20
-Text x=297 y=137 text="687.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=138.66667 text="687.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=120 w=64 h=20
-Text x=361 y=137 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=138.66667 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=140 w=64 h=20
-Text x=47 y=157 text="Позиция 6" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=158.66667 text="Позиция 6" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=140 w=64 h=20
-Text x=169 y=157 text="6" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=158.66667 text="6" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=140 w=64 h=20
-Text x=233 y=157 text="145" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=158.66667 text="145" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=140 w=64 h=20
-Text x=297 y=157 text="870" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=158.66667 text="870" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=140 w=64 h=20
-Text x=361 y=157 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=158.66667 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=160 w=64 h=20
-Text x=47 y=177 text="Позиция 7" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=178.66667 text="Позиция 7" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=160 w=64 h=20
-Text x=169 y=177 text="7" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=178.66667 text="7" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=160 w=64 h=20
-Text x=233 y=177 text="152.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=178.66667 text="152.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=160 w=64 h=20
-Text x=297 y=177 text="1067.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=178.66667 text="1067.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=160 w=64 h=20
-Text x=361 y=177 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=178.66667 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=180 w=64 h=20
-Text x=47 y=197 text="Позиция 8" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=198.66667 text="Позиция 8" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=180 w=64 h=20
-Text x=169 y=197 text="8" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=198.66667 text="8" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=180 w=64 h=20
-Text x=233 y=197 text="160" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=198.66667 text="160" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=180 w=64 h=20
-Text x=297 y=197 text="1280" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=198.66667 text="1280" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=180 w=64 h=20
-Text x=361 y=197 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=198.66667 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=200 w=64 h=20
-Text x=47 y=217 text="Позиция 9" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=218.66667 text="Позиция 9" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=200 w=64 h=20
-Text x=169 y=217 text="9" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=218.66667 text="9" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=200 w=64 h=20
-Text x=233 y=217 text="167.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=218.66667 text="167.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=200 w=64 h=20
-Text x=297 y=217 text="1507.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=218.66667 text="1507.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=200 w=64 h=20
-Text x=361 y=217 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=218.66667 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=220 w=64 h=20
-Text x=47 y=237 text="Позиция 10" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=238.66667 text="Позиция 10" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=220 w=64 h=20
-Text x=169 y=237 text="10" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=238.66667 text="10" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=220 w=64 h=20
-Text x=233 y=237 text="175" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=238.66667 text="175" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=220 w=64 h=20
-Text x=297 y=237 text="1750" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=238.66667 text="1750" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=220 w=64 h=20
-Text x=361 y=237 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=238.66667 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=240 w=64 h=20
-Text x=47 y=257 text="Позиция 11" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=258.66666 text="Позиция 11" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=240 w=64 h=20
-Text x=169 y=257 text="11" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=258.66666 text="11" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=240 w=64 h=20
-Text x=233 y=257 text="182.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=258.66666 text="182.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=240 w=64 h=20
-Text x=297 y=257 text="2007.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=258.66666 text="2007.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=240 w=64 h=20
-Text x=361 y=257 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=258.66666 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=260 w=64 h=20
-Text x=47 y=277 text="Позиция 12" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=278.66666 text="Позиция 12" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=260 w=64 h=20
-Text x=169 y=277 text="12" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=278.66666 text="12" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=260 w=64 h=20
-Text x=233 y=277 text="190" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=278.66666 text="190" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=260 w=64 h=20
-Text x=297 y=277 text="2280" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=278.66666 text="2280" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=260 w=64 h=20
-Text x=361 y=277 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=278.66666 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=280 w=64 h=20
-Text x=47 y=297 text="Позиция 13" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=298.66666 text="Позиция 13" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=280 w=64 h=20
-Text x=169 y=297 text="13" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=298.66666 text="13" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=280 w=64 h=20
-Text x=233 y=297 text="197.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=298.66666 text="197.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=280 w=64 h=20
-Text x=297 y=297 text="2567.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=298.66666 text="2567.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=280 w=64 h=20
-Text x=361 y=297 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=298.66666 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=300 w=64 h=20
-Text x=47 y=317 text="Позиция 14" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=318.66666 text="Позиция 14" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=300 w=64 h=20
-Text x=169 y=317 text="14" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=318.66666 text="14" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=300 w=64 h=20
-Text x=233 y=317 text="205" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=318.66666 text="205" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=300 w=64 h=20
-Text x=297 y=317 text="2870" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=318.66666 text="2870" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=300 w=64 h=20
-Text x=361 y=317 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=318.66666 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=320 w=64 h=20
-Text x=47 y=337 text="Позиция 15" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=338.66666 text="Позиция 15" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=320 w=64 h=20
-Text x=169 y=337 text="15" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=338.66666 text="15" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=320 w=64 h=20
-Text x=233 y=337 text="212.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=338.66666 text="212.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=320 w=64 h=20
-Text x=297 y=337 text="3187.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=338.66666 text="3187.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=320 w=64 h=20
-Text x=361 y=337 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=338.66666 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=340 w=64 h=20
-Text x=47 y=357 text="Позиция 16" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=358.66666 text="Позиция 16" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=340 w=64 h=20
-Text x=169 y=357 text="16" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=358.66666 text="16" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=340 w=64 h=20
-Text x=233 y=357 text="220" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=358.66666 text="220" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=340 w=64 h=20
-Text x=297 y=357 text="3520" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=358.66666 text="3520" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=340 w=64 h=20
-Text x=361 y=357 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=358.66666 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=360 w=64 h=20
-Text x=47 y=377 text="Позиция 17" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=378.66666 text="Позиция 17" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=360 w=64 h=20
-Text x=169 y=377 text="17" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=378.66666 text="17" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=360 w=64 h=20
-Text x=233 y=377 text="227.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=378.66666 text="227.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=360 w=64 h=20
-Text x=297 y=377 text="3867.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=378.66666 text="3867.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=360 w=64 h=20
-Text x=361 y=377 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=378.66666 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=380 w=64 h=20
-Text x=47 y=397 text="Позиция 18" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=398.66666 text="Позиция 18" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=380 w=64 h=20
-Text x=169 y=397 text="18" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=398.66666 text="18" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=380 w=64 h=20
-Text x=233 y=397 text="235" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=398.66666 text="235" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=380 w=64 h=20
-Text x=297 y=397 text="4230" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=398.66666 text="4230" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=380 w=64 h=20
-Text x=361 y=397 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=398.66666 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=400 w=64 h=20
-Text x=47 y=417 text="Позиция 19" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=418.66666 text="Позиция 19" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=400 w=64 h=20
-Text x=169 y=417 text="19" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=418.66666 text="19" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=400 w=64 h=20
-Text x=233 y=417 text="242.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=418.66666 text="242.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=400 w=64 h=20
-Text x=297 y=417 text="4607.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=418.66666 text="4607.5" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=300 y=400 w=64 h=20
-Text x=361 y=417 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=362.66666 y=418.66666 text="#####" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=420 w=64 h=20
-Text x=47 y=437 text="Позиция 20" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=438.66666 text="Позиция 20" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=108 y=420 w=64 h=20
-Text x=169 y=437 text="20" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=170.66667 y=438.66666 text="20" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=420 w=64 h=20
-Text x=233 y=437 text="250" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=234.66667 y=438.66666 text="250" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=236 y=420 w=64 h=20
-Text x=297 y=437 text="5000" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
+Text x=298.66666 y=438.66666 text="5000" font="Calibri" size=14.666667 color=Color(255) align=Right baseline=Bottom bold=false italic=false underline=false
 PopClip
 PopClip
 Rect x=0 y=0 w=800 h=20 fill=Color(4126537215) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
@@ -354,27 +354,27 @@ PopClip
 PushClip x=364 y=0 w=64 h=20
 Text x=396 y=10 text="F" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
 PopClip
-Text x=41 y=30 text="1" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=50 text="2" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=70 text="3" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=90 text="4" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=110 text="5" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=130 text="6" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=150 text="7" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=170 text="8" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=190 text="9" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=210 text="10" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=230 text="11" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=250 text="12" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=270 text="13" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=290 text="14" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=310 text="15" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=330 text="16" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=350 text="17" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=370 text="18" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=390 text="19" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=410 text="20" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=430 text="21" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=450 text="22" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=30 text="1" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=50 text="2" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=70 text="3" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=90 text="4" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=110 text="5" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=130 text="6" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=150 text="7" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=170 text="8" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=190 text="9" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=210 text="10" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=230 text="11" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=250 text="12" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=270 text="13" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=290 text="14" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=310 text="15" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=330 text="16" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=350 text="17" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=370 text="18" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=390 text="19" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=410 text="20" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=430 text="21" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=450 text="22" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
 Line x1=0 y1=20 x2=800 y2=20 stroke=Color(3233857791) sw=1 style=Solid
 Line x1=44 y1=0 x2=44 y2=600 stroke=Color(3233857791) sw=1 style=Solid

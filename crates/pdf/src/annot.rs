@@ -598,12 +598,12 @@ mod tests {
         let h_mm = content_rows * row_h * 0.75 * 25.4 / 72.0;
         PageConfig {
             size: PageSize::Custom { w_mm: 100.0, h_mm },
-            margins: Margins {
+            margins: Some(Margins {
                 top_mm: 0.0,
                 right_mm: 0.0,
                 bottom_mm: 0.0,
                 left_mm: 0.0,
-            },
+            }),
             ..PageConfig::default()
         }
     }

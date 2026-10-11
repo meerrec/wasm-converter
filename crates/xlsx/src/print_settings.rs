@@ -38,6 +38,22 @@ pub struct Span {
     pub last: u32,
 }
 
+/// Поля страницы листа, миллиметры.
+///
+/// В файле (`<pageMargins>`, `CT_PageMargins`) они записаны дюймами: миллиметры
+/// — единица потребителя печати, и перевод здесь единственный.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PageMargins {
+    /// Левое поле.
+    pub left_mm: f32,
+    /// Правое поле.
+    pub right_mm: f32,
+    /// Верхнее поле.
+    pub top_mm: f32,
+    /// Нижнее поле.
+    pub bottom_mm: f32,
+}
+
 /// Настройки печати листа.
 ///
 /// Поля заполняются из части листа, кроме
@@ -46,7 +62,7 @@ pub struct Span {
 /// `definedNames` книги, и дописывает их [`open`](crate::open).
 // Флаги печати независимы, как атрибуты схемы: это не состояния одной машины.
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PrintSettings {
     /// `<pageSetUpPr fitToPage="1">`: уместить лист на страницы.
     ///
@@ -73,6 +89,9 @@ pub struct PrintSettings {
     pub horizontal_centered: bool,
     /// `verticalCentered` — центрировать содержимое по высоте.
     pub vertical_centered: bool,
+    /// Поля страницы из `<pageMargins>`; `None` — элемента нет, поля выбирает
+    /// печатающее приложение.
+    pub margins: Option<PageMargins>,
     /// Сырой текст `<oddHeader>`: коды вида `&C` не интерпретируются.
     pub odd_header: Option<String>,
     /// Сырой текст `<oddFooter>`.
@@ -98,6 +117,7 @@ impl Default for PrintSettings {
             headings: false,
             horizontal_centered: false,
             vertical_centered: false,
+            margins: None,
             odd_header: None,
             odd_footer: None,
             repeat_header_rows: None,
@@ -153,6 +173,28 @@ pub(crate) fn read_page_setup(print: &mut PrintSettings, attrs: &[Attr<'_>]) {
     }
 }
 
+/// Прочитать `<pageMargins>`: поля страницы.
+///
+/// Атрибуты обязательны по схеме, но неполный набор (файл собран не Excel'ем)
+/// полей не задаёт: половина полей сдвинула бы лист сильнее, чем отсутствие
+/// элемента, а `<pageMargins>` без полей — не повод отказать в разборе листа.
+pub(crate) fn read_page_margins(print: &mut PrintSettings, attrs: &[Attr<'_>]) {
+    let (Some(left_mm), Some(right_mm), Some(top_mm), Some(bottom_mm)) = (
+        millimetres(attrs, "left"),
+        millimetres(attrs, "right"),
+        millimetres(attrs, "top"),
+        millimetres(attrs, "bottom"),
+    ) else {
+        return;
+    };
+    print.margins = Some(PageMargins {
+        left_mm,
+        right_mm,
+        top_mm,
+        bottom_mm,
+    });
+}
+
 /// Прочитать `<printOptions>`: сетка, заголовки строк и столбцов,
 /// центрирование. Отсутствующий атрибут ничего не меняет — атрибуты
 /// независимы.
@@ -173,6 +215,17 @@ pub(crate) fn read_print_options(print: &mut PrintSettings, attrs: &[Attr<'_>]) 
 /// `None` (неизвестный атрибут не должен ронять разбор).
 fn unsigned(attrs: &[Attr<'_>], name: &str) -> Option<u32> {
     find(attrs, name).and_then(|value| value.trim().parse().ok())
+}
+
+/// Дюймов на миллиметр (ECMA-376 пишет поля страницы дюймами).
+const MM_PER_INCH: f32 = 25.4;
+
+/// Длина из атрибута в дюймах, в миллиметрах; отсутствующее или неразбираемое
+/// значение — `None`.
+fn millimetres(attrs: &[Attr<'_>], name: &str) -> Option<f32> {
+    find(attrs, name)
+        .and_then(|value| value.trim().parse::<f32>().ok())
+        .map(|inches| inches * MM_PER_INCH)
 }
 
 /// Дочитать прямой текст элемента до парного закрывающего тега.

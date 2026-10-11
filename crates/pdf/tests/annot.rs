@@ -110,12 +110,12 @@ fn one_row_page(sheet: &Sheet) -> PdfOptions {
     PdfOptions {
         page: PageConfig {
             size: PageSize::Custom { w_mm: 100.0, h_mm },
-            margins: Margins {
+            margins: Some(Margins {
                 top_mm: 0.0,
                 right_mm: 0.0,
                 bottom_mm: 0.0,
                 left_mm: 0.0,
-            },
+            }),
             ..PageConfig::default()
         },
         ..PdfOptions::default()

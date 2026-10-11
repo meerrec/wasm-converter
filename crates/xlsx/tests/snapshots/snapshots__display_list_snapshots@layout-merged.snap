@@ -21,15 +21,15 @@ Rect x=44 y=20 w=128 h=20 fill=Color(4294967295) stroke=Color(0) sw=0 r=[0.0, 0.
 Rect x=172 y=20 w=128 h=40 fill=Color(4294967295) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
 Rect x=44 y=40 w=64 h=40 fill=Color(4294967295) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
 PushClip x=44 y=20 w=128 h=20
-Text x=47 y=37 text="заголовок на два столбца" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=38.666668 text="заголовок на два столбца" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=172 y=20 w=128 h=40
-Text x=175 y=57 text="блок 2×2" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=173.33333 y=58.666668 text="блок 2×2" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 PushClip x=44 y=40 w=64 h=40
-Text x=47 y=77 text="на два ряда" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=45.333332 y=78.666664 text="на два ряда" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
-Text x=303 y=37 text="обычная" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
+Text x=301.33334 y=38.666668 text="обычная" font="Calibri" size=14.666667 color=Color(255) align=Left baseline=Bottom bold=false italic=false underline=false
 PopClip
 Rect x=0 y=0 w=800 h=20 fill=Color(4126537215) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
 Rect x=0 y=0 w=44 h=600 fill=Color(4126537215) stroke=Color(0) sw=0 r=[0.0, 0.0, 0.0, 0.0]
@@ -51,9 +51,9 @@ PopClip
 PushClip x=364 y=0 w=64 h=20
 Text x=396 y=10 text="F" font="Calibri" size=14.666667 color=Color(1145324799) align=Center baseline=Middle bold=false italic=false underline=false
 PopClip
-Text x=41 y=30 text="1" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=50 text="2" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=70 text="3" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
-Text x=41 y=90 text="4" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=30 text="1" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=50 text="2" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=70 text="3" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
+Text x=42.666668 y=90 text="4" font="Calibri" size=14.666667 color=Color(1145324799) align=Right baseline=Middle bold=false italic=false underline=false
 Line x1=0 y1=20 x2=800 y2=20 stroke=Color(3233857791) sw=1 style=Solid
 Line x1=44 y1=0 x2=44 y2=600 stroke=Color(3233857791) sw=1 style=Solid

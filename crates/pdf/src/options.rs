@@ -47,7 +47,9 @@ impl Default for Margins {
 pub struct PageConfig {
     pub size: PageSize,
     pub orientation: PageOrientation,
-    pub margins: Margins,
+    /// Поля страницы; `None` — взять поля листа из документа (`<pageMargins>`
+    /// части листа), как это делает при печати само приложение.
+    pub margins: Option<Margins>,
     pub scale: f32,
     pub fit_to_width: Option<u32>,
     /// Уместить лист на N страниц по высоте; `None` — по естественной высоте.
@@ -99,7 +101,7 @@ impl Default for PageConfig {
         Self {
             size: PageSize::A4,
             orientation: PageOrientation::Portrait,
-            margins: Margins::default(),
+            margins: None,
             scale: 1.0,
             fit_to_width: None,
             fit_to_height: None,

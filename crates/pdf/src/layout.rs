@@ -56,7 +56,9 @@ impl PageGeometry {
     #[must_use]
     pub fn new(cfg: &PageConfig) -> Self {
         let (width_pt, height_pt) = page_size_pt(cfg);
-        let margins = cfg.margins;
+        // Поля листа уже подставлены в конфиг (`prepare_sheet`); здесь остаётся
+        // случай геометрии, собранной в обход него, — умолчания приложения.
+        let margins = cfg.margins.unwrap_or_default();
         let left = margins.left_mm * PT_PER_MM;
         let right = margins.right_mm * PT_PER_MM;
         let top = margins.top_mm * PT_PER_MM;

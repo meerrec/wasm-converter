@@ -198,9 +198,13 @@ fn grid_lines_follow_layout_edges() {
     assert_eq!(horizontal.len(), rows as usize, "горизонтальных линий");
     assert_eq!(vertical.len(), cols as usize, "вертикальных линий");
 
-    // Геометрия страницы по умолчанию: поля 20/15/20/15 мм, масштаб 100%.
+    // Геометрия страницы: поля — объявленные листом (`<pageMargins>`), масштаб
+    // 100%. Незаданные поля брались бы из умолчаний [`PageConfig`].
     let page = PageConfig::default();
-    let margins = page.margins;
+    let margins = sheet
+        .print
+        .margins
+        .expect("фикстура объявляет поля страницы");
     let origin_x = margins.left_mm * PT_PER_MM;
     let origin_y = margins.top_mm * PT_PER_MM;
     let height = A4_H_MM * PT_PER_MM;

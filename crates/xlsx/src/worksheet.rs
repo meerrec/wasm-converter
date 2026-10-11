@@ -21,7 +21,8 @@ use crate::model::{
     DataBar, IconSet, RuleKind, SheetContent, Threshold, ThresholdKind, WorksheetBuilder,
 };
 use crate::print_settings::{
-    read_element_text, read_page_setup, read_page_setup_pr, read_print_options, PrintSettings,
+    read_element_text, read_page_margins, read_page_setup, read_page_setup_pr, read_print_options,
+    PrintSettings,
 };
 use crate::sheet_meta::{
     read_hyperlink, read_merge, read_pane, read_view, Hyperlink, Merges, SheetView,
@@ -261,7 +262,9 @@ impl<'r> SheetParser<'r> {
             }
             b"dimension" | b"sheetFormatPr" | b"col" => self.read_dims(element)?,
             b"sheetView" | b"pane" | b"mergeCell" | b"hyperlink" => self.read_meta(element)?,
-            b"pageSetUpPr" | b"pageSetup" | b"printOptions" => self.read_print(element)?,
+            b"pageSetUpPr" | b"pageSetup" | b"pageMargins" | b"printOptions" => {
+                self.read_print(element)?;
+            }
             // Колонтитулы — простой текст с кодами форматирования: храним
             // строку сырой, разворачивая только XML-сущности.
             b"oddHeader" => {
@@ -315,13 +318,15 @@ impl<'r> SheetParser<'r> {
         Ok(())
     }
 
-    /// Настройки печати: `<pageSetUpPr>`, `<pageSetup>`, `<printOptions>`.
-    /// В живых файлах они пустые, но закрытая пара тегов тоже законна.
+    /// Настройки печати: `<pageSetUpPr>`, `<pageSetup>`, `<pageMargins>`,
+    /// `<printOptions>`. В живых файлах они пустые, но закрытая пара тегов тоже
+    /// законна.
     fn read_print<'e>(&mut self, element: &'e BytesStart<'e>) -> Result<()> {
         let attrs = attributes(element, &self.part)?;
         match element.local_name().as_ref() {
             b"pageSetUpPr" => read_page_setup_pr(&mut self.print, &attrs),
             b"pageSetup" => read_page_setup(&mut self.print, &attrs),
+            b"pageMargins" => read_page_margins(&mut self.print, &attrs),
             b"printOptions" => read_print_options(&mut self.print, &attrs),
             _ => {}
         }
@@ -469,7 +474,9 @@ impl<'r> SheetParser<'r> {
             }
             b"dimension" | b"sheetFormatPr" | b"col" => self.read_dims(element)?,
             b"sheetView" | b"pane" | b"mergeCell" | b"hyperlink" => self.read_meta(element)?,
-            b"pageSetUpPr" | b"pageSetup" | b"printOptions" => self.read_print(element)?,
+            b"pageSetUpPr" | b"pageSetup" | b"pageMargins" | b"printOptions" => {
+                self.read_print(element)?;
+            }
             b"oddHeader" => self.print.odd_header = Some(String::new()),
             b"oddFooter" => self.print.odd_footer = Some(String::new()),
             // Пустые элементы условного форматирования: `<cfvo/>`, `<color/>`,

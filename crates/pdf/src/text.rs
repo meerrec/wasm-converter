@@ -25,7 +25,7 @@ use crate::styles::{to_pdf_color, CellStyle};
 ///
 /// То же число, что `TEXT_PADDING` canvas-пути (`xlsx::paint`): текст в ячейке
 /// на экране и в PDF должен стоять одинаково.
-const TEXT_PADDING_PX: f32 = 3.0;
+const TEXT_PADDING_PX: f32 = 4.0 / 3.0;
 
 /// Ширина, в которую должен уместиться текст ячейки: без полей по краям.
 #[must_use]
