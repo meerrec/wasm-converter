@@ -192,6 +192,34 @@ export interface ExportPdfMsg {
   options: PdfOptions;
 }
 
+/** Формат текстовой выгрузки DOCX: какую из трёх функций модуля звать. */
+export type DocxTextFormat = 'markdown' | 'html' | 'text';
+
+/**
+ * Экспорт открытого документа DOCX в PDF. Считается в ленивом PDF-модуле: он
+ * разбирает документ сам, а байты получает те же, что пришли при открытии.
+ *
+ * Страницы DOCX — это страницы раскладки, поэтому `pageSize`, `orientation`,
+ * `margins`, `scale` и `sheetIndex` не читаются: размер, поля и ориентация
+ * берутся из `w:sectPr` документа.
+ */
+export interface ExportDocxPdfMsg {
+  type: 'export-docx-pdf';
+  id: number;
+  options: PdfOptions;
+}
+
+/**
+ * Экспорт открытого документа DOCX в текст: markdown, HTML или обычный текст.
+ * Считается в ленивом DOCX-модуле, который воркер загрузил ещё при открытии
+ * документа.
+ */
+export interface ExportDocxTextMsg {
+  type: 'export-docx-text';
+  id: number;
+  format: DocxTextFormat;
+}
+
 /** Гиперссылка под точкой: те же единицы, что у `hit-test`. */
 export interface HyperlinkAtMsg {
   type: 'hyperlink-at';
@@ -214,7 +242,9 @@ export type InMsg =
   | HitTestMsg
   | HyperlinkAtMsg
   | ExportPngMsg
-  | ExportPdfMsg;
+  | ExportPdfMsg
+  | ExportDocxPdfMsg
+  | ExportDocxTextMsg;
 
 export interface ReadyMsg {
   type: 'ready';
@@ -237,8 +267,15 @@ export interface HitMsg { type: 'hit'; id: number; cell: [number, number] | null
 /** Ответ на `hyperlink-at`: ссылка под точкой либо ничего. */
 export interface HyperlinkMsg { type: 'hyperlink'; id: number; link: HyperlinkInfo | null }
 export interface PngMsg { type: 'png'; id: number; bytes: Uint8Array }
-/** Готовый PDF. Байты передаются переводом владения — копии нет. */
+/**
+ * Готовый PDF. Байты передаются переводом владения — копии нет.
+ *
+ * Тег общий у XLSX- и DOCX-путей: тело совпадает, а воркеры у просмотрщиков
+ * свои, так что сужать нечего.
+ */
 export interface PdfMsg { type: 'pdf'; id: number; bytes: Uint8Array }
+/** Текстовая выгрузка документа в том формате, что запросил клиент. */
+export interface DocxTextMsg { type: 'docx-text'; id: number; text: string }
 export interface WorkerErrorMsg { type: 'error'; message: string }
 
 export type OutMsg =
@@ -250,6 +287,7 @@ export type OutMsg =
   | DocxOpenedMsg
   | HitMsg
   | HyperlinkMsg
+  | DocxTextMsg
   | WorkerErrorMsg;
 
 export type WorkerResponse =

@@ -1,9 +1,12 @@
 import type {
   DocxModuleUrls,
+  DocxTextFormat,
   InMsg,
   OutMsg,
   PageInfo,
   PaintStats,
+  PdfModuleUrls,
+  PdfOptions,
   RenderConfig,
   Viewport,
 } from '../protocol.js';
@@ -30,6 +33,21 @@ export interface DocxViewerHandle {
   scrollTo(x: number, y: number): void;
   /** Текущий кадр картинкой PNG — им проверяют, что нарисовалось. */
   exportPng(): Promise<Uint8Array>;
+  /**
+   * Экспорт документа в PDF. Без настроек — страницы раскладки со своими
+   * размерами и полями из `w:sectPr`.
+   *
+   * `options` — тот же `PdfOptions`, что у XLSX-пути, но читаются не все поля:
+   * `pageSize`, `orientation`, `margins`, `scale` и `sheetIndex` не влияют,
+   * страницы берутся из документа.
+   */
+  exportPdf(options?: PdfOptions): Promise<Uint8Array>;
+  /** Экспорт документа в Markdown: заголовки, списки, таблицы, ссылки. */
+  exportMarkdown(): Promise<string>;
+  /** Экспорт документа в HTML — самостоятельную страницу со встроенными стилями. */
+  exportHtml(): Promise<string>;
+  /** Экспорт документа в обычный текст: содержимое без разметки. */
+  exportText(): Promise<string>;
   /** Подписка на метрики кадров. */
   onTick(handler: (stats: PaintStats) => void): () => void;
   /** Остановить воркер и убрать за собой разметку. */
@@ -46,6 +64,11 @@ export interface DocxViewerOptions {
    * не задан — открытие получит внятную ошибку вместо страниц.
    */
   docxWasm?: DocxModuleUrls;
+  /**
+   * Где лежит ленивый PDF-модуль. Воркер грузит его при первом экспорте в PDF;
+   * не задан — кнопка экспорта получит внятную ошибку вместо файла.
+   */
+  pdfWasm?: PdfModuleUrls;
   /** Размер слота ring'а в байтах. */
   slotCapacity?: number;
   /** Начальный зум. */
@@ -128,6 +151,14 @@ export async function createDocxViewer(
     number,
     { resolve: (bytes: Uint8Array) => void; reject: (e: Error) => void }
   >();
+  const pendingPdf = new Map<
+    number,
+    { resolve: (bytes: Uint8Array) => void; reject: (e: Error) => void }
+  >();
+  const pendingText = new Map<
+    number,
+    { resolve: (text: string) => void; reject: (e: Error) => void }
+  >();
   let nextRequestId = 1;
 
   worker.addEventListener('message', (ev: MessageEvent<OutMsg>) => {
@@ -150,12 +181,26 @@ export async function createDocxViewer(
         pendingPng.delete(msg.id);
         break;
       }
+      case 'pdf': {
+        pendingPdf.get(msg.id)?.resolve(msg.bytes);
+        pendingPdf.delete(msg.id);
+        break;
+      }
+      case 'docx-text': {
+        pendingText.get(msg.id)?.resolve(msg.text);
+        pendingText.delete(msg.id);
+        break;
+      }
       case 'error':
         for (const p of pendingOpen) p.reject(new Error(msg.message));
         pendingOpen.clear();
         // У ошибки нет id: отклоняем весь экспорт — незавершённый повис бы навсегда.
         for (const p of pendingPng.values()) p.reject(new Error(msg.message));
         pendingPng.clear();
+        for (const p of pendingPdf.values()) p.reject(new Error(msg.message));
+        pendingPdf.clear();
+        for (const p of pendingText.values()) p.reject(new Error(msg.message));
+        pendingText.clear();
         console.error('[docx]', msg.message);
         break;
       default:
@@ -182,6 +227,7 @@ export async function createDocxViewer(
         canvas: off,
         wasmUrl: options.wasmUrl,
         docx: options.docxWasm,
+        pdf: options.pdfWasm,
         slotCapacity,
       } satisfies InMsg,
       [off],
@@ -304,6 +350,15 @@ export async function createDocxViewer(
 
   resizeCanvas();
 
+  /** Выгрузка в текст: форматов три, а путь один — какой из них, решает воркер. */
+  function exportText(format: DocxTextFormat): Promise<string> {
+    const id = nextRequestId++;
+    return new Promise<string>((resolve, reject) => {
+      pendingText.set(id, { resolve, reject });
+      worker.postMessage({ type: 'export-docx-text', id, format } satisfies InMsg);
+    });
+  }
+
   return {
     get pages() {
       return pages;
@@ -359,6 +414,18 @@ export async function createDocxViewer(
       });
     },
 
+    exportPdf(options: PdfOptions = {}): Promise<Uint8Array> {
+      const id = nextRequestId++;
+      return new Promise<Uint8Array>((resolve, reject) => {
+        pendingPdf.set(id, { resolve, reject });
+        worker.postMessage({ type: 'export-docx-pdf', id, options } satisfies InMsg);
+      });
+    },
+
+    exportMarkdown: () => exportText('markdown'),
+    exportHtml: () => exportText('html'),
+    exportText: () => exportText('text'),
+
     onTick(handler: (stats: PaintStats) => void): () => void {
       tickHandlers.add(handler);
       return () => tickHandlers.delete(handler);
@@ -373,6 +440,10 @@ export async function createDocxViewer(
       pendingOpen.clear();
       for (const p of pendingPng.values()) p.reject(new Error('viewer destroyed'));
       pendingPng.clear();
+      for (const p of pendingPdf.values()) p.reject(new Error('viewer destroyed'));
+      pendingPdf.clear();
+      for (const p of pendingText.values()) p.reject(new Error('viewer destroyed'));
+      pendingText.clear();
       worker.postMessage({ type: 'close' } satisfies InMsg);
       worker.terminate();
       scroller.remove();
