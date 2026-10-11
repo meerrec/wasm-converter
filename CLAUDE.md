@@ -39,7 +39,7 @@ pnpm turbo run typecheck test build   # то же, что гоняет CI
 pnpm -F @doc-converter/core test      # vitest
 pnpm -F @doc-converter/core exec vitest run test/tick.spec.ts        # один файл
 pnpm -F @doc-converter/core exec vitest run -t 'coalesces repeated'  # один тест
-pnpm size-limit                       # бюджеты из .size-limit.json
+pnpm size-limit                       # бюджеты из .size-limit.mjs
 ```
 
 Порядок не косметический: `@doc-converter/core` типизируется против сгенерированных `packages/wasm/pkg/*.d.ts`, а `packages/wasm/pkg/` в `.gitignore`. На свежем клоне без `pnpm build:wasm` typecheck упадёт. В CI `pkg/` всех трёх модулей приезжает артефактами из джобы `wasm` (`download-artifact`: `wasm-pkg` → `packages/wasm/pkg`, `wasm-pdf-pkg` → `packages/wasm-pdf/pkg`, `wasm-docx-pkg` → `packages/wasm-docx/pkg`).
@@ -61,8 +61,8 @@ pnpm size-limit                       # бюджеты из .size-limit.json
 | `crates/core` | OOXML-примитивы: `Archive` (read-only обёртка над `zip`), `XmlReader` (streaming `quick-xml`, пропускает Decl/Comment/PI/DocType), rels, `Error` (thiserror + miette `Diagnostic`). Ничего не знает про DOCX/XLSX |
 | `crates/render` | Вся реальная логика рендера: `DisplayList`, `Painter2D`, `SabRing`, `RingState` |
 | `crates/xlsx` | Разбор книги целиком (`open()`), раскладка листа в пикселях и сборка `DisplayList` (`paint::build`) |
-| `crates/docx` | Пока заглушка: открывает архив, зовёт `validate_ooxml`, возвращает непрозрачный тип. Парсинг — TODO |
-| `crates/pdf` | Заглушка (`todo!()`); `options.rs` с `PdfOptions` уже есть |
+| `crates/docx` | Разбор DOCX целиком (`parse_docx`), раскладка страниц в пикселях и сборка `DisplayList` (`render::build`) |
+| `crates/pdf` | Экспорт в PDF на printpdf: лист/книга XLSX (`export_xlsx_sheet`/`export_xlsx_book`) и документ DOCX (`export_docx`, модуль `src/docx/`); раскладка и метрики общие с canvas-путём |
 | `crates/wasm` | Основной wasm-модуль просмотрщика: painter, SAB-аллокатор и XLSX-просмотрщик — тонкий слой wasm-bindgen-экспортов над render/xlsx |
 | `crates/docx-wasm` | Ленивый wasm-модуль просмотра DOCX: экспорты `docx_*`, отдельный `packages/wasm-docx/pkg`, грузится воркером при открытии `.docx` |
 
