@@ -30,11 +30,13 @@
 //! Границы схлопываются здесь же: собственная граница ячейки (`w:tcBorders`)
 //! перекрывает табличную (`w:tblBorders`), внешние рёбра таблицы берут
 //! top/left/bottom/right, внутренние — insideH/insideV. Общее ребро соседних
-//! ячеек отдают обе ячейки, каждая со своей границей. Заливка (`w:shd`) и
-//! выравнивание по вертикали (`w:vAlign`) уезжают в раскладку как есть, чтобы
-//! рендеру не пришлось возвращаться к модели. `w:tblStyle` (`w:tblLook`) не
-//! разрешается: каскада стилей для таблиц нет. Поля ячейки по умолчанию — 108
-//! twips по бокам, как в Word, когда ни `w:tcMar`, ни `w:tblCellMar` не заданы.
+//! ячеек отдают обе ячейки, каждая со своей границей. Когда прямых
+//! `w:tblBorders` нет, границы и заливка берутся из табличного стиля
+//! (`w:tblStyle` → `w:tblPr` и `w:tblStylePr` по флагам `w:tblLook`) — см.
+//! [`resolve_table_style`]. Заливка (`w:shd`) и выравнивание по вертикали
+//! (`w:vAlign`) уезжают в раскладку как есть, чтобы рендеру не пришлось
+//! возвращаться к модели. Поля ячейки по умолчанию — 108 twips по бокам, как в
+//! Word, когда ни `w:tcMar`, ни `w:tblCellMar` не заданы.
 
 use std::ops::Range;
 
@@ -43,7 +45,10 @@ use doc_converter_render::font::{FontId, FontRegistry};
 
 use crate::layout::line_break::LineBreaker;
 use crate::model::raw::{Border, BorderStyle, Color, HalfPoint, Justification};
-use crate::model::{BlockItem, CellBorders, Inline, Paragraph, RunContent};
+use crate::model::{
+    BlockItem, CellBorders, ConditionalFormat, Inline, Paragraph, RunContent, Shading, StyleTable,
+    TableBorders, TableLook, TableStyle, TableStyleCondition,
+};
 use crate::{Cell, CellVAlign, CellWidth, HeightRule, Row, Table, TableWidth, Twips, VMerge};
 
 use super::engine::{LayoutItem, Rect, TableCellLayout, VAlign};
@@ -390,6 +395,7 @@ pub fn measure_row_heights(
 /// * `y` - позиция Y
 /// * `available_width` - доступная ширина
 /// * `fonts` - реестр шрифтов для измерения текста ячеек
+/// * `styles` - стили документа: `w:tblStyle` таблицы разрешается по ним
 ///
 /// # Returns
 /// Результат раскладки таблицы. `height` — сумма высот строк.
@@ -400,10 +406,12 @@ pub fn layout_table(
     y: f32,
     available_width: f32,
     fonts: &mut FontRegistry,
+    styles: &StyleTable,
 ) -> TableLayoutResult {
     let frame = compute_table_frame(table, x, available_width);
     let measured = measure_rows(table, &frame, fonts, MAX_TABLE_DEPTH);
-    layout_whole(table, &frame, &measured, y, fonts, MAX_TABLE_DEPTH)
+    let ctx = StyleContext::new(styles, table);
+    layout_whole(table, &frame, &measured, y, fonts, MAX_TABLE_DEPTH, &ctx)
 }
 
 /// Разложить таблицу по страницам: строки режутся полосой набора.
@@ -420,6 +428,7 @@ pub fn layout_table(
 /// * `first` - полоса на текущей странице
 /// * `next` - полоса на странице-продолжении
 /// * `fonts` - реестр шрифтов для измерения текста ячеек
+/// * `styles` - стили документа: `w:tblStyle` таблицы разрешается по ним
 ///
 /// # Returns
 /// Фрагменты таблицы в порядке страниц. У разрезанной строки
@@ -433,7 +442,9 @@ pub fn layout_table_fragments(
     first: PageBand,
     next: PageBand,
     fonts: &mut FontRegistry,
+    styles: &StyleTable,
 ) -> Vec<TableFragment> {
+    let ctx = StyleContext::new(styles, table);
     let measured = measure_rows(table, frame, fonts, MAX_TABLE_DEPTH);
     let header_rows = header_row_count(table);
     let mut fragments = Vec::new();
@@ -569,7 +580,15 @@ pub fn layout_table_fragments(
                 y: band.top,
                 height: pieces.iter().map(|piece| piece.height).sum(),
                 starts_new_page,
-                rows: layout_pieces(table, frame, &pieces, &measured, fonts, MAX_TABLE_DEPTH),
+                rows: layout_pieces(
+                    table,
+                    frame,
+                    &pieces,
+                    &measured,
+                    fonts,
+                    MAX_TABLE_DEPTH,
+                    &ctx,
+                ),
             });
         }
         if row >= table.rows.len() {
@@ -590,6 +609,7 @@ fn layout_whole(
     y: f32,
     fonts: &mut FontRegistry,
     depth: usize,
+    ctx: &StyleContext<'_>,
 ) -> TableLayoutResult {
     let mut pieces = Vec::with_capacity(measured.len());
     let mut cursor = y;
@@ -611,7 +631,7 @@ fn layout_whole(
     TableLayoutResult {
         height,
         width: frame.width(),
-        rows: layout_pieces(table, frame, &pieces, measured, fonts, depth),
+        rows: layout_pieces(table, frame, &pieces, measured, fonts, depth, ctx),
     }
 }
 
@@ -623,10 +643,13 @@ fn layout_nested(
     width: f32,
     fonts: &mut FontRegistry,
     depth: usize,
+    styles: &StyleTable,
 ) -> (LayoutItem, f32) {
     let frame = compute_table_frame(table, x, width);
     let measured = measure_rows(table, &frame, fonts, depth);
-    let result = layout_whole(table, &frame, &measured, y, fonts, depth);
+    // У вложенной таблицы свой `w:tblStyle` — разрешается тем же набором стилей.
+    let ctx = StyleContext::new(styles, table);
+    let result = layout_whole(table, &frame, &measured, y, fonts, depth, &ctx);
     let fragment = TableFragment {
         y,
         height: result.height,
@@ -1144,6 +1167,287 @@ fn merge_slots(table: &Table, pieces: &[RowPiece]) -> Vec<Vec<MergeSlot>> {
     slots
 }
 
+/// Табличный стиль, разрешённый для раскладки: цепочка `basedOn` от корня к листу.
+///
+/// Цепочка, а не слитые значения: условные форматы зависят от позиции ячейки,
+/// поэтому применяются только на обходе строк.
+struct TableStyleResolution<'a> {
+    /// Стили цепочки `basedOn` от корня к листу: лист перекрывает корень.
+    chain: Vec<&'a TableStyle>,
+    /// Флаги `w:tblLook`: какие условные форматы включены.
+    look: TableLook,
+}
+
+/// Контекст раскладки таблиц: таблица стилей документа и стиль текущей таблицы.
+///
+/// Вложенная таблица разрешает собственный стиль из того же [`StyleTable`].
+struct StyleContext<'a> {
+    styles: &'a StyleTable,
+    resolved: Option<TableStyleResolution<'a>>,
+}
+
+impl<'a> StyleContext<'a> {
+    /// Разрешить стиль таблицы `table` в таблице стилей `styles`.
+    fn new(styles: &'a StyleTable, table: &Table) -> Self {
+        Self {
+            styles,
+            resolved: resolve_table_style(styles, table),
+        }
+    }
+
+    /// Стиль текущей таблицы; `None` — ссылки нет, стиль неизвестен или не табличный.
+    fn table_style(&self) -> Option<&TableStyleResolution<'a>> {
+        self.resolved.as_ref()
+    }
+}
+
+/// Разрешить табличный стиль: цепочка `basedOn` и флаги `w:tblLook`.
+///
+/// `None` — у таблицы нет `w:tblStyle`, стиль неизвестен или он не табличного
+/// вида: ссылки на стили только валидируются (ADR-0013), и раскладка остаётся на
+/// прямом форматировании, а не выдумывает границы.
+fn resolve_table_style<'a>(
+    styles: &'a StyleTable,
+    table: &Table,
+) -> Option<TableStyleResolution<'a>> {
+    let id = table.style_ref.as_ref()?;
+    let mut chain: Vec<&'a TableStyle> = Vec::new();
+    let mut cursor = styles.table.get(id);
+    while let Some(style) = cursor {
+        // Цикл ловит валидация (`StyleTable::validate`); страховка нужна, чтобы
+        // раскладка не зависла на документе, собранном не парсером.
+        if chain.iter().any(|seen| seen.id == style.id) {
+            break;
+        }
+        chain.push(style);
+        cursor = style
+            .based_on
+            .as_ref()
+            .and_then(|base| styles.table.get(base));
+    }
+    chain.reverse();
+
+    Some(TableStyleResolution {
+        look: effective_look(table, &chain),
+        chain,
+    })
+}
+
+/// Флаги `w:tblLook`: свои у таблицы, иначе — из ближайшего к листу стиля, их задавшего.
+///
+/// «Задала ли таблица `w:tblLook`» модель не хранит: отсутствие элемента и
+/// `w:val="0000"` неразличимы. Поэтому свои флаги берутся, когда включён хоть
+/// один, — иначе таблица без `w:tblLook` осталась бы без условных форматов,
+/// которые включает стиль своим `w:tblPr`.
+fn effective_look(table: &Table, chain: &[&TableStyle]) -> TableLook {
+    if any_flag(&table.look) {
+        return table.look.clone();
+    }
+    chain
+        .iter()
+        .rev()
+        .filter_map(|style| style.tbl_pr.look.as_ref())
+        .find(|look| any_flag(look))
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Включён ли хоть один признак оформления.
+fn any_flag(look: &TableLook) -> bool {
+    look.first_row
+        || look.last_row
+        || look.first_column
+        || look.last_column
+        || look.no_h_band
+        || look.no_v_band
+}
+
+/// Порядок применения условных форматов (ECMA-376 §17.7.6, ADR-0013 §5):
+/// позже применённый побеждает.
+const CONDITIONAL_ORDER: [TableStyleCondition; 13] = [
+    TableStyleCondition::WholeTable,
+    TableStyleCondition::Band1Horz,
+    TableStyleCondition::Band2Horz,
+    TableStyleCondition::Band1Vert,
+    TableStyleCondition::Band2Vert,
+    TableStyleCondition::FirstCol,
+    TableStyleCondition::LastCol,
+    TableStyleCondition::FirstRow,
+    TableStyleCondition::LastRow,
+    TableStyleCondition::NwCell,
+    TableStyleCondition::NeCell,
+    TableStyleCondition::SwCell,
+    TableStyleCondition::SeCell,
+];
+
+impl TableStyleResolution<'_> {
+    /// Границы таблицы из `w:tblPr` цепочки стиля: лист перекрывает корень.
+    fn table_borders(&self) -> TableBorders {
+        let mut merged = TableBorders::default();
+        for style in &self.chain {
+            let borders = &style.tbl_pr.borders;
+            merged.top = borders.top.clone().or(merged.top);
+            merged.left = borders.left.clone().or(merged.left);
+            merged.bottom = borders.bottom.clone().or(merged.bottom);
+            merged.right = borders.right.clone().or(merged.right);
+            merged.inside_h = borders.inside_h.clone().or(merged.inside_h);
+            merged.inside_v = borders.inside_v.clone().or(merged.inside_v);
+        }
+        merged
+    }
+
+    /// Границы ячейки из условных форматов стиля, применимых к её области.
+    fn conditional_borders(
+        &self,
+        row: usize,
+        col: usize,
+        span: usize,
+        last_col: usize,
+        last_row: bool,
+    ) -> CellBorders {
+        let mut merged = CellBorders::default();
+        for format in self.matching(row, col, span, last_col, last_row) {
+            let edges = region_edges(&format.tbl_pr.borders, row, col, span, last_col, last_row);
+            merged.top = edges.top.or(merged.top);
+            merged.left = edges.left.or(merged.left);
+            merged.bottom = edges.bottom.or(merged.bottom);
+            merged.right = edges.right.or(merged.right);
+        }
+        merged
+    }
+
+    /// Заливка ячейки из условных форматов (`w:pPr/w:shd`): позже применённый
+    /// формат побеждает.
+    fn conditional_shading(
+        &self,
+        row: usize,
+        col: usize,
+        span: usize,
+        last_col: usize,
+        last_row: bool,
+    ) -> Option<&Shading> {
+        self.matching(row, col, span, last_col, last_row)
+            .into_iter()
+            .filter_map(|format| format.ppr.shd.as_ref())
+            .next_back()
+    }
+
+    /// Условные форматы, применимые к ячейке, в порядке применения:
+    /// по стилям цепочки от корня к листу, внутри стиля — по [`CONDITIONAL_ORDER`].
+    fn matching(
+        &self,
+        row: usize,
+        col: usize,
+        span: usize,
+        last_col: usize,
+        last_row: bool,
+    ) -> Vec<&ConditionalFormat> {
+        let mut formats = Vec::new();
+        for style in &self.chain {
+            for kind in &CONDITIONAL_ORDER {
+                if !applies(kind, &self.look, row, col, span, last_col, last_row) {
+                    continue;
+                }
+                if let Some(format) = style.conditional.iter().find(|format| format.kind == *kind) {
+                    formats.push(format);
+                }
+            }
+        }
+        formats
+    }
+}
+
+/// Применим ли условный формат `kind` к ячейке в позиции `row`/`col`.
+///
+/// Полоса — группа строк (или столбцов) через одну. Шапка и первый столбец в
+/// полосы не входят, если включены `firstRow`/`firstColumn`: так же считает Word,
+/// первая полоса идёт сразу под шапкой.
+fn applies(
+    kind: &TableStyleCondition,
+    look: &TableLook,
+    row: usize,
+    col: usize,
+    span: usize,
+    last_col: usize,
+    last_row: bool,
+) -> bool {
+    let first_row = row == 0;
+    let first_col = col == 0;
+    let last_col_edge = col + span > last_col;
+    match kind {
+        TableStyleCondition::WholeTable => true,
+        TableStyleCondition::FirstRow => look.first_row && first_row,
+        TableStyleCondition::LastRow => look.last_row && last_row,
+        TableStyleCondition::FirstCol => look.first_column && first_col,
+        TableStyleCondition::LastCol => look.last_column && last_col_edge,
+        TableStyleCondition::Band1Horz => {
+            !look.no_h_band && band(row, look.first_row).is_some_and(|band| band % 2 == 0)
+        }
+        TableStyleCondition::Band2Horz => {
+            !look.no_h_band && band(row, look.first_row).is_some_and(|band| band % 2 == 1)
+        }
+        TableStyleCondition::Band1Vert => {
+            !look.no_v_band && band(col, look.first_column).is_some_and(|band| band % 2 == 0)
+        }
+        TableStyleCondition::Band2Vert => {
+            !look.no_v_band && band(col, look.first_column).is_some_and(|band| band % 2 == 1)
+        }
+        TableStyleCondition::NwCell => {
+            look.first_row && look.first_column && first_row && first_col
+        }
+        TableStyleCondition::NeCell => {
+            look.first_row && look.last_column && first_row && last_col_edge
+        }
+        TableStyleCondition::SwCell => look.last_row && look.first_column && last_row && first_col,
+        TableStyleCondition::SeCell => {
+            look.last_row && look.last_column && last_row && last_col_edge
+        }
+        // Условие, неизвестное парсеру, раскладка не применяет.
+        TableStyleCondition::Other(_) => false,
+    }
+}
+
+/// Номер полосы: `None` — позиция исключена из полос первой строкой
+/// (или первым столбцом) при включённом `firstRow`/`firstColumn`.
+fn band(index: usize, excluded: bool) -> Option<usize> {
+    index.checked_sub(usize::from(excluded))
+}
+
+/// Границы условного формата на рёбрах одной ячейки.
+///
+/// Собственные рёбра (`top`/`left`/`bottom`/`right`) в `w:tblStylePr` адресуют
+/// каждую ячейку области, как `w:tcBorders`; `insideH`/`insideV` кладутся по
+/// позиции ячейки и на внешних рёбрах таблицы не рисуются.
+fn region_edges(
+    borders: &TableBorders,
+    row: usize,
+    col: usize,
+    span: usize,
+    last_col: usize,
+    last_row: bool,
+) -> CellBorders {
+    CellBorders {
+        top: interior_edge(borders.top.as_ref(), borders.inside_h.as_ref(), row > 0),
+        bottom: interior_edge(
+            borders.bottom.as_ref(),
+            borders.inside_h.as_ref(),
+            !last_row,
+        ),
+        left: interior_edge(borders.left.as_ref(), borders.inside_v.as_ref(), col > 0),
+        right: interior_edge(
+            borders.right.as_ref(),
+            borders.inside_v.as_ref(),
+            col + span <= last_col,
+        ),
+    }
+}
+
+/// Ребро ячейки из условного формата: собственное ребро области, а при его
+/// отсутствии — `insideH`/`insideV`, но только у внутреннего ребра.
+fn interior_edge(edge: Option<&Border>, inside: Option<&Border>, interior: bool) -> Option<Border> {
+    edge.or(if interior { inside } else { None }).cloned()
+}
+
 /// Разложить части строк в готовые строки: ячейки, объединения, границы.
 fn layout_pieces(
     table: &Table,
@@ -1152,7 +1456,9 @@ fn layout_pieces(
     measured: &[MeasuredRow<'_>],
     fonts: &mut FontRegistry,
     depth: usize,
+    ctx: &StyleContext<'_>,
 ) -> Vec<TableRowLayout> {
+    let style = ctx.table_style();
     let slots = merge_slots(table, pieces);
     let last_col = frame.col_widths.len().saturating_sub(1);
     let mut rows = Vec::with_capacity(pieces.len());
@@ -1214,16 +1520,26 @@ fn layout_pieces(
             let content = if matches!(slot, MergeSlot::Continue { .. }) {
                 Vec::new()
             } else {
-                layout_cell_blocks(cell, cell_measure, &part, &rect, fonts, depth)
+                layout_cell_blocks(cell, cell_measure, &part, &rect, fonts, depth, ctx.styles)
             };
+
+            // Прямая заливка ячейки старше стиля таблицы; условный формат
+            // (шапка, полосы) даёт заливку, когда своей у ячейки нет.
+            let shading = cell.shading.clone().or_else(|| {
+                style.and_then(|style| {
+                    style
+                        .conditional_shading(piece.row, col, span, last_col, last_row)
+                        .cloned()
+                })
+            });
 
             cells.push(TableCellLayout {
                 rect,
                 content,
                 v_align: vertical_align(cell),
-                shading: cell.shading.clone(),
+                shading,
                 borders: Box::new(cell_borders(
-                    table, piece.row, col, span, last_col, last_row, cut,
+                    table, style, piece.row, col, span, last_col, last_row, cut,
                 )),
                 v_merge_continue: cell.v_merge == Some(VMerge::Continue),
             });
@@ -1250,6 +1566,7 @@ fn layout_cell_blocks(
     rect: &Rect,
     fonts: &mut FontRegistry,
     depth: usize,
+    styles: &StyleTable,
 ) -> Vec<LayoutItem> {
     let blocks: Vec<&MeasuredBlock<'_>> = measure
         .blocks
@@ -1314,6 +1631,7 @@ fn layout_cell_blocks(
                     *nested_width,
                     fonts,
                     depth.saturating_sub(1),
+                    styles,
                 );
                 items.push(item);
                 cursor += height;
@@ -1333,14 +1651,20 @@ struct CellCut {
     bottom: bool,
 }
 
-/// Эффективные границы ячейки: собственные поверх табличных.
+/// Эффективные границы ячейки: собственные поверх табличных, прямые поверх стилевых.
+///
+/// Порядок старшинства — ECMA-376 §17.7.2 и §17.7.6.5: прямое форматирование
+/// ячейки (`w:tcBorders`), прямое форматирование таблицы (`w:tblBorders`),
+/// условный формат области из стиля (`w:tblStylePr`), базовый `w:tblPr` стиля.
+/// Условный формат — часть стиля, поэтому прямое форматирование старше него.
 ///
 /// Внешние рёбра таблицы берут у неё `top`/`left`/`bottom`/`right`, внутренние —
 /// `insideH`/`insideV`. Общее ребро соседних ячеек отдают обе ячейки, каждая со
-/// своей границей. `w:tblStyle` не разрешается: каскада стилей для таблиц нет.
+/// своей границей.
 #[allow(clippy::too_many_arguments)]
 fn cell_borders(
     table: &Table,
+    style: Option<&TableStyleResolution<'_>>,
     row: usize,
     col: usize,
     span: usize,
@@ -1366,46 +1690,51 @@ fn cell_borders(
         })
         .map(|cell| cell.borders.as_ref());
 
+    let region = style.map_or_else(CellBorders::default, |style| {
+        style.conditional_borders(row, col, span, last_col, last_row)
+    });
+    let styled = style.map_or_else(TableBorders::default, TableStyleResolution::table_borders);
+
     let top = if cut.top {
         None
     } else {
-        pick(
+        pick(&[
             own.and_then(|cell| cell.top.as_ref()),
-            if row == 0 {
-                borders.top.as_ref()
-            } else {
-                borders.inside_h.as_ref()
-            },
-        )
+            table_edge(borders.top.as_ref(), borders.inside_h.as_ref(), row == 0),
+            region.top.as_ref(),
+            table_edge(styled.top.as_ref(), styled.inside_h.as_ref(), row == 0),
+        ])
     };
     let bottom = if cut.bottom {
         None
     } else {
-        pick(
+        pick(&[
             own.and_then(|cell| cell.bottom.as_ref()),
-            if last_row {
-                borders.bottom.as_ref()
-            } else {
-                borders.inside_h.as_ref()
-            },
-        )
+            table_edge(borders.bottom.as_ref(), borders.inside_h.as_ref(), last_row),
+            region.bottom.as_ref(),
+            table_edge(styled.bottom.as_ref(), styled.inside_h.as_ref(), last_row),
+        ])
     };
-    let left = pick(
+    let left = pick(&[
         own.and_then(|cell| cell.left.as_ref()),
-        if col == 0 {
-            borders.left.as_ref()
-        } else {
-            borders.inside_v.as_ref()
-        },
-    );
-    let right = pick(
+        table_edge(borders.left.as_ref(), borders.inside_v.as_ref(), col == 0),
+        region.left.as_ref(),
+        table_edge(styled.left.as_ref(), styled.inside_v.as_ref(), col == 0),
+    ]);
+    let right = pick(&[
         own.and_then(|cell| cell.right.as_ref()),
-        if col + span > last_col {
-            borders.right.as_ref()
-        } else {
-            borders.inside_v.as_ref()
-        },
-    );
+        table_edge(
+            borders.right.as_ref(),
+            borders.inside_v.as_ref(),
+            col + span > last_col,
+        ),
+        region.right.as_ref(),
+        table_edge(
+            styled.right.as_ref(),
+            styled.inside_v.as_ref(),
+            col + span > last_col,
+        ),
+    ]);
 
     CellBorders {
         top,
@@ -1415,9 +1744,23 @@ fn cell_borders(
     }
 }
 
-/// Граница ячейки поверх табличной; `nil` и `none` линии не рисуют.
-fn pick(own: Option<&Border>, shared: Option<&Border>) -> Option<Border> {
-    let border = own.or(shared)?;
+/// Ребро ячейки из границ таблицы: `outer` у внешней стороны таблицы,
+/// `inner` — у внутреннего ребра.
+fn table_edge<'a>(
+    outer: Option<&'a Border>,
+    inner: Option<&'a Border>,
+    outer_side: bool,
+) -> Option<&'a Border> {
+    if outer_side {
+        outer
+    } else {
+        inner
+    }
+}
+
+/// Первая заданная граница по старшинству; `nil` и `none` линии не рисуют.
+fn pick(chain: &[Option<&Border>]) -> Option<Border> {
+    let border = chain.iter().copied().flatten().next()?;
     match border.val {
         BorderStyle::Nil | BorderStyle::None => None,
         _ => Some(border.clone()),
@@ -1430,5 +1773,517 @@ fn vertical_align(cell: &Cell) -> VAlign {
         CellVAlign::Center => VAlign::Center,
         CellVAlign::Bottom => VAlign::Bottom,
         CellVAlign::Top => VAlign::Top,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::engine::{layout_document, LayoutOptions};
+    use crate::model::raw::{RawPPr, RawRPr, RawTblPr, ShadingPattern, StyleId};
+    use crate::model::{CellMargins, GridCol, Run, TableLayout};
+
+    /// Граница-одиночная линия заданной толщины (восьмые доли пункта).
+    fn single(sz: u32) -> Border {
+        Border {
+            val: BorderStyle::Single,
+            sz: Some(sz),
+            space: Some(0),
+            color: Some(Color::Auto),
+        }
+    }
+
+    /// Все шесть границ таблицы одной линией.
+    fn all_single(sz: u32) -> TableBorders {
+        TableBorders {
+            top: Some(single(sz)),
+            left: Some(single(sz)),
+            bottom: Some(single(sz)),
+            right: Some(single(sz)),
+            inside_h: Some(single(sz)),
+            inside_v: Some(single(sz)),
+        }
+    }
+
+    /// Табличный стиль с заданными `w:tblPr` и условными форматами.
+    fn table_style(
+        id: &str,
+        based_on: Option<&str>,
+        borders: TableBorders,
+        conditional: Vec<ConditionalFormat>,
+    ) -> TableStyle {
+        TableStyle {
+            id: StyleId::new(id),
+            name: None,
+            based_on: based_on.map(StyleId::new),
+            is_default: false,
+            hidden: false,
+            custom: true,
+            aliases: Vec::new(),
+            ppr: RawPPr::default(),
+            rpr: RawRPr::default(),
+            tbl_pr: RawTblPr {
+                borders,
+                ..RawTblPr::default()
+            },
+            conditional,
+        }
+    }
+
+    /// Условный формат с заливкой `fill` и без прочих свойств.
+    fn shaded(kind: TableStyleCondition, fill: u32) -> ConditionalFormat {
+        ConditionalFormat {
+            kind,
+            ppr: RawPPr {
+                shd: Some(Shading {
+                    val: ShadingPattern::Clear,
+                    color: Some(Color::Auto),
+                    fill: Some(Color::Rgb(fill)),
+                }),
+                ..RawPPr::default()
+            },
+            rpr: RawRPr::default(),
+            tbl_pr: RawTblPr::default(),
+        }
+    }
+
+    /// Таблица стилей с табличными стилями `table_styles`.
+    fn styles(table_styles: Vec<TableStyle>) -> StyleTable {
+        let mut styles = StyleTable::default();
+        for style in table_styles {
+            styles.table.insert(style.id.clone(), style);
+        }
+        styles
+    }
+
+    /// Ячейка с одним абзацем и без прямого форматирования.
+    fn plain_cell(id: u64, text: &str) -> Cell {
+        Cell {
+            id: NodeId::new(id),
+            grid_span: 1,
+            v_merge: None,
+            width: None,
+            margins: CellMargins::default(),
+            v_align: CellVAlign::Top,
+            borders: Box::new(CellBorders::default()),
+            shading: None,
+            items: vec![BlockItem::Paragraph(Paragraph {
+                id: NodeId::new(id + 1),
+                runs: vec![Inline::Run(Run {
+                    id: NodeId::new(id + 2),
+                    content: vec![RunContent::Text(text.to_owned())],
+                    ..Run::default()
+                })],
+                ..Paragraph::default()
+            })],
+        }
+    }
+
+    /// Таблица `rows`×`cols` без прямых границ: стиль `style`, флаги `look`.
+    fn table(rows: usize, cols: usize, style: Option<&str>, look: TableLook) -> Table {
+        let mut id = 100u64;
+        let rows = (0..rows)
+            .map(|_| {
+                let cells = (0..cols)
+                    .map(|col| {
+                        id += 3;
+                        plain_cell(id, &format!("c{col}"))
+                    })
+                    .collect();
+                id += 1;
+                Row {
+                    id: NodeId::new(id),
+                    cells,
+                    height: None,
+                    cant_split: false,
+                    header: false,
+                }
+            })
+            .collect();
+        Table {
+            id: NodeId::new(1),
+            style_ref: style.map(StyleId::new),
+            grid: (0..cols)
+                .map(|_| GridCol {
+                    width: Twips::new(3000),
+                })
+                .collect(),
+            rows,
+            layout: TableLayout::Autofit,
+            width: None,
+            borders: TableBorders::default(),
+            look,
+            jc: None,
+            indent: None,
+            cell_margins: CellMargins::default(),
+        }
+    }
+
+    /// Разложить таблицу целиком на широкой полосе.
+    fn layout(table: &Table, styles: &StyleTable) -> TableLayoutResult {
+        let mut fonts = FontRegistry::new(64);
+        layout_table(table, 0.0, 0.0, 600.0, &mut fonts, styles)
+    }
+
+    /// Границы ячеек разложенной таблицы построчно.
+    fn borders(table: &Table, styles: &StyleTable) -> Vec<Vec<CellBorders>> {
+        layout(table, styles)
+            .rows
+            .iter()
+            .map(|row| {
+                row.cells
+                    .iter()
+                    .map(|cell| cell.borders.as_ref().clone())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Заливки ячеек разложенной таблицы построчно.
+    fn shading(table: &Table, styles: &StyleTable) -> Vec<Vec<Option<Shading>>> {
+        layout(table, styles)
+            .rows
+            .iter()
+            .map(|row| row.cells.iter().map(|cell| cell.shading.clone()).collect())
+            .collect()
+    }
+
+    /// Цвет заливки, если ячейка залита.
+    fn fill(shading: &Option<Shading>) -> Option<u32> {
+        match shading.as_ref()?.fill? {
+            Color::Rgb(value) => Some(value),
+            Color::Auto | Color::None => None,
+        }
+    }
+
+    /// Таблица без прямых границ берёт их из `w:tblPr` стиля — случай «Table Grid».
+    #[test]
+    fn a_table_style_brings_borders_to_cells_without_direct_formatting() {
+        let styles = styles(vec![table_style(
+            "TableGrid",
+            None,
+            all_single(4),
+            Vec::new(),
+        )]);
+        let table = table(2, 2, Some("TableGrid"), TableLook::default());
+        let rows = borders(&table, &styles);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows.iter().flatten().count(),
+            4,
+            "в таблице 2×2 четыре ячейки"
+        );
+        for cell in rows.iter().flatten() {
+            for edge in [&cell.top, &cell.left, &cell.bottom, &cell.right] {
+                let border = edge.as_ref().expect("граница пришла из стиля");
+                assert_eq!(border.val, BorderStyle::Single);
+                assert_eq!(border.sz, Some(4));
+            }
+        }
+    }
+
+    /// Прямая граница ячейки (`w:tcBorders`) перекрывает границу стиля.
+    #[test]
+    fn a_cell_border_beats_the_table_style() {
+        let styles = styles(vec![table_style(
+            "TableGrid",
+            None,
+            all_single(4),
+            Vec::new(),
+        )]);
+        let mut table = table(2, 2, Some("TableGrid"), TableLook::default());
+        table.rows[0].cells[0].borders.top = Some(single(12));
+
+        let rows = borders(&table, &styles);
+        assert_eq!(rows[0][0].top.as_ref().and_then(|b| b.sz), Some(12));
+        assert_eq!(
+            rows[0][1].top.as_ref().and_then(|b| b.sz),
+            Some(4),
+            "у соседней ячейки граница остаётся стилевой"
+        );
+        assert_eq!(
+            rows[0][0].left.as_ref().and_then(|b| b.sz),
+            Some(4),
+            "остальные рёбра ячейки стилевые"
+        );
+    }
+
+    /// Прямые `w:tblBorders` перекрывают границы стиля.
+    #[test]
+    fn direct_table_borders_beat_the_table_style() {
+        let styles = styles(vec![table_style(
+            "TableGrid",
+            None,
+            all_single(4),
+            Vec::new(),
+        )]);
+        let mut table = table(2, 1, Some("TableGrid"), TableLook::default());
+        table.borders.inside_h = Some(single(18));
+
+        let rows = borders(&table, &styles);
+        assert_eq!(rows[0][0].bottom.as_ref().and_then(|b| b.sz), Some(18));
+        assert_eq!(
+            rows[0][0].top.as_ref().and_then(|b| b.sz),
+            Some(4),
+            "неперекрытые рёбра остаются из стиля"
+        );
+        assert_eq!(
+            rows[1][0].bottom.as_ref().and_then(|b| b.sz),
+            Some(4),
+            "нижнее ребро таблицы — из стиля: прямого `w:bottom` нет"
+        );
+    }
+
+    /// Границы наследуются по цепочке `basedOn`: лист перекрывает корень по рёбрам.
+    #[test]
+    fn a_table_style_inherits_borders_through_based_on() {
+        let base = table_style("TableNormal", None, all_single(4), Vec::new());
+        let derived = table_style(
+            "Grid",
+            Some("TableNormal"),
+            TableBorders {
+                inside_h: Some(single(12)),
+                ..TableBorders::default()
+            },
+            Vec::new(),
+        );
+        let styles = styles(vec![base, derived]);
+        let table = table(2, 1, Some("Grid"), TableLook::default());
+        let rows = borders(&table, &styles);
+
+        assert_eq!(rows[0][0].top.as_ref().and_then(|b| b.sz), Some(4));
+        assert_eq!(rows[0][0].bottom.as_ref().and_then(|b| b.sz), Some(12));
+        assert_eq!(rows[1][0].bottom.as_ref().and_then(|b| b.sz), Some(4));
+    }
+
+    /// Неизвестный `w:tblStyle` тихо игнорируется: границ не появляется.
+    ///
+    /// Ссылка на абзацный стиль — тот же случай: в таблице стилей табличного
+    /// стиля с таким `styleId` нет (карты видов раздельные).
+    #[test]
+    fn an_unknown_table_style_is_ignored() {
+        let styles = styles(vec![table_style(
+            "TableGrid",
+            None,
+            all_single(4),
+            Vec::new(),
+        )]);
+        let table = table(2, 2, Some("Missing"), TableLook::default());
+
+        for cell in borders(&table, &styles).iter().flatten() {
+            assert!(cell.top.is_none() && cell.left.is_none());
+            assert!(cell.bottom.is_none() && cell.right.is_none());
+        }
+    }
+
+    /// Таблица без `w:tblStyle` прямых границ не получает вовсе.
+    #[test]
+    fn a_table_without_a_style_keeps_its_direct_formatting_only() {
+        let styles = styles(vec![table_style(
+            "TableGrid",
+            None,
+            all_single(4),
+            Vec::new(),
+        )]);
+        let table = table(2, 2, None, TableLook::default());
+
+        for cell in borders(&table, &styles).iter().flatten() {
+            assert!(cell.top.is_none() && cell.bottom.is_none());
+        }
+    }
+
+    /// `w:tblLook firstRow` включает условный формат шапки: заливка из `w:tblStylePr`.
+    #[test]
+    fn the_first_row_look_paints_the_header_from_the_conditional_format() {
+        let styles = styles(vec![table_style(
+            "Banded",
+            None,
+            all_single(4),
+            vec![shaded(TableStyleCondition::FirstRow, 0x00FF_FF00)],
+        )]);
+
+        let looked = TableLook {
+            first_row: true,
+            ..TableLook::default()
+        };
+        let rows = shading(&table(2, 2, Some("Banded"), looked), &styles);
+        assert_eq!(fill(&rows[0][0]), Some(0x00FF_FF00), "шапка залита");
+        assert_eq!(fill(&rows[0][1]), Some(0x00FF_FF00));
+        assert_eq!(fill(&rows[1][0]), None, "тело не залито");
+
+        // Без флага условный формат не применяется: им управляет `w:tblLook`.
+        let plain = shading(&table(2, 2, Some("Banded"), TableLook::default()), &styles);
+        assert!(plain.iter().flatten().all(Option::is_none));
+    }
+
+    /// Прямая заливка ячейки старше условного формата.
+    #[test]
+    fn a_direct_cell_shading_beats_the_conditional_format() {
+        let styles = styles(vec![table_style(
+            "Banded",
+            None,
+            TableBorders::default(),
+            vec![shaded(TableStyleCondition::FirstRow, 0x00FF_FF00)],
+        )]);
+        let mut table = table(
+            2,
+            2,
+            Some("Banded"),
+            TableLook {
+                first_row: true,
+                ..TableLook::default()
+            },
+        );
+        table.rows[0].cells[0].shading = Some(Shading {
+            val: ShadingPattern::Solid,
+            color: Some(Color::Auto),
+            fill: Some(Color::Rgb(0x00_12_34_56)),
+        });
+
+        let rows = shading(&table, &styles);
+        assert_eq!(fill(&rows[0][0]), Some(0x0012_3456));
+        assert_eq!(fill(&rows[0][1]), Some(0x00FF_FF00));
+    }
+
+    /// Полосы строк: первая полоса идёт сразу под шапкой, `noHBand` их выключает.
+    #[test]
+    fn horizontal_bands_shade_alternate_rows_after_the_header() {
+        let styles = styles(vec![table_style(
+            "Banded",
+            None,
+            TableBorders::default(),
+            vec![
+                shaded(TableStyleCondition::Band1Horz, 0x0000_FF00),
+                shaded(TableStyleCondition::Band2Horz, 0x0000_00FF),
+            ],
+        )]);
+        let looked = TableLook {
+            first_row: true,
+            ..TableLook::default()
+        };
+        let rows = shading(&table(4, 1, Some("Banded"), looked), &styles);
+
+        assert_eq!(fill(&rows[0][0]), None, "шапка в полосы не входит");
+        assert_eq!(fill(&rows[1][0]), Some(0x0000_FF00), "первая полоса");
+        assert_eq!(fill(&rows[2][0]), Some(0x0000_00FF), "вторая полоса");
+        assert_eq!(fill(&rows[3][0]), Some(0x0000_FF00), "полосы чередуются");
+
+        let banded_off = TableLook {
+            first_row: true,
+            no_h_band: true,
+            ..TableLook::default()
+        };
+        let rows = shading(&table(4, 1, Some("Banded"), banded_off), &styles);
+        assert!(
+            rows.iter()
+                .flatten()
+                .flat_map(|shd| fill(shd))
+                .next()
+                .is_none(),
+            "`noHBand` выключает полосы"
+        );
+    }
+
+    /// Условный формат с `w:tblBorders` кладёт рёбра области на её ячейки.
+    #[test]
+    fn a_conditional_format_brings_region_borders() {
+        let conditional = ConditionalFormat {
+            kind: TableStyleCondition::FirstRow,
+            ppr: RawPPr::default(),
+            rpr: RawRPr::default(),
+            tbl_pr: RawTblPr {
+                borders: TableBorders {
+                    bottom: Some(single(12)),
+                    ..TableBorders::default()
+                },
+                ..RawTblPr::default()
+            },
+        };
+        let styles = styles(vec![table_style(
+            "Grid",
+            None,
+            all_single(4),
+            vec![conditional],
+        )]);
+        let looked = TableLook {
+            first_row: true,
+            ..TableLook::default()
+        };
+        let rows = borders(&table(2, 1, Some("Grid"), looked), &styles);
+
+        assert_eq!(
+            rows[0][0].bottom.as_ref().and_then(|b| b.sz),
+            Some(12),
+            "нижнее ребро шапки — из условного формата"
+        );
+        assert_eq!(
+            rows[1][0].bottom.as_ref().and_then(|b| b.sz),
+            Some(4),
+            "последняя строка берёт ребро из базового `w:tblPr` стиля"
+        );
+        assert_eq!(rows[0][0].top.as_ref().and_then(|b| b.sz), Some(4));
+    }
+
+    /// Разложить фикстуру и вернуть ячейки её таблиц.
+    fn fixture_cells(name: &str) -> Vec<TableCellLayout> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-fixtures/docx")
+            .join(name);
+        let document = crate::open(std::fs::read(&path).expect("фикстура читается"))
+            .expect("фикстура разбирается");
+        let mut fonts = FontRegistry::new(64);
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+        layout
+            .pages
+            .iter()
+            .flat_map(|page| page.items.iter())
+            .filter_map(|item| match item {
+                LayoutItem::Table { cells, .. } => Some(cells.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    /// Фикстура `styles/table_style.docx`: серые границы приходят из `BandedGrid`.
+    #[test]
+    fn the_table_style_fixture_brings_grey_borders_to_every_cell() {
+        let cells = fixture_cells("styles/table_style.docx");
+
+        assert_eq!(cells.len(), 4, "в фикстуре таблица 2×2");
+        for cell in &cells {
+            for edge in [
+                &cell.borders.top,
+                &cell.borders.left,
+                &cell.borders.bottom,
+                &cell.borders.right,
+            ] {
+                let border = edge.as_ref().expect("граница пришла из стиля BandedGrid");
+                assert_eq!(border.val, BorderStyle::Single);
+                assert_eq!(border.sz, Some(4));
+                assert_eq!(border.color, Some(Color::Rgb(0x007F_7F7F)));
+            }
+        }
+    }
+
+    /// Фикстура `tables/tbl_look.docx`: `TableGrid` даёт границы, `w:tblLook` — флаги.
+    #[test]
+    fn the_look_fixture_keeps_the_style_borders() {
+        let cells = fixture_cells("tables/tbl_look.docx");
+
+        assert_eq!(cells.len(), 4);
+        for cell in &cells {
+            let border = cell
+                .borders
+                .top
+                .as_ref()
+                .expect("граница из стиля TableGrid");
+            assert_eq!(border.val, BorderStyle::Single);
+            assert_eq!(border.sz, Some(4));
+            assert!(cell.borders.left.is_some() && cell.borders.right.is_some());
+            assert!(cell.borders.bottom.is_some());
+        }
     }
 }

@@ -530,6 +530,7 @@ mod tests {
             headers: BTreeMap::new(),
             footers: BTreeMap::new(),
             warnings: Vec::new(),
+            media: Vec::new(),
         }
     }
 
