@@ -19,6 +19,7 @@
 
 pub mod cascade;
 pub mod engine;
+pub mod fields;
 pub mod float;
 pub mod line_break;
 pub mod pagination;

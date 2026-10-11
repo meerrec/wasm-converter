@@ -13,6 +13,7 @@ use doc_converter_render::{
 };
 
 use crate::layout::cascade::StyleCache;
+use crate::layout::fields::{resolve_paragraph, FieldPass};
 use crate::layout::float::{emu_to_px, layout_floats_on_page, FloatElement, FloatKind};
 use crate::layout::line_break::LineBreaker;
 use crate::layout::pagination::Paginator;
@@ -381,6 +382,57 @@ pub fn layout_document(
     options: &LayoutOptions,
     fonts: &mut FontRegistry,
 ) -> Result<PageLayout, LayoutError> {
+    let (mut layout, pass) = layout_pass(document, options, fonts, None);
+    if !pass.saw_num_pages() {
+        return Ok(layout);
+    }
+
+    // `NUMPAGES` — число страниц всего документа, и известно оно только после
+    // первой раскладки: документ с этим полем раскладывается дважды. Второй
+    // проход и возвращается — в нём поля несут вычисленные значения. Третий
+    // нужен, только если подстановка сдвинула пагинацию: тогда число страниц
+    // изменилось и его надо посчитать заново.
+    let mut num_pages = page_count(&layout);
+    for _ in 1..FIELD_PASSES {
+        let (next, _) = layout_pass(document, options, fonts, Some(num_pages));
+        let counted = page_count(&next);
+        layout = next;
+        if counted == num_pages {
+            break;
+        }
+        num_pages = counted;
+    }
+    Ok(layout)
+}
+
+/// Предел проходов раскладки для документа с `NUMPAGES`.
+///
+/// Сходимость гарантирует счётчик страниц, а не число проходов: подстановка
+/// номера в колонтитул пагинацию не двигает, и второй проход уже сходится.
+/// Предел стоит на случай, когда номер в теле перевешивает строку туда-сюда.
+const FIELD_PASSES: usize = 3;
+
+/// Число страниц для `NUMPAGES`.
+///
+/// `w:pgNumType w:start` не учитывается: модель секции его не несёт, и `PAGE`
+/// в раскладке — физический номер страницы.
+fn page_count(layout: &PageLayout) -> u32 {
+    u32::try_from(layout.pages.len()).unwrap_or(u32::MAX)
+}
+
+/// Один проход раскладки: `num_pages` — число страниц из прошлого прохода
+/// (`None` — их ещё не считали).
+///
+/// Проход безошибочный: `LayoutError` остаётся в публичной сигнатуре ради
+/// потребителей, а падать раскладке нечем — неизвестные поля и битые
+/// колонтитулы она пропускает.
+fn layout_pass(
+    document: &Document,
+    options: &LayoutOptions,
+    fonts: &mut FontRegistry,
+    num_pages: Option<u32>,
+) -> (PageLayout, FieldPass) {
+    let mut pass = FieldPass::new(num_pages);
     let mut placed_floats: Vec<crate::layout::float::FloatElement> = Vec::new();
     // Анкоры, которым не хватило места на их странице: очередь переживает
     // смену страницы, в отличие от `placed_floats`, которые она очищает.
@@ -410,6 +462,7 @@ pub fn layout_document(
             continue;
         }
 
+        pass.on_page(paginator.current_page().number);
         layout_block(
             document,
             block,
@@ -420,6 +473,7 @@ pub fn layout_document(
             &mut placed_floats,
             &mut deferred_floats,
             &mut state,
+            &mut pass,
         );
 
         // Абзац со встроенным `w:sectPr` закрывает секцию: он сам ещё
@@ -439,15 +493,18 @@ pub fn layout_document(
     }
 
     let (pages, page_sections) = paginator.finish_with_sections();
-    let chrome = layout_chrome(document, &pages, &page_sections, options, fonts);
+    let chrome = layout_chrome(document, &pages, &page_sections, options, fonts, &mut pass);
 
     let total_height = pages.iter().map(|page| page.height).sum();
 
-    Ok(PageLayout {
-        pages,
-        chrome,
-        total_height,
-    })
+    (
+        PageLayout {
+            pages,
+            chrome,
+            total_height,
+        },
+        pass,
+    )
 }
 
 /// Разложить один блок потока в текущую страницу пагинатора.
@@ -455,6 +512,10 @@ pub fn layout_document(
 /// Один путь для тела документа и для колонтитулов: абзац и таблица колонтитула
 /// раскладываются теми же средствами, что и в теле, — вместе с встроенными
 /// рисунками, плавающими элементами и нумерацией абзацев.
+///
+/// Здесь же вычисляются поля `PAGE`/`NUMPAGES` (см. [`crate::layout::fields`]):
+/// подстановка идёт до раскладки абзаца, потому что абзац без неё не содержит
+/// знаков номера, а строка меряется уже с ними.
 #[allow(clippy::too_many_arguments)]
 fn layout_block(
     document: &Document,
@@ -466,6 +527,7 @@ fn layout_block(
     placed_floats: &mut Vec<FloatElement>,
     deferred_floats: &mut Vec<DeferredFloat>,
     state: &mut LayoutState,
+    pass: &mut FieldPass,
 ) {
     match block {
         BlockItem::Paragraph(paragraph) => {
@@ -473,6 +535,9 @@ fn layout_block(
             // возвращается к ним перед каждым абзацем, иначе элементы получают
             // координаты от прошлого блока.
             sync_frame(paginator, state);
+
+            let resolved = resolve_paragraph(paragraph, pass);
+            let paragraph = resolved.as_ref().unwrap_or(paragraph);
 
             let mut line_breaker = LineBreaker::new(fonts, FontId::default());
             let layout = layout_paragraph(
@@ -1175,6 +1240,7 @@ fn layout_chrome(
     page_sections: &[usize],
     options: &LayoutOptions,
     fonts: &mut FontRegistry,
+    pass: &mut FieldPass,
 ) -> Vec<PageChrome> {
     let even_and_odd = document.settings.even_and_odd_headers;
     let mut chrome = Vec::with_capacity(pages.len());
@@ -1184,6 +1250,10 @@ fn layout_chrome(
         // Страница начинает секцию, если предыдущая принадлежит другой.
         let first_in_section = index == 0 || page_sections.get(index - 1) != Some(&section_index);
         let even_page = even_and_odd && page.number.is_multiple_of(2);
+        // `PAGE` в колонтитуле — номер той страницы, на которой он напечатан:
+        // полоса колонтитула ведёт свой пагинатор с первой страницы, и без
+        // этого номера поле показало бы единицу на каждой странице.
+        pass.on_page(page.number);
 
         let header = chrome_part(&section, ChromeBand::Header, first_in_section, even_page);
         let header = layout_chrome_part(
@@ -1194,6 +1264,7 @@ fn layout_chrome(
             ChromeBand::Header,
             options,
             fonts,
+            pass,
         );
         let footer = chrome_part(&section, ChromeBand::Footer, first_in_section, even_page);
         let footer = layout_chrome_part(
@@ -1204,6 +1275,7 @@ fn layout_chrome(
             ChromeBand::Footer,
             options,
             fonts,
+            pass,
         );
         chrome.push(PageChrome { header, footer });
     }
@@ -1251,6 +1323,7 @@ fn chrome_part(
 /// но в полосе всей страницы: поля тела сняты, иначе колонтитул не поместился бы
 /// в промежуток до полосы набора. Word при переполнении отодвигает тело —
 /// здесь колонтитул просто ложится поверх (ограничение слайса).
+#[allow(clippy::too_many_arguments)]
 fn layout_chrome_part(
     document: &Document,
     part: Option<&PartRef>,
@@ -1259,6 +1332,7 @@ fn layout_chrome_part(
     band: ChromeBand,
     options: &LayoutOptions,
     fonts: &mut FontRegistry,
+    pass: &mut FieldPass,
 ) -> Vec<LayoutItem> {
     let Some(part) = part else {
         return Vec::new();
@@ -1297,6 +1371,7 @@ fn layout_chrome_part(
             &mut placed_floats,
             &mut deferred_floats,
             &mut state,
+            pass,
         );
     }
 
@@ -1491,9 +1566,9 @@ mod tests {
     use super::*;
     use crate::model::raw::{ParagraphSpacing, Toggle};
     use crate::model::{
-        Body, BreakKind, ColumnDef, Columns, Extent, Inline, InlineImage, InlineOrAnchor, Metadata,
-        NumberingTable, Paragraph, PositionH, PositionV, RelFromH, RelFromV, Relationships, Run,
-        RunContent, SectionType, Settings, StyleTable, WrapKind,
+        Body, BreakKind, ColumnDef, Columns, Extent, Field, FieldKind, Inline, InlineImage,
+        InlineOrAnchor, Metadata, NumberingTable, Paragraph, PositionH, PositionV, RelFromH,
+        RelFromV, Relationships, Run, RunContent, SectionType, Settings, StyleTable, WrapKind,
     };
 
     /// Абзац из одного run'а; идентификаторы произвольные — раскладка их не сверяет.
@@ -3295,5 +3370,125 @@ mod tests {
             11.0 * 96.0 / 72.0,
             "кегль в пикселях",
         );
+    }
+
+    /// Абзац из одного поля; `cached` — результат между `separate` и `end`.
+    ///
+    /// Так абзац и собирает парсер: поле — отдельный inline-элемент со своим
+    /// кэшированным результатом, а не текст.
+    fn field_paragraph(id: u64, instruction: &str, cached: &str) -> Paragraph {
+        Paragraph {
+            id: NodeId::new(id),
+            runs: vec![Inline::Field(Field {
+                id: NodeId::new(id + 1),
+                kind: FieldKind::Complex,
+                instruction: instruction.to_owned(),
+                result: vec![Inline::Run(Run {
+                    id: NodeId::new(id + 2),
+                    content: vec![RunContent::Text(cached.to_owned())],
+                    ..Run::default()
+                })],
+                dirty: false,
+            })],
+            ..Paragraph::default()
+        }
+    }
+
+    /// Документ из блоков на двухстрочной странице: две строки — страница.
+    fn two_line_document(items: Vec<BlockItem>) -> Document {
+        document_with(items, vec![section_without_margins(TWO_LINE_PAGE_TWIPS)])
+    }
+
+    /// Тексты абзацев страницы в порядке раскладки.
+    fn page_texts(page: &Page) -> Vec<String> {
+        page.items
+            .iter()
+            .filter_map(|item| match item {
+                LayoutItem::Paragraph { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Документ на две страницы с полями: `PAGE` — номер своей страницы,
+    /// `NUMPAGES` — число страниц всего документа.
+    fn two_page_document_with_fields() -> Document {
+        two_line_document(vec![
+            BlockItem::Paragraph(field_paragraph(1, " PAGE ", "99")),
+            BlockItem::Paragraph(paragraph(3, "one")),
+            BlockItem::Paragraph(paragraph(5, "two")),
+            BlockItem::Paragraph(field_paragraph(7, " PAGE ", "99")),
+        ])
+    }
+
+    // Блокер S-слайса: номер страницы обязан совпасть со страницей, где стоит поле.
+    #[test]
+    fn a_page_field_names_the_page_it_stands_on() {
+        let document = two_page_document_with_fields();
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(layout.pages.len(), 2);
+        assert_eq!(
+            page_texts(&layout.pages[0]),
+            ["1", "one"],
+            "кэшированное `99` замещается номером первой страницы"
+        );
+        assert_eq!(page_texts(&layout.pages[1]), ["two", "2"]);
+    }
+
+    #[test]
+    fn num_pages_counts_the_whole_document() {
+        let document = two_line_document(vec![
+            BlockItem::Paragraph(paragraph(1, "one")),
+            BlockItem::Paragraph(paragraph(3, "two")),
+            BlockItem::Paragraph(field_paragraph(5, " NUMPAGES ", "99")),
+            BlockItem::Paragraph(paragraph(7, "four")),
+        ]);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(layout.pages.len(), 2, "две строки на страницу");
+        assert_eq!(
+            page_texts(&layout.pages[1]),
+            ["2", "four"],
+            "`NUMPAGES` — число страниц документа, а не кэш"
+        );
+    }
+
+    #[test]
+    fn an_unknown_field_is_not_resolved() {
+        let document = two_line_document(vec![
+            BlockItem::Paragraph(field_paragraph(1, " DATE ", "01.01.2026")),
+            BlockItem::Paragraph(paragraph(3, "one")),
+        ]);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("неизвестное поле раскладку не роняет");
+
+        assert_eq!(
+            page_texts(&layout.pages[0]),
+            ["", "one"],
+            "поле `DATE` раскладке неизвестно и остаётся неразвёрнутым"
+        );
+    }
+
+    #[test]
+    fn a_document_without_page_fields_is_laid_out_as_is() {
+        let document = two_line_document(vec![
+            BlockItem::Paragraph(paragraph(1, "one")),
+            BlockItem::Paragraph(paragraph(3, "two")),
+        ]);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(page_texts(&layout.pages[0]), ["one", "two"]);
     }
 }

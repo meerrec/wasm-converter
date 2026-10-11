@@ -659,16 +659,79 @@ fn test_layout_page_without_headers_has_empty_chrome() {
     );
 }
 
-#[test]
-fn test_layout_footer_with_page_field_is_laid_out_without_the_number() {
-    let (_, layout) = chrome_layout("page_number_field", 1);
-    let footer = texts_in(&layout.chrome[0].footer);
+/// Раскладка фикстуры как есть, без растягивания тела.
+fn layout_of(name: &str) -> PageLayout {
+    let fonts = &mut FontRegistry::new(64);
+    let path = fixture_path(name);
+    let doc =
+        load_fixture(&path).unwrap_or_else(|_| panic!("Не удалось разобрать {}", path.display()));
+    layout_document(&doc, &LayoutOptions::default(), fonts).expect("Раскладка не удалась")
+}
 
-    // Статический текст колонтитула раскладывается, а само поле (`NUMPAGES`)
-    // числом не разворачивается: вычисление полей — отдельный долг, раскладка
-    // в него не заходит и на поле не падает.
+/// Тексты абзацев всего тела в порядке раскладки.
+fn body_texts(layout: &PageLayout) -> Vec<String> {
+    layout
+        .pages
+        .iter()
+        .flat_map(|page| texts_in(&page.items))
+        .collect()
+}
+
+#[test]
+fn test_layout_page_field_names_its_own_page_and_numpages_counts_the_document() {
+    // Тело растянуто до нескольких страниц: номер в колонтитуле обязан совпасть
+    // со страницей, на которой он напечатан, а `NUMPAGES` — со всеми.
+    let (_, layout) = chrome_layout("page_number_field", 150);
+    let total = layout.pages.len();
     assert!(
-        footer.iter().any(|text| text.contains("of")),
-        "статический текст нижнего колонтитула на месте: {footer:?}"
+        total >= 3,
+        "тело растянуто на несколько страниц, получено {total}"
+    );
+
+    for (index, chrome) in layout.chrome.iter().enumerate() {
+        let number = index + 1;
+        assert_eq!(
+            texts_in(&chrome.header),
+            [format!("Page {number}")],
+            "PAGE на странице {number} — её номер"
+        );
+        assert_eq!(
+            texts_in(&chrome.footer),
+            [format!("of {total}")],
+            "NUMPAGES на странице {number} — число страниц документа"
+        );
+    }
+}
+
+#[test]
+fn test_layout_fld_simple_resolves_page_and_numpages() {
+    // `fld_simple.docx`: `w:fldSimple` с инструкциями ` PAGE ` и ` NUMPAGES `.
+    let layout = layout_of("fields/fld_simple.docx");
+
+    // Кэш фикстуры — «1 из 12», но документ одностраничный: раскладка считает
+    // поля сама и кэшированный результат замещает целиком.
+    assert_eq!(body_texts(&layout), ["Page 1 of 1", "Page (fldChar): 1"]);
+}
+
+#[test]
+fn test_layout_complex_field_ignores_the_cached_result() {
+    // `fld_char_with_separate.docx`: сложное поле `begin`…`separate`…`end`
+    // с кэшированным `7`; статический текст « of 10» полем не является.
+    let layout = layout_of("fields/fld_char_with_separate.docx");
+
+    assert_eq!(body_texts(&layout), ["Page 1 of 10", "Bold result:"]);
+}
+
+#[test]
+fn test_layout_unknown_fields_stay_unresolved() {
+    // `MERGEFIELD` и `DATE` раскладке неизвестны: их результат остаётся за
+    // бортом, как и до вычисления полей, — и уж точно не паникой.
+    assert_eq!(
+        body_texts(&layout_of("fields/unknown_field.docx")),
+        ["Hello !", ""]
+    );
+    assert_eq!(
+        body_texts(&layout_of("fields/date_field.docx")),
+        ["Date:", "Date (fldSimple):"]
     );
 }
