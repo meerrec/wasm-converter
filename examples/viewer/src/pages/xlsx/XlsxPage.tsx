@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from 'react';
+import type { ReactElement } from 'react';
 import { FrameMeters } from '../../components/FrameMeters.js';
 import {
   FormulaBar,
@@ -15,14 +15,14 @@ import {
   type IconName,
   type RibbonTab,
 } from '../../components/office/index.js';
-import { listFixtures } from '../../lib/fixtures.js';
+import { useXlsxPage } from './use_xlsx_page.js';
 
 /**
  * Страница XLSX («ДваИксель»): каркас Office вокруг вьюера книги.
  *
- * Как и на DOCX-странице, работает только то, что не зависит от вьюера:
- * открытие файла, выбор фикстуры, зум и экспорт. Команды ленты недоступны —
- * их обработчики появятся вместе с вьюером.
+ * Разметка и лента — здесь, состояние и команды вьюера — в `useXlsxPage`:
+ * вьюер императивный, и его вызовы разложены по обработчикам и эффектам
+ * одного места, а не размазаны по вёрстке.
  */
 
 /** Вкладки ленты — как в Excel. */
@@ -197,8 +197,19 @@ const OTHER_RIBBONS: Record<string, RibbonSpec[]> = {
   ],
 };
 
+/** Пропсы ленты «Главная»: команды вьюера, которые лента показывает. */
+interface HomeRibbonProps {
+  zoom: string;
+  /** Зум — команда вьюера: без него крутить нечего. */
+  zoomDisabled: boolean;
+  onZoom: (value: string) => void;
+  exportDisabled: boolean;
+  onExportSheet: () => void;
+  onExportBook: () => void;
+}
+
 /** Лента «Главная»: та же, что в Excel, и так же разложена по группам. */
-function HomeRibbon(props: { zoom: string; onZoom: (value: string) => void }): ReactElement {
+function HomeRibbon(props: HomeRibbonProps): ReactElement {
   return (
     <div className="ofc-ribbon-body">
       <RibbonGroup label="Буфер обмена">
@@ -288,11 +299,27 @@ function HomeRibbon(props: { zoom: string; onZoom: (value: string) => void }): R
           <RibbonButton icon="filter" label="Фильтр" disabled />
         </div>
       </RibbonGroup>
-      {/* Экспорт — единственная работающая группа: она уводит книгу из вьюера
-          в файл и вьюера не требует. */}
+      {/* Экспорт — команда вьюера: PDF собирает воркер, страница только
+          отдаёт файл. До открытия книги гасить нечего, поэтому она ждёт её. */}
       <RibbonGroup label="Экспорт">
-        <RibbonButton icon="pdf" label="PDF" large id="export-pdf" />
-        <RibbonButton icon="export-book" label="Книга" large id="export-book-pdf" />
+        <RibbonButton
+          icon="pdf"
+          label="PDF"
+          large
+          id="export-pdf"
+          title="Текущий лист в PDF"
+          disabled={props.exportDisabled}
+          onClick={props.onExportSheet}
+        />
+        <RibbonButton
+          icon="export-book"
+          label="Книга"
+          large
+          id="export-book-pdf"
+          title="Вся книга одним PDF"
+          disabled={props.exportDisabled}
+          onClick={props.onExportBook}
+        />
       </RibbonGroup>
       {/* Масштаб — тоже команда вьюера, а не каркаса: она переживает отказ
           книги и остаётся доступной, когда остальная лента пуста. */}
@@ -304,6 +331,7 @@ function HomeRibbon(props: { zoom: string; onZoom: (value: string) => void }): R
           ariaLabel="Масштаб"
           title="Масштаб книги"
           width={88}
+          disabled={props.zoomDisabled}
           onChange={(label) => {
             props.onZoom(zoomByLabel(label));
           }}
@@ -315,51 +343,54 @@ function HomeRibbon(props: { zoom: string; onZoom: (value: string) => void }): R
 
 /** Страница «ДваИксель». */
 export default function XlsxPage(): ReactElement {
-  const [tab, setTab] = useState('home');
-  const [zoom, setZoom] = useState('1');
-  const [fixture, setFixture] = useState('');
-  const [fixtures, setFixtures] = useState<string[]>([]);
-
-  // Список фикстур — удобство разработки: без него книгу выбирают и перетаскивают.
-  useEffect(() => {
-    let alive = true;
-    void listFixtures('xlsx').then((names) => {
-      if (alive) setFixtures(names);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const groups = OTHER_RIBBONS[tab];
+  const page = useXlsxPage();
+  const groups = OTHER_RIBBONS[page.tab];
   return (
     <div className="ofc-app">
-      <TitleBar logo={<LogoExcel size={20} />} app="ДваИксель" documentName="Книга1">
+      <TitleBar
+        logo={<LogoExcel size={20} />}
+        app="ДваИксель"
+        documentName={page.documentName}
+      >
         <label className="ofc-file" title="Открыть книгу с диска">
-          <input id="file" type="file" accept=".xlsx" />
+          <input
+            id="file"
+            type="file"
+            accept=".xlsx"
+            disabled={page.controlsDisabled}
+            onChange={page.onFileChange}
+          />
           <Icon name="file" size={14} />
           Открыть
         </label>
         <select
           id="fixture"
           title="Фикстура"
-          value={fixture}
+          value={page.fixture}
+          disabled={page.controlsDisabled}
           onChange={(event) => {
-            setFixture(event.target.value);
+            page.onFixtureChange(event.target.value);
           }}
         >
           <option value="">— фикстура —</option>
-          {fixtures.map((name) => (
+          {page.fixtures.map((name) => (
             <option key={name} value={name}>
-              {name}
+              {name.replace(/\.xlsx$/, '')}
             </option>
           ))}
         </select>
       </TitleBar>
       <div className="ofc-ribbon">
-        <RibbonTabs tabs={TABS} activeId={tab} onSelect={setTab} />
-        {tab === 'home' ? (
-          <HomeRibbon zoom={zoom} onZoom={setZoom} />
+        <RibbonTabs tabs={TABS} activeId={page.tab} onSelect={page.onTabSelect} />
+        {page.tab === 'home' ? (
+          <HomeRibbon
+            zoom={page.zoom}
+            zoomDisabled={page.controlsDisabled}
+            onZoom={page.onZoomChange}
+            exportDisabled={page.exportDisabled}
+            onExportSheet={page.onExportSheet}
+            onExportBook={page.onExportBook}
+          />
         ) : (
           <div className="ofc-ribbon-body">
             {groups?.map((group) => (
@@ -372,16 +403,48 @@ export default function XlsxPage(): ReactElement {
           </div>
         )}
       </div>
-      <FormulaBar cellRef={<span id="cell">—</span>} />
-      <main id="viewer" />
+      <FormulaBar
+        cellRef={
+          <span id="cell" ref={page.cellRef}>
+            —
+          </span>
+        }
+      />
+      {/* Хост вьюера пуст: разметку внутри собирает сам вьюер, и React в неё
+          не вмешивается — иначе он сносил бы чужие узлы при перерисовке. */}
+      <main
+        id="viewer"
+        ref={page.hostRef}
+        onPointerMove={page.onPointerMove}
+        onDragOver={page.onDragOver}
+        onDragLeave={page.onDragLeave}
+        onDrop={page.onDrop}
+      />
       <StatusBar
         left={
           <>
             <label className="ofc-statusbar__sheet">
               лист
-              {/* Лист выбирают, когда книга открыта; до этого список пуст. */}
-              <select id="sheet" defaultValue="" disabled title="Лист">
-                <option value="">—</option>
+              {/* Список листов приходит от `open`: до него выбирать нечего, а
+                  после неудачного открытия в нём остаётся прежняя книга. */}
+              <select
+                id="sheet"
+                title="Лист"
+                value={String(page.sheetIndex)}
+                disabled={page.sheetDisabled}
+                onChange={(event) => {
+                  page.onSheetChange(event.target.value);
+                }}
+              >
+                {page.sheets.length === 0 ? (
+                  <option value="">—</option>
+                ) : (
+                  page.sheets.map((sheet) => (
+                    <option key={sheet.index} value={String(sheet.index)}>
+                      {sheet.hidden ? `${sheet.name} (скрыт)` : sheet.name}
+                    </option>
+                  ))
+                )}
               </select>
             </label>
             <span id="hint">перетащите .xlsx в окно</span>
@@ -390,22 +453,40 @@ export default function XlsxPage(): ReactElement {
         right={
           <>
             <label className="ofc-statusbar__check">
-              <input id="grid" type="checkbox" defaultChecked /> сетка
+              <input
+                id="grid"
+                type="checkbox"
+                checked={page.showGrid}
+                disabled={page.controlsDisabled}
+                onChange={(event) => {
+                  page.onShowGrid(event.target.checked);
+                }}
+              />{' '}
+              сетка
             </label>
             <label className="ofc-statusbar__check">
-              <input id="headers" type="checkbox" defaultChecked /> заголовки
+              <input
+                id="headers"
+                type="checkbox"
+                checked={page.showHeaders}
+                disabled={page.controlsDisabled}
+                onChange={(event) => {
+                  page.onShowHeaders(event.target.checked);
+                }}
+              />{' '}
+              заголовки
             </label>
             <span className="ofc-statusbar__sep" />
-            <span id="status" />
+            <span id="status">{page.status}</span>
             {/* Масштаб показывается, но не правится: ручка — в ленте. */}
             <span className="ofc-statusbar__zoom" title="Масштаб">
               <Icon name="zoom-out" size={14} />
-              {zoomLabel(zoom)}
+              {zoomLabel(page.zoom)}
             </span>
           </>
         }
       >
-        <FrameMeters handle={null} />
+        <FrameMeters handle={page.viewer} />
       </StatusBar>
     </div>
   );
