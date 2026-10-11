@@ -248,11 +248,13 @@ mod tests {
     #[test]
     fn the_warning_after_the_limit_is_an_error() {
         let mut ctx = ParseCtx::new();
-        for _ in 0..Warnings::FATAL_THRESHOLD {
+        // Предупреждения обязаны быть уникальными: порог считается по
+        // уникальным, а повторы накопитель только считает в `total`.
+        for index in 0..Warnings::FATAL_THRESHOLD {
             ctx.warn(
                 WarningKind::UnknownElement,
                 "word/document.xml",
-                "unknown element",
+                format!("unknown element {index}"),
             )
             .expect("the threshold itself is allowed");
         }
@@ -261,7 +263,7 @@ mod tests {
             .warn(
                 WarningKind::UnknownElement,
                 "word/document.xml",
-                "unknown element",
+                format!("unknown element {}", Warnings::FATAL_THRESHOLD),
             )
             .expect_err("the warning above the threshold is rejected");
 

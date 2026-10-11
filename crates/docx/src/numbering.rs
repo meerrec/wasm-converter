@@ -678,7 +678,18 @@ fn parse_rpr(
                 });
             }
             b"position" => rpr.position = attr_i32(&attrs, "val", ctx, part)?.map(HalfPoint::new),
-            _ => capture_unknown(reader, child, empty, ctx, part, &mut rpr.unknown)?,
+            _ => {
+                // Ловушка: `capture_unknown` вычитывает поддерево целиком
+                // (`capture_element` доходит до парного `End`), поэтому хвостовой
+                // `skip_tail` съел бы ещё один `End` — терминатор родителя
+                // (`w:rPr`, а следом и `w:lvl`) — и разбор разъехался бы на
+                // уровень вверх: цикл `w:lvl` проглотил бы следующие уровни,
+                // цикл `w:abstractNum` — остальные схемы и все `w:num`. Выходим
+                // из ветки напрямую, оставляя `skip_tail` только листовым
+                // элементам (как в `parse_ppr`).
+                capture_unknown(reader, child, empty, ctx, part, &mut rpr.unknown)?;
+                return Ok(());
+            }
         }
         // Листовые элементы свойств пусты; содержимое у них бывает только в
         // испорченном файле — тогда его пропускаем.
@@ -2149,6 +2160,71 @@ mod tests {
             unknown.as_slice(),
             [("fitText".to_owned(), "<w:fitText w:val=\"10\"/>".to_owned())]
         );
+    }
+
+    /// Регрессия: непустой незнакомый элемент внутри `w:lvl/w:rPr` не должен
+    /// сбивать поток событий. `capture_unknown` вычитывает поддерево целиком,
+    /// и лишний `skip_tail` съедал `End` родителя: цикл `w:lvl` проглатывал
+    /// следующие уровни, а цикл `w:abstractNum` — остальные схемы и все `w:num`,
+    /// из-за чего документ молча оставался без нумерации. Триггер — как в
+    /// реальных файлах Word (`<w14:textOutline><w14:noFill/></w14:textOutline>`);
+    /// самозакрытый вариант — контроль: он работал и до правки.
+    #[test]
+    fn unknown_rpr_child_with_content_keeps_the_rest_of_the_table() {
+        for (inner, expected_xml) in [
+            (
+                "<w14:textOutline w14:w=\"0\"><w14:noFill/></w14:textOutline>",
+                "<w14:textOutline w14:w=\"0\"><w14:noFill/></w14:textOutline>",
+            ),
+            ("<w14:textOutline/>", "<w14:textOutline/>"),
+        ] {
+            let xml = format!(
+                "<w:numbering \
+                 xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+                 xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\">\
+                 <w:abstractNum w:abstractNumId=\"0\">\
+                 <w:lvl w:ilvl=\"0\"><w:rPr>{inner}</w:rPr></w:lvl>\
+                 <w:lvl w:ilvl=\"1\"><w:lvlText w:val=\"%2.\"/></w:lvl>\
+                 </w:abstractNum>\
+                 <w:abstractNum w:abstractNumId=\"1\"><w:lvl w:ilvl=\"0\"/></w:abstractNum>\
+                 <w:num w:numId=\"7\"><w:abstractNumId w:val=\"0\"/></w:num>\
+                 </w:numbering>"
+            );
+            let (table, warnings) = parse_part(&xml);
+
+            // Единственное предупреждение — о самом незнакомом элементе;
+            // `MissingAbstractNum` от `w:num` означал бы, что `w:abstractNum`
+            // потеряны.
+            assert_eq!(warnings, vec![WarningKind::UnknownElement], "{inner}");
+            assert_eq!(table.abstract_nums.len(), 2, "{inner}");
+            assert_eq!(
+                table.abstract_nums[&AbstractNumId::new(0)]
+                    .levels
+                    .keys()
+                    .copied()
+                    .collect::<Vec<_>>(),
+                vec![0, 1],
+                "{inner}"
+            );
+            assert_eq!(
+                table.abstract_nums[&AbstractNumId::new(0)].levels[&1].lvl_text,
+                "%2.",
+                "{inner}"
+            );
+            assert_eq!(
+                table.nums.get(&NumId::new(7)).map(|num| num.abstract_id),
+                Some(AbstractNumId::new(0)),
+                "{inner}"
+            );
+            let unknown = &table.abstract_nums[&AbstractNumId::new(0)].levels[&0]
+                .rpr
+                .unknown;
+            assert_eq!(
+                unknown.as_slice(),
+                [("textOutline".to_owned(), expected_xml.to_owned())],
+                "{inner}"
+            );
+        }
     }
 
     /// `w:color` вне `ST_HexColor` (шесть шестнадцатеричных цифр, `auto`,
