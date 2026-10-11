@@ -12,12 +12,16 @@
 //! и DPR.
 
 use doc_converter_render::display_list::{
-    Color, DisplayList, DrawCommand, LineStyle, StringRef, TextAlign, TextBaseline,
+    Color, DisplayList, DrawCommand, StringRef, TextAlign, TextBaseline,
 };
 use doc_converter_render::geometry::Point;
 use doc_converter_render::viewport::Viewport;
 
-use crate::layout::engine::{half_points_to_px, LayoutItem, PageLayout, Rect, TableCellLayout};
+use crate::layout::engine::{half_points_to_px, LayoutItem, PageLayout, Rect};
+
+mod tables;
+
+use tables::draw_table;
 
 /// Гарнитура по умолчанию: ей рисовано всё, чью гарнитуру раскладка не назвала.
 ///
@@ -29,14 +33,6 @@ use crate::layout::engine::{half_points_to_px, LayoutItem, PageLayout, Rect, Tab
 /// переносы. Элементы без гарнитуры (ячейки таблиц, пустые абзацы) рисуются
 /// запасным лицом: `DisplayList` самодостаточен и на реестр не ссылается.
 const LAYOUT_FONT_FAMILY: &str = doc_converter_render::font::DEFAULT_FONT_FAMILY;
-
-/// Толщина рамки ячейки в пикселях раскладки.
-///
-/// Границы до элемента раскладки не доезжают — `LayoutItem::Table` несёт только
-/// прямоугольники ячеек, — поэтому берётся толщина одинарной границы по
-/// умолчанию: `w:sz="4"` это полпункта, то есть меньше пикселя при 96 dpi, и
-/// в пиксель её округляет уже рисование.
-const CELL_BORDER_W: f32 = 1.0;
 
 /// Обводка плейсхолдера плавающего элемента.
 const PLACEHOLDER_STROKE: Color = Color::rgba(0x80, 0x80, 0x80, 0xFF);
@@ -140,58 +136,6 @@ fn draw_items(items: &[LayoutItem], viewport: &Viewport, font: StringRef, out: &
     }
 }
 
-/// Таблица: рамки ячеек и их содержимое.
-///
-/// Рамки рисуются первыми и все сразу: иначе границы следующей ячейки легли бы
-/// поверх текста предыдущей.
-///
-/// Содержимое ячейки лежит в тех же абсолютных координатах страницы, что и её
-/// прямоугольник (`layout_cell_items` получает верхний левый угол ячейки), —
-/// сдвигать его при отрисовке не нужно и нечем.
-fn draw_table(
-    cells: &[TableCellLayout],
-    viewport: &Viewport,
-    font: StringRef,
-    out: &mut DisplayList,
-) {
-    for cell in cells {
-        draw_cell_borders(&cell.rect, viewport, out);
-    }
-    for cell in cells {
-        draw_items(&cell.content, viewport, font, out);
-    }
-}
-
-/// Контур ячейки: четыре сплошные линии по её прямоугольнику.
-///
-/// Общее ребро соседних ячеек рисуется дважды — так же, как в таблице с
-/// `border-collapse`, где линия одна на двоих.
-fn draw_cell_borders(rect: &Rect, viewport: &Viewport, out: &mut DisplayList) {
-    let (x, y) = to_screen(viewport, rect.x, rect.y);
-    let w = rect.width * viewport.scale;
-    let h = rect.height * viewport.scale;
-    let stroke_w = CELL_BORDER_W * viewport.scale;
-    let stroke = Color::BLACK;
-
-    let segments = [
-        (x, y, x + w, y),
-        (x, y + h, x + w, y + h),
-        (x, y, x, y + h),
-        (x + w, y, x + w, y + h),
-    ];
-    for (x1, y1, x2, y2) in segments {
-        out.push(DrawCommand::Line {
-            x1,
-            y1,
-            x2,
-            y2,
-            stroke,
-            stroke_w,
-            style: LineStyle::Solid,
-        });
-    }
-}
-
 /// Плейсхолдер плавающего элемента — прямоугольник с контуром.
 ///
 /// Рисунки не рисуются: им нужна выемка медиа из архива и `register_bitmap` в
@@ -250,9 +194,11 @@ fn to_screen(viewport: &Viewport, x: f32, y: f32) -> (f32, f32) {
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use doc_converter_render::display_list::LineStyle;
     use doc_converter_render::font::FontRegistry;
 
     use super::*;
+    use crate::layout::engine::{TableCellLayout, VAlign, PX_PER_POINT};
     use crate::layout::{layout_document, LayoutOptions, Page};
 
     /// Путь к фикстуре от корня репозитория.
@@ -355,6 +301,71 @@ mod tests {
         (0..dl.len())
             .filter(|i| dl.cmd(*i).is_some_and(&pred))
             .count()
+    }
+
+    /// Команда `Line`, разобранная по полям.
+    #[derive(Debug, Clone, Copy)]
+    struct DrawnLine {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        stroke: Color,
+        stroke_w: f32,
+        style: LineStyle,
+    }
+
+    /// Все команды `Line` кадра в порядке рисования.
+    fn drawn_lines(dl: &DisplayList) -> Vec<DrawnLine> {
+        (0..dl.len())
+            .filter_map(|i| match dl.cmd(i) {
+                Some(DrawCommand::Line {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    stroke,
+                    stroke_w,
+                    style,
+                }) => Some(DrawnLine {
+                    x1: *x1,
+                    y1: *y1,
+                    x2: *x2,
+                    y2: *y2,
+                    stroke: *stroke,
+                    stroke_w: *stroke_w,
+                    style: *style,
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Ни одна линия не повторяет другую: общее ребро соседей схлопнуто.
+    fn unique(lines: &[DrawnLine]) -> bool {
+        lines.iter().enumerate().all(|(i, line)| {
+            lines[i + 1..]
+                .iter()
+                .all(|other| !same_segment(line, other))
+        })
+    }
+
+    /// Отрезки совпадают с точностью до [`assert_px`].
+    fn same_segment(a: &DrawnLine, b: &DrawnLine) -> bool {
+        let near = |x: f32, y: f32| (x - y).abs() < 0.01;
+        near(a.x1, b.x1) && near(a.y1, b.y1) && near(a.x2, b.x2) && near(a.y2, b.y2)
+    }
+
+    /// Прямоугольники заливки кадра.
+    fn drawn_rects(dl: &DisplayList) -> Vec<(f32, f32, f32, f32, Color)> {
+        (0..dl.len())
+            .filter_map(|i| match dl.cmd(i) {
+                Some(DrawCommand::Rect {
+                    x, y, w, h, fill, ..
+                }) => Some((*x, *y, *w, *h, *fill)),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Ячейки первой таблицы раскладки.
@@ -526,7 +537,7 @@ mod tests {
         assert_eq!(plain.color, Color::BLACK, "без `w:color` — чёрный");
     }
 
-    /// Таблица: контур на каждую ячейку и текст ячейки внутри.
+    /// Таблица: границы и текст ячейки.
     #[test]
     fn a_table_draws_cell_borders_and_content() {
         let layout = fixture_layout("tables/simple_2x2.docx");
@@ -534,11 +545,25 @@ mod tests {
 
         let cells = first_table_cells(&layout);
         assert_eq!(cells.len(), 4, "таблица 2×2");
-        assert_eq!(
-            count(&dl, |cmd| matches!(cmd, DrawCommand::Line { .. })),
-            cells.len() * 4,
-            "по четыре линии на ячейку"
+        let lines = drawn_lines(&dl);
+        // Шестнадцать рёбер четырёх ячеек, но общее ребро соседей схлопывается
+        // в один отрезок: три горизонтальные границы и три вертикальные, каждая
+        // из двух отрезков — по одному на ячейку, между которыми она проходит.
+        assert_eq!(lines.len(), 12, "общие рёбра нарисованы по одному разу");
+        assert!(
+            unique(&lines),
+            "ни одно ребро не нарисовано дважды: {lines:?}"
         );
+        for line in &lines {
+            assert_eq!(line.stroke, Color::BLACK, "`w:color=\"auto\"` — чёрный");
+            // `w:sz="4"` — полпункта; толщина масштабируется, как координаты.
+            assert_px(
+                line.stroke_w,
+                4.0 / 8.0 * PX_PER_POINT * viewport().scale,
+                "толщина границы",
+            );
+            assert_eq!(line.style, LineStyle::Solid, "`w:val=\"single\"`");
+        }
         assert_eq!(
             drawn_texts(&dl).len(),
             cells
@@ -597,6 +622,219 @@ mod tests {
             0,
             "рисунки отложены"
         );
+    }
+
+    /// Таблицы страницы с глубиной вложенности: у вложенной таблицы глубина
+    /// больше нуля.
+    fn table_depths(items: &[LayoutItem], depth: usize, out: &mut Vec<(Rect, usize)>) {
+        for item in items {
+            if let LayoutItem::Table { rect, cells, .. } = item {
+                out.push((*rect, depth));
+                for cell in cells {
+                    table_depths(&cell.content, depth + 1, out);
+                }
+            }
+        }
+    }
+
+    /// Абзацы страницы вместе с абзацами ячеек и вложенных таблиц.
+    fn paragraphs_on_page(items: &[LayoutItem]) -> usize {
+        items
+            .iter()
+            .map(|item| match item {
+                LayoutItem::Paragraph { .. } => 1,
+                LayoutItem::Table { cells, .. } => cells
+                    .iter()
+                    .map(|cell| paragraphs_on_page(&cell.content))
+                    .sum(),
+                _ => 0,
+            })
+            .sum()
+    }
+
+    /// Заливка ячейки (`w:shd`) — прямоугольник её размера под содержимым.
+    #[test]
+    fn a_shaded_cell_is_filled_with_its_fill_color() {
+        let layout = fixture_layout("tables/borders_shading.docx");
+        let dl = frame(&layout, 0);
+
+        // Шапка фикстуры залита `w:shd w:val="clear" w:fill="2F5496"` — так фон
+        // ячейки пишет Word, и это единственный цвет заливки в фикстуре.
+        let rects = drawn_rects(&dl);
+        let shaded: Vec<_> = rects
+            .iter()
+            .filter(|(_, _, _, _, color)| *color == Color(0x2F54_96FF))
+            .collect();
+        assert_eq!(shaded.len(), 2, "залиты обе ячейки шапки: {rects:?}");
+
+        let cell = &first_table_cells(&layout)[0];
+        let (x, y) = to_screen(&viewport(), cell.rect.x, cell.rect.y);
+        assert_px(shaded[0].0, x, "левый край заливки");
+        assert_px(shaded[0].1, y, "верхний край заливки");
+        assert_px(
+            shaded[0].2,
+            cell.rect.width * viewport().scale,
+            "ширина заливки",
+        );
+        assert_px(
+            shaded[0].3,
+            cell.rect.height * viewport().scale,
+            "высота заливки",
+        );
+    }
+
+    /// Границы таблицы: `w:sz` — восьмые доли пункта, цвет — из `w:color`.
+    #[test]
+    fn a_table_border_uses_its_thickness_and_color() {
+        let layout = fixture_layout("tables/borders_shading.docx");
+        let dl = frame(&layout, 0);
+        let lines = drawn_lines(&dl);
+
+        let blue: Vec<_> = lines
+            .iter()
+            .filter(|line| line.stroke == Color(0x2F54_96FF))
+            .collect();
+        assert!(!blue.is_empty(), "границы таблицы нарисованы: {lines:?}");
+        for line in blue {
+            assert_eq!(line.style, LineStyle::Solid, "`w:val=\"single\"`");
+            assert_px(
+                line.stroke_w,
+                8.0 / 8.0 * PX_PER_POINT * viewport().scale,
+                "толщина `w:sz=\"8\"`",
+            );
+        }
+    }
+
+    /// `w:tcBorders` побеждает табличную границу на общем ребре: линия одна и
+    /// она тяжелее (`double` ячейки против `single` таблицы).
+    #[test]
+    fn a_cell_border_wins_over_the_table_border() {
+        let layout = fixture_layout("tables/borders_shading.docx");
+        let dl = frame(&layout, 0);
+        let lines = drawn_lines(&dl);
+
+        let doubles: Vec<_> = lines
+            .iter()
+            .filter(|line| line.style == LineStyle::Double)
+            .collect();
+        assert_eq!(doubles.len(), 1, "двойная граница одна: {lines:?}");
+        assert_eq!(doubles[0].stroke, Color(0xC000_00FF), "`w:color` двойной");
+        assert_px(
+            doubles[0].stroke_w,
+            6.0 / 8.0 * PX_PER_POINT * viewport().scale,
+            "толщина `w:sz=\"6\"`",
+        );
+    }
+
+    /// Вложенная таблица рисуется внутри ячейки: у неё свои границы.
+    #[test]
+    fn a_nested_table_draws_its_own_grid() {
+        let layout = fixture_layout("tables/nested.docx");
+        let dl = frame(&layout, 0);
+
+        let mut tables = Vec::new();
+        table_depths(&layout.pages[0].items, 0, &mut tables);
+        let (rect, _) = tables
+            .iter()
+            .find(|(_, depth)| *depth > 0)
+            .unwrap_or_else(|| panic!("вложенной таблицы нет: {tables:?}"));
+
+        let (x, y) = to_screen(&viewport(), rect.x, rect.y);
+        let (x2, y2) = to_screen(&viewport(), rect.x + rect.width, rect.y + rect.height);
+        let inside = drawn_lines(&dl)
+            .iter()
+            .filter(|line| {
+                line.x1 >= x - 0.01
+                    && line.x1 <= x2 + 0.01
+                    && line.x2 >= x - 0.01
+                    && line.x2 <= x2 + 0.01
+                    && line.y1 >= y - 0.01
+                    && line.y1 <= y2 + 0.01
+                    && line.y2 >= y - 0.01
+                    && line.y2 <= y2 + 0.01
+            })
+            .count();
+        assert!(inside >= 4, "границы вложенной таблицы: {inside}");
+    }
+
+    /// Продолжение `w:vMerge` приносит только геометрию: содержимое объединения
+    /// уже нарисовано в его начале, а границы и заливка нужны.
+    #[test]
+    fn a_merge_continuation_draws_no_extra_content() {
+        let layout = fixture_layout("tables/v_merge.docx");
+        let dl = frame(&layout, 0);
+
+        let cells = first_table_cells(&layout);
+        assert!(
+            cells.iter().any(|cell| cell.v_merge_continue),
+            "в фикстуре есть продолжение объединения"
+        );
+        let lines = drawn_lines(&dl);
+        assert!(
+            !lines.is_empty() && unique(&lines),
+            "границы объединённой ячейки нарисованы по одному разу: {lines:?}"
+        );
+        assert_eq!(
+            drawn_texts(&dl).len(),
+            paragraphs_on_page(&layout.pages[0].items),
+            "содержимое нарисовано один раз — в начале объединения"
+        );
+    }
+
+    /// Фрагмент таблицы на странице рисуется один раз: ни одна строка не
+    /// попадает в кадр дважды, в том числе повторённая строка заголовка.
+    #[test]
+    fn a_table_fragment_is_drawn_once_per_page() {
+        let layout = fixture_layout("tables/table_100_pages.docx");
+        assert!(layout.pages.len() > 1, "таблица не помещается на страницу");
+
+        let pages = (0..layout.pages.len().min(10)).chain([layout.pages.len() - 1]);
+        for number in pages {
+            let dl = frame(&layout, number);
+            assert_eq!(
+                drawn_texts(&dl).len(),
+                paragraphs_on_page(&layout.pages[number].items),
+                "страница {}: каждый абзац нарисован один раз",
+                number + 1
+            );
+        }
+    }
+
+    /// `w:vAlign` сдвигает содержимое ячейки вниз, а не повторяется рисованием:
+    /// строки стоят там, где их положила раскладка.
+    #[test]
+    fn cell_valign_shifts_the_content_down() {
+        let layout = fixture_layout("tables/cell_margins_valign.docx");
+        let dl = frame(&layout, 0);
+        let texts = drawn_texts(&dl);
+
+        let y = |text: &str| {
+            texts
+                .iter()
+                .find(|drawn| drawn.text == text)
+                .unwrap_or_else(|| panic!("нет строки {text:?} в кадре"))
+                .y
+        };
+        let (top, center, bottom) = (y("Сверху"), y("По центру"), y("Снизу"));
+        assert!(center > top, "центр ниже верха: {center} > {top}");
+        assert!(bottom > center, "низ ниже центра: {bottom} > {center}");
+
+        // Приписывать сдвиг второй раз нельзя: строка ячейки с `vAlign` рисуется
+        // ровно там, где её поставила раскладка.
+        let cells = first_table_cells(&layout);
+        for cell in cells.iter().filter(|cell| cell.v_align != VAlign::Top) {
+            for item in &cell.content {
+                let LayoutItem::Paragraph { rect, text, .. } = item else {
+                    continue;
+                };
+                let drawn = texts
+                    .iter()
+                    .find(|drawn| drawn.text == *text)
+                    .unwrap_or_else(|| panic!("нет строки {text:?} в кадре"));
+                let (_, expected) = to_screen(&viewport(), rect.x, rect.y);
+                assert_px(drawn.y, expected, "верх строки ячейки");
+            }
+        }
     }
 
     /// Кадр переживает сериализацию: painter получает его из ring'а байтами.
