@@ -1,0 +1,31 @@
+{
+  "name": "@doc-converter/example-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Пример просмотрщика DOCX и XLSX в одном приложении: воркер, OffscreenCanvas и наш парсер.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@doc-converter/core": "workspace:*",
+    "@doc-converter/wasm-docx": "workspace:*",
+    "@doc-converter/wasm-pdf": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.18.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^22.9.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}
