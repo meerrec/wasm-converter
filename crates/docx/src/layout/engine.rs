@@ -17,12 +17,15 @@ use crate::layout::float::{layout_floats_on_page, FloatElement};
 use crate::layout::line_break::LineBreaker;
 use crate::layout::pagination::Paginator;
 use crate::layout::paragraph::{layout_paragraph, Line, ParagraphLayout};
+use crate::layout::tables::{
+    compute_table_frame, layout_table_fragments, table_item, PageBand, TableRowLayout,
+};
 
 use crate::model::drawing::Anchor;
 use crate::model::raw::HalfPoint;
 use crate::model::{
-    BlockItem, BreakKind, Document, Inline, Margins, Orientation, PageSize, Paragraph, RunContent,
-    Section, SectionProperties, Table,
+    BlockItem, BreakKind, CellBorders, Document, Inline, Margins, Orientation, PageSize, Paragraph,
+    RunContent, Section, SectionProperties, Shading, Table,
 };
 use crate::{Columns, Twips};
 
@@ -131,13 +134,19 @@ pub enum LayoutItem {
         /// Подчёркивание (`w:u`).
         underline: bool,
     },
-    /// Таблица.
+    /// Таблица — фрагмент на одной странице.
+    ///
+    /// Таблица, не поместившаяся на странице, приходит несколькими элементами:
+    /// по одному на страницу, каждый со своими координатами. Склейка фрагментов
+    /// в один прямоугольник сломала бы и содержимое, и границы разрезанных строк.
     Table {
         /// Идентификатор узла.
         node_id: NodeId,
-        /// Прямоугольник положения.
+        /// Прямоугольник фрагмента.
         rect: Rect,
-        /// Раскладка ячеек.
+        /// Раскладка строк фрагмента.
+        rows: Vec<TableRowLayout>,
+        /// Плоский список ячеек фрагмента — в порядке отрисовки (см. [`TableRowLayout::cells`]).
         cells: Vec<TableCellLayout>,
     },
     /// Разрыв страницы.
@@ -155,6 +164,17 @@ pub struct TableCellLayout {
     pub rect: Rect,
     /// Содержимое ячейки.
     pub content: Vec<LayoutItem>,
+    /// Выравнивание содержимого по вертикали (`w:vAlign`).
+    pub v_align: VAlign,
+    /// Заливка ячейки (`w:shd`).
+    pub shading: Option<Shading>,
+    /// Эффективные границы ячейки: собственные поверх табличных.
+    ///
+    /// Рёбра разреза страницы пусты (`None`): линия разреза не рисуется.
+    pub borders: Box<CellBorders>,
+    /// Ячейка — продолжение вертикального объединения: её содержимое осталось
+    /// в начале объединения, здесь только геометрия.
+    pub v_merge_continue: bool,
 }
 
 /// Страница документа после раскладки.
@@ -627,7 +647,12 @@ fn place_floats_on_page(
     deferred
 }
 
-/// Положить таблицу: не поместилась — уходит на следующую страницу.
+/// Положить таблицу: строки режет полоса набора, фрагменты ложатся по страницам.
+///
+/// Разрез строки, повтор `w:tblHeader` и `w:cantSplit` посчитаны в
+/// [`layout_table_fragments`]: здесь остаётся только разложить готовые фрагменты
+/// по страницам. Фрагмент уже несёт координаты той полосы, на которую лёг, —
+/// курсор лишь продвигается за ним.
 fn place_table(
     table: &Table,
     fonts: &mut FontRegistry,
@@ -635,34 +660,31 @@ fn place_table(
     placed_floats: &mut Vec<FloatElement>,
     state: &mut LayoutState,
 ) {
-    let left = state.column_x;
-    let top = paginator.current_y();
-    let table_layout =
-        crate::layout::tables::layout_table(table, left, top, state.column_width, fonts);
+    let frame = compute_table_frame(table, state.column_x, state.column_width);
+    let first = PageBand {
+        top: paginator.current_y(),
+        height: (paginator.content_bottom() - paginator.current_y()).max(0.0),
+    };
+    // Геометрия продолжений одна на всю таблицу: перенос не меняет секцию,
+    // а смена секции закрывает таблицу разрывом потока.
+    let next = PageBand {
+        top: state.content_top,
+        height: (state.content_bottom - state.content_top).max(0.0),
+    };
+    let fragments = layout_table_fragments(table, &frame, first, next, fonts);
 
-    // `place` переносит таблицу целиком, если та не поместилась: курсор после
-    // него стоит под таблицей на той странице, куда она в итоге легла.
-    place(paginator, table_layout.height, false, placed_floats, state);
-
-    // Ячейки разложены от прежнего верха страницы; на новой странице сдвиг
-    // тот же, что у самой таблицы, — иначе содержимое осталось бы на прежнем месте.
-    let table_top = paginator.current_y() - table_layout.height;
-    let dy = table_top - top;
-    let cells = table_layout
-        .rows
-        .into_iter()
-        .flat_map(|row| row.cells)
-        .map(|cell| TableCellLayout {
-            rect: cell.rect.offset(0.0, dy),
-            content: cell.content,
-        })
-        .collect();
-
-    paginator.current_page_mut().items.push(LayoutItem::Table {
-        node_id: table.id,
-        rect: Rect::new(left, table_top, table_layout.width, table_layout.height),
-        cells,
-    });
+    for fragment in fragments {
+        // Пустая страница — предел: фрагмент не влез в неё, но новых страниц
+        // под него не будет, и разрыв оставил бы лист с одной таблицей за полем.
+        if fragment.starts_new_page && paginator.current_y() > paginator.content_top() {
+            break_page(paginator, placed_floats, state);
+        }
+        paginator.advance(fragment.height);
+        paginator
+            .current_page_mut()
+            .items
+            .push(table_item(table, &frame, fragment));
+    }
 }
 
 /// Положить на страницу фрагмент высотой `height` и продвинуть курсор.
