@@ -379,3 +379,296 @@ fn test_layout_sections_in_document_order() {
         "Второй абзац уходит на альбомную страницу"
     );
 }
+
+/// Тексты элементов-абзацев в порядке раскладки.
+fn texts_in(items: &[LayoutItem]) -> Vec<String> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            LayoutItem::Paragraph { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Верх и высота каждого абзаца: колонтитул в этих фикстурах — абзацы.
+fn paragraph_bounds(items: &[LayoutItem]) -> Vec<(f32, f32)> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            LayoutItem::Paragraph { rect, .. } => Some((rect.y, rect.height)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Есть ли в элементах встроенный рисунок, у которого нашлись байты.
+fn has_image(items: &[LayoutItem]) -> bool {
+    items.iter().any(|item| {
+        matches!(
+            item,
+            LayoutItem::Image {
+                image_id: Some(_),
+                ..
+            }
+        )
+    })
+}
+
+/// Повторить тело `times` раз, чтобы документ занял несколько страниц.
+///
+/// Фикстуры колонтитулов одностраничные, а выбор `first`/`even` проверяется на
+/// страницах 1..=3. Копии вставляются перед финальным `w:sectPr`: размноженный
+/// конец секции разрезал бы документ, и колонтитулы стало бы не с чем сверять.
+fn stretch(document: &mut Document, times: usize) {
+    let body = document.body.items.clone();
+    let at = document
+        .body
+        .items
+        .iter()
+        .rposition(|block| matches!(block, BlockItem::SectPr(_)))
+        .unwrap_or(document.body.items.len());
+
+    let mut items: Vec<BlockItem> = Vec::with_capacity(body.len() * times);
+    for _ in 0..times {
+        items.extend(body[..at].iter().cloned());
+    }
+    items.extend(body[at..].iter().cloned());
+    document.body.items = items;
+}
+
+/// Раскладка фикстуры колонтитулов, растянутой на `times` копий тела.
+fn chrome_layout(name: &str, times: usize) -> (Document, PageLayout) {
+    let fonts = &mut FontRegistry::new(64);
+    let options = LayoutOptions::default();
+
+    let path = fixture_path(&format!("headers_footers/{name}.docx"));
+    let mut doc =
+        load_fixture(&path).unwrap_or_else(|_| panic!("Не удалось разобрать {}", path.display()));
+    if times > 1 {
+        stretch(&mut doc, times);
+    }
+    let layout = layout_document(&doc, &options, fonts).expect("Раскладка не удалась");
+    (doc, layout)
+}
+
+#[test]
+fn test_layout_default_header_and_footer_on_every_page() {
+    let (_, layout) = chrome_layout("default_header_footer", 150);
+
+    assert!(
+        layout.pages.len() >= 3,
+        "тело растянуто на несколько страниц, получено {}",
+        layout.pages.len()
+    );
+    assert_eq!(
+        layout.chrome.len(),
+        layout.pages.len(),
+        "колонтитул есть у каждой страницы"
+    );
+
+    for (index, chrome) in layout.chrome.iter().enumerate() {
+        assert_eq!(
+            texts_in(&chrome.header),
+            ["Default header"],
+            "верхний колонтитул страницы {}",
+            index + 1
+        );
+        assert_eq!(
+            texts_in(&chrome.footer),
+            ["Default footer"],
+            "нижний колонтитул страницы {}",
+            index + 1
+        );
+    }
+
+    // Колонтитул — не тело: в потоке страницы его текста быть не должно.
+    let body: Vec<String> = layout
+        .pages
+        .iter()
+        .flat_map(|page| texts_in(&page.items))
+        .collect();
+    assert!(
+        body.iter()
+            .all(|text| text != "Default header" && text != "Default footer"),
+        "колонтитул не попадает в поток содержимого: {body:?}"
+    );
+}
+
+#[test]
+fn test_layout_header_sits_in_the_margin_band() {
+    let (_, layout) = chrome_layout("default_header_footer", 1);
+    let page = &layout.pages[0];
+    let chrome = &layout.chrome[0];
+
+    // `w:pgMar`: header и footer — 709 twips (47.27 px), верхнее и нижнее
+    // поля — 1134 twips (75.6 px).
+    let Some(&(header_y, header_h)) = paragraph_bounds(&chrome.header).first() else {
+        panic!("в верхнем колонтитуле нет абзаца");
+    };
+    assert_px(
+        header_y,
+        709.0 / 15.0,
+        "верхний колонтитул от края страницы",
+    );
+    assert!(
+        header_y + header_h <= page.margins.top + 0.01,
+        "колонтитул остаётся в верхнем поле: {} > {}",
+        header_y + header_h,
+        page.margins.top
+    );
+
+    let Some(&(footer_y, footer_h)) = paragraph_bounds(&chrome.footer).first() else {
+        panic!("в нижнем колонтитуле нет абзаца");
+    };
+    assert_px(
+        footer_y + footer_h,
+        page.height - 709.0 / 15.0,
+        "нижний колонтитул от края страницы",
+    );
+    assert!(
+        footer_y >= page.height - page.margins.bottom - 0.01,
+        "колонтитул ниже полосы набора: {} < {}",
+        footer_y,
+        page.height - page.margins.bottom
+    );
+}
+
+#[test]
+fn test_layout_title_pg_uses_the_first_page_header() {
+    let (doc, layout) = chrome_layout("title_pg_first", 150);
+
+    assert!(doc.body.sections[0].title_pg, "фикстура несёт `w:titlePg`");
+    assert!(
+        layout.pages.len() >= 2,
+        "нужны первая и вторая страницы, получено {}",
+        layout.pages.len()
+    );
+
+    assert_eq!(
+        texts_in(&layout.chrome[0].header),
+        ["First page header"],
+        "на первой странице секции — колонтитул `first`"
+    );
+    assert_eq!(
+        texts_in(&layout.chrome[1].header),
+        ["Default header"],
+        "на второй странице — колонтитул `default`"
+    );
+    assert!(
+        layout.chrome[0].footer.is_empty() && layout.chrome[1].footer.is_empty(),
+        "нижних колонтитулов в фикстуре нет"
+    );
+}
+
+#[test]
+fn test_layout_even_and_odd_headers_differ() {
+    let (doc, layout) = chrome_layout("even_odd", 150);
+
+    assert!(
+        doc.settings.even_and_odd_headers,
+        "фикстура включает `w:evenAndOddHeaders`"
+    );
+    assert!(
+        layout.pages.len() >= 3,
+        "нужны страницы 1..=3, получено {}",
+        layout.pages.len()
+    );
+
+    // Первая страница секции: `w:titlePg` перевешивает чётность.
+    assert_eq!(
+        texts_in(&layout.chrome[0].header),
+        ["First page header"],
+        "страница 1"
+    );
+    assert_eq!(
+        texts_in(&layout.chrome[1].header),
+        ["Even page header"],
+        "страница 2 — чётная"
+    );
+    assert_eq!(
+        texts_in(&layout.chrome[2].header),
+        ["Default header"],
+        "страница 3 — нечётная"
+    );
+}
+
+#[test]
+fn test_layout_header_with_inline_image_is_drawn_in_the_margin() {
+    let (_, layout) = chrome_layout("header_with_image", 1);
+    let chrome = &layout.chrome[0];
+
+    assert!(
+        has_image(&chrome.header),
+        "рисунок колонтитула раскладывается тем же путём, что и в теле"
+    );
+    let page = &layout.pages[0];
+    let Some(&(first_y, _)) = paragraph_bounds(&chrome.header).first() else {
+        panic!("в верхнем колонтитуле нет абзаца");
+    };
+    assert_px(
+        first_y,
+        page.margins.header,
+        "содержимое колонтитула начинается от линии `w:header`",
+    );
+
+    // Рисунок идёт за строкой абзаца (долг встроенных рисунков: место внутри
+    // строки текст колонтитула не занимает), но в полосу колонтитула он сдвинут
+    // тем же сдвигом, что и текст.
+    let rects: Vec<(f32, f32)> = chrome
+        .header
+        .iter()
+        .filter_map(|item| match item {
+            LayoutItem::Image {
+                rect,
+                image_id: Some(_),
+                ..
+            } => Some((rect.y, rect.height)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        rects
+            .iter()
+            .any(|(y, height)| *y >= page.margins.header && *height > 0.0),
+        "рисунок отсчитывается от линии `w:header` ({}): {rects:?}",
+        page.margins.header
+    );
+}
+
+#[test]
+fn test_layout_page_without_headers_has_empty_chrome() {
+    let fonts = &mut FontRegistry::new(64);
+    let options = LayoutOptions::default();
+
+    let path = fixture_path("simple/empty.docx");
+    let doc =
+        load_fixture(&path).unwrap_or_else(|_| panic!("Не удалось разобрать {}", path.display()));
+    let layout = layout_document(&doc, &options, fonts).expect("Раскладка не удалась");
+
+    assert!(
+        !layout.chrome.is_empty(),
+        "страница есть и без колонтитулов"
+    );
+    assert!(
+        layout
+            .chrome
+            .iter()
+            .all(|chrome| chrome.header.is_empty() && chrome.footer.is_empty()),
+        "нет ссылок на колонтитулы — нет и элементов"
+    );
+}
+
+#[test]
+fn test_layout_footer_with_page_field_is_laid_out_without_the_number() {
+    let (_, layout) = chrome_layout("page_number_field", 1);
+    let footer = texts_in(&layout.chrome[0].footer);
+
+    // Статический текст колонтитула раскладывается, а само поле (`NUMPAGES`)
+    // числом не разворачивается: вычисление полей — отдельный долг, раскладка
+    // в него не заходит и на поле не падает.
+    assert!(
+        footer.iter().any(|text| text.contains("of")),
+        "статический текст нижнего колонтитула на месте: {footer:?}"
+    );
+}

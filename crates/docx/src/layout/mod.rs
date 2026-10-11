@@ -27,7 +27,7 @@ pub mod tables;
 
 pub use engine::{
     half_points_to_px, layout_document, twips_to_px, LayoutError, LayoutItem, LayoutOptions,
-    LayoutState, Page, PageLayout, Rect, TableCellLayout, VAlign,
+    LayoutState, Page, PageChrome, PageLayout, Rect, TableCellLayout, VAlign,
 };
 pub use float::{layout_float, layout_floats_on_page, FloatElement, FloatKind, FloatLayoutContext};
 pub use line_break::LineBreaker;

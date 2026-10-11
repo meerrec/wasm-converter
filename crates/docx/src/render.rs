@@ -54,7 +54,10 @@ pub fn build(layout: &PageLayout, page: usize, viewport: Viewport, out: &mut Dis
     out.clear();
     out.push(DrawCommand::Clear);
 
-    let Some(page) = layout.pages.get(page) else {
+    // Индекс нужен дважды: страница берётся из `pages`, колонтитул — из
+    // `chrome` по тому же номеру.
+    let page_index = page;
+    let Some(page) = layout.pages.get(page_index) else {
         return;
     };
 
@@ -80,6 +83,14 @@ pub fn build(layout: &PageLayout, page: usize, viewport: Viewport, out: &mut Dis
     );
 
     draw_items(&page.items, &viewport, font, out);
+
+    // Колонтитулы рисуются после тела: они лежат в полях страницы и с телом
+    // не пересекаются, но если колонтитул перерос поле, поверх текста должен
+    // остаться он — так же поступает Word, раздвигая полосу набора.
+    if let Some(chrome) = layout.chrome.get(page_index) {
+        draw_items(&chrome.header, &viewport, font, out);
+        draw_items(&chrome.footer, &viewport, font, out);
+    }
 
     out.push(DrawCommand::PopClip);
 }
@@ -1016,5 +1027,39 @@ mod tests {
             .filter(|cmd| matches!(cmd, DrawCommand::Text { .. }))
             .count();
         assert_eq!(decoded_texts, drawn_texts(&dl).len());
+    }
+
+    /// Колонтитулы страницы попадают в кадр: canvas и PDF рисуют их из `chrome`.
+    #[test]
+    fn headers_and_footers_are_drawn_in_the_frame() {
+        let layout = fixture_layout("headers_footers/default_header_footer.docx");
+        let page = &layout.pages[0];
+        let dl = frame(&layout, 0);
+
+        // В потоке страницы колонтитула нет — он приходит только из `chrome`.
+        let body: Vec<&str> = paragraphs(page)
+            .iter()
+            .map(|item| paragraph_text(item))
+            .collect();
+        assert_eq!(body, ["Body text"]);
+
+        let drawn = drawn_texts(&dl);
+        let header = drawn
+            .iter()
+            .find(|item| item.text == "Default header")
+            .expect("верхний колонтитул нарисован");
+        let footer = drawn
+            .iter()
+            .find(|item| item.text == "Default footer")
+            .expect("нижний колонтитул нарисован");
+
+        // Колонтитул рисуется в полосе своей линии: верхний — в верхнем поле,
+        // нижний — ниже полосы набора.
+        let (_, header_y) = to_screen(&viewport(), 0.0, page.margins.header);
+        assert_px(header.y, header_y, "верх колонтитула");
+        assert!(
+            footer.y > to_screen(&viewport(), 0.0, page.height - page.margins.bottom).1,
+            "нижний колонтитул ниже полосы набора"
+        );
     }
 }

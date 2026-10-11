@@ -25,7 +25,7 @@ use crate::model::drawing::{Anchor, InlineImage, InlineOrAnchor, MediaPart};
 use crate::model::raw::HalfPoint;
 use crate::model::{
     BlockItem, BreakKind, CellBorders, Document, Inline, Margins, Orientation, PageSize, Paragraph,
-    RunContent, Section, SectionProperties, Shading, StyleTable, Table,
+    PartRef, RunContent, Section, SectionProperties, Shading, StyleTable, Table,
 };
 use crate::{Columns, Twips};
 
@@ -247,8 +247,28 @@ impl MarginsLayout {
 pub struct PageLayout {
     /// Страницы документа.
     pub pages: Vec<Page>,
+    /// Колонтитулы страниц: `chrome[i]` относится к `pages[i]`.
+    ///
+    /// Колонтитулы держатся рядом со страницами, а не в [`Page::items`]:
+    /// `items` — поток содержимого, по нему считается высота и режется таблица,
+    /// и попавший туда колонтитул сдвинул бы разбивку. Потребителю (canvas и PDF)
+    /// списки нужны раздельно ещё и потому, что колонтитул рисуется слоем,
+    /// отличным от тела.
+    pub chrome: Vec<PageChrome>,
     /// Общая высота содержимого (без учёта полей и колонтитулов).
     pub total_height: f32,
+}
+
+/// Колонтитулы одной страницы: то, что печатается в её полях.
+///
+/// Элементы лежат в координатах страницы, как и [`Page::items`]: сдвиг в полосу
+/// колонтитула делает раскладка, а не потребитель.
+#[derive(Debug, Clone, Default)]
+pub struct PageChrome {
+    /// Элементы верхнего колонтитула (`w:headerReference`).
+    pub header: Vec<LayoutItem>,
+    /// Элементы нижнего колонтитула (`w:footerReference`).
+    pub footer: Vec<LayoutItem>,
 }
 
 /// Состояние раскладки: колонка и текущая позиция в ней.
@@ -370,86 +390,42 @@ pub fn layout_document(
     let mut paginator = Paginator::new(&first_section);
     let mut state = LayoutState::for_page(paginator.current_page(), &first_section);
     let mut cache = StyleCache::new();
-    let default_font_id = FontId::default();
     // Секция, в которой идёт раскладка: `sections[i]` описывает секцию, которую
     // закрывает i-й по порядку конец секции (`collect_sections` в `document.rs`).
     let mut section_index = 0usize;
 
     for block in &document.body.items {
-        match block {
-            BlockItem::Paragraph(paragraph) => {
-                // Курсор страницы — источник истины: состояние возвращается к нему перед
-                // каждым абзацем, иначе элементы получают координаты от прошлого блока.
-                state.x = state.column_x;
-                state.y = paginator.current_y();
+        if let BlockItem::SectPr(_sect_pr) = block {
+            // Блочный `w:sectPr` закрывает последнюю секцию и описывает её
+            // свойства, а не разрывает документ: новой секции за ним нет,
+            // поэтому лишней пустой страницы не появляется.
+            section_index += 1;
+            enter_section(
+                document,
+                section_index,
+                &mut paginator,
+                &mut placed_floats,
+                &mut state,
+            );
+            continue;
+        }
 
-                // Layout paragraph
-                let mut line_breaker = LineBreaker::new(fonts, default_font_id);
-                let layout = layout_paragraph(
-                    document,
-                    paragraph,
-                    &state,
-                    options,
-                    &mut cache,
-                    &mut line_breaker,
-                );
+        layout_block(
+            document,
+            block,
+            options,
+            fonts,
+            &mut cache,
+            &mut paginator,
+            &mut placed_floats,
+            &mut deferred_floats,
+            &mut state,
+        );
 
-                let empty_line = empty_paragraph_line(&mut line_breaker, state.x);
-                let lines: Vec<&Line> = if layout.lines.is_empty() {
-                    vec![&empty_line]
-                } else {
-                    layout.lines.iter().collect()
-                };
-
-                let placement = place_lines(
-                    &mut paginator,
-                    paragraph,
-                    &lines,
-                    &layout,
-                    &document.media,
-                    &mut placed_floats,
-                    &mut state,
-                );
-
-                // Плавающие рисунки встают после строк абзаца: их база —
-                // фрагмент, в который абзац лёг.
-                place_floats(
-                    &mut paginator,
-                    &layout.anchors,
-                    placement,
-                    &document.media,
-                    &mut placed_floats,
-                    &mut deferred_floats,
-                    &mut state,
-                );
-
-                // Абзац со встроенным `w:sectPr` закрывает секцию: он сам ещё
-                // принадлежит ей, а следующая начинается после него.
-                if paragraph.section_break.is_some() {
-                    section_index += 1;
-                    enter_section(
-                        document,
-                        section_index,
-                        &mut paginator,
-                        &mut placed_floats,
-                        &mut state,
-                    );
-                }
-            }
-            BlockItem::Table(table) => {
-                place_table(
-                    table,
-                    &document.styles,
-                    fonts,
-                    &mut paginator,
-                    &mut placed_floats,
-                    &mut state,
-                );
-            }
-            BlockItem::SectPr(_sect_pr) => {
-                // Блочный `w:sectPr` закрывает последнюю секцию и описывает её
-                // свойства, а не разрывает документ: новой секции за ним нет,
-                // поэтому лишней пустой страницы не появляется.
+        // Абзац со встроенным `w:sectPr` закрывает секцию: он сам ещё
+        // принадлежит ей, а следующая начинается после него.
+        if let BlockItem::Paragraph(paragraph) = block {
+            if paragraph.section_break.is_some() {
                 section_index += 1;
                 enter_section(
                     document,
@@ -459,20 +435,97 @@ pub fn layout_document(
                     &mut state,
                 );
             }
-            BlockItem::Unknown { .. } => {
-                // Skip unknown
-            }
         }
     }
 
-    let pages = paginator.finish();
+    let (pages, page_sections) = paginator.finish_with_sections();
+    let chrome = layout_chrome(document, &pages, &page_sections, options, fonts);
 
     let total_height = pages.iter().map(|page| page.height).sum();
 
     Ok(PageLayout {
         pages,
+        chrome,
         total_height,
     })
+}
+
+/// Разложить один блок потока в текущую страницу пагинатора.
+///
+/// Один путь для тела документа и для колонтитулов: абзац и таблица колонтитула
+/// раскладываются теми же средствами, что и в теле, — вместе с встроенными
+/// рисунками, плавающими элементами и нумерацией абзацев.
+#[allow(clippy::too_many_arguments)]
+fn layout_block(
+    document: &Document,
+    block: &BlockItem,
+    options: &LayoutOptions,
+    fonts: &mut FontRegistry,
+    cache: &mut StyleCache,
+    paginator: &mut Paginator,
+    placed_floats: &mut Vec<FloatElement>,
+    deferred_floats: &mut Vec<DeferredFloat>,
+    state: &mut LayoutState,
+) {
+    match block {
+        BlockItem::Paragraph(paragraph) => {
+            // Курсор страницы — источник истины: состояние возвращается к нему перед
+            // каждым абзацем, иначе элементы получают координаты от прошлого блока.
+            state.x = state.column_x;
+            state.y = paginator.current_y();
+
+            let mut line_breaker = LineBreaker::new(fonts, FontId::default());
+            let layout = layout_paragraph(
+                document,
+                paragraph,
+                state,
+                options,
+                cache,
+                &mut line_breaker,
+            );
+
+            let empty_line = empty_paragraph_line(&mut line_breaker, state.x);
+            let lines: Vec<&Line> = if layout.lines.is_empty() {
+                vec![&empty_line]
+            } else {
+                layout.lines.iter().collect()
+            };
+
+            let placement = place_lines(
+                paginator,
+                paragraph,
+                &lines,
+                &layout,
+                &document.media,
+                placed_floats,
+                state,
+            );
+
+            // Плавающие рисунки встают после строк абзаца: их база —
+            // фрагмент, в который абзац лёг.
+            place_floats(
+                paginator,
+                &layout.anchors,
+                placement,
+                &document.media,
+                placed_floats,
+                deferred_floats,
+                state,
+            );
+        }
+        BlockItem::Table(table) => {
+            place_table(
+                table,
+                &document.styles,
+                fonts,
+                paginator,
+                placed_floats,
+                state,
+            );
+        }
+        // Секции в поток колонтитула не попадают, чужие блоки раскладке не видны.
+        BlockItem::SectPr(_) | BlockItem::Unknown { .. } => {}
+    }
 }
 
 /// Строка-метка абзаца без текста: такой абзац всё равно занимает строку.
@@ -979,11 +1032,219 @@ fn enter_section(
     );
 
     if needs_break {
-        paginator.push_page_with_section(section);
+        paginator.push_page_with_section(section, index);
         reset_page_state(paginator, placed_floats, state);
     } else {
-        paginator.set_section(section);
+        paginator.set_section(section, index);
         *state = LayoutState::for_page(paginator.current_page(), section);
+    }
+}
+
+/// Полоса, в которой печатается колонтитул.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChromeBand {
+    /// Верхний колонтитул: от `w:header` вниз, содержимое растёт от этой линии.
+    Header,
+    /// Нижний колонтитул: от `w:footer` вверх, содержимое прижато к нижнему краю.
+    Footer,
+}
+
+/// Разложить колонтитулы всех страниц документа.
+///
+/// `page_sections[i]` — индекс секции страницы `pages[i]` (см.
+/// [`Paginator::finish_with_sections`]): по самой странице первую страницу
+/// секции и её чётность не восстановить — страница знает только общий номер.
+fn layout_chrome(
+    document: &Document,
+    pages: &[Page],
+    page_sections: &[usize],
+    options: &LayoutOptions,
+    fonts: &mut FontRegistry,
+) -> Vec<PageChrome> {
+    let even_and_odd = document.settings.even_and_odd_headers;
+    let mut chrome = Vec::with_capacity(pages.len());
+    for (index, page) in pages.iter().enumerate() {
+        let section_index = page_sections.get(index).copied().unwrap_or_default();
+        let section = section_at(document, section_index);
+        // Страница начинает секцию, если предыдущая принадлежит другой.
+        let first_in_section = index == 0 || page_sections.get(index - 1) != Some(&section_index);
+        let even_page = even_and_odd && page.number.is_multiple_of(2);
+
+        let header = chrome_part(&section, ChromeBand::Header, first_in_section, even_page);
+        let header = layout_chrome_part(
+            document,
+            header,
+            &section,
+            page,
+            ChromeBand::Header,
+            options,
+            fonts,
+        );
+        let footer = chrome_part(&section, ChromeBand::Footer, first_in_section, even_page);
+        let footer = layout_chrome_part(
+            document,
+            footer,
+            &section,
+            page,
+            ChromeBand::Footer,
+            options,
+            fonts,
+        );
+        chrome.push(PageChrome { header, footer });
+    }
+    chrome
+}
+
+/// Какой колонтитул печатается: выбор между `default`, `first` и `even`.
+///
+/// `first` — на первой странице секции и только при `w:titlePg`; `even` —
+/// на чётных страницах и только при `w:evenAndOddHeaders`. Флаг сам по себе
+/// колонтитула не создаёт: отсутствующая часть откатывается к `default`, как
+/// это делает Word (`w:titlePg` без части `first` оставляет первой странице
+/// обычный колонтитул).
+fn chrome_part(
+    section: &Section,
+    band: ChromeBand,
+    first_in_section: bool,
+    even_page: bool,
+) -> Option<&PartRef> {
+    let (default, first, even) = match band {
+        ChromeBand::Header => (
+            section.header_default.as_ref(),
+            section.header_first.as_ref(),
+            section.header_even.as_ref(),
+        ),
+        ChromeBand::Footer => (
+            section.footer_default.as_ref(),
+            section.footer_first.as_ref(),
+            section.footer_even.as_ref(),
+        ),
+    };
+
+    if first_in_section && section.title_pg {
+        first.or(default)
+    } else if even_page {
+        even.or(default)
+    } else {
+        default
+    }
+}
+
+/// Разложить один колонтитул в координатах страницы.
+///
+/// Содержимое колонтитула раскладывается тем же [`layout_block`], что и тело,
+/// но в полосе всей страницы: поля тела сняты, иначе колонтитул не поместился бы
+/// в промежуток до полосы набора. Word при переполнении отодвигает тело —
+/// здесь колонтитул просто ложится поверх (ограничение слайса).
+fn layout_chrome_part(
+    document: &Document,
+    part: Option<&PartRef>,
+    section: &Section,
+    page: &Page,
+    band: ChromeBand,
+    options: &LayoutOptions,
+    fonts: &mut FontRegistry,
+) -> Vec<LayoutItem> {
+    let Some(part) = part else {
+        return Vec::new();
+    };
+    // Части нет в пакете (битая ссылка) — страница без колонтитула, а не паника.
+    let content = match band {
+        ChromeBand::Header => document.headers.get(&part.target),
+        ChromeBand::Footer => document.footers.get(&part.target),
+    };
+    let Some(content) = content else {
+        return Vec::new();
+    };
+
+    let mut band_section = section.clone();
+    band_section.margins.top = Twips::new(0);
+    band_section.margins.bottom = Twips::new(0);
+    band_section.margins.header = Some(Twips::new(0));
+    band_section.margins.footer = Some(Twips::new(0));
+
+    let mut paginator = Paginator::new(&band_section);
+    let mut state = LayoutState::for_page(paginator.current_page(), &band_section);
+    let mut cache = StyleCache::new();
+    let mut placed_floats = Vec::new();
+    let mut deferred_floats = Vec::new();
+    for block in &content.body.items {
+        layout_block(
+            document,
+            block,
+            options,
+            fonts,
+            &mut cache,
+            &mut paginator,
+            &mut placed_floats,
+            &mut deferred_floats,
+            &mut state,
+        );
+    }
+
+    // Колонтитул выше страницы — вырожденный случай, которого Word не создаёт:
+    // берём то, что легло на первую страницу полосы.
+    let (band_pages, _) = paginator.finish_with_sections();
+    let mut items = band_pages
+        .into_iter()
+        .next()
+        .map_or_else(Vec::new, |band_page| band_page.items);
+    // Разрыв страницы в колонтитуле бессмыслен: он не начинает новую страницу,
+    // а лишь сдвинул бы содержимое.
+    items.retain(|item| !matches!(item, LayoutItem::PageBreak | LayoutItem::ColumnBreak));
+    if items.is_empty() {
+        return items;
+    }
+
+    let dy = match band {
+        // Верхний колонтитул печатается от расстояния `w:header`.
+        ChromeBand::Header => page.margins.header,
+        // Нижний прижат к линии `w:footer`: на неё приходится его нижний край.
+        ChromeBand::Footer => {
+            let bottom = items.iter().map(item_bottom).fold(0.0, f32::max);
+            page.height - page.margins.footer - bottom
+        }
+    };
+    translate_items(&mut items, dy);
+    items
+}
+
+/// Нижняя граница элемента в координатах полосы колонтитула.
+fn item_bottom(item: &LayoutItem) -> f32 {
+    match item {
+        LayoutItem::Paragraph { rect, .. }
+        | LayoutItem::Image { rect, .. }
+        | LayoutItem::Table { rect, .. } => rect.y + rect.height,
+        LayoutItem::Float(float) => float.rect.y + float.rect.height,
+        LayoutItem::PageBreak | LayoutItem::ColumnBreak => 0.0,
+    }
+}
+
+/// Сдвинуть элементы по вертикали: из полосы колонтитула — на страницу.
+///
+/// Сдвиг рекурсивный: содержимое ячейки таблицы колонтитула — такие же элементы.
+fn translate_items(items: &mut [LayoutItem], dy: f32) {
+    for item in items {
+        match item {
+            LayoutItem::Paragraph { rect, .. } | LayoutItem::Image { rect, .. } => rect.y += dy,
+            LayoutItem::Float(float) => float.rect.y += dy,
+            LayoutItem::Table {
+                rect, cells, rows, ..
+            } => {
+                rect.y += dy;
+                for cell in cells.iter_mut() {
+                    cell.rect.y += dy;
+                    translate_items(&mut cell.content, dy);
+                }
+                for row in rows.iter_mut() {
+                    for cell in &mut row.cells {
+                        cell.rect.y += dy;
+                        translate_items(&mut cell.content, dy);
+                    }
+                }
+            }
+            LayoutItem::PageBreak | LayoutItem::ColumnBreak => {}
+        }
     }
 }
 

@@ -19,6 +19,14 @@ use super::engine::{MarginsLayout, Page, Rect};
 pub struct Paginator {
     /// Завершённые страницы.
     pages: Vec<Page>,
+    /// Секция каждой завершённой страницы — индекс в `Document::body.sections`.
+    ///
+    /// Идёт вровень с `pages`: колонтитулам нужна секция страницы, а сама
+    /// страница несёт только общий номер, по которому `w:titlePg` (первая
+    /// страница секции) и чётность не восстановить.
+    page_sections: Vec<usize>,
+    /// Индекс секции текущей страницы.
+    section_index: usize,
     /// Страница, которую пагинатор заполняет сейчас.
     current_page: Page,
     /// Текущая позиция Y (от верхнего края страницы).
@@ -47,6 +55,8 @@ impl Paginator {
 
         Self {
             pages: Vec::new(),
+            page_sections: Vec::new(),
+            section_index: 0,
             current_page,
             current_y,
             current_section: section.clone(),
@@ -106,18 +116,23 @@ impl Paginator {
     /// [`Paginator::finish`] отдаёт документ целиком независимо от того,
     /// пользуется ли вызывающий возвратом.
     pub fn push_page(&mut self) -> Page {
+        let section_index = self.section_index;
         let next = page_for(self.current_page.number + 1, &self.current_section);
-        self.break_page(next)
+        self.break_page(next, section_index)
     }
 
     /// Завершить текущую страницу и продолжить раскладку в другой секции.
     ///
     /// Нужен для разрыва секции: следующая страница получает геометрию
-    /// `section`, а её номер продолжает общий счёт документа.
-    pub fn push_page_with_section(&mut self, section: &Section) -> Page {
+    /// `section`, а её номер продолжает общий счёт документа. `index` — номер
+    /// секции в `Document::body.sections`; завершаемая страница ещё принадлежит
+    /// прежней секции, поэтому её номер запоминается до смены.
+    pub fn push_page_with_section(&mut self, section: &Section, index: usize) -> Page {
+        let finished_section = self.section_index;
         self.current_section = section.clone();
+        self.section_index = index;
         let next = page_for(self.current_page.number + 1, &self.current_section);
-        self.break_page(next)
+        self.break_page(next, finished_section)
     }
 
     /// Секция, в геометрии которой идёт раскладка.
@@ -130,9 +145,12 @@ impl Paginator {
     ///
     /// Нужен для `Continuous`-разрыва: содержимое продолжается на той же
     /// странице, поэтому уже разложенные элементы и позиция курсора
-    /// сохраняются, а размеры листа и поля берутся у новой секции.
-    pub fn set_section(&mut self, section: &Section) {
+    /// сохраняются, а размеры листа и поля берутся у новой секции. Страница
+    /// целиком достаётся новой секции: колонтитул — свойство страницы, а не
+    /// куска текста, и разрыва посреди неё у колонтитула нет.
+    pub fn set_section(&mut self, section: &Section, index: usize) {
         self.current_section = section.clone();
+        self.section_index = index;
 
         let items = std::mem::take(&mut self.current_page.items);
         let mut page = page_for(self.current_page.number, section);
@@ -141,17 +159,28 @@ impl Paginator {
     }
 
     /// Отдать все страницы документа, включая текущую.
+    #[must_use]
+    pub fn finish(self) -> Vec<Page> {
+        self.finish_with_sections().0
+    }
+
+    /// Отдать все страницы документа вместе с номером секции каждой.
+    ///
+    /// Номера секций идут вторым списком, вровень со страницами: [`Page`]
+    /// их не несёт, а колонтитулам они нужны — первая страница секции
+    /// (`w:titlePg`) и чётность по общему номеру не считаются.
     ///
     /// Пустая текущая страница в результат не попадает: документ, который
     /// закончился явным разрывом, не должен получить лишний пустой лист.
     /// Если же страниц нет вовсе, возвращается одна пустая — у документа
     /// всегда есть хотя бы одна страница.
     #[must_use]
-    pub fn finish(mut self) -> Vec<Page> {
+    pub fn finish_with_sections(mut self) -> (Vec<Page>, Vec<usize>) {
         if !self.current_page.items.is_empty() || self.pages.is_empty() {
             self.pages.push(self.current_page);
+            self.page_sections.push(self.section_index);
         }
-        self.pages
+        (self.pages, self.page_sections)
     }
 
     /// Добавить элемент на текущую страницу и продвинуть позицию Y.
@@ -166,8 +195,9 @@ impl Paginator {
     /// `true` если элемент поместился на текущей странице, `false` если была создана новая.
     pub fn add_item(&mut self, height: f32, needs_page_break: bool) -> bool {
         if needs_page_break || !self.fits(height) {
+            let section_index = self.section_index;
             let next = page_for(self.current_page.number + 1, &self.current_section);
-            self.break_page(next);
+            self.break_page(next, section_index);
             return false;
         }
 
@@ -207,12 +237,14 @@ impl Paginator {
 
     /// Начать страницу `next`, завершив текущую.
     ///
-    /// Завершённая страница уходит в список для [`Paginator::finish`], но
-    /// возвращается и вызывающему — отсюда копия.
-    fn break_page(&mut self, next: Page) -> Page {
+    /// Завершённая страница уходит в список для [`Paginator::finish`] вместе
+    /// с номером своей секции (`finished_section`), но возвращается и
+    /// вызывающему — отсюда копия.
+    fn break_page(&mut self, next: Page, finished_section: usize) -> Page {
         let finished = std::mem::replace(&mut self.current_page, next);
         self.current_y = self.current_page.margins.top;
         self.pages.push(finished.clone());
+        self.page_sections.push(finished_section);
         finished
     }
 }
@@ -380,7 +412,7 @@ mod tests {
         let mut landscape = section(16_838, 11_906, 720);
         landscape.orientation = Orientation::Landscape;
 
-        let finished = paginator.push_page_with_section(&landscape);
+        let finished = paginator.push_page_with_section(&landscape, 1);
         assert_eq!(finished.number, 1, "завершается страница прежней секции");
         assert!((finished.width - twips_to_px(Twips::new(11_906))).abs() < 0.01);
 
@@ -473,7 +505,7 @@ mod tests {
         // Та же бумага, повёрнутая; поля вдвое уже (720 twips = 48 px).
         let mut landscape = section(16_838, 11_906, 720);
         landscape.orientation = Orientation::Landscape;
-        paginator.set_section(&landscape);
+        paginator.set_section(&landscape, 1);
 
         assert_eq!(paginator.current_page().number, 1, "страница не завершена");
         assert_eq!(
