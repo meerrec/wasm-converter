@@ -163,8 +163,9 @@ jobs:
           path: packages/wasm-docx/pkg
 
   # Браузерные wasm-bindgen-тесты до этой джобы не запускались нигде: в
-  # crates/wasm/tests/ живут мост DOCX и регрессия кэша стилей painter'а, а
-  # CLAUDE.md требует покрывать новые wasm-функции через `wasm-bindgen-test`.
+  # crates/wasm/tests/ живёт регрессия кэша стилей painter'а, тесты остальных
+  # wasm-крейтов — в их собственных `tests/`, а CLAUDE.md требует покрывать
+  # новые wasm-функции через `wasm-bindgen-test`.
   #
   # `needs` нет намеренно: `wasm-pack test` собирает тестовые артефакты из
   # исходников и `pkg/` из джобы wasm ему не нужен, так что джоба идёт
@@ -217,7 +218,7 @@ jobs:
 
       # wasm-pack берёт chromedriver из PATH, если он там есть, и качает свой
       # только при его отсутствии — на PATH (/usr/local/bin) его кладёт шаг выше.
-      # Профиль release обязателен для обоих шагов: бюджет ROADMAP §9 написан
+      # Профиль release обязателен для всех шагов: бюджет ROADMAP §9 написан
       # для поставляемой сборки, её и надо мерить. Какой профиль быстрее на
       # `painter_perf`, по прогонам в CI сказать нельзя — наблюдённые 32 мс у
       # debug против 82 и 138 мс у release шли с разбросом раннера ~×1.7
@@ -232,6 +233,11 @@ jobs:
       # Тесты моста DOCX переехали в отдельный крейт `crates/docx-wasm`.
       - name: wasm-pack test (docx)
         run: wasm-pack test --headless --chrome --release crates/docx-wasm
+
+      # Тесты экспортёров в PDF живут в отдельном крейте `crates/pdf-wasm` и до
+      # этого шага в CI не запускались.
+      - name: wasm-pack test (pdf)
+        run: wasm-pack test --headless --chrome --release crates/pdf-wasm
 
   js:
     name: JS (node ${{ matrix.node }})
