@@ -6,7 +6,6 @@
 #![cfg(target_arch = "wasm32")]
 
 pub mod bitmap_api;
-pub mod docx_api;
 pub mod painter_api;
 pub mod sab_api;
 pub mod xlsx_api;
