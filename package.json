@@ -13,6 +13,7 @@
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean && cargo clean",
     "build:wasm": "bash scripts/build-wasm.sh",
+    "cli": "node packages/cli/dist/cli.js",
     "gen:fixtures": "node scripts/gen-fixtures.ts",
     "gen:docx-fixtures": "npx tsx scripts/generate_docx_fixtures.ts",
     "gen:docx-fixtures:large": "npx tsx scripts/generate_docx_fixtures.ts --large",

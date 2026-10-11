@@ -1,0 +1,39 @@
+{
+  "name": "@doc-converter/cli",
+  "version": "0.1.0",
+  "description": "Command-line converter: DOCX to PDF/Markdown/HTML/text, XLSX to PDF, with a worker pool for batch runs.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "doc-converter": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@doc-converter/wasm-docx": "workspace:*",
+    "@doc-converter/wasm-pdf": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
