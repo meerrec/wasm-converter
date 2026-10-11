@@ -1,0 +1,76 @@
+{
+  "metadata": {
+    "name": "tables/cell_margins_valign",
+    "category": "tables",
+    "description": "Поля ячеек w:tblCellMar и w:tcMar, вертикальное выравнивание w:vAlign top/center/bottom",
+    "docTitle": "Поля ячеек w:tblCellMar и w:tcMar, вертикальное выравнивание w:vAlign top/center/bottom",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [],
+    "tables": [
+      {
+        "rows": 2,
+        "cols": 3,
+        "grid": [
+          3212,
+          3213,
+          3213
+        ],
+        "cellMargins": {
+          "top": 0,
+          "left": 108,
+          "bottom": 0,
+          "right": 108
+        },
+        "vAlign": [
+          [
+            "top",
+            "center",
+            "bottom"
+          ],
+          [
+            "center",
+            "top",
+            "bottom"
+          ]
+        ],
+        "cellMarginsOverride": [
+          {
+            "row": 1,
+            "col": 0,
+            "top": 480,
+            "bottom": 480
+          },
+          {
+            "row": 1,
+            "col": 1,
+            "left": 720,
+            "right": 720
+          },
+          {
+            "row": 1,
+            "col": 2,
+            "bottom": 240
+          }
+        ],
+        "cells": [
+          [
+            "Сверху",
+            "По центру",
+            "Снизу"
+          ],
+          [
+            "Большие поля сверху и снизу",
+            "Широкие боковые поля",
+            "Поля ячейки перекрывают таблицу Второй абзац для высоты"
+          ]
+        ]
+      }
+    ],
+    "images": []
+  }
+}

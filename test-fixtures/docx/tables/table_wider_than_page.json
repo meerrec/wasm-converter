@@ -1,0 +1,57 @@
+{
+  "metadata": {
+    "name": "tables/table_wider_than_page",
+    "category": "tables",
+    "description": "w:tblW и w:tcW дают 14400 twips — таблица шире полосы набора (9638 twips)",
+    "docTitle": "w:tblW и w:tcW дают 14400 twips — таблица шире полосы набора (9638 twips)",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [],
+    "tables": [
+      {
+        "rows": 2,
+        "cols": 3,
+        "tableWidth": {
+          "w": 14400,
+          "type": "dxa"
+        },
+        "contentWidth": 9638,
+        "layout": "fixed",
+        "grid": [
+          4800,
+          4800,
+          4800
+        ],
+        "widths": [
+          [
+            4800,
+            4800,
+            4800
+          ],
+          [
+            4800,
+            4800,
+            4800
+          ]
+        ],
+        "cells": [
+          [
+            "Колонка A",
+            "Колонка B",
+            "Колонка C"
+          ],
+          [
+            "Значение A",
+            "Значение B",
+            "Значение C"
+          ]
+        ]
+      }
+    ],
+    "images": []
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "metadata": {
+    "name": "tables/table_100_pages",
+    "category": "tables",
+    "description": "Таблица 4800 строк по 3 колонки — около 100 страниц A4 при печати по умолчанию",
+    "docTitle": "Таблица 4800 строк по 3 колонки — около 100 страниц A4 при печати по умолчанию",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": [],
+    "expectedPages": 100
+  },
+  "content": {
+    "paragraphs": [],
+    "tables": [
+      {
+        "rows": 4800,
+        "cols": 3,
+        "grid": [
+          3212,
+          3213,
+          3213
+        ],
+        "sampleCells": [
+          [
+            "Строка 0",
+            "Значение 0",
+            "Примечание 0"
+          ],
+          [
+            "Строка 1",
+            "Значение 1",
+            "Примечание 1"
+          ]
+        ],
+        "textPattern": "Строка {i} / Значение {i} / Примечание {i}, i = 0..4799"
+      }
+    ],
+    "images": []
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "name": "tables/row_taller_than_page",
+    "category": "tables",
+    "description": "Строка с 60 абзацами в ячейке — выше полосы набора страницы A4",
+    "docTitle": "Строка с 60 абзацами в ячейке — выше полосы набора страницы A4",
+    "expectedParagraphs": 0,
+    "expectedTables": 1,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [],
+    "tables": [
+      {
+        "rows": 2,
+        "cols": 1,
+        "grid": [
+          9638
+        ],
+        "tallerThanPage": {
+          "row": 0,
+          "paragraphs": 60
+        },
+        "cells": [
+          [
+            "Абзац 1 высокой строки Абзац 60 высокой строки"
+          ],
+          [
+            "Строка после высокой"
+          ]
+        ]
+      }
+    ],
+    "images": []
+  }
+}

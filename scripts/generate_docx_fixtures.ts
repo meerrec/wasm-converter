@@ -20,6 +20,7 @@ import { basicFixtures } from './docx-fixtures/basic.js';
 import { stylesFixtures } from './docx-fixtures/styles.js';
 import { numberingFixtures } from './docx-fixtures/numbering.js';
 import { tablesFixtures } from './docx-fixtures/tables.js';
+import { tablesLayoutFixtures } from './docx-fixtures/tables-layout.js';
 import { imagesFixtures } from './docx-fixtures/images.js';
 import { alternateContentFixtures } from './docx-fixtures/alternate-content.js';
 import { trackChangesFixtures } from './docx-fixtures/track-changes.js';
@@ -47,6 +48,7 @@ export const committableFixtures = (): FixtureSpec[] => [
     ...stylesFixtures,
     ...numberingFixtures,
     ...tablesFixtures,
+    ...tablesLayoutFixtures,
     ...imagesFixtures,
     ...alternateContentFixtures,
     ...trackChangesFixtures,
