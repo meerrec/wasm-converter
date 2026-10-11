@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -14,10 +15,17 @@ import {
   type XlsxViewerHandle,
 } from '@doc-converter/core';
 import { clearViewer, publishViewer } from '../../lib/bridge.js';
+import { cacheStats, fileDocumentKey, getDocument, putDocument } from '../../lib/doc_cache.js';
 import { downloadBlob } from '../../lib/download.js';
 import { fetchFixture, listFixtures } from '../../lib/fixtures.js';
 import { useViewer } from '../../lib/use_viewer.js';
-import { pdfWasmBinaryUrl, pdfWasmModuleUrl, xlsxWorkerUrl } from '../../lib/viewer_urls.js';
+import {
+  releaseAllWasmUrls,
+  releasePdfWasmUrls,
+  resolvePdfWasm,
+  warmPdfWasmCache,
+  xlsxWorkerUrl,
+} from '../../lib/viewer_urls.js';
 
 /**
  * Логика страницы XLSX: вьюер книги и всё, что страница о нём знает.
@@ -89,6 +97,8 @@ export interface XlsxPageApi {
   controlsDisabled: boolean;
   /** Подпись открытого документа (для титульной строки); `null` — ничего не открыто. */
   documentName: string;
+  /** Текст индикатора кэша: «кэш: N» с числом документов или «кэш: —». */
+  cacheLabel: string;
   onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
   fixtures: string[];
   fixture: string;
@@ -132,15 +142,35 @@ export function useXlsxPage(): XlsxPageApi {
   const hitSeqRef = useRef(0);
 
   const { hostRef, viewer, error } = useViewer(
-    (host) =>
+    async (host) =>
       createXlsxViewer(host, {
         workerUrl: xlsxWorkerUrl,
-        pdfWasm: { module: pdfWasmModuleUrl, binary: pdfWasmBinaryUrl },
+        // Резолвер только читает кэш: за прогретые байты отдаётся blob-URL, а
+        // при промахе воркер пойдёт по сети сам — при первом экспорте, как и
+        // раньше.
+        pdfWasm: await resolvePdfWasm(),
       }),
     (handle) => {
       publishViewer({ kind: 'xlsx', viewer: handle });
     },
   );
+
+  /** Индикатор кэша: число документов в хранилище; `—` — хранилища нет. */
+  const [cacheLabel, setCacheLabel] = useState('кэш: —');
+  const refreshCache = useCallback(async () => {
+    const stats = await cacheStats();
+    setCacheLabel(stats === null ? 'кэш: —' : `кэш: ${stats.docs}`);
+  }, []);
+
+  // Мерки читаются и на входе на страницу — хранилище живёт дольше вкладки, и
+  // в нём уже может что-то лежать от прошлого раза.
+  useEffect(() => {
+    void refreshCache();
+  }, [refreshCache]);
+
+  // Уходя со страницы, отдаём blob-URL-ы: воркер к этому времени уничтожен, и
+  // никто, кроме набора в модуле URL-ов, на них не ссылается.
+  useEffect(() => releaseAllWasmUrls, []);
 
   // Список фикстур — удобство разработки: без него книгу выбирают и перетаскивают.
   useEffect(() => {
@@ -188,6 +218,9 @@ export function useXlsxPage(): XlsxPageApi {
     setSheetIndex(index);
     active.showSheet(index);
     setStatus(`${name}: ${list.length} лист(ов) за ${elapsed} мс`);
+    // К этому моменту байты уже в кэше (фикстуру кладёт `fetchFixture`), а файл
+    // пользователя — `openFile`: индикатору остаётся их посчитать.
+    void refreshCache();
   };
 
   /**
@@ -207,6 +240,11 @@ export function useXlsxPage(): XlsxPageApi {
       // `BlobPart` принимает только буферы во владении страницы.
       downloadBlob(new Uint8Array(bytes), name, 'application/pdf');
       setStatus(`PDF готов: ${name}, ${Math.round(bytes.byteLength / 1024)} КБ`);
+      // Экспорт прошёл — PDF-модуль в воркере загружен: кладём его байты в кэш
+      // (URL-ы уже в HTTP-кэше браузера), а blob-URL-ы отпускаем, пока воркер их
+      // ещё не переиспользует: модуль он запоминает навсегда.
+      releasePdfWasmUrls();
+      void warmPdfWasmCache();
     } catch (e) {
       // Ошибка уходит в строку состояния: `alert` перекрыл бы страницу, а
       // исключение из обработчика отменило бы только его — вьюер жив.
@@ -218,8 +256,18 @@ export function useXlsxPage(): XlsxPageApi {
 
   /** Открыть файл книги: выбранный в поле или перетащенный в окно. */
   const openFile = (file: File): void => {
-    void file
-      .arrayBuffer()
+    // Ключ строится по метаданным файла, до чтения: повторное открытие того же
+    // файла не читает диск, а правка файла меняет ключ — старое из кэша не
+    // подменит новое.
+    const key = fileDocumentKey(file);
+    void getDocument(key)
+      .then(async (cached) => {
+        const bytes = cached ?? (await file.arrayBuffer());
+        // Копия в базе должна лечь до `show`: вьюер вправе передать буфер
+        // воркеру переносом, и тогда записывать было бы уже нечего.
+        if (cached === null) await putDocument(key, bytes);
+        return bytes;
+      })
       .then((bytes) => show(bytes, file.name))
       // Чтение с диска может отказать (файл увели, доступ пропал): страница
       // говорит об этом строкой состояния, а не исключением в консоли.
@@ -317,6 +365,7 @@ export function useXlsxPage(): XlsxPageApi {
     status: error ?? status,
     controlsDisabled: error !== null,
     documentName: label ?? 'Книга1',
+    cacheLabel,
     onFileChange,
     fixtures,
     fixture,

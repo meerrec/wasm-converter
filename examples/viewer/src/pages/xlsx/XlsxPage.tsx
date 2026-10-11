@@ -487,6 +487,8 @@ export default function XlsxPage(): ReactElement {
         }
       >
         <FrameMeters handle={page.viewer} />
+        {/* Кэш документов: метрика подвала, меняется редко — состоянием React. */}
+        <span id="cache">{page.cacheLabel}</span>
       </StatusBar>
     </div>
   );

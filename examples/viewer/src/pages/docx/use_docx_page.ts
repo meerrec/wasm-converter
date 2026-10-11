@@ -8,15 +8,19 @@ import {
 } from 'react';
 import { createDocxViewer, type DocxViewerHandle, type PageInfo } from '@doc-converter/core';
 import { publishViewer } from '../../lib/bridge.js';
+import { cacheStats, fileDocumentKey, getDocument, putDocument } from '../../lib/doc_cache.js';
 import { downloadBlob, exportFileName } from '../../lib/download.js';
 import { fetchFixture, listFixtures } from '../../lib/fixtures.js';
 import { useViewer } from '../../lib/use_viewer.js';
 import {
-  docxWasmBinaryUrl,
-  docxWasmModuleUrl,
   docxWorkerUrl,
-  pdfWasmBinaryUrl,
-  pdfWasmModuleUrl,
+  releaseAllWasmUrls,
+  releaseDocxWasmUrls,
+  releasePdfWasmUrls,
+  resolveDocxWasm,
+  resolvePdfWasm,
+  warmDocxWasmCache,
+  warmPdfWasmCache,
 } from '../../lib/viewer_urls.js';
 import { textFormats, type TextFormat } from './text_formats.js';
 
@@ -41,6 +45,8 @@ export interface DocxPageController {
   label: string | null;
   /** Номер страницы для подвала: «1 / 3» или «—», пока документа нет. */
   pageInfo: string;
+  /** Текст индикатора кэша: «кэш: N» с числом документов или «кэш: —». */
+  cacheLabel: string;
   /** Сколько страниц в документе; `0` — документа нет. */
   pageCount: number;
   canPrev: boolean;
@@ -89,16 +95,36 @@ export function useDocxPage(): DocxPageController {
   // Вьюер создаётся один раз за жизнь страницы и публикуется для сквозных
   // тестов: их мост к странице — `window.docConverter`.
   const { hostRef, viewer, error } = useViewer(
-    (host) =>
+    async (host) =>
       createDocxViewer(host, {
         workerUrl: docxWorkerUrl,
-        docxWasm: { module: docxWasmModuleUrl, binary: docxWasmBinaryUrl },
-        pdfWasm: { module: pdfWasmModuleUrl, binary: pdfWasmBinaryUrl },
+        // Резолверы только читают кэш: за прогретые байты отдаётся blob-URL, а
+        // при промахе воркер пойдёт по сети сам — в момент открытия документа
+        // или первого экспорта, как и раньше.
+        docxWasm: await resolveDocxWasm(),
+        pdfWasm: await resolvePdfWasm(),
       }),
     (handle) => {
       publishViewer({ kind: 'docx', viewer: handle });
     },
   );
+
+  /** Индикатор кэша: число документов в хранилище; `—` — хранилища нет. */
+  const [cacheLabel, setCacheLabel] = useState('кэш: —');
+  const refreshCache = useCallback(async () => {
+    const stats = await cacheStats();
+    setCacheLabel(stats === null ? 'кэш: —' : `кэш: ${stats.docs}`);
+  }, []);
+
+  // Мерки читаются и на входе на страницу — хранилище живёт дольше вкладки, и
+  // в нём уже может что-то лежать от прошлого раза.
+  useEffect(() => {
+    void refreshCache();
+  }, [refreshCache]);
+
+  // Уходя со страницы, отдаём blob-URL-ы: воркер к этому времени уничтожен, и
+  // никто, кроме набора в модуле URL-ов, на них не ссылается.
+  useEffect(() => releaseAllWasmUrls, []);
 
   /** Открыть документ и отчитаться в строке состояния; отказ — тоже отчёт. */
   const openDocument = useCallback(
@@ -120,15 +146,33 @@ export function useDocxPage(): DocxPageController {
       setPager({ index: viewer.pageIndex, count: viewer.pageCount });
       const elapsed = Math.round(performance.now() - started);
       setStatus(`${name}: ${pages.length} стр. за ${elapsed} мс`);
+      // Документ открылся — значит, воркер уже загрузил DOCX-модуль: его байты
+      // можно положить в кэш (URL-ы к этому моменту в HTTP-кэше браузера), а
+      // выданные воркеру blob-URL-ы отозвать: `import` больше не случится.
+      releaseDocxWasmUrls();
+      void warmDocxWasmCache();
+      // К этому моменту байты документа уже в кэше (фикстуру кладёт
+      // `fetchFixture`), а файл пользователя — вызывающий: индикатору остаётся
+      // их посчитать.
+      void refreshCache();
     },
-    [viewer],
+    [viewer, refreshCache],
   );
 
   /** Открыть выбранный файл: байты читает main, разбирает воркер. */
   const openFile = useCallback(
     async (file: File) => {
       try {
-        await openDocument(await file.arrayBuffer(), file.name);
+        // Ключ строится по метаданным файла, до чтения: повторное открытие того
+        // же файла не читает диск, а правка файла меняет ключ — старое из кэша
+        // не подменит новое.
+        const key = fileDocumentKey(file);
+        const cached = await getDocument(key);
+        const bytes = cached ?? (await file.arrayBuffer());
+        // Копия в базе должна лечь до `openDocument`: тот вправе передать буфер
+        // воркеру переносом, и тогда записывать было бы уже нечего.
+        if (cached === null) await putDocument(key, bytes);
+        await openDocument(bytes, file.name);
       } catch (e) {
         // Чтение файла тоже может сорваться (файл исчез с диска) — исключение
         // из обработчика не должно ронять страницу.
@@ -250,6 +294,10 @@ export function useDocxPage(): DocxPageController {
           // сдвиг 0.
           downloadBlob(new Uint8Array(bytes), name, 'application/pdf');
           setStatus(`PDF готов: ${name}, ${Math.round(bytes.byteLength / 1024)} КБ`);
+          // Экспорт прошёл — PDF-модуль в воркере загружен: кладём его байты в
+          // кэш и отпускаем blob-URL-ы (см. открытие документа выше).
+          releasePdfWasmUrls();
+          void warmPdfWasmCache();
         } else {
           const spec = textFormats[kind];
           const text = await spec.run(active);
@@ -287,6 +335,7 @@ export function useDocxPage(): DocxPageController {
     status: error !== null ? error : status,
     label,
     pageInfo,
+    cacheLabel,
     pageCount: pager.count,
     canPrev: pager.count > 0 && pager.index > 0,
     canNext: pager.count > 0 && pager.index < pager.count - 1,

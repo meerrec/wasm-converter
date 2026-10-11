@@ -49,6 +49,9 @@ footer {
 }
 footer b { color: #222; font-weight: 600; }
 #hint { color: var(--muted); }
+/* Индикатор кэша в строке состояния: та же подача, что у счётчиков кадров рядом
+   (`ofc-statusbar`), но тон приглушённый — это не метрика текущего кадра. */
+#cache { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* Заглушка `Suspense`: пока чанк страницы не приехал, центр окна занят. */
 .boot-fallback {
   display: flex;
