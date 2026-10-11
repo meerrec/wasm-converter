@@ -146,12 +146,23 @@ impl ParseWarning {
 
 /// Накопитель предупреждений парсера.
 ///
-/// Пороги из ADR-0016 §6: больше [`Self::UI_ALERT_THRESHOLD`] предупреждений —
-/// повод показать их пользователю, [`Self::FATAL_THRESHOLD`] — предел, после
-/// которого разбор признаётся патологическим и [`Warnings::push`] отказывает.
-#[derive(Debug, Default)]
+/// Предупреждения дедуплицируются по существу: в `items` лежит одно
+/// предупреждение на класс проблемы (совпадают `kind`, `message` и `location`),
+/// а [`Self::total()`] считает все вхождения, включая повторные. Так устроены
+/// реальные документы Word: `w:lang`, `w:bCs`, `w:iCs` пишутся в каждый
+/// `w:rPr` и приходят дословно одинаковым `unknown_element` тысячи раз, из-за
+/// чего корректный документ упирался в порог (ADR-0016 §6, дополнение
+/// 12.10.2026).
+///
+/// Пороги из ADR-0016 §6 применяются к числу УНИКАЛЬНЫХ предупреждений: больше
+/// [`Self::UI_ALERT_THRESHOLD`] — повод показать их пользователю,
+/// [`Self::FATAL_THRESHOLD`] — предел, после которого разбор признаётся
+/// патологическим и [`Warnings::push`] отказывает. Порог означает
+/// патологическое разнообразие нарушений, а не «много повторов».
+#[derive(Debug, Clone, Default)]
 pub struct Warnings {
     items: Vec<ParseWarning>,
+    total: usize,
 }
 
 impl Warnings {
@@ -160,24 +171,43 @@ impl Warnings {
 
     #[must_use]
     pub const fn new() -> Self {
-        Self { items: Vec::new() }
+        Self {
+            items: Vec::new(),
+            total: 0,
+        }
     }
 
     /// Добавляет предупреждение.
     ///
+    /// Повтор уже накопленного (совпадают `kind`, `message` и `location`)
+    /// в `items` не попадает — он только увеличивает [`Self::total()`]: тысячи
+    /// повторов одного свойства из `w:rPr` не раздувают память и не
+    /// приближают порог. Линейный поиск по `items` здесь допустим: классов
+    /// проблем десятки, а не тысячи.
+    ///
     /// # Errors
-    /// [`Error::TooManyWarnings`], когда накоплено уже [`Self::FATAL_THRESHOLD`]:
-    /// предупреждение не добавляется и длина не растёт, так что патологический
-    /// вход не раздувает память (ADR-0016 §6). Число в ошибке — сколько
-    /// предупреждений уже есть.
+    /// [`Error::TooManyWarnings`], когда УНИКАЛЬНЫХ предупреждений накоплено
+    /// уже [`Self::FATAL_THRESHOLD`]: предупреждение не добавляется и длина не
+    /// растёт, так что патологический вход не раздувает память (ADR-0016 §6).
+    /// Число в ошибке — сколько уникальных предупреждений уже есть.
     pub fn push(&mut self, warning: ParseWarning) -> Result<()> {
         if self.items.len() >= Self::FATAL_THRESHOLD {
             return Err(Error::TooManyWarnings(self.items.len()));
         }
-        self.items.push(warning);
+        self.add(warning);
         Ok(())
     }
 
+    /// Учитывает предупреждение в счётчике `total` и запоминает его, если
+    /// такого ещё нет.
+    fn add(&mut self, warning: ParseWarning) {
+        self.total += 1;
+        if !self.items.contains(&warning) {
+            self.items.push(warning);
+        }
+    }
+
+    /// Число УНИКАЛЬНЫХ предупреждений (классов проблем).
     #[must_use]
     pub fn len(&self) -> usize {
         self.items.len()
@@ -188,7 +218,16 @@ impl Warnings {
         self.items.is_empty()
     }
 
-    /// Пора показать предупреждения пользователю.
+    /// Сколько предупреждений пришло всего — включая повторные, которые
+    /// в `items` не попали. Отказанные порогом не считаются: накопитель их не
+    /// принимает, а разбор всё равно прерывается ошибкой.
+    #[must_use]
+    pub const fn total(&self) -> usize {
+        self.total
+    }
+
+    /// Пора показать предупреждения пользователю: уникальных больше
+    /// [`Self::UI_ALERT_THRESHOLD`].
     #[must_use]
     pub fn needs_ui_alert(&self) -> bool {
         self.items.len() > Self::UI_ALERT_THRESHOLD
@@ -213,8 +252,14 @@ impl Extend<ParseWarning> for Warnings {
     /// Добавляет предупреждения **без** проверки порога: `Extend` не умеет
     /// вернуть ошибку, а нужен он для слияния уже собранных списков — вход
     /// раздувает память через [`Warnings::push`], не через слияние.
+    ///
+    /// Дедупликация та же, что у [`Warnings::push`]: [`Warnings::len`] остаётся
+    /// числом уникальных предупреждений, [`Warnings::total`] — числом всех
+    /// вхождений.
     fn extend<T: IntoIterator<Item = ParseWarning>>(&mut self, iter: T) {
-        self.items.extend(iter);
+        for warning in iter {
+            self.add(warning);
+        }
     }
 }
 
@@ -228,6 +273,12 @@ mod tests {
 
     fn warning(kind: WarningKind) -> ParseWarning {
         ParseWarning::new(kind, "test warning")
+    }
+
+    /// Предупреждение, не совпадающее с другими по сообщению: так порог
+    /// проверяется на уникальных, а не на повторах.
+    fn distinct(index: usize) -> ParseWarning {
+        ParseWarning::new(WarningKind::UnknownElement, format!("test warning {index}"))
     }
 
     fn round_trip<T: serde::Serialize + serde::de::DeserializeOwned>(value: &T) -> T {
@@ -344,9 +395,43 @@ mod tests {
 
         assert!(!warnings.is_empty());
         assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings.total(), 1);
         assert_eq!(warnings.as_slice().len(), 1);
         assert_eq!(warnings.iter().count(), 1);
         assert_eq!(warnings.into_vec().len(), 1);
+    }
+
+    #[test]
+    fn duplicates_collapse_into_one_class_but_count_in_total() {
+        let mut warnings = Warnings::new();
+        for _ in 0..3 {
+            warnings
+                .push(warning(WarningKind::UnknownElement))
+                .expect("below the fatal threshold");
+        }
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings.total(), 3);
+
+        // Другая часть пакета — другое место, а значит другой класс проблемы.
+        warnings
+            .push(ParseWarning::at(
+                WarningKind::UnknownElement,
+                "test warning",
+                "word/styles.xml",
+            ))
+            .expect("below the fatal threshold");
+        assert_eq!(warnings.len(), 2);
+        assert_eq!(warnings.total(), 4);
+
+        // Другое сообщение — тоже другой класс.
+        warnings
+            .push(ParseWarning::new(
+                WarningKind::UnknownElement,
+                "another warning",
+            ))
+            .expect("below the fatal threshold");
+        assert_eq!(warnings.len(), 3);
+        assert_eq!(warnings.total(), 5);
     }
 
     #[test]
@@ -355,46 +440,70 @@ mod tests {
         assert_eq!(Warnings::FATAL_THRESHOLD, 1000);
 
         let mut warnings = Warnings::new();
-        for _ in 0..Warnings::UI_ALERT_THRESHOLD {
+        for index in 0..Warnings::UI_ALERT_THRESHOLD {
             warnings
-                .push(warning(WarningKind::MissingPart))
+                .push(distinct(index))
                 .expect("below the fatal threshold");
         }
         assert_eq!(warnings.len(), 100);
         assert!(!warnings.needs_ui_alert());
 
         warnings
-            .push(warning(WarningKind::MissingPart))
+            .push(distinct(Warnings::UI_ALERT_THRESHOLD))
             .expect("below the fatal threshold");
         assert!(warnings.needs_ui_alert());
     }
 
     #[test]
-    fn fatal_threshold_rejects_the_next_warning() {
+    fn fatal_threshold_rejects_the_next_distinct_warning() {
         let mut warnings = Warnings::new();
-        for _ in 0..Warnings::FATAL_THRESHOLD {
+        for index in 0..Warnings::FATAL_THRESHOLD {
             warnings
-                .push(warning(WarningKind::UnknownElement))
+                .push(distinct(index))
                 .expect("the threshold itself is allowed");
         }
         assert_eq!(warnings.len(), Warnings::FATAL_THRESHOLD);
+        assert_eq!(warnings.total(), Warnings::FATAL_THRESHOLD);
 
         let err = warnings
-            .push(warning(WarningKind::UnknownElement))
-            .expect_err("the 1001st warning is rejected");
+            .push(distinct(Warnings::FATAL_THRESHOLD))
+            .expect_err("the 1001st distinct warning is rejected");
 
         assert!(matches!(err, Error::TooManyWarnings(1000)), "{err}");
         assert_eq!(warnings.len(), Warnings::FATAL_THRESHOLD);
+        assert_eq!(
+            warnings.total(),
+            Warnings::FATAL_THRESHOLD,
+            "отказанное порогом предупреждение в счётчик не попадает"
+        );
+    }
+
+    #[test]
+    fn a_million_identical_warnings_never_reach_the_threshold() {
+        let mut warnings = Warnings::new();
+        let duplicate = warning(WarningKind::UnknownElement);
+        for _ in 0..1_000_000 {
+            warnings
+                .push(duplicate.clone())
+                .expect("повторы порог не приближают");
+        }
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings.total(), 1_000_000);
+        assert!(!warnings.needs_ui_alert());
     }
 
     #[test]
     fn extend_merges_without_the_threshold() {
         let mut warnings = Warnings::new();
-        warnings.extend(vec![
-            warning(WarningKind::DuplicateStyleId);
-            Warnings::FATAL_THRESHOLD + 500
-        ]);
+        warnings.extend((0..Warnings::FATAL_THRESHOLD + 500).map(distinct));
 
         assert_eq!(warnings.len(), 1500);
+        assert_eq!(warnings.total(), 1500);
+
+        // Слияние дедуплицирует так же, как `push`, но порог не проверяет.
+        warnings.extend((0..10).map(distinct));
+        assert_eq!(warnings.len(), 1500);
+        assert_eq!(warnings.total(), 1510);
     }
 }

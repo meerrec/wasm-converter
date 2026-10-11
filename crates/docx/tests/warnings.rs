@@ -142,3 +142,85 @@ fn adr_0016_thresholds_are_visible_to_the_consumer() {
     assert_eq!(Warnings::UI_ALERT_THRESHOLD, 100);
     assert_eq!(Warnings::FATAL_THRESHOLD, 1000);
 }
+
+#[test]
+fn a_thousand_distinct_warnings_are_fatal() {
+    // Порог считает уникальные предупреждения (ADR-0016 §6, дополнение
+    // 12.10.2026): тысяча разных классов проблем — патологическое разнообразие,
+    // и разбор обязан остановиться.
+    let mut warnings = Warnings::new();
+    for index in 0..Warnings::FATAL_THRESHOLD {
+        warnings
+            .push(ParseWarning::new(
+                WarningKind::UnknownElement,
+                format!("unknown element #{index}"),
+            ))
+            .expect("the threshold itself is allowed");
+    }
+    assert_eq!(warnings.len(), Warnings::FATAL_THRESHOLD);
+
+    let err = warnings
+        .push(ParseWarning::new(
+            WarningKind::UnknownElement,
+            "unknown element #1000",
+        ))
+        .expect_err("the 1001st distinct warning is rejected");
+
+    assert!(matches!(err, CoreError::TooManyWarnings(1000)), "{err}");
+}
+
+#[test]
+fn a_million_identical_warnings_are_deduplicated() {
+    // Word пишет `w:lang`, `w:bCs`, `w:iCs` в каждый `w:rPr`, поэтому реальный
+    // документ приносит тысячи дословно одинаковых `unknown_element`: повторы
+    // не должны ни приближать порог, ни раздувать память.
+    const REPEATS: usize = 1_000_000;
+    let mut warnings = Warnings::new();
+    let repeated = ParseWarning::new(WarningKind::UnknownElement, "unknown element `w:lang`");
+    for _ in 0..REPEATS {
+        warnings
+            .push(repeated.clone())
+            .expect("repeats never reach the threshold");
+    }
+
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings.total(), REPEATS);
+    assert!(!warnings.needs_ui_alert());
+}
+
+#[test]
+fn warnings_deduplicate_by_kind_message_and_location() {
+    let mut warnings = Warnings::new();
+    let warning = ParseWarning::at(
+        WarningKind::MissingNumId,
+        "num_id 7 is not defined",
+        "word/document.xml",
+    );
+
+    warnings
+        .push(warning.clone())
+        .expect("below the fatal threshold");
+    warnings.push(warning).expect("below the fatal threshold");
+    assert_eq!(warnings.len(), 1, "повтор — тот же класс проблемы");
+    assert_eq!(warnings.total(), 2, "но total считает все вхождения");
+
+    // Другая часть пакета — другое место, значит другой класс.
+    warnings
+        .push(ParseWarning::at(
+            WarningKind::MissingNumId,
+            "num_id 7 is not defined",
+            "word/numbering.xml",
+        ))
+        .expect("below the fatal threshold");
+    // Другое сообщение — тоже другой класс.
+    warnings
+        .push(ParseWarning::at(
+            WarningKind::MissingNumId,
+            "num_id 8 is not defined",
+            "word/document.xml",
+        ))
+        .expect("below the fatal threshold");
+
+    assert_eq!(warnings.len(), 3);
+    assert_eq!(warnings.total(), 4);
+}
