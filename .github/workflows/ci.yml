@@ -295,11 +295,18 @@ jobs:
       # Повторы из-за фоновой установки пакетов в образе: `--with-deps` зовёт
       # apt-get и падает на «Could not get lock /var/lib/apt/lists/lock», пока
       # лок держит чужой процесс. Исчерпание попыток валит шаг ненулевым кодом.
+      # Предел на попытку — как у apt-шагов (`.github/actions/apt-install`):
+      # заминка неизвестной природы не должна ждаться бесконечно (в прогоне
+      # 38161310682 apt-шаг провисел полчаса). 300 с — пятикратный запас к самой
+      # долгой здоровой установке (62 с): здесь не только apt, но и скачивание
+      # трёх браузеров, а оно сетевое и переменчивое. `timeout` шлёт TERM всей
+      # группе процесса, так что оборванная попытка не оставляет за собой
+      # apt-get; код 124 обычный `until` считает провалом и уходит на повтор.
       - name: playwright browsers
         run: |
           set -uo pipefail
           attempt=1
-          until pnpm --filter @doc-converter/example-viewer-xlsx exec playwright install --with-deps chromium firefox webkit; do
+          until timeout 300 pnpm --filter @doc-converter/example-viewer-xlsx exec playwright install --with-deps chromium firefox webkit; do
             if [ "$attempt" -ge 3 ]; then
               echo "::error::playwright install не удался за ${attempt} попытки — браузеры не поставлены"
               exit 1
