@@ -24,7 +24,7 @@ mod tables;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use doc_converter_docx::layout::{LayoutItem, Page, PageLayout, Rect};
+use doc_converter_docx::layout::{LayoutItem, Page, PageChrome, PageLayout, Rect};
 use doc_converter_docx::{Document, HalfPoint, LayoutOptions};
 use doc_converter_render::display_list::Color;
 use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
@@ -99,9 +99,16 @@ pub(crate) fn export(doc: &Document, options: &PdfOptions) -> Result<Vec<u8>, Pd
         &mut out,
         &mut warnings,
     )?;
-    for page in &layout.pages {
+    for (index, page) in layout.pages.iter().enumerate() {
         let geometry = geometry(page);
-        let ops = draw_page(page, &geometry, &embedded, &mut registry, &images);
+        let ops = draw_page(
+            page,
+            layout.chrome.get(index),
+            &geometry,
+            &embedded,
+            &mut registry,
+            &images,
+        );
         let pdf_page = PdfPage::new(
             Mm::from(Pt(geometry.width_pt())),
             Mm::from(Pt(geometry.height_pt())),
@@ -216,6 +223,12 @@ fn collect_faces(layout: &PageLayout) -> FaceSet {
     for page in &layout.pages {
         walk(&page.items, &mut faces);
     }
+    // Начертания колонтитулов нужны так же: шрифт подрезается до записи первой
+    // страницы, и полужирный колонтитул без своей грани вышел бы regular'ом.
+    for chrome in &layout.chrome {
+        walk(&chrome.header, &mut faces);
+        walk(&chrome.footer, &mut faces);
+    }
     faces
 }
 
@@ -231,9 +244,16 @@ fn collect_glyphs(
     images: &images::Images,
 ) -> BTreeMap<FontId, BTreeSet<char>> {
     let mut glyphs: BTreeMap<FontId, BTreeSet<char>> = BTreeMap::new();
-    for page in &layout.pages {
+    for (index, page) in layout.pages.iter().enumerate() {
         let geometry = geometry(page);
-        for op in draw_page(page, &geometry, embedded, registry, images) {
+        for op in draw_page(
+            page,
+            layout.chrome.get(index),
+            &geometry,
+            embedded,
+            registry,
+            images,
+        ) {
             if let Op::WriteText { font, items } = op {
                 let set = glyphs.entry(font.clone()).or_default();
                 for item in items {
@@ -248,14 +268,27 @@ fn collect_glyphs(
 }
 
 /// Операции одной страницы в порядке рисования.
+///
+/// `chrome` — колонтитулы этой страницы; `None` — у раскладки их нет (короткий
+/// `chrome` при рассинхроне): страница выходит без колонтитулов, без паники —
+/// так же решает canvas-путь ([`doc_converter_docx::render::build`]).
+///
+/// Порядок — тело, затем верхний колонтитул, затем нижний: колонтитул лежит в
+/// полосе полей и с телом не пересекается, но если он перерос своё поле, поверх
+/// текста должен остаться он — там же, где его ждёт Word, раздвигая полосу
+/// набора. Так же поступает и canvas-путь: два слоя одного документа не должны
+/// расходиться на первой же правке.
 fn draw_page(
     page: &Page,
+    chrome: Option<&PageChrome>,
     geometry: &PageGeometry,
     embedded: &EmbeddedFonts,
     registry: &mut FontRegistry,
     images: &images::Images,
 ) -> Vec<Op> {
     let mut ops = Vec::new();
+    // Диспетчер общий с телом: абзацы, таблицы и рисунки колонтитула рисуются
+    // теми же путями, что и элементы страницы.
     draw_items(
         &page.items,
         &mut ops,
@@ -265,6 +298,11 @@ fn draw_page(
         images,
         0.0,
     );
+    if let Some(chrome) = chrome {
+        for items in [&chrome.header, &chrome.footer] {
+            draw_items(items, &mut ops, geometry, embedded, registry, images, 0.0);
+        }
+    }
     ops
 }
 

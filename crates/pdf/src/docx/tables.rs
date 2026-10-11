@@ -189,6 +189,8 @@ struct Edge {
 
 impl Edge {
     /// Середина ребра: по ней ребро проверяется на «проходит через ячейку».
+    // `f32::midpoint` появился только в Rust 1.85, а MSRV workspace — 1.82.
+    #[allow(clippy::manual_midpoint)]
     fn midpoint(&self) -> (f32, f32) {
         (
             (self.from.0 + self.to.0) / 2.0,
@@ -245,6 +247,8 @@ struct EdgeKey {
 
 impl EdgeKey {
     fn new(from: (f32, f32), to: (f32, f32)) -> Self {
+        // Координаты страницы далеки от пределов `i64` при этом шаге.
+        #[allow(clippy::cast_possible_truncation)]
         let quantize = |v: f32| (v * EDGE_KEY_STEP).round() as i64;
         let a = (quantize(from.0), quantize(from.1));
         let b = (quantize(to.0), quantize(to.1));
@@ -318,6 +322,8 @@ const fn solid_dash() -> LineDashPattern {
 }
 
 /// Толщина границы в точках: `w:sz` хранится в восьмых долях пункта.
+// `w:sz` — восьмые доли пункта, заведомо меньше 2^24: точность не теряется.
+#[allow(clippy::cast_precision_loss)]
 fn width_pt(border: &Border) -> f32 {
     match border.sz {
         Some(sz) => sz as f32 / 8.0,
