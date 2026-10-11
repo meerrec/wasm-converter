@@ -16,6 +16,12 @@ const ONE_PARAGRAPH: &[u8] = include_bytes!(concat!(
     "/../../test-fixtures/docx/simple/one_paragraph.docx"
 ));
 
+/// Фикстура с рисунком: у неё в модели есть хотя бы одна медиачасть.
+const INLINE_IMAGE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../test-fixtures/docx/images/inline.docx"
+));
+
 /// Размер фикстуры в пикселях раскладки: 1 px = 15 твипов при 96 dpi.
 const PAGE_W: f64 = 11906.0 / 15.0;
 const PAGE_H: f64 = 16838.0 / 15.0;
@@ -53,6 +59,14 @@ fn boolean(value: &JsValue, key: &str) -> bool {
         .expect("поле читается")
         .as_bool()
         .unwrap_or_else(|| panic!("{key} — не bool"))
+}
+
+/// Строковое поле ответа; отсутствие поля — ошибка теста, а не пустая строка.
+fn string(value: &JsValue, key: &str) -> String {
+    js_sys::Reflect::get(value, &JsValue::from_str(key))
+        .expect("поле читается")
+        .as_string()
+        .unwrap_or_else(|| panic!("{key} — не строка"))
 }
 
 /// Размеры страниц приходят в пикселях раскладки: по ним интерфейс строит
@@ -156,4 +170,67 @@ fn build_after_close_is_an_error() {
         .expect_err("после закрытия кадр не собирается");
     let message = error.as_string().unwrap_or_default();
     assert!(message.contains("no document"), "сообщение: {message}");
+}
+
+/// Список картинок несёт id, MIME и длину, а `docx_image_bytes` отдаёт байты
+/// ровно этой длины: по ним интерфейс собирает `Blob` и регистрирует битмап.
+#[wasm_bindgen_test]
+fn images_report_the_media_of_the_document() {
+    doc_converter_docx_wasm::docx_api::docx_open(INLINE_IMAGE.to_vec())
+        .expect("фикстура открывается");
+
+    let images = js_sys::Array::from(
+        &doc_converter_docx_wasm::docx_api::docx_images().expect("список картинок"),
+    );
+    assert!(images.length() >= 1, "в фикстуре есть рисунок");
+
+    let image = images.get(0);
+    let id = number(&image, "id") as u32;
+    let mime = string(&image, "mime");
+    assert!(mime.starts_with("image/"), "MIME: {mime}");
+    let byte_length = number(&image, "byteLength") as u32;
+    assert!(byte_length > 0, "длина байтов: {byte_length}");
+
+    let bytes = doc_converter_docx_wasm::docx_api::docx_image_bytes(id).expect("байты картинки");
+    assert_eq!(
+        bytes.length(),
+        byte_length,
+        "длина байтов совпадает со списком"
+    );
+
+    doc_converter_docx_wasm::docx_api::docx_close();
+}
+
+/// После закрытия картинок нет: мост отвечает ошибкой, а не пустым списком, —
+/// как и соседние функции.
+#[wasm_bindgen_test]
+fn images_after_close_are_an_error() {
+    doc_converter_docx_wasm::docx_api::docx_open(ONE_PARAGRAPH.to_vec())
+        .expect("фикстура открывается");
+    doc_converter_docx_wasm::docx_api::docx_close();
+
+    let errors = [
+        doc_converter_docx_wasm::docx_api::docx_images().expect_err("после закрытия списка нет"),
+        doc_converter_docx_wasm::docx_api::docx_image_bytes(0)
+            .expect_err("после закрытия байтов нет"),
+    ];
+    for error in errors {
+        let message = error.as_string().unwrap_or_default();
+        assert!(message.contains("no document"), "сообщение: {message}");
+    }
+}
+
+/// id, которого нет среди прочитанных частей, — ошибка, а не пустой массив:
+/// интерфейс пропустит одну картинку и оставит остальные.
+#[wasm_bindgen_test]
+fn unknown_image_id_is_an_error() {
+    doc_converter_docx_wasm::docx_api::docx_open(INLINE_IMAGE.to_vec())
+        .expect("фикстура открывается");
+
+    let error = doc_converter_docx_wasm::docx_api::docx_image_bytes(u32::MAX)
+        .expect_err("картинки с таким id нет");
+    let message = error.as_string().unwrap_or_default();
+    assert!(message.contains("does not exist"), "сообщение: {message}");
+
+    doc_converter_docx_wasm::docx_api::docx_close();
 }

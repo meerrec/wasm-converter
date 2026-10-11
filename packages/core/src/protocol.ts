@@ -109,9 +109,10 @@ export interface PageInfo {
 }
 
 /**
- * Картинка книги: id, MIME-тип и длина байтов. Байты в список не входят —
- * их забирает `xlsx_image_bytes(id)`, чтобы не копировать разом всю media
- * книги. Тем же id помечены команды `Image` в кадре.
+ * Картинка открытого документа: id, MIME-тип и длина байтов. Байты в список
+ * не входят — их забирает `xlsx_image_bytes(id)` или `docx_image_bytes(id)`,
+ * чтобы не копировать разом всю media. Тем же id помечены команды `Image`
+ * в кадре.
  */
 export interface ImageInfo {
   id: number;

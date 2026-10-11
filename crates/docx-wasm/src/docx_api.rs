@@ -13,7 +13,7 @@
 use std::cell::RefCell;
 
 use doc_converter_docx::layout::layout_document;
-use doc_converter_docx::{Document, LayoutOptions, PageLayout};
+use doc_converter_docx::{Document, LayoutOptions, MediaPart, PageLayout};
 use doc_converter_render::display_list::DisplayList;
 use doc_converter_render::font::FontRegistry;
 use doc_converter_render::sab::SabRing;
@@ -40,10 +40,9 @@ thread_local! {
 
 /// Открытый документ: разобранная модель, реестр шрифтов и готовая раскладка.
 struct OpenDoc {
-    /// Модель документа. Кадру она не нужна — раскладка уже посчитана, — но
-    /// следующим слайсам (картинки, поиск по тексту) без неё не обойтись, и
-    /// держать её живой дешевле, чем разбирать пакет заново.
-    #[allow(dead_code)]
+    /// Модель документа: кадру она не нужна — раскладка уже посчитана, — но
+    /// [`docx_images`] и [`docx_image_bytes`] берут из неё медиачасти, а
+    /// поиску по тексту она понадобится дальше.
     document: Document,
     /// Реестр, которым мерялась раскладка; остаётся, чтобы повторная раскладка
     /// (другой кегль, другой шрифт) не регистрировала шрифты заново.
@@ -108,6 +107,66 @@ pub fn docx_close() {
 #[wasm_bindgen]
 pub fn docx_is_open() -> bool {
     DOC.with(|doc| doc.borrow().is_some())
+}
+
+/// Картинка документа в том виде, в каком её видит интерфейс: id, MIME и размер.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInfo {
+    /// id, которым помечены команды `Image` в кадре.
+    id: u32,
+    /// MIME-тип байтов — интерфейс собирает из них `Blob`.
+    mime: String,
+    /// Длина байтов в [`docx_image_bytes`].
+    byte_length: u32,
+}
+
+impl ImageInfo {
+    fn of(part: &MediaPart) -> Self {
+        Self {
+            id: part.id,
+            mime: part.mime.clone(),
+            byte_length: u32::try_from(part.bytes.len()).unwrap_or(u32::MAX),
+        }
+    }
+}
+
+/// Картинки открытого документа: id, MIME-тип и длина байтов.
+///
+/// Байты в список не входят: их забирает [`docx_image_bytes`] по одному id,
+/// чтобы не копировать разом всю media документа. В списке только части, на
+/// которые ссылается хотя бы один рисунок: остальные разбор не читает.
+///
+/// # Errors
+/// Если документ не открыт.
+#[wasm_bindgen]
+pub fn docx_images() -> Result<JsValue, JsValue> {
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let open = doc.as_ref().ok_or_else(|| to_js("no document is open"))?;
+        let images: Vec<ImageInfo> = open.document.media().iter().map(ImageInfo::of).collect();
+        serde_wasm_bindgen::to_value(&images).map_err(to_js)
+    })
+}
+
+/// Байты картинки по её id.
+///
+/// Возвращается `Uint8Array` — копия байтов из памяти wasm; буфер принадлежит
+/// интерфейсу, и дальше его можно отдать `postMessage` с transferables.
+///
+/// # Errors
+/// Если документ не открыт или картинки с таким id нет.
+#[wasm_bindgen]
+pub fn docx_image_bytes(id: u32) -> Result<js_sys::Uint8Array, JsValue> {
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let open = doc.as_ref().ok_or_else(|| to_js("no document is open"))?;
+        let part = open
+            .document
+            .media_part(id)
+            .ok_or_else(|| to_js(format!("image {id} does not exist")))?;
+        Ok(js_sys::Uint8Array::from(part.bytes.as_slice()))
+    })
 }
 
 /// Собрать кадр страницы и отдать его байты транспорту вызывающего.

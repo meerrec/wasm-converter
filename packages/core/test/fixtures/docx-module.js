@@ -58,6 +58,26 @@ export function docx_build_display_list_sab(...args) {
   return { written: true, cmds: 1, buildMs: 0 };
 }
 
+// Картинки документа: список и «битые» id тест подменяет глобалами, потому что
+// достучаться до заглушки иначе нечем — воркер грузит её по URL из `init`.
+// По умолчанию список пуст: картинки нужны только сценарию о них. Байты
+// кодируют id первым элементом, чтобы тест видел, какая картинка дошла до
+// декодирования; `__docxImagesBroken` — id, на которых `docx_image_bytes`
+// падает, как испорченная часть пакета.
+
+export function docx_images(...args) {
+  record('docx_images', args);
+  return globalThis.__docxImages ?? [];
+}
+
+export function docx_image_bytes(id, ...args) {
+  record('docx_image_bytes', [id, ...args]);
+  if (globalThis.__docxImagesBroken?.includes(id)) {
+    throw new Error(`docx stub: image ${id} is broken`);
+  }
+  return new Uint8Array([id]);
+}
+
 // Текстовые выгрузки: у каждой свой узнаваемый ответ, чтобы тест видел, какая
 // именно функция ответила на запрос формата.
 

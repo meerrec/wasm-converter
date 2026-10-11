@@ -150,35 +150,49 @@ const post = (msg: OutMsg, transfer: Transferable[] = []) => {
 /** Битмапы, зарегистрированные в painter'е: их возвращают после ресайза и снимают при закрытии. */
 const bitmaps = new Map<number, ImageBitmap>();
 /**
- * Поколение набора картинок. Открытие и закрытие книги его увеличивают:
+ * Поколение набора картинок. Открытие и закрытие документа его увеличивают:
  * декодирование асинхронно, и результат отставшей загрузки не должен попасть
  * в уже сменившийся набор.
  */
 let bitmapsGen = 0;
 
 /** Снять с painter'а все зарегистрированные картинки. */
-function dropBookBitmaps(): void {
+function dropBitmaps(): void {
   bitmapsGen++;
   for (const id of bitmaps.keys()) drop_bitmap(id);
   bitmaps.clear();
 }
 
 /**
- * Декодировать картинки открытой книги и отдать их painter'у. Ошибка одной
- * картинки не мешает остальным и не роняет открытие книги.
+ * Откуда воркер берёт картинки открытого документа: у книги — функции
+ * основного модуля, у документа DOCX — ленивого, который загружается только
+ * при открытии `.docx`.
  */
-async function loadBookBitmaps(gen: number): Promise<void> {
+interface BitmapSource {
+  /** Метка источника в предупреждениях: `[xlsx]` или `[docx]`. */
+  tag: string;
+  /** Список картинок: id, MIME и длина байтов. */
+  list: () => ImageInfo[];
+  /** Байты одной картинки; ошибка здесь пропускает только её. */
+  bytes: (id: number) => Uint8Array;
+}
+
+/**
+ * Декодировать картинки открытого документа и отдать их painter'у. Ошибка
+ * одной картинки не мешает остальным и не роняет открытие документа.
+ */
+async function loadBitmaps(source: BitmapSource, gen: number): Promise<void> {
   let images: ImageInfo[];
   try {
-    images = xlsx_images() as ImageInfo[];
+    images = source.list();
   } catch (e) {
-    console.warn('[xlsx] image list:', String(e));
+    console.warn(`[${source.tag}] image list:`, String(e));
     return;
   }
   await Promise.all(
     images.map(async ({ id, mime }) => {
       try {
-        const bytes = xlsx_image_bytes(id) as Uint8Array;
+        const bytes = source.bytes(id);
         // Байты приходят копией из памяти wasm: буфер целиком принадлежит
         // интерфейсу, и Blob забирает его без ещё одной копии.
         const bmp = await createImageBitmap(
@@ -191,7 +205,7 @@ async function loadBookBitmaps(gen: number): Promise<void> {
         register_bitmap(id, bmp);
         bitmaps.set(id, bmp);
       } catch (e) {
-        console.warn(`[xlsx] image ${id} skipped:`, String(e));
+        console.warn(`[${source.tag}] image ${id} skipped:`, String(e));
       }
     }),
   );
@@ -400,8 +414,19 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
           // разбирает документ сам) и текстовые выгрузки. Прежняя книга
           // отпускается здесь же.
           sourceBytes = msg.bytes;
-          // Картинки прежней книги больше не нужны, а id нового документа могут с ними совпасть.
-          dropBookBitmaps();
+          // Картинки прежнего документа больше не нужны, а id нового могут с ними совпасть.
+          dropBitmaps();
+          const gen = bitmapsGen;
+          // Ждём картинки до `docx-opened`: к первому кадру они уже в painter'е.
+          await loadBitmaps(
+            {
+              tag: 'docx',
+              list: () => mod.docx_images() as ImageInfo[],
+              bytes: (id) => mod.docx_image_bytes(id),
+            },
+            gen,
+          );
+          if (gen !== bitmapsGen) break;
           post({ type: 'docx-opened', pages });
           loop?.request();
           break;
@@ -415,10 +440,17 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         sourceBytes = msg.bytes;
         pending = null;
         // Картинки прежней книги больше не нужны, а id нового файла могут с ними совпасть.
-        dropBookBitmaps();
+        dropBitmaps();
         const gen = bitmapsGen;
         // Ждём картинки до `opened`: к первому кадру они уже в painter'е.
-        await loadBookBitmaps(gen);
+        await loadBitmaps(
+          {
+            tag: 'xlsx',
+            list: () => xlsx_images() as ImageInfo[],
+            bytes: (id) => xlsx_image_bytes(id) as Uint8Array,
+          },
+          gen,
+        );
         if (gen !== bitmapsGen) break;
         post({ type: 'opened', sheets });
         // Пока декодировались картинки, мог прийти кадр — просим показать полный.
@@ -547,7 +579,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     case 'close': {
       pending = null;
       sourceBytes = null;
-      dropBookBitmaps();
+      dropBitmaps();
       releaseDocument();
       break;
     }
