@@ -156,9 +156,10 @@
   помечен `#[ignore]`, запуск
   `cargo test -p doc-converter-xlsx --release --test budget -- --ignored --nocapture`,
   миллион ячеек < 2 с и `size_of::<Cell>() == 48`;
-  `crates/wasm/tests/painter_perf.rs` — wasm32 и браузер
-  (`wasm-pack test --headless --chrome crates/wasm`), в CI не идёт: шага
-  `wasm-pack test` в `.github/workflows/ci.yml` нет.
+  `crates/wasm/tests/painter_perf.rs` — wasm32 и браузер; в CI идёт джобой
+  `wasm-test` шагом `wasm-pack test --headless --chrome --release crates/wasm`.
+  Профиль release обязателен: тест меряет бюджет ROADMAP §9 (< 16 мс) для
+  поставляемой сборки, в debug-сборке то же число выходит ~32 мс.
 - **`pnpm size-limit`** — бюджеты из `.size-limit.mjs` (именно `.mjs`; файла
   `.size-limit.json` в репозитории нет), в CI это отдельный шаг JS-джобы.
 
