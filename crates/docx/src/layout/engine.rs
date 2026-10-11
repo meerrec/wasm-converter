@@ -493,6 +493,19 @@ fn place_lines(
     // Сколько строк остаётся на текущей странице; хвост — на следующей.
     let kept = lines_kept_on_page(paginator, lines, layout);
 
+    // Абзац начинает страницу: интервал `before` пришёлся бы на разрыв,
+    // а строка и так стоит у верхнего поля — Word интервал не рисует.
+    // Разрыв уже сделан или будет сделан перед первой строкой: явный
+    // `w:br w:type="page"`, `w:pageBreakBefore`, перенос абзаца целиком
+    // (`kept == 0`) или страница продолжения, на которой ещё ничего нет.
+    // Первая страница документа — не разрыв: там `before` остаётся (так же
+    // кладёт LibreOffice — эталон фикстуры `basic/paragraph_spacing`).
+    let starts_page = has_page_break(paragraph)
+        || kept == 0
+        || layout.page_break_before
+        || (paginator.current_page().number > 1
+            && paginator.current_y() <= paginator.content_top());
+
     // Верх фрагмента абзаца на странице, где он закончится: у разорванного
     // абзаца `relativeFrom="paragraph"` отсчитывается от полосы набора той
     // страницы, а не от начала абзаца на предыдущей.
@@ -509,11 +522,8 @@ fn place_lines(
         // Интервалы идут в те же единицы, что и `advance`: место занимает
         // не только строка, но и промежуток вокруг неё.
         let mut height = line.height;
-        if first {
+        if first && !starts_page {
             height += layout.space_before;
-        }
-        if last {
-            height += layout.space_after;
         }
         // `w:pageBreakBefore` — разрыв перед абзацем, флагом в `add_item`;
         // после уже сделанного разрыва он не нужен: страница и так новая.
@@ -527,10 +537,18 @@ fn place_lines(
             fragment_top = state.y;
         }
 
-        // Верх строки: курсор стоит за её нижней границей, а интервалы абзаца
-        // учтены в `height`. Интервал перед сдвигает первую строку, интервал
-        // после остаётся под последней — из `height` его нужно вычесть.
-        let after = if last { layout.space_after } else { 0.0 };
+        // Интервал после остаётся под последней строкой и входит в курсор,
+        // но только пока помещается в полосу: упёршийся в нижнюю границу
+        // интервал Word отбрасывает — на разрыве страницы его не рисуют.
+        let after = if last && paginator.fits(layout.space_after) {
+            paginator.advance(layout.space_after);
+            layout.space_after
+        } else {
+            0.0
+        };
+        // Верх строки: курсор стоит за её нижней границей, а интервал перед
+        // учтён в `height`. Он сдвигает первую строку, интервал после остаётся
+        // под последней — из курсора его нужно вычесть.
         let top = paginator.current_y() - line.height - after;
         paginator
             .current_page_mut()
@@ -740,11 +758,10 @@ fn reset_page_state(
 fn lines_kept_on_page(paginator: &Paginator, lines: &[&Line], layout: &ParagraphLayout) -> usize {
     let mut height = layout.space_before;
     let mut fit = 0;
-    for (index, line) in lines.iter().enumerate() {
+    for line in lines {
         height += line.height;
-        if index + 1 == lines.len() {
-            height += layout.space_after;
-        }
+        // `space_after` в проверку не входит: упёршийся в нижнюю границу
+        // интервал Word отбрасывает, а не переносит строку на новую страницу.
         if !paginator.fits(height) {
             break;
         }
@@ -1231,9 +1248,10 @@ mod tests {
 
     /// Сколько строк абзаца помещается после `filler` однострочных абзацев.
     ///
-    /// Считается так же, как `lines_kept_on_page`: `space_before` уходит в высоту
-    /// первой строки, `space_after` — последней. Правила переноса (висячие строки,
-    /// `w:keepLines`) сюда не входят — их проверяют тесты ниже.
+    /// Считается так же, как `lines_kept_on_page`: в высоту входит `space_before`
+    /// первой строки, а `space_after` — нет (Word отбрасывает его на разрыве).
+    /// Правила переноса (висячие строки, `w:keepLines`) сюда не входят — их
+    /// проверяют тесты ниже.
     fn lines_fitting_after(filler: usize, lines: usize) -> usize {
         let metrics = body_metrics();
         let mut y = twips_to_px(Twips::new(FIXTURE_MARGIN_TWIPS));
@@ -1246,9 +1264,6 @@ mod tests {
         let mut height = metrics.space_before;
         for index in 1..=lines {
             height += metrics.line_height;
-            if index == lines {
-                height += metrics.space_after;
-            }
             if y + height > content_bottom() {
                 break;
             }
@@ -1395,6 +1410,127 @@ mod tests {
         assert!(
             (rects[0].y - expected).abs() < 0.01,
             "строка — на верхнем поле плюс интервал перед абзацем ({expected} px), получено {}",
+            rects[0].y
+        );
+    }
+
+    /// `space_after`, упёршийся в нижнюю границу, не переносит строку на
+    /// следующую страницу: Word отбрасывает интервал на разрыве, и строка
+    /// остаётся на своей странице, ровно по нижнему краю полосы.
+    #[test]
+    fn the_space_after_at_the_content_bottom_is_dropped() {
+        // Полоса ровно в две строки: заполнитель оставляет под последнюю
+        // строку абзаца ровно одну строку, а интервалу в 24 pt (480 twips)
+        // места уже нет.
+        let document = document_with(
+            vec![
+                BlockItem::Paragraph(paragraph(1, "filler")),
+                BlockItem::Paragraph(paragraph_with_spacing(3, "last", 0, 480)),
+                BlockItem::Paragraph(paragraph(5, "next")),
+            ],
+            vec![section_without_margins(TWO_LINE_PAGE_TWIPS)],
+        );
+        let layout = layout_of(&document);
+
+        assert_eq!(layout.pages.len(), 2, "третья строка не помещается");
+        assert_eq!(
+            paragraphs_on(&layout.pages[0]),
+            2,
+            "строка с интервалом после остаётся на первой странице"
+        );
+        let rects = line_rects(&layout.pages[0]);
+        let bottom = layout.pages[0].height - layout.pages[0].margins.bottom;
+        assert!(
+            ((rects[1].y + rects[1].height) - bottom).abs() < 0.01,
+            "строка стоит ровно по нижнему краю полосы: {} при границе {bottom}",
+            rects[1].y + rects[1].height
+        );
+        assert_eq!(
+            paragraphs_on(&layout.pages[1]),
+            1,
+            "следующий абзац — на второй странице"
+        );
+    }
+
+    /// Интервал после, помещающийся в полосу, остаётся: его отбрасывают
+    /// только на разрыве, и следующую строку он вытесняет заслуженно.
+    #[test]
+    fn the_space_after_that_fits_still_pushes_the_next_line() {
+        // Полоса в три строки (3 × 19.2 px = 864 twips): после второй строки
+        // интервал в 8 pt (160 twips) ещё помещается, следующей строке места
+        // уже нет — она уходит на вторую страницу.
+        let document = document_with(
+            vec![
+                BlockItem::Paragraph(paragraph(1, "filler")),
+                BlockItem::Paragraph(paragraph_with_spacing(3, "last", 0, 160)),
+                BlockItem::Paragraph(paragraph(5, "next")),
+            ],
+            vec![section_without_margins(864)],
+        );
+        let layout = layout_of(&document);
+
+        assert_eq!(layout.pages.len(), 2, "интервал вытесняет третью строку");
+        assert_eq!(paragraphs_on(&layout.pages[0]), 2);
+        assert_eq!(paragraphs_on(&layout.pages[1]), 1);
+    }
+
+    /// Абзац, начавший страницу переносом, интервал `before` не добавляет:
+    /// он пришёлся бы на разрыв, а строка и так стоит у верхнего поля.
+    #[test]
+    fn a_paragraph_moved_to_the_next_page_drops_its_space_before() {
+        // Полоса в две строки: заполнитель оставляет ровно строку, а перед
+        // абзацем стоит интервал в 24 pt (480 twips) — он не помещается,
+        // и абзац уходит на вторую страницу целиком.
+        let document = document_with(
+            vec![
+                BlockItem::Paragraph(paragraph(1, "filler")),
+                BlockItem::Paragraph(paragraph_with_spacing(3, "second", 480, 0)),
+            ],
+            vec![section_without_margins(TWO_LINE_PAGE_TWIPS)],
+        );
+        let layout = layout_of(&document);
+
+        assert_eq!(
+            layout.pages.len(),
+            2,
+            "абзац не помещается на первой странице"
+        );
+        assert_eq!(paragraphs_on(&layout.pages[0]), 1);
+        let rects = line_rects(&layout.pages[1]);
+        assert!(
+            (rects[0].y - layout.pages[1].margins.top).abs() < 0.01,
+            "строка — у верхнего поля, без интервала перед: {}",
+            rects[0].y
+        );
+    }
+
+    /// Абзац, открывающий пустую страницу разрыва секции, тоже не добавляет
+    /// `before` — его интервал пришёлся бы на разрыв.
+    #[test]
+    fn a_paragraph_opening_a_fresh_page_drops_its_space_before() {
+        let mut page = section_without_margins(TWO_LINE_PAGE_TWIPS);
+        page.properties.section_type = Some(SectionType::NextPage);
+        let mut closing = paragraph(1, "first section");
+        closing.section_break = Some(Box::new(page.properties.clone()));
+        let document = document_with(
+            vec![
+                BlockItem::Paragraph(closing),
+                BlockItem::Paragraph(paragraph_with_spacing(3, "second", 480, 0)),
+                BlockItem::SectPr(page.properties.clone()),
+            ],
+            vec![page.clone(), page],
+        );
+        let layout = layout_of(&document);
+
+        assert_eq!(
+            layout.pages.len(),
+            2,
+            "разрыв секции `NextPage` начинает вторую страницу"
+        );
+        let rects = line_rects(&layout.pages[1]);
+        assert!(
+            (rects[0].y - layout.pages[1].margins.top).abs() < 0.01,
+            "первая строка страницы — у верхнего поля, без интервала перед: {}",
             rects[0].y
         );
     }
