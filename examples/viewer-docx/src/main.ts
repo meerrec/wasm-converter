@@ -10,6 +10,20 @@ import { createDocxViewer, type DocxViewerHandle, type PageInfo } from '@doc-con
 // `@doc-converter/core/worker` уже не разрешается, — воркер молча не стартует.
 import workerUrl from './worker.ts?worker&url';
 
+// DOCX-модуль грузится лениво и отдельным файлом: Vite отдаёт его URL-ом
+// (`new URL(..., import.meta.url)` разворачивается в ассет), а не импортом
+// модуля — импорт втянул бы его в основной бандл, и страница платила бы за
+// wasm ещё до открытия документа. Копируя JS как есть, сборщик не кладёт
+// рядом его wasm-бинарь, поэтому второй URL передаётся явно.
+const docxWasmModuleUrl = new URL(
+  '@doc-converter/wasm-docx/pkg/doc_converter_docx_wasm.js',
+  import.meta.url,
+).href;
+const docxWasmBinaryUrl = new URL(
+  '@doc-converter/wasm-docx/pkg/doc_converter_docx_wasm_bg.wasm',
+  import.meta.url,
+).href;
+
 /** Элемент разметки: его отсутствие — ошибка сборки примера, а не рантайма. */
 function required<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -111,7 +125,10 @@ function stepPage(delta: number): void {
 
 async function main(): Promise<void> {
   try {
-    handle = await createDocxViewer(viewerHost, { workerUrl });
+    handle = await createDocxViewer(viewerHost, {
+      workerUrl,
+      docxWasm: { module: docxWasmModuleUrl, binary: docxWasmBinaryUrl },
+    });
   } catch (e) {
     // Нет OffscreenCanvas/transferControlToOffscreen — вьюер не поднять:
     // показываем причину и гасим управление, не роняя страницу исключением.
