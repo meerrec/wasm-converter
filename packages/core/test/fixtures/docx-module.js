@@ -57,3 +57,21 @@ export function docx_build_display_list_sab(...args) {
   record('docx_build_display_list_sab', args);
   return { written: true, cmds: 1, buildMs: 0 };
 }
+
+// Текстовые выгрузки: у каждой свой узнаваемый ответ, чтобы тест видел, какая
+// именно функция ответила на запрос формата.
+
+export function docx_export_markdown(...args) {
+  record('docx_export_markdown', args);
+  return '# markdown stub';
+}
+
+export function docx_export_html(...args) {
+  record('docx_export_html', args);
+  return '<!DOCTYPE html><html><body>html stub</body></html>';
+}
+
+export function docx_export_text(...args) {
+  record('docx_export_text', args);
+  return 'text stub';
+}

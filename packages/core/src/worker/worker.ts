@@ -47,12 +47,15 @@ let format: OpenFormat = null;
 let buildMs = 0;
 
 /**
- * Байты открытой книги. Основному модулю они не нужны — книга живёт в
- * `thread_local` уже разобранной, — но ленивый PDF-модуль разбирает книгу
- * сам и получает исходный XLSX. Плата — размер файла в памяти воркера;
- * отпускаем при закрытии книги и на новом `open`.
+ * Байты открытого документа: книги XLSX или документа DOCX.
+ *
+ * Основному модулю они не нужны — документ живёт в `thread_local` уже
+ * разобранным, — но экспорт работает поверх исходного файла: ленивый
+ * PDF-модуль разбирает его сам, а текстовые выгрузки DOCX получают байтами.
+ * Плата — размер файла в памяти воркера; отпускаем при закрытии и на новом
+ * `open`.
  */
-let bookBytes: ArrayBuffer | null = null;
+let sourceBytes: ArrayBuffer | null = null;
 
 /** Откуда грузить PDF-модуль: заполняется на `init`, до него экспорта нет. */
 let pdfUrls: PdfModuleUrls | null = null;
@@ -293,9 +296,10 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
           const pages = mod.docx_open_bytes(new Uint8Array(msg.bytes)) as PageInfo[];
           format = 'docx';
           pending = null;
-          // Документ уходит в wasm целиком, а PDF-экспорт пока умеет только
-          // книгу: байты прежней книги держать незачем.
-          bookBytes = null;
+          // Байты документа остаются: их просят экспорт в PDF (тамошний модуль
+          // разбирает документ сам) и текстовые выгрузки. Прежняя книга
+          // отпускается здесь же.
+          sourceBytes = msg.bytes;
           // Картинки прежней книги больше не нужны, а id нового документа могут с ними совпасть.
           dropBookBitmaps();
           post({ type: 'docx-opened', pages });
@@ -308,7 +312,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         format = 'xlsx';
         // Байты остаются в воркере до закрытия книги: их просит ленивый
         // PDF-модуль. Прежняя книга отпускается здесь же.
-        bookBytes = msg.bytes;
+        sourceBytes = msg.bytes;
         pending = null;
         // Картинки прежней книги больше не нужны, а id нового файла могут с ними совпасть.
         dropBookBitmaps();
@@ -367,7 +371,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     case 'export-pdf': {
       const urls = pdfUrls;
       // Снимок: за время загрузки модуля книгу могли закрыть или сменить.
-      const source = bookBytes;
+      const source = sourceBytes;
       if (!urls) {
         post({ type: 'error', message: 'pdf module is not configured: init has no pdf urls' });
         break;
@@ -389,9 +393,60 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       }
       break;
     }
+    case 'export-docx-pdf': {
+      const urls = pdfUrls;
+      // Снимок: за время загрузки модуля документ могли закрыть или сменить.
+      const source = sourceBytes;
+      if (!urls) {
+        post({ type: 'error', message: 'pdf module is not configured: init has no pdf urls' });
+        break;
+      }
+      if (format !== 'docx' || !source) {
+        post({ type: 'error', message: 'no docx document is open' });
+        break;
+      }
+      try {
+        // Первый клик платит за загрузку модуля; дальше он уже в памяти.
+        const mod = await loadPdfWasm(urls);
+        const bytes = mod.export_docx_pdf(new Uint8Array(source), msg.options);
+        post({ type: 'pdf', id: msg.id, bytes }, [bytes.buffer]);
+      } catch (e) {
+        // Ошибка экспорта — ответ, а не падение воркера: документ остаётся открытым.
+        post({ type: 'error', message: String(e) });
+      }
+      break;
+    }
+    case 'export-docx-text': {
+      const urls = docxUrls;
+      const source = sourceBytes;
+      if (!urls) {
+        post({ type: 'error', message: 'docx module is not configured: init has no docx urls' });
+        break;
+      }
+      if (format !== 'docx' || !source) {
+        post({ type: 'error', message: 'no docx document is open' });
+        break;
+      }
+      try {
+        // Модуль загружен ещё открытием документа; здесь он уже в памяти.
+        const mod = await loadDocxWasm(urls);
+        const bytes = new Uint8Array(source);
+        const text =
+          msg.format === 'markdown'
+            ? mod.docx_export_markdown(bytes)
+            : msg.format === 'html'
+              ? mod.docx_export_html(bytes)
+              : mod.docx_export_text(bytes);
+        post({ type: 'docx-text', id: msg.id, text });
+      } catch (e) {
+        // Разбор мог упасть и здесь: документ остаётся открытым, клиент получает ошибку.
+        post({ type: 'error', message: String(e) });
+      }
+      break;
+    }
     case 'close': {
       pending = null;
-      bookBytes = null;
+      sourceBytes = null;
       dropBookBitmaps();
       releaseDocument();
       break;
