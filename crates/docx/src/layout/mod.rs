@@ -32,3 +32,6 @@ pub use engine::{
 pub use float::{layout_float, layout_floats_on_page, FloatElement, FloatKind, FloatLayoutContext};
 pub use line_break::LineBreaker;
 pub use pagination::Paginator;
+// Рядом с `TableCellLayout`: строка — такой же элемент `LayoutItem::Table`, и
+// потребителю (canvas- и PDF-рендер) нужен её тип в том же пространстве имён.
+pub use tables::TableRowLayout;

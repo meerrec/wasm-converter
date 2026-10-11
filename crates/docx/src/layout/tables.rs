@@ -703,7 +703,11 @@ fn ranges_from(measure: &MeasuredRow<'_>, start: &[usize]) -> Vec<Range<usize>> 
         .iter()
         .enumerate()
         .map(|(index, cell)| {
-            let from = start.get(index).copied().unwrap_or(0).min(cell.blocks.len());
+            let from = start
+                .get(index)
+                .copied()
+                .unwrap_or(0)
+                .min(cell.blocks.len());
             from..cell.blocks.len()
         })
         .collect()
@@ -716,11 +720,11 @@ fn ends(parts: &[Range<usize>]) -> Vec<usize> {
 
 /// Все блоки строки разложены.
 fn exhausted(measure: &MeasuredRow<'_>, parts: &[Range<usize>]) -> bool {
-    measure
-        .cells
-        .iter()
-        .enumerate()
-        .all(|(index, cell)| parts.get(index).is_none_or(|part| part.end >= cell.blocks.len()))
+    measure.cells.iter().enumerate().all(|(index, cell)| {
+        parts
+            .get(index)
+            .is_none_or(|part| part.end >= cell.blocks.len())
+    })
 }
 
 /// Высота остатка строки, начиная с блоков `start`.
@@ -758,7 +762,11 @@ fn fit_blocks(
     let mut parts = Vec::with_capacity(measure.cells.len());
     let mut any = false;
     for (index, cell) in measure.cells.iter().enumerate() {
-        let from = start.get(index).copied().unwrap_or(0).min(cell.blocks.len());
+        let from = start
+            .get(index)
+            .copied()
+            .unwrap_or(0)
+            .min(cell.blocks.len());
         // Верхнее поле ячейки остаётся на первой странице: у продолжения его нет.
         let mut used = if partial { 0.0 } else { cell.padding_top };
         let mut end = from;
@@ -789,8 +797,16 @@ fn force_blocks(
     let mut height = 0.0_f32;
     let mut any = false;
     for (index, cell) in measure.cells.iter().enumerate() {
-        let from = start.get(index).copied().unwrap_or(0).min(cell.blocks.len());
-        let end = if cell.blocks.len() > from { from + 1 } else { from };
+        let from = start
+            .get(index)
+            .copied()
+            .unwrap_or(0)
+            .min(cell.blocks.len());
+        let end = if cell.blocks.len() > from {
+            from + 1
+        } else {
+            from
+        };
         if end > from {
             any = true;
             let top = if partial { 0.0 } else { cell.padding_top };
@@ -912,7 +928,8 @@ fn measure_cell<'a>(
     // конечной — одной строкой на абзац.
     let inner_width = (width - padding.left - padding.right).max(0.0);
 
-    let line_height = LineBreaker::new(fonts, FontId::default()).line_height(DEFAULT_SIZE_HALF_POINTS);
+    let line_height =
+        LineBreaker::new(fonts, FontId::default()).line_height(DEFAULT_SIZE_HALF_POINTS);
     let mut blocks = Vec::new();
 
     for item in &cell.items {
@@ -986,8 +1003,9 @@ struct Padding {
 /// Поля ячейки: `w:tcMar`, затем `w:tblCellMar`, затем умолчание Word.
 fn cell_padding(cell: &Cell, table: &Table) -> Padding {
     let side = twips_to_px(Twips::new(DEFAULT_SIDE_MARGIN_TWIPS));
-    let resolve =
-        |own: Option<Twips>, shared: Option<Twips>, default: f32| own.or(shared).map_or(default, twips_to_px);
+    let resolve = |own: Option<Twips>, shared: Option<Twips>, default: f32| {
+        own.or(shared).map_or(default, twips_to_px)
+    };
     Padding {
         top: resolve(cell.margins.top, table.cell_margins.top, 0.0),
         bottom: resolve(cell.margins.bottom, table.cell_margins.bottom, 0.0),
@@ -1099,10 +1117,7 @@ fn merge_slots(table: &Table, pieces: &[RowPiece]) -> Vec<Vec<MergeSlot>> {
     let mut slots: Vec<Vec<MergeSlot>> = pieces
         .iter()
         .map(|piece| {
-            vec![
-                MergeSlot::None;
-                table.rows.get(piece.row).map_or(0, |row| row.cells.len())
-            ]
+            vec![MergeSlot::None; table.rows.get(piece.row).map_or(0, |row| row.cells.len())]
         })
         .collect();
 
@@ -1163,7 +1178,10 @@ fn layout_pieces(
         let mut col = 0usize;
         for (cell_index, cell) in row.cells.iter().enumerate() {
             let span = grid_span(cell);
-            let slot = slots_row.get(cell_index).copied().unwrap_or(MergeSlot::None);
+            let slot = slots_row
+                .get(cell_index)
+                .copied()
+                .unwrap_or(MergeSlot::None);
             let (height, cut) = match slot {
                 MergeSlot::Start { bottom } => (
                     (bottom - piece.y).max(piece.height),
@@ -1172,10 +1190,9 @@ fn layout_pieces(
                         bottom: false,
                     },
                 ),
-                MergeSlot::Continue { bottom } => (
-                    (bottom - piece.y).max(piece.height),
-                    CellCut::default(),
-                ),
+                MergeSlot::Continue { bottom } => {
+                    ((bottom - piece.y).max(piece.height), CellCut::default())
+                }
                 MergeSlot::None => (
                     piece.height,
                     CellCut {
@@ -1342,16 +1359,18 @@ fn cell_borders(
     let own = table
         .rows
         .get(row)
-        .and_then(|row| row.cells.iter().find(|cell| {
-            let mut start = 0usize;
-            for other in &row.cells {
-                if std::ptr::eq(other, *cell) {
-                    break;
+        .and_then(|row| {
+            row.cells.iter().find(|cell| {
+                let mut start = 0usize;
+                for other in &row.cells {
+                    if std::ptr::eq(other, *cell) {
+                        break;
+                    }
+                    start += grid_span(other);
                 }
-                start += grid_span(other);
-            }
-            (start..start + grid_span(cell)).contains(&col)
-        }))
+                (start..start + grid_span(cell)).contains(&col)
+            })
+        })
         .map(|cell| cell.borders.as_ref());
 
     let top = if cut.top {

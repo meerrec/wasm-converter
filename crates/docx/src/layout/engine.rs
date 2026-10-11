@@ -1962,7 +1962,10 @@ mod tests {
     fn a_sixty_row_table_spans_pages_within_the_content_band() {
         let section = section_with_margins(A4_WIDTH_TWIPS, A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS);
         let mut document = document_in_section(section, 0);
-        document.body.items.push(BlockItem::Table(synthetic_table(700, 60, false)));
+        document
+            .body
+            .items
+            .push(BlockItem::Table(synthetic_table(700, 60, false)));
 
         let layout = layout_of(&document);
 
