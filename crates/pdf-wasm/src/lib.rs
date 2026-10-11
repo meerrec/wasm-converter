@@ -82,12 +82,12 @@ impl PdfOptionsJs {
             };
         }
         if let Some(margins) = self.margins {
-            options.page.margins = Margins {
+            options.page.margins = Some(Margins {
                 top_mm: margins.top,
                 right_mm: margins.right,
                 bottom_mm: margins.bottom,
                 left_mm: margins.left,
-            };
+            });
         }
         if let Some(scale) = self.scale {
             options.page.scale = scale;
