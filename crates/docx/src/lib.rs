@@ -43,8 +43,8 @@ pub use layout::{
 };
 pub use model::annotation::{Comment, Footnote, NoteKind};
 pub use model::drawing::{
-    AlignH, AlignV, Anchor, Extent, InlineImage, InlineOrAnchor, PositionH, PositionV, RelFromH,
-    RelFromV, WrapKind,
+    AlignH, AlignV, Anchor, Extent, InlineImage, InlineOrAnchor, MediaPart, PositionH, PositionV,
+    RelFromH, RelFromV, WrapKind,
 };
 pub use model::inline::{
     Bookmark, BreakKind, Field, FieldKind, Hyperlink, Inline, Paragraph, Run, RunContent,

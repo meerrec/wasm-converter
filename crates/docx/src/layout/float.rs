@@ -76,6 +76,10 @@ pub enum FloatKind {
         rel_id: String,
         /// Имя части.
         part: Option<String>,
+        /// Идентификатор байтов части в [`crate::Document::media`]; `None` —
+        /// байтов нет (внешняя цель, битая часть, часть выше предела) и рисовать
+        /// нечем, кроме габаритов.
+        image_id: Option<u32>,
     },
     /// Текстовый блок.
     TextBox {
@@ -149,6 +153,8 @@ pub fn layout_float(anchor: &Anchor, ctx: &FloatLayoutContext) -> Option<FloatEl
         kind: FloatKind::Image {
             rel_id: anchor.image.rel_id.clone(),
             part: anchor.image.part.clone(),
+            // Байты ищутся в модели позже: раскладка анкора не знает документа.
+            image_id: None,
         },
         wrap: anchor.wrap,
         behind_text: anchor.behind_text,

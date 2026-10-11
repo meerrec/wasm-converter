@@ -18,8 +18,8 @@ pub mod validate;
 
 pub use annotation::{Comment, Footnote, NoteKind};
 pub use drawing::{
-    AlignH, AlignV, Anchor, Extent, InlineImage, InlineOrAnchor, PositionH, PositionV, RelFromH,
-    RelFromV, WrapKind,
+    AlignH, AlignV, Anchor, Extent, InlineImage, InlineOrAnchor, MediaPart, PositionH, PositionV,
+    RelFromH, RelFromV, WrapKind,
 };
 pub use inline::{
     Bookmark, BreakKind, Field, FieldKind, Hyperlink, Inline, Paragraph, Run, RunContent,
@@ -90,6 +90,12 @@ pub struct Document {
     pub footers: BTreeMap<String, HeaderFooter>,
     /// Восстановимые нарушения разбора в порядке появления.
     pub warnings: Vec<ParseWarning>,
+    /// Байты медиачастей, на которые ссылаются рисунки (inline и плавающие).
+    ///
+    /// Части, на которые не ссылается ни один рисунок, сюда не читаются: архив
+    /// (`Archive`) живёт только внутри разбора и байты нужны лишь рисующему.
+    /// Идентификатор записи несут элементы кадра ([`MediaPart::id`]).
+    pub media: Vec<MediaPart>,
 }
 
 impl Document {
@@ -97,6 +103,24 @@ impl Document {
     #[must_use]
     pub fn warnings(&self) -> &[ParseWarning] {
         &self.warnings
+    }
+
+    /// Медиачасти документа: `id` → байты. Одна запись на часть пакета.
+    #[must_use]
+    pub fn media(&self) -> &[MediaPart] {
+        &self.media
+    }
+
+    /// Медиачасть по идентификатору из кадра; `None` — рисовать нечем.
+    #[must_use]
+    pub fn media_part(&self, id: u32) -> Option<&MediaPart> {
+        self.media.iter().find(|part| part.id == id)
+    }
+
+    /// Идентификатор байтов части; `None` — части нет среди прочитанных.
+    #[must_use]
+    pub fn media_id(&self, part: &str) -> Option<u32> {
+        self.media.iter().find(|m| m.part == part).map(|m| m.id)
     }
 
     /// Предупреждения одного вида — выборка для отчёта или диагностики.

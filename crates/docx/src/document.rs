@@ -2396,6 +2396,11 @@ fn parse_drawing(
         description: parts.description,
         extent: parts.extent.unwrap_or(Extent { cx: 0, cy: 0 }),
     };
+    // Байты медиачасти нужны рисующему, а архив к тому времени уже закрыт:
+    // часть запоминается здесь, читает её `parse.rs`, пока архив жив.
+    if let Some(media) = &image.part {
+        ctx.note_media(media);
+    }
     if parts.inline {
         return Ok(InlineOrAnchor {
             id,

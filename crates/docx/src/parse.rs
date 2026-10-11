@@ -16,8 +16,8 @@ use quick_xml::events::Event;
 use crate::context::ParseCtx;
 use crate::error::{Error, Result};
 use crate::model::{
-    BlockItem, Body, Document, Footnote, HeaderFooter, Inline, NoteKind, NumberingTable, Paragraph,
-    PartRef, Relationships, Settings, StyleId, StyleTable, Table,
+    BlockItem, Body, Document, Footnote, HeaderFooter, Inline, MediaPart, NoteKind, NumberingTable,
+    Paragraph, PartRef, Relationships, Settings, StyleId, StyleTable, Table,
 };
 use crate::settings::xml_error;
 use crate::xml::local_name;
@@ -721,6 +721,10 @@ fn has_style(styles: &StyleTable, style: &StyleId) -> bool {
 /// Восстановимые нарушения разбор не прерывают: они копятся в
 /// [`Document::warnings`] и попадают в лог (ADR-0016 §1, §4).
 ///
+/// Байты медиачастей, на которые ссылаются рисунки, читаются здесь же и
+/// остаются в [`Document::media`]: архив живёт только внутри разбора, а
+/// рисующему нужны байты после него.
+///
 /// # Errors
 /// [`Error::EncryptedDocument`] — зашифрованный OOXML; [`Error::LegacyFormat`] —
 /// бинарный `.doc`; [`Error::MacroEnabledDocument`] — `.docm`;
@@ -776,6 +780,9 @@ pub fn parse_docx(bytes: &[u8], limits: ZipLimits) -> Result<Document> {
 
     let (headers, footers) = load_frames(&mut archive, &body, &mut ctx)?;
 
+    // Медиа читается здесь, пока архив ещё жив: дальше байты — часть модели.
+    let media = read_media(&mut archive, &mut ctx)?;
+
     let parts = PartNames {
         document: document_part,
         footnotes: part_name(footnotes_part.as_ref(), FOOTNOTES),
@@ -796,6 +803,7 @@ pub fn parse_docx(bytes: &[u8], limits: ZipLimits) -> Result<Document> {
         headers,
         footers,
         warnings: Vec::new(),
+        media,
     };
 
     validate_refs(&mut document, &parts, &mut ctx)?;
@@ -807,6 +815,86 @@ pub fn parse_docx(bytes: &[u8], limits: ZipLimits) -> Result<Document> {
     log_warnings(&warnings);
     document.warnings = warnings;
     Ok(document)
+}
+
+/// Предел на одну медиачасть: крупнее — байты в модель не попадают.
+///
+/// Число совпадает с XLSX-путём (`crates/xlsx/src/lib.rs`): картинка больше
+/// десятков мегабайт утопила бы память воркера, а на экране она всё равно
+/// ужимается. Рисунок без байтов остаётся габаритами, кадр не падает.
+const MAX_MEDIA_PART_BYTES: usize = 32 * 1024 * 1024;
+
+/// Предел на все медиачасти документа: после него части не читаются вовсе.
+const MAX_TOTAL_MEDIA_BYTES: usize = 128 * 1024 * 1024;
+
+/// Прочитать байты медиачастей, на которые ссылаются рисунки.
+///
+/// Имена частей собрал разбор (`ParseCtx::note_media`), а архив живёт только
+/// здесь: после возврата из `parse_docx` байты остаются единственной копией.
+/// Часть читается один раз, сколько бы рисунков на неё ни ссылалось, и получает
+/// идентификатор в порядке первой ссылки — он и уходит в команду кадра.
+///
+/// Отсутствующая или битая часть — предупреждение, а не отказ (ADR-0016 §2):
+/// рисунок рисуется габаритами, документ открывается.
+///
+/// # Errors
+/// [`Error::TooManyWarnings`] — предупреждений стало больше порога.
+fn read_media(archive: &mut Archive, ctx: &mut ParseCtx) -> Result<Vec<MediaPart>> {
+    let mut media: Vec<MediaPart> = Vec::new();
+    let mut bytes_used = 0usize;
+    for part in ctx.take_media() {
+        if !archive.contains(&part) {
+            ctx.warn(
+                WarningKind::MissingPart,
+                &part,
+                format!("`{part}` is referenced by a drawing but missing from the package"),
+            )?;
+            continue;
+        }
+        let bytes = match archive.part(&part) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                ctx.warn(
+                    WarningKind::MissingPart,
+                    &part,
+                    format!("`{part}` is referenced by a drawing but cannot be read: {error}"),
+                )?;
+                continue;
+            }
+        };
+        if bytes.len() > MAX_MEDIA_PART_BYTES || bytes_used + bytes.len() > MAX_TOTAL_MEDIA_BYTES {
+            continue;
+        }
+        bytes_used += bytes.len();
+        media.push(MediaPart {
+            // Индекс записи — идентификатор: он стабилен, потому что порядок
+            // частей задан разбором, а не обходом карты байтов.
+            id: u32::try_from(media.len()).unwrap_or(u32::MAX),
+            part: part.clone(),
+            mime: media_mime(&part).to_owned(),
+            bytes,
+        });
+    }
+    Ok(media)
+}
+
+/// MIME медиачасти по расширению; незнакомое расширение — поток байтов.
+#[must_use]
+fn media_mime(part: &str) -> &'static str {
+    match part.rsplit_once('.').map(|(_, ext)| ext) {
+        Some(ext) if ext.eq_ignore_ascii_case("png") => "image/png",
+        Some(ext) if ext.eq_ignore_ascii_case("jpg") || ext.eq_ignore_ascii_case("jpeg") => {
+            "image/jpeg"
+        }
+        Some(ext) if ext.eq_ignore_ascii_case("gif") => "image/gif",
+        Some(ext) if ext.eq_ignore_ascii_case("bmp") => "image/bmp",
+        Some(ext) if ext.eq_ignore_ascii_case("tif") || ext.eq_ignore_ascii_case("tiff") => {
+            "image/tiff"
+        }
+        Some(ext) if ext.eq_ignore_ascii_case("webp") => "image/webp",
+        Some(ext) if ext.eq_ignore_ascii_case("svg") => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
 }
 
 /// Логирует предупреждения разбора.
@@ -1027,6 +1115,81 @@ mod tests {
             "Hello, World!"
         );
         assert!(document.warnings.is_empty(), "{:?}", document.warnings);
+    }
+
+    /// Тело с одним встроенным рисунком: `wp:inline` ссылается на `rIdImg1`.
+    const DRAWING_DOCUMENT_XML: &[u8] = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body><w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="685800"/><wp:docPr id="1" name="inline.png"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="inline.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdImg1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="685800"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:body></w:document>"#;
+
+    /// Связи главной части: рисунок ведёт на `word/media/image1.png`.
+    const DRAWING_RELS_XML: &[u8] = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdImg1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>"#;
+
+    /// Пакет с рисунком в теле; `media` — содержимое `word/media/image1.png`.
+    fn drawing_zip(media: Option<&[u8]>) -> Vec<u8> {
+        let mut parts: Vec<(&str, &[u8])> = vec![
+            ("[Content_Types].xml", CONTENT_TYPES_XML),
+            ("_rels/.rels", ROOT_RELS_XML),
+            ("word/document.xml", DRAWING_DOCUMENT_XML),
+            ("word/_rels/document.xml.rels", DRAWING_RELS_XML),
+        ];
+        if let Some(bytes) = media {
+            parts.push(("word/media/image1.png", bytes));
+        }
+        zip(&parts, &[])
+    }
+
+    /// Байты медиачасти, на которую ссылается рисунок, доезжают до модели.
+    #[test]
+    fn referenced_media_bytes_are_read_into_the_document() {
+        let png = b"\x89PNG\r\n\x1a\nnot-really-a-png";
+        let document =
+            parse_docx(&drawing_zip(Some(png)), ZipLimits::default()).expect("пакет разбирается");
+
+        let media = document.media();
+        assert_eq!(media.len(), 1, "одна часть — одна запись");
+        assert_eq!(
+            media[0].id, 0,
+            "идентификаторы идут с нуля по порядку ссылок"
+        );
+        assert_eq!(media[0].part, "word/media/image1.png");
+        assert_eq!(media[0].mime, "image/png");
+        assert_eq!(media[0].bytes, png, "байты лежат как в пакете");
+        assert_eq!(document.media_id("word/media/image1.png"), Some(0));
+        assert_eq!(
+            document.media_part(0).map(|part| part.part.as_str()),
+            Some("word/media/image1.png")
+        );
+        assert!(document.warnings.is_empty(), "{:?}", document.warnings);
+    }
+
+    /// Медиачасть, на которую ссылается рисунок, отсутствует: предупреждение,
+    /// а не отказ (ADR-0016 §2) — рисующий нарисует одни габариты.
+    #[test]
+    fn a_missing_media_part_is_a_warning() {
+        let document =
+            parse_docx(&drawing_zip(None), ZipLimits::default()).expect("пакет разбирается");
+
+        assert!(document.media().is_empty(), "байтов нет");
+        let warnings = document.warnings_by_kind(WarningKind::MissingPart);
+        assert_eq!(warnings.len(), 1, "{:?}", document.warnings);
+        assert!(warnings[0].message.contains("word/media/image1.png"));
+        assert_eq!(
+            warnings[0]
+                .location
+                .as_ref()
+                .map(|location| location.part.as_str()),
+            Some("word/media/image1.png")
+        );
+    }
+
+    #[test]
+    fn media_mime_maps_known_extensions() {
+        assert_eq!(media_mime("word/media/image1.png"), "image/png");
+        assert_eq!(media_mime("word/media/photo.JPEG"), "image/jpeg");
+        assert_eq!(media_mime("word/media/anim.gif"), "image/gif");
+        assert_eq!(
+            media_mime("word/media/no-extension"),
+            "application/octet-stream"
+        );
     }
 
     /// Отсутствие необязательных частей — не нарушение: у модели есть умолчания,

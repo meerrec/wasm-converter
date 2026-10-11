@@ -13,7 +13,7 @@ use doc_converter_render::{
 };
 
 use crate::layout::cascade::StyleCache;
-use crate::layout::float::{layout_floats_on_page, FloatElement};
+use crate::layout::float::{emu_to_px, layout_floats_on_page, FloatElement, FloatKind};
 use crate::layout::line_break::LineBreaker;
 use crate::layout::pagination::Paginator;
 use crate::layout::paragraph::{layout_paragraph, Line, ParagraphLayout};
@@ -21,11 +21,11 @@ use crate::layout::tables::{
     compute_table_frame, layout_table_fragments, table_item, PageBand, TableRowLayout,
 };
 
-use crate::model::drawing::Anchor;
+use crate::model::drawing::{Anchor, InlineImage, InlineOrAnchor, MediaPart};
 use crate::model::raw::HalfPoint;
 use crate::model::{
     BlockItem, BreakKind, CellBorders, Document, Inline, Margins, Orientation, PageSize, Paragraph,
-    RunContent, Section, SectionProperties, Shading, Table,
+    RunContent, Section, SectionProperties, Shading, StyleTable, Table,
 };
 use crate::{Columns, Twips};
 
@@ -155,6 +155,22 @@ pub enum LayoutItem {
     ColumnBreak,
     /// Плавающий рисунок (`wp:anchor`).
     Float(FloatElement),
+    /// Встроенный рисунок (`wp:inline`) в потоке.
+    ///
+    /// Рисунок занимает в потоке прямоугольник [`Rect`] и раздвигает содержимое
+    /// вокруг себя, как это делает Word; место внутри строки текста (рисунок
+    /// между словами) — отдельный долг, сейчас рисунок абзаца с текстом встаёт
+    /// после его строк.
+    Image {
+        /// Идентификатор узла.
+        node_id: NodeId,
+        /// Прямоугольник положения.
+        rect: Rect,
+        /// Идентификатор байтов в [`crate::Document::media`]; `None` — байтов
+        /// нет (битая часть, внешняя цель, часть выше предела): кадр рисует
+        /// габариты плейсхолдером.
+        image_id: Option<u32>,
+    },
 }
 
 /// Раскладка одной ячейки таблицы.
@@ -378,24 +394,7 @@ pub fn layout_document(
                     &mut line_breaker,
                 );
 
-                // Пустой `w:p` всё равно занимает строку высотой шрифта: ноль
-                // схлопнул бы абзацы и набрал страницу плотнее, чем в Word.
-                let empty_line = Line {
-                    text: String::new(),
-                    x: state.x,
-                    width: 0.0,
-                    height: line_breaker
-                        .line_height_with_spacing(HalfPoint::new(DEFAULT_HALF_POINTS), None),
-                    color: None,
-                    // Текста в строке нет: рисовать нечего, а каскада, откуда
-                    // берёт стиль `layout_paragraph`, у движка под рукой нет —
-                    // то же умолчание, из которого взята и высота строки.
-                    font_family: None,
-                    size: HalfPoint::new(DEFAULT_HALF_POINTS),
-                    bold: false,
-                    italic: false,
-                    underline: false,
-                };
+                let empty_line = empty_paragraph_line(&mut line_breaker, state.x);
                 let lines: Vec<&Line> = if layout.lines.is_empty() {
                     vec![&empty_line]
                 } else {
@@ -407,6 +406,7 @@ pub fn layout_document(
                     paragraph,
                     &lines,
                     &layout,
+                    &document.media,
                     &mut placed_floats,
                     &mut state,
                 );
@@ -417,6 +417,7 @@ pub fn layout_document(
                     &mut paginator,
                     &layout.anchors,
                     placement,
+                    &document.media,
                     &mut placed_floats,
                     &mut deferred_floats,
                     &mut state,
@@ -436,7 +437,14 @@ pub fn layout_document(
                 }
             }
             BlockItem::Table(table) => {
-                place_table(table, fonts, &mut paginator, &mut placed_floats, &mut state);
+                place_table(
+                    table,
+                    &document.styles,
+                    fonts,
+                    &mut paginator,
+                    &mut placed_floats,
+                    &mut state,
+                );
             }
             BlockItem::SectPr(_sect_pr) => {
                 // Блочный `w:sectPr` закрывает последнюю секцию и описывает её
@@ -467,19 +475,51 @@ pub fn layout_document(
     })
 }
 
-/// Положить строки абзаца на страницы: строка за строкой.
+/// Строка-метка абзаца без текста: такой абзац всё равно занимает строку.
+///
+/// Высота берётся у [`LineBreaker`] по кеглю по умолчанию: каскада, откуда
+/// `layout_paragraph` берёт стиль знака, у движка под рукой нет.
+fn empty_paragraph_line(line_breaker: &mut LineBreaker, x: f32) -> Line {
+    Line {
+        text: String::new(),
+        x,
+        width: 0.0,
+        height: line_breaker.line_height_with_spacing(HalfPoint::new(DEFAULT_HALF_POINTS), None),
+        color: None,
+        // Текста в строке нет: рисовать нечего — рисовать будет запасное лицо.
+        font_family: None,
+        size: HalfPoint::new(DEFAULT_HALF_POINTS),
+        bold: false,
+        italic: false,
+        underline: false,
+    }
+}
+
+/// Положить строки абзаца и его встроенные рисунки на страницы.
 ///
 /// Абзац переполняет страницу строкой, а не целиком: что не влезло — уходит
 /// на следующую. Явный `w:br w:type="page"` закрывает страницу до строк
 /// абзаца, а `w:keepLines` и висячие строки переносят его целиком.
+///
+/// Встроенные рисунки идут тем же потоком: у абзаца без текста рисунок и есть
+/// строка — в Word метка абзаца идёт за картинкой, — а у абзаца с текстом
+/// рисунки встают после строк (место внутри строки — отдельный долг, см.
+/// [`LayoutItem::Image`]).
 fn place_lines(
     paginator: &mut Paginator,
     paragraph: &Paragraph,
     lines: &[&Line],
     layout: &ParagraphLayout,
+    media: &[MediaPart],
     placed_floats: &mut Vec<FloatElement>,
     state: &mut LayoutState,
 ) -> ParagraphPlacement {
+    let images = collect_inline_images(paragraph);
+    let images_first = layout.lines.is_empty() && !images.is_empty();
+    if images_first {
+        place_inline_images(paginator, &images, media, placed_floats, state);
+    }
+
     // Явный разрыв стоит до строк абзаца: знак абзаца Word оставляет
     // уже на новой странице.
     if has_page_break(paragraph) {
@@ -567,10 +607,98 @@ fn place_lines(
             });
     }
 
+    if !images_first {
+        place_inline_images(paginator, &images, media, placed_floats, state);
+    }
+
     ParagraphPlacement {
         top: fragment_top,
         height: paginator.current_y() - fragment_top,
     }
+}
+
+/// Положить в поток встроенные рисунки абзаца: один прямоугольник за другим.
+///
+/// Рисунок занимает место в полосе набора, а не висит поверх текста: следующий
+/// за ним абзац сдвигается вниз. Рисунок, не влезающий на текущую страницу,
+/// переезжает на следующую — но только если на текущей уже что-то есть: выше
+/// полосы набора он остаётся здесь, как блок в [`Paginator::advance`], иначе
+/// пустая страница зациклила бы раскладку.
+fn place_inline_images(
+    paginator: &mut Paginator,
+    images: &[&InlineImage],
+    media: &[MediaPart],
+    placed_floats: &mut Vec<FloatElement>,
+    state: &mut LayoutState,
+) {
+    for image in images {
+        let width = emu_to_px(image.extent.cx);
+        let height = emu_to_px(image.extent.cy);
+        // Вырожденный `wp:extent` — рисовать нечего: нулевой прямоугольник
+        // только сдвинул бы поток на месте.
+        if width <= 0.0 || height <= 0.0 {
+            continue;
+        }
+        if !paginator.fits(height) && paginator.current_y() > paginator.content_top() {
+            break_page(paginator, placed_floats, state);
+        }
+        let rect = paginator.next_rect(width, height);
+        paginator.advance(height);
+        paginator.current_page_mut().items.push(LayoutItem::Image {
+            node_id: image.id,
+            rect,
+            image_id: media_id(media, image.part.as_deref()),
+        });
+    }
+}
+
+/// Собрать встроенные рисунки абзаца в порядке появления.
+///
+/// Обход тот же, что у анкоров (`layout::paragraph::collect_anchors`), но здесь
+/// нужны сами картинки: у `wp:inline` анкора нет, а место в потоке — есть.
+fn collect_inline_images(paragraph: &Paragraph) -> Vec<&InlineImage> {
+    let mut images = Vec::new();
+    collect_images_in(&paragraph.runs, &mut images);
+    images
+}
+
+/// Обойти `Inline` и собрать встроенные картинки: вложенные списки (гиперссылка,
+/// поле) обходятся тем же порядком, что и текст в них.
+fn collect_images_in<'a>(inlines: &'a [Inline], images: &mut Vec<&'a InlineImage>) {
+    for inline in inlines {
+        match inline {
+            Inline::Drawing(drawing) => push_inline_image(drawing, images),
+            Inline::Run(run) => {
+                for content in &run.content {
+                    if let RunContent::Drawing(drawing) = content {
+                        push_inline_image(drawing, images);
+                    }
+                }
+            }
+            Inline::Hyperlink(hyperlink) => collect_images_in(&hyperlink.runs, images),
+            Inline::Field(field) => collect_images_in(&field.result, images),
+            _ => {}
+        }
+    }
+}
+
+/// Добавить встроенную картинку `w:drawing`; плавающая идёт другим путём.
+fn push_inline_image<'a>(drawing: &'a InlineOrAnchor, images: &mut Vec<&'a InlineImage>) {
+    if let Some(inline) = &drawing.inline {
+        images.push(inline);
+    }
+}
+
+/// Идентификатор байтов медиачасти в реестре документа.
+///
+/// `None` — часть не прочитана (внешняя цель, отсутствующая или битая часть,
+/// часть выше предела): кадр нарисует габариты плейсхолдером.
+fn media_id(media: &[MediaPart], part: Option<&str>) -> Option<u32> {
+    let part = part?;
+    media
+        .iter()
+        .find(|entry| entry.part == part)
+        .map(|entry| entry.id)
 }
 
 /// Куда лёг абзац: база его плавающих элементов.
@@ -601,6 +729,7 @@ fn place_floats(
     paginator: &mut Paginator,
     anchors: &[Anchor],
     placement: ParagraphPlacement,
+    media: &[MediaPart],
     placed_floats: &mut Vec<FloatElement>,
     deferred_floats: &mut Vec<DeferredFloat>,
     state: &mut LayoutState,
@@ -616,7 +745,12 @@ fn place_floats(
     loop {
         let placed_before = placed_floats.len();
         queue = place_floats_on_page(paginator, queue, text_y, placed_floats);
-        for float in placed_floats[placed_before..].iter().cloned() {
+        for mut float in placed_floats[placed_before..].iter().cloned() {
+            // Байты ищутся здесь, а не в `layout_float`: анкор несёт имя части,
+            // но не документ, в котором лежит медиареестр.
+            if let FloatKind::Image { part, image_id, .. } = &mut float.kind {
+                *image_id = media_id(media, part.as_deref());
+            }
             paginator
                 .current_page_mut()
                 .items
@@ -673,6 +807,7 @@ fn place_floats_on_page(
 /// курсор лишь продвигается за ним.
 fn place_table(
     table: &Table,
+    styles: &StyleTable,
     fonts: &mut FontRegistry,
     paginator: &mut Paginator,
     placed_floats: &mut Vec<FloatElement>,
@@ -689,7 +824,7 @@ fn place_table(
         top: state.content_top,
         height: (state.content_bottom - state.content_top).max(0.0),
     };
-    let fragments = layout_table_fragments(table, &frame, first, next, fonts);
+    let fragments = layout_table_fragments(table, &frame, first, next, fonts, styles);
 
     for fragment in fragments {
         // Пустая страница — предел: фрагмент не влез в неё, но новых страниц
@@ -1015,6 +1150,7 @@ mod tests {
             headers: std::collections::BTreeMap::new(),
             footers: std::collections::BTreeMap::new(),
             warnings: Vec::new(),
+            media: Vec::new(),
         }
     }
 
@@ -2169,6 +2305,35 @@ mod tests {
             .collect()
     }
 
+    /// Элементы встроенных рисунков в порядке страниц и следования.
+    fn images_of(layout: &PageLayout) -> Vec<ImageLayout> {
+        layout
+            .pages
+            .iter()
+            .flat_map(|page| page.items.iter())
+            .filter_map(|item| match item {
+                LayoutItem::Image {
+                    node_id,
+                    rect,
+                    image_id,
+                } => Some(ImageLayout {
+                    node_id: *node_id,
+                    rect: *rect,
+                    image_id: *image_id,
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Элемент встроенного рисунка: что и где легло в поток.
+    #[derive(Debug, Clone, Copy)]
+    struct ImageLayout {
+        node_id: NodeId,
+        rect: Rect,
+        image_id: Option<u32>,
+    }
+
     /// Сравнить пиксельный размер: `f32` из EMU на равенство не проверяем.
     fn assert_px(actual: f32, expected: f32, what: &str) {
         assert!(
@@ -2275,7 +2440,8 @@ mod tests {
         }
     }
 
-    /// Встроенные рисунки остаются в потоке: элементов `Float` не появляется.
+    /// Встроенные рисунки остаются в потоке: элементов `Float` не появляется,
+    /// а место в полосе набора занимает [`LayoutItem::Image`].
     #[test]
     fn fixture_inline_drawings_stay_in_the_flow() {
         for name in ["images/inline.docx", "images/multiple_sizes.docx"] {
@@ -2284,7 +2450,64 @@ mod tests {
                 floats_of(&layout).is_empty(),
                 "{name}: встроенные рисунки не плавают"
             );
+            let images = images_of(&layout);
+            assert!(
+                !images.is_empty(),
+                "{name}: у встроенных рисунков есть место в потоке"
+            );
+            // Узлы элементов — узлы картинок модели: по ним рисунок находят
+            // выделение и потребитель кадра.
+            let mut ids: Vec<NodeId> = images.iter().map(|image| image.node_id).collect();
+            ids.dedup();
+            assert_eq!(ids.len(), images.len(), "{name}: у рисунка свой узел");
         }
+    }
+
+    /// Размеры встроенных рисунков — из `wp:extent` (914400 EMU = 96 px):
+    /// `images/multiple_sizes.json` даёт 457200×457200, 1371600×685800 и
+    /// 685800×1371600 EMU.
+    #[test]
+    fn fixture_inline_images_take_their_extent_sizes() {
+        let layout = layout_fixture("images/multiple_sizes.docx");
+        let images = images_of(&layout);
+        let expected = [(48.0, 48.0), (144.0, 72.0), (72.0, 144.0)];
+
+        assert_eq!(images.len(), expected.len(), "по элементу на рисунок");
+        for (image, (width, height)) in images.iter().zip(expected) {
+            assert_px(image.rect.width, width, "ширина");
+            assert_px(image.rect.height, height, "высота");
+        }
+        // Рисунки занимают место друг за другом: следующий ниже предыдущего.
+        assert!(
+            images[0].rect.y + images[0].rect.height <= images[1].rect.y + 0.01,
+            "второй рисунок — под первым"
+        );
+        assert!(
+            images[1].rect.y + images[1].rect.height <= images[2].rect.y + 0.01,
+            "третий рисунок — под вторым"
+        );
+    }
+
+    /// Раскладка ссылается на байты медиачасти: у элемента рисунка тот же
+    /// идентификатор, что и у записи [`crate::Document::media`].
+    #[test]
+    fn inline_images_reference_the_media_registry() {
+        let path = fixture_path("images/inline.docx");
+        let bytes =
+            std::fs::read(&path).unwrap_or_else(|_| panic!("нет фикстуры {}", path.display()));
+        let document = crate::open(bytes).expect("фикстура разбирается");
+        let layout = layout_of(&document);
+
+        let media = document.media();
+        assert_eq!(media.len(), 1, "у рисунка одна медиачасть");
+        let images = images_of(&layout);
+        assert_eq!(images.len(), 1);
+        assert_eq!(
+            images[0].image_id,
+            Some(media[0].id),
+            "кадр адресует те же байты, что лежат в модели"
+        );
+        assert_eq!(media[0].part, "word/media/inline.png");
     }
 
     /// Два пересекающихся анкора: второй сдвигается под нижнюю границу первого.

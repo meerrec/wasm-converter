@@ -18,6 +18,7 @@ use doc_converter_render::geometry::Point;
 use doc_converter_render::viewport::Viewport;
 
 use crate::layout::engine::{half_points_to_px, LayoutItem, PageLayout, Rect};
+use crate::layout::float::FloatKind;
 
 mod tables;
 
@@ -34,7 +35,7 @@ use tables::draw_table;
 /// запасным лицом: `DisplayList` самодостаточен и на реестр не ссылается.
 const LAYOUT_FONT_FAMILY: &str = doc_converter_render::font::DEFAULT_FONT_FAMILY;
 
-/// Обводка плейсхолдера плавающего элемента.
+/// Обводка плейсхолдера рисунка, которому нечем рисоваться.
 const PLACEHOLDER_STROKE: Color = Color::rgba(0x80, 0x80, 0x80, 0xFF);
 
 /// Толщина обводки плейсхолдера в пикселях раскладки.
@@ -129,19 +130,47 @@ fn draw_items(items: &[LayoutItem], viewport: &Viewport, font: StringRef, out: &
                 });
             }
             LayoutItem::Table { cells, .. } => draw_table(cells, viewport, font, out),
-            LayoutItem::Float(float) => draw_float_placeholder(&float.rect, viewport, out),
+            LayoutItem::Float(float) => match &float.kind {
+                FloatKind::Image { image_id, .. } => {
+                    draw_image(&float.rect, *image_id, viewport, out);
+                }
+                // Текстовый блок раскладка ещё не несёт: видно только габариты.
+                FloatKind::TextBox { .. } => draw_placeholder(&float.rect, viewport, out),
+            },
+            LayoutItem::Image { rect, image_id, .. } => {
+                draw_image(rect, *image_id, viewport, out);
+            }
             // Разрывы — метки раскладки, рисовать нечего.
             LayoutItem::PageBreak | LayoutItem::ColumnBreak => {}
         }
     }
 }
 
-/// Плейсхолдер плавающего элемента — прямоугольник с контуром.
+/// Нарисовать рисунок: команда `Image`, а без байтов — плейсхолдер.
 ///
-/// Рисунки не рисуются: им нужна выемка медиа из архива и `register_bitmap` в
-/// painter'е — это следующий слайс. Пока на месте картинки видно её габариты,
-/// так что раскладка и обтекание проверяемы на глаз.
-fn draw_float_placeholder(rect: &Rect, viewport: &Viewport, out: &mut DisplayList) {
+/// Байты приходят из [`crate::Document::media`] через раскладку
+/// ([`LayoutItem::Image::image_id`]); сам `DisplayList` картинок не несёт — их
+/// регистрирует у painter'а потребитель (так же устроен путь XLSX:
+/// `xlsx_image_bytes` → `createImageBitmap` → `register_bitmap`).
+fn draw_image(rect: &Rect, image_id: Option<u32>, viewport: &Viewport, out: &mut DisplayList) {
+    let Some(bitmap_id) = image_id else {
+        // Рисовать нечем (битая или отсутствующая часть): на месте картинки
+        // остаются её габариты — их видно и можно сверить с раскладкой.
+        draw_placeholder(rect, viewport, out);
+        return;
+    };
+    let (x, y) = to_screen(viewport, rect.x, rect.y);
+    out.push(DrawCommand::Image {
+        x,
+        y,
+        w: rect.width * viewport.scale,
+        h: rect.height * viewport.scale,
+        bitmap_id,
+    });
+}
+
+/// Плейсхолдер рисунка — прямоугольник с контуром.
+fn draw_placeholder(rect: &Rect, viewport: &Viewport, out: &mut DisplayList) {
     let (x, y) = to_screen(viewport, rect.x, rect.y);
     out.push(DrawCommand::Rect {
         x,
@@ -197,9 +226,16 @@ mod tests {
     use doc_converter_render::display_list::LineStyle;
     use doc_converter_render::font::FontRegistry;
 
+    use std::collections::BTreeMap;
+
+    use doc_converter_core::NodeId;
+
     use super::*;
     use crate::layout::engine::{TableCellLayout, VAlign, PX_PER_POINT};
     use crate::layout::{layout_document, LayoutOptions, Page};
+    use crate::model::{
+        BlockItem, Body, Extent, Inline, InlineImage, InlineOrAnchor, Paragraph, Run, RunContent,
+    };
 
     /// Путь к фикстуре от корня репозитория.
     fn fixture_path(name: &str) -> PathBuf {
@@ -354,6 +390,73 @@ mod tests {
     fn same_segment(a: &DrawnLine, b: &DrawnLine) -> bool {
         let near = |x: f32, y: f32| (x - y).abs() < 0.01;
         near(a.x1, b.x1) && near(a.y1, b.y1) && near(a.x2, b.x2) && near(a.y2, b.y2)
+    }
+
+    /// Команды `Image` кадра: `(x, y, w, h, bitmap_id)` в порядке рисования.
+    fn drawn_images(dl: &DisplayList) -> Vec<(f32, f32, f32, f32, u32)> {
+        (0..dl.len())
+            .filter_map(|i| match dl.cmd(i) {
+                Some(DrawCommand::Image {
+                    x,
+                    y,
+                    w,
+                    h,
+                    bitmap_id,
+                }) => Some((*x, *y, *w, *h, *bitmap_id)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Документ из абзацев — для случаев, которых нет среди фикстур.
+    fn document_of(items: Vec<BlockItem>) -> crate::Document {
+        crate::Document {
+            id: NodeId::ROOT,
+            body: Body {
+                id: NodeId::new(1),
+                items,
+                sections: Vec::new(),
+            },
+            styles: crate::StyleTable::default(),
+            numbering: crate::NumberingTable::default(),
+            settings: crate::Settings::default(),
+            metadata: crate::Metadata::default(),
+            rels: crate::Relationships::default(),
+            footnotes: Vec::new(),
+            endnotes: Vec::new(),
+            comments: Vec::new(),
+            headers: BTreeMap::new(),
+            footers: BTreeMap::new(),
+            warnings: Vec::new(),
+            media: Vec::new(),
+        }
+    }
+
+    /// Абзац с одним встроенным рисунком; `part` — имя части, если оно известно.
+    fn paragraph_with_inline_image(part: Option<&str>) -> BlockItem {
+        BlockItem::Paragraph(Paragraph {
+            id: NodeId::new(2),
+            runs: vec![Inline::Run(Run {
+                id: NodeId::new(3),
+                content: vec![RunContent::Drawing(InlineOrAnchor {
+                    id: NodeId::new(4),
+                    inline: Some(InlineImage {
+                        id: NodeId::new(5),
+                        rel_id: "rIdImg1".to_owned(),
+                        part: part.map(str::to_owned),
+                        name: None,
+                        description: None,
+                        extent: Extent {
+                            cx: 457_200,
+                            cy: 685_800,
+                        },
+                    }),
+                    anchor: None,
+                })],
+                ..Run::default()
+            })],
+            ..Paragraph::default()
+        })
     }
 
     /// Прямоугольники заливки кадра.
@@ -598,30 +701,87 @@ mod tests {
         }
     }
 
-    /// Плавающий элемент — пока прямоугольник-плейсхолдер: `Image` в кадре не
-    /// появляется, медиа для него ещё не вынимается из архива.
+    /// Плавающий рисунок рисуется командой `Image` реального размера из
+    /// `wp:extent` (914400 EMU = 96 px, значит 120×90 px здесь — 120 и 90).
     #[test]
-    fn a_float_becomes_a_placeholder_rect() {
+    fn a_float_draws_the_image_command() {
         let layout = fixture_layout("images/anchor_wrap_square.docx");
         let dl = frame(&layout, 0);
 
-        let drawn = (0..dl.len())
-            .filter_map(|i| match dl.cmd(i) {
-                Some(DrawCommand::Rect {
-                    w, h, fill, stroke, ..
-                }) if *fill == Color::TRANSPARENT => Some((*w, *h, *stroke)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(drawn.len(), 1, "ровно один плейсхолдер");
-        assert_px(drawn[0].0, 120.0 * viewport().scale, "ширина");
-        assert_px(drawn[0].1, 90.0 * viewport().scale, "высота");
-        assert_ne!(drawn[0].2, Color::TRANSPARENT, "контур виден");
+        let images = drawn_images(&dl);
+        assert_eq!(images.len(), 1, "ровно одна команда `Image`");
+        assert_px(images[0].2, 120.0 * viewport().scale, "ширина");
+        assert_px(images[0].3, 90.0 * viewport().scale, "высота");
         assert_eq!(
-            count(&dl, |cmd| matches!(cmd, DrawCommand::Image { .. })),
+            count(&dl, |cmd| matches!(
+                cmd,
+                DrawCommand::Rect {
+                    fill: Color::TRANSPARENT,
+                    ..
+                }
+            )),
             0,
-            "рисунки отложены"
+            "плейсхолдер рисунку с байтами не нужен"
         );
+    }
+
+    /// Встроенные рисунки: каждый — своя команда `Image` размера `wp:extent`
+    /// (сайдкар `images/multiple_sizes.json`: 457200×457200 — 48×48 px,
+    /// 1371600×685800 — 144×72, 685800×1371600 — 72×144).
+    #[test]
+    fn inline_images_are_drawn_at_their_extents() {
+        let layout = fixture_layout("images/multiple_sizes.docx");
+        let dl = frame(&layout, 0);
+
+        let sizes: Vec<(f32, f32)> = drawn_images(&dl)
+            .into_iter()
+            .map(|(_, _, w, h, _)| (w, h))
+            .collect();
+        let expected = [(48.0, 48.0), (144.0, 72.0), (72.0, 144.0)];
+        assert_eq!(sizes.len(), expected.len(), "по команде на рисунок");
+        for ((w, h), (ew, eh)) in sizes.iter().zip(expected) {
+            assert_px(*w, ew * viewport().scale, "ширина рисунка");
+            assert_px(*h, eh * viewport().scale, "высота рисунка");
+        }
+        assert!(
+            count(&dl, |cmd| matches!(
+                cmd,
+                DrawCommand::Rect {
+                    fill: Color::TRANSPARENT,
+                    ..
+                }
+            )) == 0,
+            "габариты рисуются картинкой, а не плейсхолдером"
+        );
+    }
+
+    /// Рисунок, чьей медиачасти нет (битая или внешняя ссылка), остаётся
+    /// плейсхолдером: кадр не падает и не ссылается на чужие байты.
+    #[test]
+    fn an_image_without_bytes_stays_a_placeholder() {
+        let document = document_of(vec![paragraph_with_inline_image(Some(
+            "word/media/missing.png",
+        ))]);
+        let layout = layout_document(
+            &document,
+            &LayoutOptions::default(),
+            &mut FontRegistry::new(64),
+        )
+        .expect("раскладка не должна падать");
+        let dl = frame(&layout, 0);
+
+        assert_eq!(
+            drawn_images(&dl).len(),
+            0,
+            "байтов нет — команды `Image` быть не должно"
+        );
+        let placeholders: Vec<_> = drawn_rects(&dl)
+            .into_iter()
+            .filter(|(.., fill)| *fill == Color::TRANSPARENT)
+            .collect();
+        assert_eq!(placeholders.len(), 1, "габариты видны плейсхолдером");
+        assert_px(placeholders[0].2, 48.0 * viewport().scale, "ширина");
+        assert_px(placeholders[0].3, 72.0 * viewport().scale, "высота");
     }
 
     /// Таблицы страницы с глубиной вложенности: у вложенной таблицы глубина

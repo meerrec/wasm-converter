@@ -96,6 +96,7 @@ fn base_document() -> Document {
         headers: BTreeMap::new(),
         footers: BTreeMap::new(),
         warnings: Vec::new(),
+        media: Vec::new(),
     }
 }
 

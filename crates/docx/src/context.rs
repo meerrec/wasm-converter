@@ -24,6 +24,11 @@ pub(crate) struct ParseCtx {
     /// Набор на документ, а не на абзац: закладка вправе охватывать несколько
     /// абзацев, и `w:bookmarkEnd` встречается далеко от своего начала.
     bookmarks: BTreeSet<i64>,
+    /// Части медиа, на которые ссылаются рисунки, в порядке первой ссылки.
+    ///
+    /// Только имена: байты частей читает `parse.rs`, где на время разбора живёт
+    /// архив. Части без ссылок не читаются вовсе.
+    media: Vec<String>,
 }
 
 impl ParseCtx {
@@ -34,7 +39,24 @@ impl ParseCtx {
             ids: NodeIdAllocator::new(),
             warnings: Warnings::new(),
             bookmarks: BTreeSet::new(),
+            media: Vec::new(),
         }
+    }
+
+    /// Запомнить медиачасть, на которую ссылается рисунок.
+    ///
+    /// Повторная ссылка ничего не добавляет: байты одной части читаются один
+    /// раз, а порядок записей — порядок первого упоминания (по нему выдаются
+    /// идентификаторы байтов).
+    pub(crate) fn note_media(&mut self, part: &str) {
+        if !self.media.iter().any(|known| known == part) {
+            self.media.push(part.to_owned());
+        }
+    }
+
+    /// Забрать список медиачастей: разбор частей к этому моменту закончен.
+    pub(crate) fn take_media(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.media)
     }
 
     /// Следующий идентификатор узла.

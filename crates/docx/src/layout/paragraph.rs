@@ -440,6 +440,7 @@ mod tests {
             headers: std::collections::BTreeMap::new(),
             footers: std::collections::BTreeMap::new(),
             warnings: Vec::new(),
+            media: Vec::new(),
         }
     }
 
