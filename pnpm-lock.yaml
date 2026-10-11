@@ -86,6 +86,9 @@ importers:
         specifier: workspace:*
         version: link:../wasm
     devDependencies:
+      '@doc-converter/wasm-docx':
+        specifier: workspace:*
+        version: link:../wasm-docx
       '@doc-converter/wasm-pdf':
         specifier: workspace:*
         version: link:../wasm-pdf

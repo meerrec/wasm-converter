@@ -1,4 +1,5 @@
 import type {
+  DocxModuleUrls,
   InMsg,
   OutMsg,
   PageInfo,
@@ -40,6 +41,11 @@ export interface DocxViewerOptions {
   workerUrl?: string | URL;
   /** URL wasm-модуля; по умолчанию — рядом с бандлом воркера. */
   wasmUrl?: string;
+  /**
+   * Где лежит ленивый DOCX-модуль. Воркер грузит его при открытии документа;
+   * не задан — открытие получит внятную ошибку вместо страниц.
+   */
+  docxWasm?: DocxModuleUrls;
   /** Размер слота ring'а в байтах. */
   slotCapacity?: number;
   /** Начальный зум. */
@@ -171,7 +177,13 @@ export async function createDocxViewer(
     worker.addEventListener('message', onMessage);
     const off = canvas.transferControlToOffscreen();
     worker.postMessage(
-      { type: 'init', canvas: off, wasmUrl: options.wasmUrl, slotCapacity } satisfies InMsg,
+      {
+        type: 'init',
+        canvas: off,
+        wasmUrl: options.wasmUrl,
+        docx: options.docxWasm,
+        slotCapacity,
+      } satisfies InMsg,
       [off],
     );
   });

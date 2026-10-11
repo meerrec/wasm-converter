@@ -119,6 +119,19 @@ export interface PdfModuleUrls {
   binary?: string | undefined;
 }
 
+/**
+ * Ленивый DOCX-модуль: URL его JS-модуля и wasm-бинаря.
+ *
+ * Оба приходят с main-потока: воркер собран бандлом, и относительный путь из
+ * него ничего не значит. Не задан — открытие `.docx` вернёт внятную ошибку.
+ */
+export interface DocxModuleUrls {
+  /** JS-модуль `@doc-converter/wasm-docx`: воркер импортирует его при открытии `.docx`. */
+  module: string;
+  /** Бинарь для `init()`; без него wasm-bindgen ищет его рядом с модулем. */
+  binary?: string | undefined;
+}
+
 export interface InitMsg {
   type: 'init';
   canvas: OffscreenCanvas;
@@ -126,6 +139,8 @@ export interface InitMsg {
   wasmUrl?: string | undefined;
   /** Где лежит PDF-модуль. Не задан — экспорт ответит ошибкой. */
   pdf?: PdfModuleUrls | undefined;
+  /** Где лежит DOCX-модуль. Не задан — открыть документ не получится. */
+  docx?: DocxModuleUrls | undefined;
   slotCapacity: number;
 }
 

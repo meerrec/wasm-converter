@@ -31,6 +31,7 @@
     "@doc-converter/wasm": "workspace:*"
   },
   "devDependencies": {
+    "@doc-converter/wasm-docx": "workspace:*",
     "@doc-converter/wasm-pdf": "workspace:*",
     "tsup": "^8.3.5",
     "vitest": "^2.1.4",
