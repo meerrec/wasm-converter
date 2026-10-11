@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use doc_converter_docx::export::markdown::to_markdown;
-use doc_converter_docx::open;
+use doc_converter_docx::{open, BlockItem, Cell, Document, Justification};
 
 /// Каталог с фикстурами.
 fn fixtures_dir() -> PathBuf {
@@ -34,13 +34,26 @@ fn fixture_files() -> Vec<PathBuf> {
     paths
 }
 
-/// Разбирает фикстуру по имени и экспортирует её в Markdown.
-fn markdown_of(name: &str) -> String {
+/// Разбирает фикстуру по имени: тесты, которым мало корпуса, правят модель руками.
+fn document_of(name: &str) -> Document {
     let path = fixtures_dir().join(name);
     let bytes = std::fs::read(&path)
         .unwrap_or_else(|error| panic!("{} не читается: {error}", path.display()));
-    let document = open(bytes).unwrap_or_else(|error| panic!("{name} не разбирается: {error}"));
-    to_markdown(&document)
+    open(bytes).unwrap_or_else(|error| panic!("{name} не разбирается: {error}"))
+}
+
+/// Разбирает фикстуру по имени и экспортирует её в Markdown.
+fn markdown_of(name: &str) -> String {
+    to_markdown(&document_of(name))
+}
+
+/// Проставляет выравнивание всем абзацам ячейки: столбцу GFM достаточно одного.
+fn align_cell(cell: &mut Cell, jc: Option<Justification>) {
+    for item in &mut cell.items {
+        if let BlockItem::Paragraph(paragraph) = item {
+            paragraph.ppr.jc = jc.clone();
+        }
+    }
 }
 
 /// Проверяет, что ожидаемая строка есть в выводе; при расхождении печатает весь вывод.
@@ -92,6 +105,72 @@ fn table_cells_are_escaped_and_flattened() {
         markdown,
         "Text before\n\n| H1 | H2 |\n| --- | --- |\n| C1 | C2 |\n\nText after\n"
     );
+}
+
+#[test]
+fn vertical_merge_leaves_the_continuation_cells_empty() {
+    // GFM вертикального объединения не выражает: продолжения объединения остаются
+    // пустыми, а текст живёт только в его начале.
+    let expected = "| Объединено по вертикали | Строка 1 |\n\
+                    | --- | --- |\n\
+                    |  | Строка 2 |\n\
+                    |  | Строка 3 |\n";
+    assert_eq!(markdown_of("tables/v_merge.docx"), expected);
+
+    // Даже если продолжение несёт текст, в вывод он не попадает: место занято
+    // началом объединения, и повтор был бы выдуманными данными.
+    let mut document = document_of("tables/v_merge.docx");
+    let BlockItem::Table(table) = &mut document.body.items[0] else {
+        panic!("в фикстуре нет таблицы");
+    };
+    let duplicate = table.rows[1].cells[1].items.clone();
+    table.rows[1].cells[0].items = duplicate;
+    assert_eq!(to_markdown(&document), expected);
+}
+
+#[test]
+fn a_horizontally_merged_cell_is_padded_to_the_column_count() {
+    // `w:gridSpan` занимает в GFM одну ячейку: остальные места строки дописываются
+    // пустыми, иначе строки разошлись бы с разделителем по числу столбцов.
+    assert_eq!(
+        markdown_of("tables/grid_span.docx"),
+        "| Строка во всю ширину |  |  |\n\
+         | --- | --- | --- |\n\
+         | Две ячейки | C2 |  |\n\
+         | A3 | B3 | C3 |\n"
+    );
+}
+
+#[test]
+fn column_alignment_comes_from_the_first_row_cells() {
+    // Разделитель GFM один на столбец и идёт за строкой заголовка — выравнивание
+    // столбца берётся у ячеек первой строки.
+    let mut document = document_of("tables/alignment_widths.docx");
+    let BlockItem::Table(table) = &mut document.body.items[0] else {
+        panic!("в фикстуре нет таблицы");
+    };
+    align_cell(&mut table.rows[0].cells[0], Some(Justification::Both));
+    align_cell(&mut table.rows[0].cells[1], Some(Justification::Center));
+    align_cell(&mut table.rows[0].cells[2], Some(Justification::Right));
+    assert_has(&to_markdown(&document), "| --- | :---: | ---: |");
+
+    // Абзацы одной ячейки разошлись во выравнивании: приписать столбцу одну из двух
+    // сторон было бы произволом, и столбец остаётся с умолчанием GFM.
+    let mut document = document_of("tables/alignment_widths.docx");
+    let BlockItem::Table(table) = &mut document.body.items[0] else {
+        panic!("в фикстуре нет таблицы");
+    };
+    let second = table.rows[0].cells[1].items[0].clone();
+    table.rows[0].cells[1].items.push(second);
+    let BlockItem::Paragraph(first) = &mut table.rows[0].cells[1].items[0] else {
+        panic!("в ячейке нет абзаца");
+    };
+    first.ppr.jc = Some(Justification::Center);
+    let BlockItem::Paragraph(last) = table.rows[0].cells[1].items.last_mut().unwrap() else {
+        panic!("в ячейке нет абзаца");
+    };
+    last.ppr.jc = Some(Justification::Right);
+    assert_has(&to_markdown(&document), "| --- | --- | --- |");
 }
 
 #[test]

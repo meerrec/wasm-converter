@@ -8,16 +8,20 @@
 //! (каскад начертаний, уровень заголовка, счётчики списков) берётся из родительского
 //! модуля, чтобы экспортёры не расходились.
 
+use std::cmp::Ordering;
 use std::fmt::Write as _;
 
 use crate::layout::cascade::{ResolvedParagraph, StyleCache};
 use crate::model::inline::Paragraph;
 use crate::model::numbering::NumId;
-use crate::model::raw::{CellVAlign, Color, Justification};
-use crate::model::table::{Cell, Row, Table};
+use crate::model::raw::{
+    Border, BorderStyle, CellVAlign, Color, Justification, Shading, ShadingPattern,
+};
+use crate::model::table::{Cell, Table, TableLayout, TableWidth};
 use crate::model::BlockItem;
 use crate::Document;
 
+use super::grid::{self, Placed};
 use super::{
     heading_level, list_ref, paragraph_layout, segments, ListNumbering, Marks, Piece, Segment,
 };
@@ -45,6 +49,12 @@ pub fn to_html(document: &Document) -> String {
 /// Классы здесь только те, что ставит экспортёр; `h7`…`h9` — не элементы HTML
 /// (`display` у неизвестного элемента строчный), и без явного `display: block`
 /// заголовки седьмого уровня и глубже встали бы в строку с текстом.
+///
+/// Границы, заливка и поля ячеек приходят инлайн-стилями: значения у каждой ячейки
+/// свои. `border: 0` здесь гасит границу там, где её нет в документе, а поля
+/// `0 5.4pt` — умолчание `WordprocessingML` при отсутствии `w:tblCellMar`
+/// (108 twips по горизонтали, ноль по вертикали), поэтому в разметку попадают
+/// только отличия от него.
 const STYLE: &str = "\
 h1, h2, h3, h4, h5, h6, h7, h8, h9 {
   font-weight: 700;
@@ -65,8 +75,7 @@ p { margin: 0 0 0.6em; }
 ul, ol { margin: 0.4em 0 0.8em; padding-left: 1.7em; }
 li { margin: 0.15em 0; }
 table { border-collapse: collapse; margin: 0.6em 0; }
-th, td { border: 1px solid #a6a6a6; padding: 0.25em 0.5em; text-align: left; vertical-align: top; }
-th { background: #efefef; }
+th, td { border: 0; padding: 0 5.4pt; text-align: left; vertical-align: top; }
 td p, th p { margin: 0; }
 td p + p, th p + p { margin-top: 0.5em; }
 img { max-width: 100%; height: auto; }
@@ -337,49 +346,91 @@ impl<'a> Html<'a> {
         self.out.push('\n');
     }
 
-    /// Таблица: строки и ячейки; границы и отступы — в таблице стилей.
+    /// Таблица: полоса столбцов, строки и ячейки.
     ///
     /// Вложенная таблица остаётся таблицей — HTML это позволяет, в отличие от
     /// GFM-таблицы Markdown, где вложенность пришлось разворачивать в текст.
+    /// Внешний вид ячеек (границы, заливка, поля) выражается инлайн-стилями:
+    /// значения у каждой ячейки свои, классом их не выразить.
     fn table(&mut self, table: &Table) {
         self.end_lists();
-        if table.rows.is_empty() {
+        let placed = grid::place(table);
+        if placed.is_empty() {
             return;
         }
         self.out.push_str("<table");
         self.out
             .push_str(&class_attribute(alignment_class(table.jc.as_ref())));
+        let style = table_style(table);
+        if !style.is_empty() {
+            self.out.push_str(" style=\"");
+            self.out.push_str(&style);
+            self.out.push('"');
+        }
         self.out.push_str(">\n");
-        for row in &table.rows {
-            self.row(row);
+        self.colgroup(table);
+        let mut next = 0;
+        for (index, row) in table.rows.iter().enumerate() {
+            self.out.push_str("<tr>");
+            while let Some(place) = placed.get(next).filter(|place| place.row == index) {
+                // Ячейка-продолжение своего элемента не получает: её место занято
+                // `rowspan`-ом начала объединения.
+                if !place.continuation {
+                    self.cell(table, place, index, row.header);
+                }
+                next += 1;
+            }
+            self.out.push_str("</tr>\n");
         }
         self.out.push_str("</table>\n");
     }
 
-    /// Строка таблицы: ячейки строки `w:tblHeader` — заголовочные (`<th>`).
-    fn row(&mut self, row: &Row) {
-        let tag = if row.header { "th" } else { "td" };
-        self.out.push_str("<tr>");
-        for cell in &row.cells {
-            self.cell(cell, tag);
+    /// Полоса столбцов: ширины `w:tblGrid` в процентах от их суммы.
+    ///
+    /// Проценты, а не пункты: сетка задаёт доли столбцов, а ширину всей таблицы —
+    /// `w:tblW`, который попадает в стиль таблицы. Сетки может не быть вовсе
+    /// (`w:tblGrid` необязателен) — тогда столбцы размечает браузер.
+    fn colgroup(&mut self, table: &Table) {
+        let widths = column_widths(table);
+        if widths.is_empty() {
+            return;
         }
-        self.out.push_str("</tr>\n");
+        self.out.push_str("<colgroup>");
+        for width in &widths {
+            self.out.push_str("<col style=\"width: ");
+            self.out.push_str(width);
+            self.out.push_str("%\">");
+        }
+        self.out.push_str("</colgroup>\n");
     }
 
-    /// Ячейка: объединённые столбцы — `colspan`, содержимое — блоками, как в теле.
-    fn cell(&mut self, cell: &Cell, tag: &str) {
+    /// Ячейка: объединения — атрибутами, оформление — стилем, содержимое — блоками,
+    /// как в теле документа.
+    fn cell(&mut self, table: &Table, place: &Placed<'_>, row: usize, header: bool) {
+        let tag = if header { "th" } else { "td" };
         self.out.push('<');
         self.out.push_str(tag);
-        if cell.grid_span > 1 {
+        if place.cols > 1 {
             self.out.push_str(" colspan=\"");
-            self.out.push_str(&cell.grid_span.to_string());
+            self.out.push_str(&place.cols.to_string());
+            self.out.push('"');
+        }
+        if place.rows > 1 {
+            self.out.push_str(" rowspan=\"");
+            self.out.push_str(&place.rows.to_string());
+            self.out.push('"');
+        }
+        let style = cell_style(table, place, row);
+        if !style.is_empty() {
+            self.out.push_str(" style=\"");
+            self.out.push_str(&style);
             self.out.push('"');
         }
         self.out
-            .push_str(&class_attribute(v_align_class(cell.v_align)));
+            .push_str(&class_attribute(v_align_class(place.cell.v_align)));
         self.out.push('>');
         let start = self.out.len();
-        for item in &cell.items {
+        for item in &place.cell.items {
             self.block(item);
         }
         self.end_lists();
@@ -391,6 +442,416 @@ impl<'a> Html<'a> {
         self.out.push_str(tag);
         self.out.push('>');
     }
+}
+
+/// Стиль таблицы: ширина (`w:tblW`), фиксированная раскладка и отступ от поля.
+///
+/// Выравнивание (`w:jc`) — классом: `margin-left/right: auto` в таблице стилей.
+/// `w:tblW` типа `auto` ширины не задаёт: Word считает её по содержимому, а в HTML
+/// это и есть `width: auto`. `w:tblInd` при выравнивании по центру и справа Word
+/// игнорирует — отступ тогда не выводится.
+fn table_style(table: &Table) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    match table.width.as_ref() {
+        Some(TableWidth::Pct(pct)) if pct.is_finite() && *pct > 0.0 => {
+            parts.push(format!("width: {}%", number(f64::from(*pct))));
+        }
+        Some(TableWidth::Dxa(twips)) if twips.value() > 0 => {
+            parts.push(format!(
+                "width: {}pt",
+                number(f64::from(twips.value()) / 20.0)
+            ));
+        }
+        Some(TableWidth::Auto | TableWidth::Pct(_) | TableWidth::Dxa(_)) | None => {}
+    }
+    // Фиксированная раскладка держит ширины столбцов из сетки: так же считает таблицу
+    // и Word при `w:tblLayout w:type="fixed"`.
+    if table.layout == TableLayout::Fixed && !table.grid.is_empty() {
+        parts.push("table-layout: fixed".to_owned());
+    }
+    let aligned = matches!(
+        table.jc,
+        Some(Justification::Center | Justification::Right | Justification::End)
+    );
+    if let Some(indent) = table.indent.filter(|_| !aligned) {
+        parts.push(format!(
+            "margin-left: {}pt",
+            number(f64::from(indent.value().max(0)) / 20.0)
+        ));
+    }
+    parts.join("; ")
+}
+
+/// Ширины столбцов в процентах от суммы `w:tblGrid`; пусто — сетки нет или она нулевая.
+fn column_widths(table: &Table) -> Vec<String> {
+    let total: f64 = table
+        .grid
+        .iter()
+        .map(|column| f64::from(column.width.value().max(0)))
+        .sum();
+    if total <= 0.0 {
+        return Vec::new();
+    }
+    table
+        .grid
+        .iter()
+        .map(|column| number(f64::from(column.width.value().max(0)) / total * 100.0))
+        .collect()
+}
+
+/// Оформление ячейки: границы, заливка и поля — только то, что отличается от
+/// умолчаний таблицы стилей.
+fn cell_style(table: &Table, place: &Placed<'_>, row: usize) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for (side, border) in cell_borders(table, place, row) {
+        let Some(border) = border else {
+            // Граница не нарисована: в стилях её гасит `border: 0` таблицы стилей.
+            continue;
+        };
+        parts.push(format!(
+            "border-{side}: {} {} {}",
+            border_width(border),
+            line_style(&border.val),
+            color(border.color.as_ref())
+        ));
+    }
+    if let Some(fill) = fill_color(place.cell.shading.as_ref()) {
+        parts.push(format!("background-color: {fill}"));
+    }
+    if let Some(padding) = padding(table, place.cell) {
+        parts.push(format!("padding: {padding}"));
+    }
+    parts.join("; ")
+}
+
+/// Эффективные границы ячейки по четырём сторонам.
+///
+/// Внешние рёбра таблицы берут её `top`/`left`/`bottom`/`right`, внутренние —
+/// `insideH`/`insideV`; на общем ребре двух ячеек остаётся сильнейшая из границ —
+/// так же, как схлопывает границы Word (ECMA-376 §17.7.6: ширина, затем стиль).
+fn cell_borders<'a>(
+    table: &'a Table,
+    place: &Placed<'a>,
+    row: usize,
+) -> [(&'static str, Option<&'a Border>); 4] {
+    let borders = &table.borders;
+    [
+        (
+            "top",
+            edge(
+                place.cell.borders.top.as_ref(),
+                &neighbours(table, place, Side::Top),
+                if row == 0 {
+                    borders.top.as_ref()
+                } else {
+                    borders.inside_h.as_ref()
+                },
+            ),
+        ),
+        (
+            "right",
+            edge(
+                place.cell.borders.right.as_ref(),
+                &neighbours(table, place, Side::Right),
+                if is_last_column(table, place) {
+                    borders.right.as_ref()
+                } else {
+                    borders.inside_v.as_ref()
+                },
+            ),
+        ),
+        (
+            "bottom",
+            edge(
+                place.cell.borders.bottom.as_ref(),
+                &neighbours(table, place, Side::Bottom),
+                if row + usize::try_from(place.rows).unwrap_or(usize::MAX) >= table.rows.len() {
+                    borders.bottom.as_ref()
+                } else {
+                    borders.inside_h.as_ref()
+                },
+            ),
+        ),
+        (
+            "left",
+            edge(
+                place.cell.borders.left.as_ref(),
+                &neighbours(table, place, Side::Left),
+                if place.col == 0 {
+                    borders.left.as_ref()
+                } else {
+                    borders.inside_v.as_ref()
+                },
+            ),
+        ),
+    ]
+}
+
+/// Сторона ячейки, по которой ищутся соседи.
+#[derive(Clone, Copy)]
+enum Side {
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+/// Границы соседей по стороне: чужие рёбра, которые смотрят на это.
+///
+/// У объединённой по вертикали ячейки соседи справа и слева стоят в разных строках
+/// и их может быть несколько — своё ребро у каждого.
+fn neighbours<'a>(table: &'a Table, place: &Placed<'_>, side: Side) -> Vec<&'a Border> {
+    let end = place.end_col();
+    let rows = usize::try_from(place.rows).unwrap_or(usize::MAX);
+    let mut out = Vec::new();
+    match side {
+        Side::Top => {
+            if let Some(row) = place.row.checked_sub(1).and_then(|row| table.rows.get(row)) {
+                for (col, cell, cols) in grid::row_cells(row) {
+                    if overlaps(
+                        col,
+                        col + usize::try_from(cols).unwrap_or(usize::MAX),
+                        place.col,
+                        end,
+                    ) {
+                        out.push(cell.borders.bottom.as_ref());
+                    }
+                }
+            }
+        }
+        Side::Bottom => {
+            if let Some(row) = table.rows.get(place.row.saturating_add(rows)) {
+                for (col, cell, cols) in grid::row_cells(row) {
+                    if overlaps(
+                        col,
+                        col + usize::try_from(cols).unwrap_or(usize::MAX),
+                        place.col,
+                        end,
+                    ) {
+                        out.push(cell.borders.top.as_ref());
+                    }
+                }
+            }
+        }
+        Side::Left => {
+            for row in table.rows.iter().skip(place.row).take(rows) {
+                for (col, cell, cols) in grid::row_cells(row) {
+                    if col + usize::try_from(cols).unwrap_or(usize::MAX) == place.col {
+                        out.push(cell.borders.right.as_ref());
+                    }
+                }
+            }
+        }
+        Side::Right => {
+            for row in table.rows.iter().skip(place.row).take(rows) {
+                for (col, cell, _) in grid::row_cells(row) {
+                    if col == end {
+                        out.push(cell.borders.left.as_ref());
+                    }
+                }
+            }
+        }
+    }
+    out.into_iter().flatten().collect()
+}
+
+/// Пересекаются ли отрезки столбцов `[a, a_end)` и `[b, b_end)`.
+fn overlaps(a: usize, a_end: usize, b: usize, b_end: usize) -> bool {
+    a < b_end && b < a_end
+}
+
+/// Ячейка занимает последний столбец таблицы: правого соседа нет.
+fn is_last_column(table: &Table, place: &Placed<'_>) -> bool {
+    let end = place.end_col();
+    table.rows.iter().all(|row| {
+        grid::row_cells(row)
+            .iter()
+            .all(|(col, _, _)| *col < end || *col == place.col)
+    })
+}
+
+/// Граница ребра: своя у ячейки, своя у соседей, затем табличная.
+///
+/// Границы ячеек сильнее табличной; на общем ребре двух ячеек остаётся сильнейшая.
+/// Между равными по силе выигрывает первая — своя у ячейки, дальше соседи сверху
+/// и слева: то же правило, что у Word для равных границ.
+fn edge<'a>(
+    own: Option<&'a Border>,
+    neighbours: &[&'a Border],
+    shared: Option<&'a Border>,
+) -> Option<&'a Border> {
+    let border = strongest(
+        own.into_iter()
+            .chain(neighbours.iter().copied())
+            .filter(|border| draws(border)),
+    );
+    if border.is_some() {
+        return border;
+    }
+    // Ни ячейка, ни соседи своей линии не рисуют: остаётся граница таблицы.
+    // Своя граница без линии (`nil`/`none`) гасит и её — так в Word убирают
+    // табличную границу у одной ячейки.
+    if own.is_some() {
+        return None;
+    }
+    shared.filter(|border| draws(border))
+}
+
+/// Сильнейшая из границ: сначала по толщине, затем по заметности стиля.
+fn strongest<'a>(borders: impl IntoIterator<Item = &'a Border>) -> Option<&'a Border> {
+    let mut best: Option<&Border> = None;
+    for border in borders {
+        if best.is_none_or(|current| wins(border, current)) {
+            best = Some(border);
+        }
+    }
+    best
+}
+
+/// `a` сильнее `b`: толще, а при равной толщине — заметнее по стилю.
+fn wins(a: &Border, b: &Border) -> bool {
+    match width(a).cmp(&width(b)) {
+        Ordering::Equal => style_rank(&a.val) > style_rank(&b.val),
+        ordering => ordering.is_gt(),
+    }
+}
+
+/// Толщина границы в восьмых долях пункта; отсутствующая — как у одиночной линии Word.
+fn width(border: &Border) -> u32 {
+    border.sz.unwrap_or(4)
+}
+
+/// Порядок заметности стилей для схлопывания: приближение порядка `ECMA-376`
+/// (§17.7.6) — там, где стили не сравнимы напрямую (штрих-пунктир против волнистой
+/// линии), порядок выбран по внешнему виду.
+fn style_rank(style: &BorderStyle) -> u8 {
+    match style {
+        BorderStyle::Nil | BorderStyle::None => 0,
+        BorderStyle::Single | BorderStyle::Thick => 1,
+        BorderStyle::Dotted
+        | BorderStyle::Dashed
+        | BorderStyle::DashSmallGap
+        | BorderStyle::DotDash
+        | BorderStyle::DotDotDash
+        | BorderStyle::DashDotStroked => 2,
+        BorderStyle::Double | BorderStyle::Triple => 3,
+        BorderStyle::Wave | BorderStyle::DoubleWave => 4,
+        BorderStyle::ThreeDEmboss
+        | BorderStyle::ThreeDEngrave
+        | BorderStyle::Inset
+        | BorderStyle::Outset => 5,
+        // Составные линии с зазором (`thinThickSmallGap` и родственные) и неизвестные
+        // стили: в CSS им соответствия нет, но линия заметная.
+        BorderStyle::ThinThickSmallGap
+        | BorderStyle::ThickThinSmallGap
+        | BorderStyle::ThinThickThinSmallGap
+        | BorderStyle::ThinThickMediumGap
+        | BorderStyle::ThickThinMediumGap
+        | BorderStyle::ThinThickThinMediumGap
+        | BorderStyle::ThinThickLargeGap
+        | BorderStyle::ThickThinLargeGap
+        | BorderStyle::ThinThickThinLargeGap
+        | BorderStyle::Other(_) => 6,
+    }
+}
+
+/// Рисует ли граница линию: `nil` и `none` — нет.
+fn draws(border: &Border) -> bool {
+    !matches!(border.val, BorderStyle::Nil | BorderStyle::None)
+}
+
+/// Стиль линии CSS; чего в CSS нет — ближайшее существующее (штрих-пунктир — штрих,
+/// волнистая линия — сплошная), чтобы граница осталась видимой и на месте.
+fn line_style(style: &BorderStyle) -> &'static str {
+    match style {
+        BorderStyle::Double
+        | BorderStyle::Triple
+        | BorderStyle::ThinThickSmallGap
+        | BorderStyle::ThickThinSmallGap
+        | BorderStyle::ThinThickThinSmallGap
+        | BorderStyle::ThinThickMediumGap
+        | BorderStyle::ThickThinMediumGap
+        | BorderStyle::ThinThickThinMediumGap
+        | BorderStyle::ThinThickLargeGap
+        | BorderStyle::ThickThinLargeGap
+        | BorderStyle::ThinThickThinLargeGap => "double",
+        BorderStyle::Dotted | BorderStyle::DotDotDash => "dotted",
+        BorderStyle::Dashed
+        | BorderStyle::DashSmallGap
+        | BorderStyle::DotDash
+        | BorderStyle::DashDotStroked => "dashed",
+        BorderStyle::ThreeDEmboss => "ridge",
+        BorderStyle::ThreeDEngrave => "groove",
+        BorderStyle::Inset => "inset",
+        BorderStyle::Outset => "outset",
+        _ => "solid",
+    }
+}
+
+/// Толщина линии в пикселях: `w:sz` — восьмые доли пункта, пункт — 4/3 пикселя.
+fn border_width(border: &Border) -> String {
+    let points = f64::from(width(border)) / 8.0;
+    format!("{}px", number(points * 4.0 / 3.0))
+}
+
+/// Цвет линии: `auto` и отсутствующий Word рисует основным цветом текста (чёрным).
+fn color(color: Option<&Color>) -> String {
+    match color {
+        Some(Color::Rgb(rgb)) => format!("#{rgb:06x}"),
+        Some(Color::Auto | Color::None) | None => "#000000".to_owned(),
+    }
+}
+
+/// Заливка ячейки (`w:shd w:fill`); `auto` и `nil` заливкой не считаются.
+///
+/// Узор заливки (`w:val` вида `horzStripe`) в CSS не выражается: берётся цвет фона,
+/// а штриховка теряется.
+fn fill_color(shading: Option<&Shading>) -> Option<String> {
+    let shading = shading?;
+    if shading.val == ShadingPattern::Nil {
+        return None;
+    }
+    match shading.fill.as_ref()? {
+        Color::Rgb(rgb) => Some(format!("#{rgb:06x}")),
+        Color::Auto | Color::None => None,
+    }
+}
+
+/// Поля ячейки: свои поверх табличных, при отсутствии обоих — умолчание
+/// `WordprocessingML` (108 twips по горизонтали, ноль по вертикали).
+///
+/// `None` — поля совпали с умолчанием, которое уже стоит в таблице стилей.
+fn padding(table: &Table, cell: &Cell) -> Option<String> {
+    let table_margins = &table.cell_margins;
+    // Порядок сторон — как в CSS: сверху, справа, снизу, слева.
+    let twips = [
+        cell.margins
+            .top
+            .or(table_margins.top)
+            .map_or(0, |twips| twips.value()),
+        cell.margins
+            .right
+            .or(table_margins.right)
+            .map_or(108, |twips| twips.value()),
+        cell.margins
+            .bottom
+            .or(table_margins.bottom)
+            .map_or(0, |twips| twips.value()),
+        cell.margins
+            .left
+            .or(table_margins.left)
+            .map_or(108, |twips| twips.value()),
+    ];
+    if twips == [0, 108, 0, 108] {
+        return None;
+    }
+    Some(
+        twips
+            .iter()
+            .map(|&twips| format!("{}pt", number(f64::from(twips.max(0)) / 20.0)))
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
 }
 
 /// Содержимое абзаца разметкой: `document` нужен каскаду для начертаний и стилей ссылок.
@@ -539,15 +1000,21 @@ fn push_twips(out: &mut String, twips: i32) {
 
 /// Число в пунктах: без хвостовых нулей, чтобы `612.00` не попало в стили.
 fn push_points(out: &mut String, points: f64) {
-    let mut text = format!("{points:.2}");
+    out.push_str(&number(points));
+    out.push_str("pt");
+}
+
+/// Число с точностью до сотых и без хвостовых нулей: `612.00` — это `612`, а
+/// `33.333333` — `33.33`.
+fn number(value: f64) -> String {
+    let mut text = format!("{value:.2}");
     while text.ends_with('0') {
         text.pop();
     }
     if text.ends_with('.') {
         text.pop();
     }
-    out.push_str(&text);
-    out.push_str("pt");
+    text
 }
 
 /// Имя шрифта как строка CSS: кавычка или обратный слэш закрыли бы её раньше времени.

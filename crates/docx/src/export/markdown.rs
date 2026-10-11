@@ -3,10 +3,12 @@
 use crate::layout::cascade::{ResolvedParagraph, StyleCache};
 use crate::model::inline::{BreakKind, Paragraph};
 use crate::model::numbering::NumId;
+use crate::model::raw::Justification;
 use crate::model::table::{Cell, Table};
 use crate::model::BlockItem;
 use crate::Document;
 
+use super::grid;
 use super::{
     heading_level, list_ref, paragraph_layout, segments, text, trim_end_newlines, ListNumbering,
     Marks, Piece, Segment,
@@ -108,27 +110,133 @@ fn paragraph_markdown(
 /// Таблица: первая строка — заголовок, вторая — разделитель, дальше строки данных.
 /// Ячейка-строка собирается из абзацев ячейки через `<br>`; вложенная таблица
 /// разворачивается в текст (разметка таблицы внутрь ячейки не вкладывается).
+///
+/// Вертикальное объединение (`w:vMerge`) GFM не выражает: ячейка-продолжение
+/// выводится пустой. Текст остаётся только в начале объединения — повторять его
+/// в каждой строке значило бы выдумать данные, которых в документе нет.
+///
+/// Выравнивание столбца берётся у ячейки первой строки: разделитель GFM один на
+/// весь столбец, а первая строка и объявлена заголовком. Выравнивание ячейки вне
+/// первой строки в разделитель не попадает — GFM его не выражает.
 fn table_markdown(document: &Document, table: &Table, cache: &mut StyleCache, out: &mut String) {
+    let placed = grid::place(table);
     let columns = columns(table);
     if table.rows.is_empty() || columns == 0 {
         return;
     }
+    let alignments = column_alignments(document, &placed, columns, cache);
     let mut lines: Vec<String> = Vec::with_capacity(table.rows.len() + 1);
-    for row in &table.rows {
-        let mut cells: Vec<String> = row
-            .cells
+    for (index, _) in table.rows.iter().enumerate() {
+        let mut cells: Vec<String> = placed
             .iter()
-            .map(|cell| cell_markdown(document, cell, cache))
+            .filter(|place| place.row == index)
+            .map(|place| {
+                if place.continuation {
+                    String::new()
+                } else {
+                    cell_markdown(document, place.cell, cache)
+                }
+            })
             .collect();
         cells.resize(columns.max(cells.len()), String::new());
         lines.push(format!("| {} |", cells.join(" | ")));
-        if lines.len() == 1 {
-            let separator = vec!["---"; columns].join(" | ");
+        if index == 0 {
+            // Разделитель идёт сразу за строкой заголовка: GFM читает его как
+            // объявление столбцов и их выравнивания.
+            let separator = (0..cells.len())
+                .map(|column| {
+                    alignments
+                        .get(column)
+                        .copied()
+                        .unwrap_or_default()
+                        .separator()
+                })
+                .collect::<Vec<_>>()
+                .join(" | ");
             lines.push(format!("| {separator} |"));
         }
     }
     end_block(out);
     out.push_str(&lines.join("\n"));
+}
+
+/// Выравнивание столбцов таблицы по ячейкам первой строки.
+///
+/// У ячейки с `w:gridSpan` выравнивание достаётся всем её столбцам.
+fn column_alignments(
+    document: &Document,
+    placed: &[grid::Placed<'_>],
+    columns: usize,
+    cache: &mut StyleCache,
+) -> Vec<Alignment> {
+    let mut alignments = vec![Alignment::default(); columns];
+    for place in placed.iter().filter(|place| place.row == 0) {
+        let alignment = cell_alignment(document, place.cell, cache);
+        for column in place.col..place.end_col().min(columns) {
+            if let Some(slot) = alignments.get_mut(column) {
+                *slot = alignment;
+            }
+        }
+    }
+    alignments
+}
+
+/// Выравнивание ячейки: `w:jc` её абзацев, если они не противоречат друг другу.
+///
+/// У ячейки с разным выравниванием абзацев своего выравнивания нет: столбцу
+/// приписать одну из двух сторон было бы произволом.
+fn cell_alignment(document: &Document, cell: &Cell, cache: &mut StyleCache) -> Alignment {
+    let mut alignment: Option<Alignment> = None;
+    for item in &cell.items {
+        let BlockItem::Paragraph(paragraph) = item else {
+            continue;
+        };
+        let Some(jc) = paragraph_layout(document, paragraph, cache).ppr.jc else {
+            continue;
+        };
+        let found = Alignment::of(&jc);
+        match alignment {
+            Some(previous) if previous != found => return Alignment::default(),
+            _ => alignment = Some(found),
+        }
+    }
+    alignment.unwrap_or_default()
+}
+
+/// Выравнивание столбца в GFM: `:---`, `:---:` или `---:`.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+enum Alignment {
+    /// По левому краю — умолчание GFM; оно и у неизвестного выравнивания.
+    #[default]
+    Left,
+    /// По центру.
+    Center,
+    /// По правому краю.
+    Right,
+}
+
+impl Alignment {
+    /// Выравнивание по `w:jc` абзаца.
+    fn of(jc: &Justification) -> Self {
+        match jc {
+            Justification::Center => Self::Center,
+            Justification::Right | Justification::End => Self::Right,
+            Justification::Left
+            | Justification::Start
+            | Justification::Both
+            | Justification::Distribute
+            | Justification::Other(_) => Self::Left,
+        }
+    }
+
+    /// Ячейка разделителя GFM для этого выравнивания.
+    fn separator(self) -> &'static str {
+        match self {
+            Self::Left => "---",
+            Self::Center => ":---:",
+            Self::Right => "---:",
+        }
+    }
 }
 
 /// Число столбцов таблицы: по сетке (`w:tblGrid`) и по ячейкам строк с учётом `w:gridSpan`.
