@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 import { FrameMeters } from '../../components/FrameMeters.js';
 import {
   Icon,
@@ -15,15 +15,17 @@ import {
   type IconName,
   type RibbonTab,
 } from '../../components/office/index.js';
-import { listFixtures } from '../../lib/fixtures.js';
+import { useDocxPage, type ExportKind } from './use_docx_page.js';
 
 /**
  * Страница DOCX («Слово»): каркас Office вокруг вьюера.
  *
- * Слайс рисует только каркас: команды ленты недоступны, работают контролы
- * документа (файл, фикстура, зум) и экспорт — его обработчики появятся вместе
- * с вьюером. Места, куда он встанет, помечены id: `#viewer`, `#page-info`,
- * `#status` и счётчики кадров.
+ * Работает ровно то, что делает вьюер: открытие документа, выбор фикстуры,
+ * перетаскивание файла, переход по страницам, зум и экспорт. Остальные команды
+ * ленты — правдоподобный, но недоступный фон; состояние и вызовы вьюера живут
+ * в `useDocxPage`, здесь остаются разметка и контракт id (`#viewer`,
+ * `#page-prev`, `#page-info`, `#page-next`, `#pages`, `#status`, `#zoom`,
+ * `#export-*`, счётчики кадров).
  */
 
 /** Вкладки ленты — как в Word. */
@@ -47,24 +49,24 @@ const SIZES = ['8', '9', '10', '11', '12', '14', '16', '18', '24'];
 
 /** Масштабы зума: те же, что у вьюера, и в том же виде, что в Office. */
 const ZOOM = [
-  { value: '0.5', label: '50 %' },
-  { value: '0.75', label: '75 %' },
-  { value: '1', label: '100 %' },
-  { value: '1.5', label: '150 %' },
-  { value: '2', label: '200 %' },
+  { value: 0.5, label: '50 %' },
+  { value: 0.75, label: '75 %' },
+  { value: 1, label: '100 %' },
+  { value: 1.5, label: '150 %' },
+  { value: 2, label: '200 %' },
 ];
 
 /** Подписи для списка «Масштаб»: в списке ленты живут они, а не множители. */
 const ZOOM_LABELS = ZOOM.map((option) => option.label);
 
 /** Множитель по подписи из списка; отбор идёт по своему же списку. */
-function zoomByLabel(label: string): string {
+function zoomByLabel(label: string): number {
   const found = ZOOM.find((option) => option.label === label);
-  return found === undefined ? '1' : found.value;
+  return found === undefined ? 1 : found.value;
 }
 
 /** Подпись текущего масштаба — её показывают лента и строка состояния. */
-function zoomLabel(value: string): string {
+function zoomLabel(value: number): string {
   const found = ZOOM.find((option) => option.value === value);
   return found === undefined ? '100 %' : found.label;
 }
@@ -214,8 +216,17 @@ const OTHER_RIBBONS: Record<string, RibbonSpec[]> = {
   ],
 };
 
+/** Пропсы ленты «Главная»: всё, что доступно от вьюера и страницы. */
+interface HomeRibbonProps {
+  zoom: number;
+  ready: boolean;
+  onZoom: (zoom: number) => void;
+  onExport: (kind: ExportKind) => void;
+  exportDisabled: (kind: ExportKind) => boolean;
+}
+
 /** Лента «Главная»: та же, что в Word, и так же разложена по группам. */
-function HomeRibbon(props: { zoom: string; onZoom: (value: string) => void }): ReactElement {
+function HomeRibbon(props: HomeRibbonProps): ReactElement {
   return (
     <div className="ofc-ribbon-body">
       <RibbonGroup label="Буфер обмена">
@@ -287,16 +298,52 @@ function HomeRibbon(props: { zoom: string; onZoom: (value: string) => void }): R
           <RibbonButton icon="select" label="Выделить" disabled />
         </div>
       </RibbonGroup>
-      {/* Экспорт — единственная работающая группа: она уводит документ из
-          вьюера в файл и вьюера не требует. */}
+      {/* Экспорт — первое, что делает вьюер: без открытого документа
+          экспортировать нечего, поэтому кнопки ждут его. */}
       <RibbonGroup label="Экспорт">
-        <RibbonButton icon="pdf" label="PDF" large id="export-pdf" />
-        <RibbonButton icon="markdown" label="Markdown" large id="export-md" />
-        <RibbonButton icon="html" label="HTML" large id="export-html" />
-        <RibbonButton icon="text" label="Текст" large id="export-txt" />
+        <RibbonButton
+          icon="pdf"
+          label="PDF"
+          large
+          id="export-pdf"
+          disabled={props.exportDisabled('pdf')}
+          onClick={() => {
+            props.onExport('pdf');
+          }}
+        />
+        <RibbonButton
+          icon="markdown"
+          label="Markdown"
+          large
+          id="export-md"
+          disabled={props.exportDisabled('markdown')}
+          onClick={() => {
+            props.onExport('markdown');
+          }}
+        />
+        <RibbonButton
+          icon="html"
+          label="HTML"
+          large
+          id="export-html"
+          disabled={props.exportDisabled('html')}
+          onClick={() => {
+            props.onExport('html');
+          }}
+        />
+        <RibbonButton
+          icon="text"
+          label="Текст"
+          large
+          id="export-txt"
+          disabled={props.exportDisabled('text')}
+          onClick={() => {
+            props.onExport('text');
+          }}
+        />
       </RibbonGroup>
-      {/* Масштаб — тоже команда вьюера, а не каркаса: она переживает отказ
-          документа и остаётся доступной, когда остальная лента пуста. */}
+      {/* Масштаб — тоже команда вьюера, а не каркаса: она остаётся доступной
+          и без документа, но не без вьюера. */}
       <RibbonGroup label="Масштаб">
         <RibbonSelect
           id="zoom"
@@ -305,6 +352,7 @@ function HomeRibbon(props: { zoom: string; onZoom: (value: string) => void }): R
           ariaLabel="Масштаб"
           title="Масштаб документа"
           width={88}
+          disabled={!props.ready}
           onChange={(label) => {
             props.onZoom(zoomByLabel(label));
           }}
@@ -316,43 +364,43 @@ function HomeRibbon(props: { zoom: string; onZoom: (value: string) => void }): R
 
 /** Страница «Слово». */
 export default function DocxPage(): ReactElement {
+  // Вкладка ленты — вид страницы, а не документ: её место здесь, рядом с
+  // разметкой ленты.
   const [tab, setTab] = useState('home');
-  const [zoom, setZoom] = useState('1');
-  const [fixture, setFixture] = useState('');
-  const [fixtures, setFixtures] = useState<string[]>([]);
-
-  // Список фикстур — удобство разработки: без него файл выбирают и перетаскивают.
-  useEffect(() => {
-    let alive = true;
-    void listFixtures('docx').then((names) => {
-      if (alive) setFixtures(names);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
+  const page = useDocxPage();
   const groups = OTHER_RIBBONS[tab];
+
   return (
     <div className="ofc-app">
-      <TitleBar logo={<LogoWord size={20} />} app="Слово" documentName="Документ1">
+      <TitleBar
+        logo={<LogoWord size={20} />}
+        app="Слово"
+        documentName={page.label ?? 'Документ1'}
+      >
         <label className="ofc-file" title="Открыть документ с диска">
-          <input id="file" type="file" accept=".docx" />
+          <input
+            id="file"
+            type="file"
+            accept=".docx"
+            disabled={!page.ready}
+            onChange={page.onFileChange}
+          />
           <Icon name="file" size={14} />
           Открыть
         </label>
         <select
           id="fixture"
           title="Фикстура"
-          value={fixture}
-          onChange={(event) => {
-            setFixture(event.target.value);
-          }}
+          value={page.fixture}
+          disabled={!page.ready}
+          onChange={page.onFixtureChange}
         >
           <option value="">— фикстура —</option>
-          {fixtures.map((name) => (
+          {page.fixtures.map((name) => (
             <option key={name} value={name}>
-              {name}
+              {/* Категорию видно в значении, а в подписи она только мешает:
+                  документы в списке различает имя файла. */}
+              {name.replace(/\.docx$/, '')}
             </option>
           ))}
         </select>
@@ -360,7 +408,13 @@ export default function DocxPage(): ReactElement {
       <div className="ofc-ribbon">
         <RibbonTabs tabs={TABS} activeId={tab} onSelect={setTab} />
         {tab === 'home' ? (
-          <HomeRibbon zoom={zoom} onZoom={setZoom} />
+          <HomeRibbon
+            zoom={page.zoom}
+            ready={page.ready}
+            onZoom={page.setZoom}
+            onExport={page.exportDocument}
+            exportDisabled={page.exportDisabled}
+          />
         ) : (
           <div className="ofc-ribbon-body">
             {groups?.map((group) => (
@@ -373,30 +427,63 @@ export default function DocxPage(): ReactElement {
           </div>
         )}
       </div>
-      <Ruler zoom={Number(zoom)} />
-      <main id="viewer" />
+      <Ruler zoom={page.zoom} />
+      {/* Хост вьюера пуст: разметку внутри него рисует вьюер, а React в неё не
+          вмешивается — иначе он снёс бы её при любом своём обновлении. */}
+      <main
+        id="viewer"
+        ref={page.hostRef}
+        onDragOver={page.onDragOver}
+        onDragLeave={page.onDragLeave}
+        onDrop={page.onDrop}
+      />
       <StatusBar
         left={
           <>
+            <button
+              id="page-prev"
+              type="button"
+              title="Предыдущая страница"
+              disabled={!page.canPrev}
+              onClick={() => {
+                page.stepPage(-1);
+              }}
+            >
+              ←
+            </button>
             <span>
-              страница <b id="page-info">—</b>
+              страница <b id="page-info">{page.pageInfo}</b>
+            </span>
+            <button
+              id="page-next"
+              type="button"
+              title="Следующая страница"
+              disabled={!page.canNext}
+              onClick={() => {
+                page.stepPage(1);
+              }}
+            >
+              →
+            </button>
+            <span>
+              страниц: <b id="pages">{page.pageCount}</b>
             </span>
             <span id="hint">перетащите .docx в окно</span>
           </>
         }
         right={
           <>
-            <span id="status" />
+            <span id="status">{page.status}</span>
             <span className="ofc-statusbar__sep" />
             {/* Масштаб показывается, но не правится: ручка — в ленте. */}
             <span className="ofc-statusbar__zoom" title="Масштаб">
               <Icon name="zoom-out" size={14} />
-              {zoomLabel(zoom)}
+              {zoomLabel(page.zoom)}
             </span>
           </>
         }
       >
-        <FrameMeters handle={null} />
+        <FrameMeters handle={page.viewer} />
       </StatusBar>
     </div>
   );
