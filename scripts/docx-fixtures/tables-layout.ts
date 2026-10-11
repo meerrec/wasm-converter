@@ -49,12 +49,15 @@ const borderedTblPr = tblBorders(4) + '<w:tblW w:w="0" w:type="auto"/>';
 const uniformTable = (
     rowsCount: number,
     columns: readonly string[],
-    opts: { tblPr?: string } = {},
+    opts: { tblPr?: string; rowTrPr?: string } = {},
 ): string => {
     const rows: string[] = [];
     for (let i = 0; i < rowsCount; i++) {
         rows.push(
-            row(THIRDS.map((width, column) => cellW(`${columns[column]!} ${i}`, width)).join('')),
+            row(
+                THIRDS.map((width, column) => cellW(`${columns[column]!} ${i}`, width)).join(''),
+                opts.rowTrPr ?? '',
+            ),
         );
     }
     return tbl(opts.tblPr ?? borderedTblPr, THIRDS, rows);
@@ -91,11 +94,19 @@ const headerRepeatTable = (() => {
 /** Число абзацев в высокой строке `cant_split_rows`. */
 const TALL_ROW_PARAGRAPHS = 12;
 
+/** Текст абзаца высокой строки: один источник и для тела фикстуры, и для сайдкара. */
+const tallRowParagraph = (i: number): string => `Абзац высокой строки ${i + 1}`;
+
+/** Все абзацы высокой строки одной строкой — так их склеивает сайдкар. */
+const tallRowText = Array.from({ length: TALL_ROW_PARAGRAPHS }, (_, i) => tallRowParagraph(i)).join(
+    ' ',
+);
+
 /** Строка, которая не влезает в остаток страницы: целиком уходит на следующую. */
 const tallRow = row(
     cell(
         `<w:tcW w:w="4819" w:type="dxa"/>`,
-        Array.from({ length: TALL_ROW_PARAGRAPHS }, (_, i) => p(`Абзац высокой строки ${i + 1}`)).join(''),
+        Array.from({ length: TALL_ROW_PARAGRAPHS }, (_, i) => p(tallRowParagraph(i))).join(''),
     ) + cellW('Соседняя ячейка высокой строки', 4819),
     '<w:cantSplit/><w:trHeight w:val="600" w:hRule="atLeast"/>',
 );
@@ -122,11 +133,19 @@ const cantSplitTable = (() => {
  */
 const OVERFLOW_PARAGRAPHS = 60;
 
+/** Текст абзаца строки выше страницы: один источник и для тела, и для сайдкара. */
+const overflowParagraph = (i: number): string => `Абзац ${i + 1} высокой строки`;
+
+/** Все абзацы строки одной строкой — так их склеивает сайдкар. */
+const overflowText = Array.from({ length: OVERFLOW_PARAGRAPHS }, (_, i) => overflowParagraph(i)).join(
+    ' ',
+);
+
 const rowTallerThanPage = [
     row(
         cell(
             '<w:tcW w:w="9638" w:type="dxa"/>',
-            Array.from({ length: OVERFLOW_PARAGRAPHS }, (_, i) => p(`Абзац ${i + 1} высокой строки`)).join(''),
+            Array.from({ length: OVERFLOW_PARAGRAPHS }, (_, i) => p(overflowParagraph(i))).join(''),
         ),
     ),
     row(cellW('Строка после высокой', 9638)),
@@ -279,7 +298,7 @@ export const tablesLayoutFixtures: FixtureSpec[] = [
                     grid: [4819, 4819],
                     cantSplit: 'all',
                     rowHeights: [{ row: 6, val: 600, hRule: 'atLeast' }],
-                    tallRow: { row: 6, paragraphs: TALL_ROW_PARAGRAPHS + 1 },
+                    tallRow: { row: 6, paragraphs: TALL_ROW_PARAGRAPHS },
                     cells: [
                         ['Строка 1', 'Значение 1'],
                         ['Строка 2', 'Значение 2'],
@@ -287,7 +306,7 @@ export const tablesLayoutFixtures: FixtureSpec[] = [
                         ['Строка 4', 'Значение 4'],
                         ['Строка 5', 'Значение 5'],
                         ['Строка 6', 'Значение 6'],
-                        ['Абзац высокой строки 1 Абзац высокой строки 12', 'Соседняя ячейка высокой строки'],
+                        [tallRowText, 'Соседняя ячейка высокой строки'],
                         ['Строка 8', 'Значение 8'],
                         ['Строка 9', 'Значение 9'],
                         ['Строка 10', 'Значение 10'],
@@ -315,7 +334,7 @@ export const tablesLayoutFixtures: FixtureSpec[] = [
                     grid: [9638],
                     tallerThanPage: { row: 0, paragraphs: OVERFLOW_PARAGRAPHS },
                     cells: [
-                        ['Абзац 1 высокой строки Абзац 60 высокой строки'],
+                        [overflowText],
                         ['Строка после высокой'],
                     ],
                 },
@@ -406,7 +425,7 @@ export const tablesLayoutFixtures: FixtureSpec[] = [
                         ['Строка 0', 'Значение 0', 'Примечание 0'],
                         ['Строка 1', 'Значение 1', 'Примечание 1'],
                     ]),
-                    textPattern: `Строка {i} / Значение {i} / Примечание {i}, i = 0..${HUNDRED_PAGES_ROWS - 1}`,
+                    cellTemplate: ['Строка {i}', 'Значение {i}', 'Примечание {i}'],
                 },
             ],
             images: [],

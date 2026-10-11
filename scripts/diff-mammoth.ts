@@ -55,7 +55,7 @@ const MIN_COMPARABLE = 50;
 /** Потолок на `non-goal`: исключать из знаменателя можно только осознанно. */
 const MAX_NON_GOAL = 8;
 /** Кандидатов ровно столько; разошлось — это ошибка набора, а не «ладно». */
-const EXPECTED_CANDIDATES = 76;
+const EXPECTED_CANDIDATES = 83;
 
 /**
  * Категории вне набора кандидатов и почему — причина называет сторону:
@@ -372,7 +372,7 @@ function buildReport(entries: Entry[], summary: Summary, mammothVersion: string)
   );
   lines.push('');
   lines.push(
-    `Кандидаты — все 97 фикстур минус \`broken/\`, \`alternate_content/\` (mammoth читает`,
+    `Кандидаты — все ${entries.length} фикстур минус \`broken/\`, \`alternate_content/\` (mammoth читает`,
     '`mc:Fallback`, мы `mc:Choice`), `track_changes/` (наши non-goal) и `notes/`',
     `(mammoth выносит их отдельно): ${summary.candidates}.`,
   );
@@ -382,7 +382,7 @@ function buildReport(entries: Entry[], summary: Summary, mammothVersion: string)
   lines.push(
     '[`test-fixtures/docx/mammoth-oracle.json`](../../test-fixtures/docx/mammoth-oracle.json)',
     'пишет тот же скрипт: заголовок (`generator`, `mammoth`, `threshold`,',
-    '`min_comparable`, `candidates`) и `fixtures` — по записи на каждую из 97 фикстур,',
+    `\`min_comparable\`, \`candidates\`) и \`fixtures\` — по записи на каждую из ${entries.length} фикстур,`,
     'ключи по возрастанию:',
   );
   lines.push('');
@@ -406,7 +406,7 @@ function buildReport(entries: Entry[], summary: Summary, mammothVersion: string)
   );
   lines.push(
     '- `non-goal` — фикстура вне области сравнения (элемента нет в модели v1 или его не',
-    '  читает mammoth); **выводится из знаменателя**, потолок — 8 из 76;',
+    `  читает mammoth); **выводится из знаменателя**, потолок — ${MAX_NON_GOAL} из ${EXPECTED_CANDIDATES};`,
   );
   lines.push('- `bug` — дефект нашего парсера;');
   lines.push('- `unclassified` — решение не принято — значение по умолчанию.');

@@ -4999,6 +4999,28 @@ mod tests {
             "{path}: число столбцов"
         );
 
+        // Крупные фикстуры (тысячи строк) не перечисляют ячейки: `cellTemplate`
+        // с `{i}` — номером строки — заменяет список `cells` и сверяется по
+        // всем строкам, а не по образцу.
+        if let Some(template) = expected["cellTemplate"].as_array() {
+            let template = template
+                .iter()
+                .map(|cell| {
+                    cell.as_str()
+                        .unwrap_or_else(|| panic!("{path}: шаблон ячейки не строка"))
+                        .to_owned()
+                })
+                .collect::<Vec<_>>();
+            for (index, row) in table.rows.iter().enumerate() {
+                let want = template
+                    .iter()
+                    .map(|cell| cell.replace("{i}", &index.to_string()))
+                    .collect::<Vec<_>>();
+                let got = row.cells.iter().map(cell_text).collect::<Vec<_>>();
+                assert_eq!(got, want, "{path}: строка {index}");
+            }
+            return;
+        }
         let cells = expected["cells"]
             .as_array()
             .unwrap_or_else(|| panic!("{path}: сайкар без `cells`"));
@@ -5261,18 +5283,23 @@ mod tests {
         }
     }
 
-    /// Цвет `RRGGBB` из сайкара.
+    /// Цвет из сайкара: `RRGGBB`, `auto` или `none`.
     fn sidecar_color(path: &str, value: &serde_json::Value) -> Color {
         let raw = value
             .as_str()
             .unwrap_or_else(|| panic!("{path}: цвет не строка"));
-        Color::Rgb(
-            u32::from_str_radix(raw, 16).unwrap_or_else(|_| panic!("{path}: `{raw}` не цвет")),
-        )
+        match raw {
+            "auto" => Color::Auto,
+            "none" => Color::None,
+            _ => Color::Rgb(
+                u32::from_str_radix(raw, 16).unwrap_or_else(|_| panic!("{path}: `{raw}` не цвет")),
+            ),
+        }
     }
 
-    /// Девять фикстур таблиц — против сайкаров: строки, ячейки, `gridSpan`,
-    /// `vMerge`, ширины, выравнивание, оформление и вложенные таблицы.
+    /// Шестнадцать фикстур таблиц — против сайкаров: строки, ячейки, `gridSpan`,
+    /// `vMerge`, ширины, выравнивание, оформление, вложенные таблицы и
+    /// пагинация (длинные таблицы, `w:cantSplit`, повтор заголовка).
     #[test]
     fn tables_fixtures_match_their_sidecars() {
         let mut checked = 0;
@@ -5296,7 +5323,7 @@ mod tests {
             }
             checked += 1;
         }
-        assert_eq!(checked, 9, "в категории `tables` девять фикстур");
+        assert_eq!(checked, 16, "в категории `tables` шестнадцать фикстур");
     }
 
     // -----------------------------------------------------------------------
