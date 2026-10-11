@@ -245,7 +245,7 @@ fn draw_page(
     registry: &mut FontRegistry,
 ) -> Vec<Op> {
     let mut ops = Vec::new();
-    draw_items(&page.items, &mut ops, geometry, embedded, registry);
+    draw_items(&page.items, &mut ops, geometry, embedded, registry, 0.0);
     ops
 }
 
@@ -253,12 +253,17 @@ fn draw_page(
 ///
 /// Ячейки таблицы сюда не спускаются: их содержимое рисует сам слайс таблиц
 /// (`tables::draw`) — иначе он не смог бы разложить содержимое по ячейкам.
+///
+/// `offset_y` — вертикальный сдвиг в пикселях раскладки: им содержимое ячейки
+/// смещается по `w:vAlign` (`VAlign::Center`/`Bottom`), на верхнем уровне он
+/// нулевой.
 fn draw_items(
     items: &[LayoutItem],
     ops: &mut Vec<Op>,
     page: &PageGeometry,
     embedded: &EmbeddedFonts,
     registry: &mut FontRegistry,
+    offset_y: f32,
 ) {
     for item in items {
         match item {
@@ -276,7 +281,9 @@ fn draw_items(
                 embedded,
                 registry,
                 LineRun {
-                    rect: *rect,
+                    // Сдвиг снимается здесь: дальше строка живёт в своих
+                    // координатах, как и любая строка тела документа.
+                    rect: Rect::new(rect.x, rect.y + offset_y, rect.width, rect.height),
                     text,
                     size: *size,
                     color: *color,
@@ -284,8 +291,12 @@ fn draw_items(
                     italic: *italic,
                 },
             ),
-            LayoutItem::Table { cells, .. } => tables::draw(ops, cells, page, embedded, registry),
-            LayoutItem::Float(float) => floats::draw(ops, float, page, embedded, registry),
+            LayoutItem::Table { cells, .. } => {
+                tables::draw(ops, cells, page, embedded, registry, offset_y);
+            }
+            LayoutItem::Float(float) => {
+                floats::draw(ops, float, page, embedded, registry, offset_y)
+            }
             // Разрывы — метки раскладки: страницы уже разрезаны, рисовать нечего.
             LayoutItem::PageBreak | LayoutItem::ColumnBreak => {}
         }

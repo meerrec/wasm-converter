@@ -35,14 +35,24 @@ const PLACEHOLDER_STROKE_PX: f32 = 1.0;
 /// элементов раскладки; сдвигать его не нужно. Вид элемента не различается:
 /// canvas-путь тоже рисует одни габариты, а `FloatKind::TextBox` раскладка
 /// пока не порождает.
+///
+/// `offset_y` — сдвиг в пикселях раскладки: он не ноль, когда элемент — часть
+/// содержимого ячейки, выровненного по `w:vAlign`.
 pub(crate) fn draw(
     ops: &mut Vec<Op>,
     float: &FloatElement,
     page: &PageGeometry,
     _embedded: &EmbeddedFonts,
     _registry: &mut FontRegistry,
+    offset_y: f32,
 ) {
-    let placeholder = placeholder_ops(float.rect, page);
+    let rect = Rect::new(
+        float.rect.x,
+        float.rect.y + offset_y,
+        float.rect.width,
+        float.rect.height,
+    );
+    let placeholder = placeholder_ops(rect, page);
     if float.behind_text {
         // Два элемента под текстом на одной странице не перекрываются —
         // раскладка разводит их по вертикали (`float::blocking_bottom`), —

@@ -84,7 +84,8 @@ fn main() {
 
     let path = resolve(&input);
     let bytes = std::fs::read(&path).unwrap_or_else(|err| fail(&path, &err.to_string()));
-    let document = doc_converter_docx::open(bytes).unwrap_or_else(|err| fail(&path, &err.to_string()));
+    let document =
+        doc_converter_docx::open(bytes).unwrap_or_else(|err| fail(&path, &err.to_string()));
 
     // Раскладка — источник числа страниц; экспорт ниже раскладывает документ
     // ещё раз, поэтому обе величины времени в контракте стоят рядом, а не
