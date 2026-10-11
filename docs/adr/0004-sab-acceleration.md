@@ -60,11 +60,11 @@ main [`initOffscreen`](../../packages/core/src/render/offscreen.ts) ждёт
 transferables»; это утверждение коду не соответствует.
 
 **Тесты.** Сквозные тесты
-([`examples/viewer-xlsx/e2e/viewer.spec.ts`](../../examples/viewer-xlsx/e2e/viewer.spec.ts),
+([`examples/viewer/e2e/xlsx/viewer.spec.ts`](../../examples/viewer/e2e/xlsx/viewer.spec.ts),
 5 штук) идут только в Chromium
-([`playwright.config.ts`](../../examples/viewer-xlsx/playwright.config.ts)), а
+([`playwright.config.ts`](../../examples/viewer/playwright.config.ts)), а
 Vite отдаёт COOP/COEP и в dev, и в preview
-([`vite.config.ts`](../../examples/viewer-xlsx/vite.config.ts)) — то есть все
+([`vite.config.ts`](../../examples/viewer/vite.config.ts)) — то есть все
 тесты живут в мире с SAB, и прогона без заголовков нет вовсе.
 
 **Честно про «zero-copy».** Слово из комментариев пока означает цель, а не

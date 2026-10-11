@@ -95,8 +95,9 @@ canvas, `scale` — зум, умноженный на DPR.
 собирается сразу в слот ring'а: гонять сотни килобайт команд через
 `postMessage` значило бы платить за копирование на каждом кадре.
 
-Пример — `examples/viewer-xlsx/` (Vite + Playwright; сквозные тесты идут в
-настоящем Chromium и проверяют пиксели через `exportPng`).
+Пример — `examples/viewer/` (Vite + React + Playwright; две страницы — «Слово»
+на `/#/docx` и «ДваИксель» на `/#/xlsx`; сквозные тесты идут в настоящих
+Chromium, Firefox и WebKit и проверяют пиксели через `exportPng`).
 
 ### Два канала Main ↔ Worker (намеренно разные)
 

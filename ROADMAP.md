@@ -75,7 +75,7 @@
 ### 3.1 Структура репозитория
 
 Дерево ниже — план целиком. Что из него уже есть на 05.10.2026: все шесть
-крейтов, `packages/core`, `packages/wasm`, `examples/viewer-xlsx`,
+крейтов, `packages/core`, `packages/wasm`, `examples/viewer`,
 `test-fixtures/xlsx` (100 книг + эталон), `docs/adr`. Остальных пакетов,
 примеров и `test-fixtures/docx` пока нет.
 
@@ -106,8 +106,7 @@ doc-converter/
 │   ├── react/
 │   └── cli/
 ├── examples/
-│   ├── viewer-docx/
-│   ├── viewer-xlsx/
+│   ├── viewer/
 │   ├── batch-convert/
 │   └── worker-pool-demo/
 ├── benches/
@@ -304,7 +303,7 @@ PDF/PNG transfer) работают без SAB с приемлемой произ
 >
 > `createXlsxViewer` из `@doc-converter/core` даёт прокрутку, зум,
 > переключение листов и определение ячейки под курсором; пример —
-> `examples/viewer-xlsx/`.
+> `examples/viewer/`.
 >
 > **Чем подтверждено.** 291 нативный тест (на момент спринта; сейчас — **889**,
 > см. §10); 110 фикстур, собранных exceljs
@@ -507,7 +506,7 @@ PDF/PNG transfer) работают без SAB с приемлемой произ
 7. `xlsx/src/render.rs` — `build_display_list_for_sheet`.
 8. WASM-экспорты: `build_display_list`, `paint_display_list_to_offscreen`, `hit_test`, `resize_canvas`.
 9. TS-обёртка `XlsxViewer`.
-10. `examples/viewer-xlsx/`.
+10. `examples/viewer/`.
 
 **DoD:**
 - ⬜ 60 FPS при scroll 1M ячеек — стресс-теста нет; на фикстурах кадр
@@ -884,7 +883,7 @@ PDF/PNG transfer) работают без SAB с приемлемой произ
 1. `docx/src/render.rs` — `render_page`.
 2. `pdf/src/docx.rs` — `export_docx_to_pdf`.
 3. Экспорт MD / HTML / plain text.
-4. `examples/viewer-docx/`.
+4. `examples/viewer/`.
 5. Интеграция с воркером.
 
 **DoD:**
@@ -1058,7 +1057,7 @@ Chrome на раннере рисует программно, там меряе�
 - `buildDisplayList` — без деградации (transferables)
 
 Замеры — Apple Silicon, релизная сборка, синтетическая книга (см. `cargo bench
--p doc-converter-xlsx` и `examples/viewer-xlsx/e2e/`).
+-p doc-converter-xlsx` и `examples/viewer/e2e/`).
 
 ### Бюджеты размера (gzip)
 

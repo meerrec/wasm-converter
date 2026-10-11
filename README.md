@@ -8,7 +8,7 @@ High-performance OOXML (DOCX/XLSX) viewer & PDF exporter — Rust/WASM + Offscre
 
 ## Демо
 
-Собранный `examples/viewer-xlsx`: <https://meerrec.github.io/wasm-converter/>. Публикуется workflow `Pages` при пуше в `main`.
+Собранный `examples/viewer` (страницы «Слово» на `/#/docx` и «ДваИксель» на `/#/xlsx`; корень ведёт на `/#/docx`): <https://meerrec.github.io/wasm-converter/>. Публикуется workflow `Pages` при пуше в `main`.
 
 При первом заходе страница перезагружается: GitHub Pages не отдаёт заголовки cross-origin isolation (COOP/COEP), их подставляет service worker.
 
