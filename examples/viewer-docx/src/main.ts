@@ -24,6 +24,19 @@ const docxWasmBinaryUrl = new URL(
   import.meta.url,
 ).href;
 
+// PDF-модуль тоже ленивый и отдельным файлом: URL-ом, а не импортом модуля —
+// импорт втянул бы printpdf в основной бандл, и страница платила бы за него
+// до первого экспорта. JS копируется как есть, поэтому сборщик не кладёт рядом
+// его wasm-бинарь: второй URL передаётся явно.
+const pdfWasmModuleUrl = new URL(
+  '@doc-converter/wasm-pdf/pkg/doc_converter_pdf_wasm.js',
+  import.meta.url,
+).href;
+const pdfWasmBinaryUrl = new URL(
+  '@doc-converter/wasm-pdf/pkg/doc_converter_pdf_wasm_bg.wasm',
+  import.meta.url,
+).href;
+
 /** Элемент разметки: его отсутствие — ошибка сборки примера, а не рантайма. */
 function required<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -38,6 +51,10 @@ const prevButton = required<HTMLButtonElement>('#page-prev');
 const nextButton = required<HTMLButtonElement>('#page-next');
 const pageOutput = required<HTMLElement>('#page-info');
 const zoomSelect = required<HTMLSelectElement>('#zoom');
+const exportPdfButton = required<HTMLButtonElement>('#export-pdf');
+const exportMdButton = required<HTMLButtonElement>('#export-md');
+const exportHtmlButton = required<HTMLButtonElement>('#export-html');
+const exportTxtButton = required<HTMLButtonElement>('#export-txt');
 const pagesOutput = required<HTMLElement>('#pages');
 const cmdsOutput = required<HTMLElement>('#cmds');
 const buildOutput = required<HTMLElement>('#build');
@@ -46,9 +63,18 @@ const frameOutput = required<HTMLElement>('#frame');
 const status = required<HTMLElement>('#status');
 
 let handle: DocxViewerHandle | null = null;
+/** Подпись открытого документа: из неё получается имя файла при экспорте. */
+let currentLabel: string | null = null;
 
 function setStatus(text: string): void {
   status.textContent = text;
+}
+
+/** Кнопки экспорта: включаются только вместе с документом — иначе экспортировать нечего. */
+const exportButtons = [exportPdfButton, exportMdButton, exportHtmlButton, exportTxtButton];
+
+function setExportEnabled(enabled: boolean): void {
+  for (const button of exportButtons) button.disabled = !enabled;
 }
 
 /** Погасить всё управление: без вьюера нажимать нечего. */
@@ -56,6 +82,7 @@ function disableControls(): void {
   for (const control of [fileInput, fixtureSelect, prevButton, nextButton, zoomSelect]) {
     control.disabled = true;
   }
+  setExportEnabled(false);
 }
 
 /**
@@ -80,12 +107,131 @@ async function show(bytes: ArrayBuffer, label: string): Promise<void> {
   try {
     pages = await handle.open(bytes);
   } catch (e) {
+    // Документ не открылся — экспортировать нечего, а имя файла потеряло бы
+    // связь с содержимым.
+    currentLabel = null;
+    setExportEnabled(false);
     setStatus(`не открылось: ${e instanceof Error ? e.message : String(e)}`);
     return;
   }
+  currentLabel = label;
+  setExportEnabled(true);
   const elapsed = Math.round(performance.now() - started);
   updatePager();
   setStatus(`${label}: ${pages.length} стр. за ${elapsed} мс`);
+}
+
+/** Формат текстового экспорта: имя файла, MIME-тип, подписи и метод вьюера. */
+type TextFormat = 'markdown' | 'html' | 'text';
+
+interface TextFormatSpec {
+  /** Расширение файла: приписывается к подписи документа вместо старого. */
+  extension: string;
+  /** MIME-тип скачиваемого файла. */
+  mime: string;
+  /** Имя формата в строке состояния: «Markdown готов: …». */
+  title: string;
+  /** Строка состояния, пока воркер собирает файл. */
+  progress: string;
+  /** Метод вьюера, отдающий содержимое. */
+  run: (viewer: DocxViewerHandle) => Promise<string>;
+}
+
+/** Форматы отличаются только этими значениями, поэтому логика экспорта у них общая. */
+const textFormats: Record<TextFormat, TextFormatSpec> = {
+  markdown: {
+    extension: 'md',
+    mime: 'text/markdown',
+    title: 'Markdown',
+    progress: 'экспортирую Markdown…',
+    run: (viewer) => viewer.exportMarkdown(),
+  },
+  html: {
+    extension: 'html',
+    mime: 'text/html',
+    title: 'HTML',
+    progress: 'экспортирую HTML…',
+    run: (viewer) => viewer.exportHtml(),
+  },
+  text: {
+    extension: 'txt',
+    mime: 'text/plain',
+    title: 'Текст',
+    progress: 'экспортирую текст…',
+    run: (viewer) => viewer.exportText(),
+  },
+};
+
+/**
+ * Имя файла для скачивания: подпись документа без каталога и расширения плюс
+ * своё расширение; без подписи — запасное имя `document.<ext>`.
+ */
+function exportFileName(extension: string): string {
+  const label = currentLabel?.trim();
+  if (!label) return `document.${extension}`;
+  // Имя фикстуры приходит путём с категорией (`simple/one_paragraph.docx`),
+  // а скачивается файл с плоским именем: каталог срезаем. Расширение у
+  // выбранного файла может быть любым, поэтому срезается последнее.
+  const name = label.replace(/^.*[/\\]/, '');
+  const base = name.replace(/\.[^.]*$/, '');
+  return `${base || name}.${extension}`;
+}
+
+/** Отдать данные файлом: временная ссылка на blob, клик и отзыв ссылки. */
+function downloadFile(data: BlobPart, name: string, mime: string): void {
+  const url = URL.createObjectURL(new Blob([data], { type: mime }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // Отзываем не сразу: браузер начинает скачивание асинхронно, и немедленный
+  // revoke успевает отменить его (в WebKit — стабильно).
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+/** Экспорт в PDF: файл собирает Rust в воркере, здесь остаётся скачивание. */
+async function exportPdf(): Promise<void> {
+  const active = handle;
+  if (!active) return;
+  exportPdfButton.disabled = true;
+  setStatus('экспортирую PDF…');
+  try {
+    const bytes = await active.exportPdf();
+    // Копия в Uint8Array над обычным ArrayBuffer: тип из воркера —
+    // Uint8Array<ArrayBufferLike> (в ArrayBufferLike входит SharedArrayBuffer),
+    // а BlobPart принимает только ArrayBuffer. Заодно гарантирован сдвиг 0.
+    const copy = new Uint8Array(bytes);
+    const name = exportFileName('pdf');
+    downloadFile(copy, name, 'application/pdf');
+    setStatus(`PDF готов: ${name}, ${Math.round(bytes.byteLength / 1024)} КБ`);
+  } catch (e) {
+    // Ошибку показываем в строке состояния: alert перекрыл бы пример,
+    // а исключение из обработчика не должно ронять страницу.
+    setStatus(`экспорт не удался: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    exportPdfButton.disabled = false;
+  }
+}
+
+/** Экспорт в текстовый формат: Markdown, HTML или содержимое без разметки. */
+async function exportText(format: TextFormat, button: HTMLButtonElement): Promise<void> {
+  const active = handle;
+  if (!active) return;
+  const spec = textFormats[format];
+  button.disabled = true;
+  setStatus(spec.progress);
+  try {
+    const text = await spec.run(active);
+    const name = exportFileName(spec.extension);
+    downloadFile(text, name, spec.mime);
+    setStatus(`${spec.title} готов: ${name}`);
+  } catch (e) {
+    setStatus(`экспорт не удался: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function loadFixture(name: string): Promise<void> {
@@ -128,6 +274,7 @@ async function main(): Promise<void> {
     handle = await createDocxViewer(viewerHost, {
       workerUrl,
       docxWasm: { module: docxWasmModuleUrl, binary: docxWasmBinaryUrl },
+      pdfWasm: { module: pdfWasmModuleUrl, binary: pdfWasmBinaryUrl },
     });
   } catch (e) {
     // Нет OffscreenCanvas/transferControlToOffscreen — вьюер не поднять:
@@ -162,6 +309,19 @@ async function main(): Promise<void> {
 
   zoomSelect.addEventListener('change', () => {
     handle?.setZoom(Number(zoomSelect.value));
+  });
+
+  exportPdfButton.addEventListener('click', () => {
+    void exportPdf();
+  });
+  exportMdButton.addEventListener('click', () => {
+    void exportText('markdown', exportMdButton);
+  });
+  exportHtmlButton.addEventListener('click', () => {
+    void exportText('html', exportHtmlButton);
+  });
+  exportTxtButton.addEventListener('click', () => {
+    void exportText('text', exportTxtButton);
   });
 
   // Перетаскивание файла в окно.

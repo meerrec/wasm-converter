@@ -47,6 +47,9 @@ importers:
       '@doc-converter/wasm-docx':
         specifier: workspace:*
         version: link:../../packages/wasm-docx
+      '@doc-converter/wasm-pdf':
+        specifier: workspace:*
+        version: link:../../packages/wasm-pdf
     devDependencies:
       '@playwright/test':
         specifier: ^1.63.0

@@ -83,6 +83,12 @@
           <option value="2">200 %</option>
         </select>
       </label>
+      <!-- Экспорт включается только вместе с документом: экспортировать нечего,
+           пока ничего не открыто. -->
+      <button id="export-pdf" type="button" disabled>Экспорт в PDF</button>
+      <button id="export-md" type="button" disabled>Экспорт в Markdown</button>
+      <button id="export-html" type="button" disabled>Экспорт в HTML</button>
+      <button id="export-txt" type="button" disabled>Экспорт в текст</button>
       <span id="hint">перетащите .docx в окно</span>
     </header>
 
