@@ -314,7 +314,11 @@ mod tests {
         st.commit_write(2);
         assert_eq!(st.advance_to_latest(), 1);
         assert_eq!(st.reader_slot(), 1, "читается второй, самый свежий слот");
-        assert_eq!(st.advance_to_latest(), 0, "повторный вызов ничего не двигает");
+        assert_eq!(
+            st.advance_to_latest(),
+            0,
+            "повторный вызов ничего не двигает"
+        );
         assert!(st.commit_read());
         assert!(!st.can_read());
     }
