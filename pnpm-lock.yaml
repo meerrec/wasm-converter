@@ -101,6 +101,8 @@ importers:
 
   packages/wasm: {}
 
+  packages/wasm-docx: {}
+
   packages/wasm-pdf: {}
 
 packages:
