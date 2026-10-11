@@ -1802,41 +1802,48 @@ mod tests {
         );
     }
 
-    /// Таблица, не помещающаяся на странице, уходит на следующую целиком.
-    #[test]
-    fn a_table_that_does_not_fit_moves_to_the_next_page_whole() {
+    /// Синтетическая таблица: одна колонка, `rows` однострочных строк.
+    ///
+    /// `cant_split` — `w:cantSplit` всех строк: такая строка не режется
+    /// разрывом страницы, а уходит на следующую целиком.
+    fn synthetic_table(id: u64, rows: usize, cant_split: bool) -> Table {
         use crate::model::CellVAlign;
         use crate::{Cell, CellBorders, CellMargins, GridCol, Row, TableLayout, TableLook};
 
-        let section = section_with_margins(A4_WIDTH_TWIPS, A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS);
-        // Строк текста на странице — без одной: таблице остаётся меньше строки.
-        let mut document = document_in_section(section, a4_capacity() - 1);
-        document.body.items.push(BlockItem::Table(Table {
-            id: NodeId::new(900),
+        let rows = (0..rows)
+            .map(|index| {
+                // Три идентификатора на строку: строка, ячейка, абзац.
+                let base = id + 10 + u64::try_from(index).unwrap_or(u64::MAX) * 3;
+                Row {
+                    id: NodeId::new(base),
+                    cells: vec![Cell {
+                        id: NodeId::new(base + 1),
+                        grid_span: 1,
+                        v_merge: None,
+                        width: None,
+                        margins: CellMargins::default(),
+                        v_align: CellVAlign::Top,
+                        borders: Box::new(CellBorders::default()),
+                        shading: None,
+                        items: vec![BlockItem::Paragraph(paragraph(
+                            base + 2,
+                            &format!("row {index}"),
+                        ))],
+                    }],
+                    height: None,
+                    cant_split,
+                    header: false,
+                }
+            })
+            .collect();
+
+        Table {
+            id: NodeId::new(id),
             style_ref: None,
             grid: vec![GridCol {
                 width: Twips::new(6000),
             }],
-            rows: vec![Row {
-                id: NodeId::new(901),
-                cells: vec![Cell {
-                    id: NodeId::new(902),
-                    grid_span: 1,
-                    v_merge: None,
-                    width: None,
-                    margins: CellMargins::default(),
-                    v_align: CellVAlign::Top,
-                    borders: Box::new(CellBorders::default()),
-                    shading: None,
-                    items: vec![
-                        BlockItem::Paragraph(paragraph(903, "row one")),
-                        BlockItem::Paragraph(paragraph(904, "row two")),
-                    ],
-                }],
-                height: None,
-                cant_split: false,
-                header: false,
-            }],
+            rows,
             layout: TableLayout::Autofit,
             width: None,
             borders: crate::TableBorders::default(),
@@ -1844,7 +1851,84 @@ mod tests {
             jc: None,
             indent: None,
             cell_margins: CellMargins::default(),
-        }));
+        }
+    }
+
+    /// Первый элемент-таблица страницы: прямоугольник, строки и ячейки фрагмента.
+    fn table_fragment(page: &Page) -> Option<(&Rect, &[TableRowLayout], &[TableCellLayout])> {
+        page.items.iter().find_map(|item| match item {
+            LayoutItem::Table {
+                rect, rows, cells, ..
+            } => Some((rect, rows.as_slice(), cells.as_slice())),
+            _ => None,
+        })
+    }
+
+    /// Строка, которой остатка страницы не хватило, режется разрывом.
+    #[test]
+    fn a_row_that_does_not_fit_is_split_at_the_page_break() {
+        let section = section_with_margins(A4_WIDTH_TWIPS, A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS);
+        // Строк текста на странице — без одной: строке таблицы остаётся меньше строки.
+        let mut document = document_in_section(section, a4_capacity() - 1);
+        let mut table = synthetic_table(900, 1, false);
+        table.rows[0].cells[0].items = vec![
+            BlockItem::Paragraph(paragraph(903, "row one")),
+            BlockItem::Paragraph(paragraph(904, "row two")),
+        ];
+        document.body.items.push(BlockItem::Table(table));
+
+        let layout = layout_of(&document);
+
+        assert_eq!(
+            layout.pages.len(),
+            2,
+            "остаток строки ушёл на вторую страницу"
+        );
+        let first_page = &layout.pages[0];
+        let (rect, rows, cells) =
+            table_fragment(first_page).expect("начало строки — на первой странице");
+        assert!(rows[0].continues_below, "строка разрезана разрывом");
+        assert!(
+            rect.y + rect.height <= first_page.height - first_page.margins.bottom + 0.01,
+            "фрагмент не заходит за нижнее поле: {}",
+            rect.y + rect.height
+        );
+
+        let second_page = &layout.pages[1];
+        let (rect, rows, second_cells) =
+            table_fragment(second_page).expect("остаток строки — на второй странице");
+        assert!(rows[0].continued_above, "строка продолжается сверху");
+        assert!(
+            (rect.y - second_page.margins.top).abs() < 0.01,
+            "продолжение начинается от верхнего поля: {}",
+            rect.y
+        );
+        assert!(
+            rect.y + rect.height <= second_page.height - second_page.margins.bottom + 0.01,
+            "продолжение влезает в полосу набора"
+        );
+
+        let mut texts: Vec<String> = cells.iter().flat_map(cell_texts).collect();
+        texts.extend(second_cells.iter().flat_map(cell_texts));
+        assert_eq!(
+            texts,
+            vec!["row one", "row two"],
+            "оба блока строки разложены, пусть и по разным фрагментам"
+        );
+    }
+
+    /// Строка с `w:cantSplit`, не помещающаяся в остаток, уходит на следующую целиком.
+    #[test]
+    fn a_cannot_split_row_moves_to_the_next_page_whole() {
+        let section = section_with_margins(A4_WIDTH_TWIPS, A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS);
+        // Строк текста на странице — без одной: таблице остаётся меньше строки.
+        let mut document = document_in_section(section, a4_capacity() - 1);
+        let mut table = synthetic_table(900, 1, true);
+        table.rows[0].cells[0].items = vec![
+            BlockItem::Paragraph(paragraph(903, "row one")),
+            BlockItem::Paragraph(paragraph(904, "row two")),
+        ];
+        document.body.items.push(BlockItem::Table(table));
 
         let layout = layout_of(&document);
 
@@ -1854,31 +1938,68 @@ mod tests {
             "таблица не влезла — страниц стало две"
         );
         assert!(
-            !layout.pages[0]
-                .items
-                .iter()
-                .any(|item| matches!(item, LayoutItem::Table { .. })),
+            table_fragment(&layout.pages[0]).is_none(),
             "на первой странице таблицы нет: она ушла целиком"
         );
-        let second = &layout.pages[1];
-        let (rect, cells) = second
-            .items
-            .iter()
-            .find_map(|item| match item {
-                LayoutItem::Table { rect, cells, .. } => Some((*rect, cells)),
-                _ => None,
-            })
-            .expect("таблица — на второй странице");
+        let second_page = &layout.pages[1];
+        let (rect, rows, cells) =
+            table_fragment(second_page).expect("таблица — на второй странице");
         assert_eq!(cells.len(), 1, "ячейка таблицы доехала вместе с таблицей");
+        assert!(!rows[0].continued_above, "строка не разрезана");
         assert!(
-            (rect.y - second.margins.top).abs() < 0.01,
+            (rect.y - second_page.margins.top).abs() < 0.01,
             "таблица начинается от верхнего поля новой страницы: {}",
             rect.y
         );
         assert!(
-            rect.y + rect.height <= second.height - second.margins.bottom + 0.01,
+            rect.y + rect.height <= second_page.height - second_page.margins.bottom + 0.01,
             "таблица влезает в полосу набора второй страницы"
         );
+    }
+
+    /// Длинная таблица разбивается на страницы, не выходя за полосу набора.
+    #[test]
+    fn a_sixty_row_table_spans_pages_within_the_content_band() {
+        let section = section_with_margins(A4_WIDTH_TWIPS, A4_HEIGHT_TWIPS, FIXTURE_MARGIN_TWIPS);
+        let mut document = document_in_section(section, 0);
+        document.body.items.push(BlockItem::Table(synthetic_table(700, 60, false)));
+
+        let layout = layout_of(&document);
+
+        assert!(
+            layout.pages.len() >= 2,
+            "60 строк не помещаются на одну страницу: {}",
+            layout.pages.len()
+        );
+        let mut rows = 0usize;
+        for page in &layout.pages {
+            let content_bottom = page.height - page.margins.bottom;
+            for item in &page.items {
+                let LayoutItem::Table {
+                    rect,
+                    rows: fragment_rows,
+                    cells,
+                    ..
+                } = item
+                else {
+                    continue;
+                };
+                rows += fragment_rows.len();
+                assert!(
+                    rect.y + rect.height <= content_bottom + 0.01,
+                    "фрагмент таблицы не заходит за нижнее поле: {}",
+                    rect.y + rect.height
+                );
+                for cell in cells {
+                    assert!(
+                        cell.rect.y + cell.rect.height <= content_bottom + 0.01,
+                        "ячейка не ниже полосы набора: {}",
+                        cell.rect.y + cell.rect.height
+                    );
+                }
+            }
+        }
+        assert_eq!(rows, 60, "все строки разложены по фрагментам");
     }
 
     /// Путь к фикстуре от корня репозитория.
