@@ -59,6 +59,24 @@ impl RingState {
         self.seq_reader = self.seq_reader.wrapping_add(1);
         true
     }
+
+    /// Отпускает все готовые кадры, кроме самого свежего, и возвращает число
+    /// пропущенных.
+    ///
+    /// Догонять прокрутку устаревшими кадрами незачем: если сборщик успел
+    /// положить два кадра, а painter не отрисовал ни одного, рисуется последний.
+    /// Без этого глубину два было бы не видно: второй кадр ждал бы своей
+    /// очереди и показывался бы на кадр позже, чем он устарел.
+    #[inline]
+    pub fn advance_to_latest(&mut self) -> u32 {
+        if !self.can_read() {
+            return 0;
+        }
+        let latest = self.seq_writer.wrapping_sub(1);
+        let skipped = latest.wrapping_sub(self.seq_reader);
+        self.seq_reader = latest;
+        skipped
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -187,6 +205,26 @@ mod wasm_impl {
             Ok(Some((slot, len)))
         }
 
+        /// Отпускает готовые, но ещё не отрисованные кадры, оставляя самый свежий.
+        ///
+        /// Возвращает число пропущенных. Оба слота к этому моменту заняты —
+        /// второй кадр и есть та двойная буферизация, ради которой ring глубиной
+        /// два: рисовать его следующим значило бы показывать вчерашнюю прокрутку.
+        ///
+        /// # Errors
+        /// Если заголовок ring'а не читается как `Int32Array`.
+        pub fn advance_to_latest(&mut self) -> Result<u32, JsValue> {
+            let mut st = self.state()?;
+            if !st.can_read() {
+                return Ok(0);
+            }
+            let skipped = st.advance_to_latest();
+            if skipped > 0 {
+                atomic_store(&self.header, 1, st.seq_reader as i32)?;
+            }
+            Ok(skipped)
+        }
+
         /// # Errors
         /// Если заголовок ring'а не читается как `Int32Array`.
         pub fn release_current(&mut self) -> Result<(), JsValue> {
@@ -263,6 +301,34 @@ mod tests {
         assert_eq!(st.writer_slot(), 1);
         st.commit_write(2);
         assert_eq!(st.writer_slot(), 0);
+    }
+
+    #[test]
+    fn advance_to_latest_skips_queued_frames() {
+        let mut st = RingState::default();
+        assert_eq!(st.advance_to_latest(), 0, "пустой ring пропускать нечего");
+        st.commit_write(1);
+        assert_eq!(st.advance_to_latest(), 0, "единственный кадр — уже свежий");
+        assert!(st.can_read());
+        assert_eq!(st.reader_slot(), 0);
+        st.commit_write(2);
+        assert_eq!(st.advance_to_latest(), 1);
+        assert_eq!(st.reader_slot(), 1, "читается второй, самый свежий слот");
+        assert_eq!(st.advance_to_latest(), 0, "повторный вызов ничего не двигает");
+        assert!(st.commit_read());
+        assert!(!st.can_read());
+    }
+
+    #[test]
+    fn advance_to_latest_frees_both_slots() {
+        let mut st = RingState::default();
+        st.commit_write(1);
+        st.commit_write(2);
+        assert!(!st.has_free_slot());
+        st.advance_to_latest();
+        st.commit_read();
+        assert!(st.has_free_slot(), "после отрисовки свежего слот свободен");
+        assert!(st.commit_write(3));
     }
 
     #[test]

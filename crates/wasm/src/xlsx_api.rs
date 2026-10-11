@@ -20,6 +20,9 @@ thread_local! {
     static DOC: RefCell<Option<Workbook>> = const { RefCell::new(None) };
     /// Буфер кадра: переиспользуется, чтобы не аллоцировать на каждый кадр.
     static FRAME: RefCell<DisplayList> = RefCell::new(DisplayList::new());
+    /// Байты кадра: сериализация тоже переиспользует буфер — на кадр глубиной
+    /// в сотни килобайт `to_bytes()` был бы лишней аллокацией и копией.
+    static SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Окно — то, что приходит из воркера.
@@ -82,9 +85,12 @@ pub struct SheetInfo {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildStats {
-    /// Кадр уложился в слот ring'а.
+    /// Кадр уложился в буфер. `false` — либо не было свободного слота ring'а,
+    /// либо буфер вызывающего меньше кадра (`bytes` скажет, насколько).
     written: bool,
     cmds: u32,
+    /// Размер кадра в байтах. По нему воркер понимает, что буфер мал, и растит его.
+    bytes: u32,
     build_ms: f64,
 }
 
@@ -218,10 +224,54 @@ fn options_of(value: JsValue) -> Result<PaintOptions, JsValue> {
     })
 }
 
-/// Собрать кадр листа в буфер и вернуть его байты.
+/// Собрать кадр листа и отдать его байты транспорту вызывающего.
 ///
-/// Нужен там, где `SharedArrayBuffer` недоступен: при отсутствии
-/// COOP/COEP-заголовков кадр уезжает в воркер копией.
+/// Сборка и сериализация у обоих путей (SAB и без него) общие: решение о
+/// транспорте не должно разъезжаться с решением о содержимом кадра. Слот ring'а
+/// и буфер JS отличаются только тем, куда байты деваются, — это и есть `write`.
+///
+/// # Errors
+/// Если книга не открыта, листа нет, окно описано неверно или запись не удалась.
+fn with_frame_bytes(
+    sheet: usize,
+    viewport: Viewport,
+    options: PaintOptions,
+    write: impl FnOnce(&[u8]) -> Result<bool, JsValue>,
+) -> Result<BuildStats, JsValue> {
+    let started = now();
+    DOC.with(|doc| -> Result<BuildStats, JsValue> {
+        let doc = doc.borrow();
+        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
+        let sheet = book
+            .sheets()
+            .get(sheet)
+            .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
+
+        FRAME.with(|frame| {
+            let mut frame = frame.borrow_mut();
+            paint::build(book, sheet, viewport, &options, &mut frame);
+            let cmds = u32::try_from(frame.len()).unwrap_or(u32::MAX);
+
+            SCRATCH.with(|scratch| {
+                let mut scratch = scratch.borrow_mut();
+                frame.to_bytes_into(&mut scratch);
+                let bytes = u32::try_from(scratch.len()).unwrap_or(u32::MAX);
+                Ok(BuildStats {
+                    written: write(&scratch)?,
+                    cmds,
+                    bytes,
+                    build_ms: now() - started,
+                })
+            })
+        })
+    })
+}
+
+/// Собрать кадр листа и вернуть его байты.
+///
+/// Годится тому, кто рисует кадр не в этом же воркере: сам кадр самодостаточен.
+/// Просмотрщик ходит через [`xlsx_build_display_list_into`] — там буфер
+/// вызывающего переиспользуется, а тут кадр каждый раз новый массив.
 ///
 /// # Errors
 /// Если книга не открыта, листа с таким номером нет или окно описано неверно.
@@ -233,27 +283,21 @@ pub fn xlsx_build_display_list(
 ) -> Result<Vec<u8>, JsValue> {
     let viewport = viewport_of(viewport)?;
     let options = options_of(options)?;
-    DOC.with(|doc| {
-        let doc = doc.borrow();
-        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
-        let sheet = book
-            .sheets()
-            .get(sheet)
-            .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
-
-        FRAME.with(|frame| {
-            let mut frame = frame.borrow_mut();
-            paint::build(book, sheet, viewport, &options, &mut frame);
-            Ok(frame.to_bytes())
-        })
-    })
+    let mut out = Vec::new();
+    with_frame_bytes(sheet, viewport, options, |bytes| {
+        out.extend_from_slice(bytes);
+        Ok(true)
+    })?;
+    Ok(out)
 }
 
 /// Собрать кадр листа сразу в слот ring'а.
 ///
 /// Возвращает `written: false`, если свободного слота не было: кадр теряется,
 /// но следующий за ним рисуется — так и задумано, догонять прокрутку
-/// устаревшими кадрами незачем.
+/// устаревшими кадрами незачем. Второй случай `written: false` — кадр больше
+/// слота: `bytes` в статистике скажет, насколько, а по нему воркер решит,
+/// растить ли ring.
 ///
 /// # Errors
 /// Если книга не открыта, листа нет, окно описано неверно или SAB не тот.
@@ -267,31 +311,39 @@ pub fn xlsx_build_display_list_sab(
 ) -> Result<JsValue, JsValue> {
     let viewport = viewport_of(viewport)?;
     let options = options_of(options)?;
-    let started = now();
-
-    let stats = DOC.with(|doc| -> Result<BuildStats, JsValue> {
-        let doc = doc.borrow();
-        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
-        let sheet = book
-            .sheets()
-            .get(sheet)
-            .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
-
-        FRAME.with(|frame| {
-            let mut frame = frame.borrow_mut();
-            paint::build(book, sheet, viewport, &options, &mut frame);
-            let cmds = u32::try_from(frame.len()).unwrap_or(u32::MAX);
-
-            let mut ring = SabRing::from_sab(sab, slot_capacity as usize)?;
-            let written = ring.try_write(&frame.to_bytes())?;
-            Ok(BuildStats {
-                written,
-                cmds,
-                build_ms: now() - started,
-            })
-        })
+    let stats = with_frame_bytes(sheet, viewport, options, |bytes| {
+        let mut ring = SabRing::from_sab(sab, slot_capacity as usize)?;
+        ring.try_write(bytes)
     })?;
+    serde_wasm_bindgen::to_value(&stats).map_err(to_js)
+}
 
+/// Собрать кадр листа в буфер вызывающего — путь без `SharedArrayBuffer`.
+///
+/// Буфер переиспользуется: воркер держит два и заполняет то один, то другой,
+/// поэтому на кадр нет ни аллокации, ни копии из памяти wasm в JS — только
+/// запись в готовый массив. `written: false` вместе с `bytes` больше длины
+/// буфера означает, что буфер мал: воркер вырастит его и повторит сборку.
+///
+/// # Errors
+/// Если книга не открыта, листа нет или окно описано неверно.
+#[wasm_bindgen]
+pub fn xlsx_build_display_list_into(
+    out: &js_sys::Uint8Array,
+    sheet: usize,
+    viewport: JsValue,
+    options: JsValue,
+) -> Result<JsValue, JsValue> {
+    let viewport = viewport_of(viewport)?;
+    let options = options_of(options)?;
+    let stats = with_frame_bytes(sheet, viewport, options, |bytes| {
+        let length = bytes.len() as u32;
+        if length > out.length() {
+            return Ok(false);
+        }
+        out.subarray(0, length).copy_from(bytes);
+        Ok(true)
+    })?;
     serde_wasm_bindgen::to_value(&stats).map_err(to_js)
 }
 

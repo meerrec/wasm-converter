@@ -43,13 +43,27 @@ pub fn paint_display_list_bytes(bytes: &[u8]) -> Result<JsValue, JsValue> {
     OffscreenPainter::with(|painter| to_stats(painter.paint_bytes(bytes)?))?
 }
 
-/// SAB-путь: читает текущий слот ring'а и рисует. Освобождает слот.
+/// SAB-путь: читает самый свежий слот ring'а и рисует. Освобождает слот.
+///
+/// Промежуточные готовые кадры отпускаются — сборщик успевает положить второй
+/// кадр, пока painter рисует первый, и рисовать их по очереди значило бы
+/// показывать вчерашнюю прокрутку. Число пропущенных кадров видно в статистике
+/// (`dropped`): это и есть backpressure глубины два.
 #[wasm_bindgen]
 pub fn paint_display_list_sab(
     sab: js_sys::SharedArrayBuffer,
     slot_capacity: u32,
 ) -> Result<JsValue, JsValue> {
-    OffscreenPainter::with(|painter| to_stats(painter.paint_sab(sab, slot_capacity)?))?
+    // Ring здесь строится второй раз (второй — внутри `paint_sab`): это две
+    // обёртки над тем же SAB, копирования нет, а границу painter'а ради одного
+    // `Atomics.store` размыкать не хочется.
+    let mut ring = doc_converter_render::sab::SabRing::from_sab(sab.clone(), slot_capacity as usize)?;
+    let skipped = ring.advance_to_latest()?;
+    let mut stats = OffscreenPainter::with(|painter| painter.paint_sab(sab, slot_capacity))??;
+    if skipped > 0 {
+        stats.dropped = true;
+    }
+    to_stats(stats)
 }
 
 /// Пересчитывает canvas под DPR и сбрасывает состояние painter'а.

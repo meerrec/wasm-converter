@@ -33,6 +33,12 @@ impl NativeRingReader {
         self.state.commit_read();
         Some(&self.slots[s])
     }
+
+    /// Отпускает готовые кадры, кроме самого свежего, — как это делает painter
+    /// на SAB-пути. Возвращает число пропущенных.
+    pub fn advance_to_latest(&mut self) -> u32 {
+        self.state.advance_to_latest()
+    }
 }
 
 impl Default for NativeRingReader {
@@ -63,5 +69,25 @@ mod tests {
         assert!(r.push(b"a"));
         assert!(r.push(b"b"));
         assert!(!r.push(b"c"));
+    }
+
+    #[test]
+    fn latest_wins_when_both_slots_are_full() {
+        let mut r = NativeRingReader::new();
+        assert!(r.push(b"first"));
+        assert!(r.push(b"second"));
+        assert_eq!(r.advance_to_latest(), 1);
+        assert_eq!(r.pop(), Some(&b"second"[..]));
+        assert_eq!(r.pop(), None);
+        // Оба слота отпущены: следующий кадр пишется без ожидания.
+        assert!(r.push(b"third"));
+    }
+
+    #[test]
+    fn advance_to_latest_keeps_the_only_frame() {
+        let mut r = NativeRingReader::new();
+        assert!(r.push(b"only"));
+        assert_eq!(r.advance_to_latest(), 0);
+        assert_eq!(r.pop(), Some(&b"only"[..]));
     }
 }
