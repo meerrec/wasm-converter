@@ -207,7 +207,9 @@ impl BuildStats {
 }
 
 /// Ошибка разбора — сообщением для человека: показывать её будет интерфейс.
-fn to_js(error: impl std::fmt::Display) -> JsValue {
+///
+/// Общая с [`crate::export_api`]: у обоих путей ошибки одного вида.
+pub(crate) fn to_js(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 

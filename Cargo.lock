@@ -606,11 +606,14 @@ dependencies = [
 name = "doc-converter-pdf-wasm"
 version = "0.1.0"
 dependencies = [
+ "doc-converter-docx",
  "doc-converter-pdf",
  "doc-converter-xlsx",
+ "js-sys",
  "serde",
  "serde-wasm-bindgen",
  "wasm-bindgen",
+ "wasm-bindgen-test",
 ]
 
 [[package]]

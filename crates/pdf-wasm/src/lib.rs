@@ -1,9 +1,9 @@
-//! Отдельный wasm-модуль экспорта XLSX → PDF.
+//! Отдельный wasm-модуль экспорта в PDF: лист XLSX и документ DOCX.
 //!
 //! Тянет `doc-converter-pdf` (→ printpdf), поэтому в основной модуль не
 //! входит: просмотрщику он нужен только по клику «Экспорт в PDF», и воркер
 //! подгружает его по требованию. Модуль самодостаточен — никакого
-//! `thread_local`: книгу он получает байтами и разбирает сам.
+//! `thread_local`: книгу и документ он получает байтами и разбирает сам.
 //!
 //! Как и `crates/wasm`, крейт собирается только под `wasm32`: на нативном
 //! таргете он пуст, и `cargo clippy --workspace --all-targets` проходит без
@@ -146,4 +146,24 @@ pub fn export_pdf_book(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValu
     let book = doc_converter_xlsx::open(bytes.to_vec()).map_err(to_js)?;
     let mut exporter = PdfExporter::new(options);
     exporter.export_xlsx_book(&book).map_err(to_js)
+}
+
+/// Экспортировать документ DOCX в PDF. Документ приходит байтами OOXML и
+/// разбирается здесь же: у модуля нет общего с просмотрщиком состояния.
+///
+/// Опции — тот же [`PdfOptionsJs`], что у XLSX, но читаются не все: страницы
+/// PDF — это страницы раскладки DOCX, поэтому размер, поля и ориентация
+/// берутся из `w:sectPr`, а `pageSize`, `orientation`, `margins`, `scale` и
+/// `sheetIndex` не читаются. Действуют метаданные (`title`, `author`,
+/// `subject`, `keywords`) и `compress`.
+///
+/// # Errors
+/// Если байты не OOXML-пакет, `word/document.xml` не разбирается, раскладка
+/// документа не собралась или printpdf не смог собрать документ.
+#[wasm_bindgen]
+pub fn export_docx_pdf(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValue> {
+    let options = parse_options(options)?;
+    let document = doc_converter_docx::open(bytes.to_vec()).map_err(to_js)?;
+    let mut exporter = PdfExporter::new(options);
+    exporter.export_docx(&document).map_err(to_js)
 }
