@@ -59,9 +59,9 @@ fn boolean(value: &JsValue, key: &str) -> bool {
 /// прокрутку, как по размерам листа XLSX.
 #[wasm_bindgen_test]
 fn open_reports_page_sizes() {
-    let pages = doc_converter_wasm::docx_api::docx_open(ONE_PARAGRAPH.to_vec())
+    let pages = doc_converter_docx_wasm::docx_api::docx_open(ONE_PARAGRAPH.to_vec())
         .expect("фикстура открывается");
-    assert!(doc_converter_wasm::docx_api::docx_is_open());
+    assert!(doc_converter_docx_wasm::docx_api::docx_is_open());
 
     let pages = js_sys::Array::from(&pages);
     assert_eq!(pages.length(), 1, "в фикстуре одна страница");
@@ -72,26 +72,27 @@ fn open_reports_page_sizes() {
     assert!((width - PAGE_W).abs() < 0.01, "ширина страницы: {width}");
     assert!((height - PAGE_H).abs() < 0.01, "высота страницы: {height}");
 
-    doc_converter_wasm::docx_api::docx_close();
-    assert!(!doc_converter_wasm::docx_api::docx_is_open());
+    doc_converter_docx_wasm::docx_api::docx_close();
+    assert!(!doc_converter_docx_wasm::docx_api::docx_is_open());
 }
 
 /// `docx_open_bytes` — тот же разбор, но байты приезжают `Uint8Array`.
 #[wasm_bindgen_test]
 fn open_bytes_accepts_a_uint8_array() {
     let pages =
-        doc_converter_wasm::docx_api::docx_open_bytes(js_sys::Uint8Array::from(ONE_PARAGRAPH))
+        doc_converter_docx_wasm::docx_api::docx_open_bytes(js_sys::Uint8Array::from(ONE_PARAGRAPH))
             .expect("фикстура открывается");
     assert_eq!(js_sys::Array::from(&pages).length(), 1, "одна страница");
-    doc_converter_wasm::docx_api::docx_close();
+    doc_converter_docx_wasm::docx_api::docx_close();
 }
 
 /// Fallback без SAB: байты кадра уезжают в воркер копией.
 #[wasm_bindgen_test]
 fn build_without_sab_returns_the_frame_bytes() {
-    doc_converter_wasm::docx_api::docx_open(ONE_PARAGRAPH.to_vec()).expect("фикстура открывается");
+    doc_converter_docx_wasm::docx_api::docx_open(ONE_PARAGRAPH.to_vec())
+        .expect("фикстура открывается");
 
-    let bytes = doc_converter_wasm::docx_api::docx_build_display_list(0, viewport())
+    let bytes = doc_converter_docx_wasm::docx_api::docx_build_display_list(0, viewport())
         .expect("кадр собирается");
     assert!(bytes.len() > doc_converter_render::display_list::HEADER_SIZE);
     assert_eq!(
@@ -100,17 +101,22 @@ fn build_without_sab_returns_the_frame_bytes() {
         "кадр начинается с магии DisplayList"
     );
 
-    doc_converter_wasm::docx_api::docx_close();
+    doc_converter_docx_wasm::docx_api::docx_close();
 }
 
 /// Кадр ложится в слот ring'а целиком: статистика непустая, а в слоте именно
 /// DisplayList, а не мусор.
 #[wasm_bindgen_test]
 fn builds_a_frame_into_the_sab_slot() {
-    doc_converter_wasm::docx_api::docx_open(ONE_PARAGRAPH.to_vec()).expect("фикстура открывается");
+    doc_converter_docx_wasm::docx_api::docx_open(ONE_PARAGRAPH.to_vec())
+        .expect("фикстура открывается");
 
-    let sab = doc_converter_wasm::sab_api::alloc_sab(SLOT_CAPACITY).expect("SAB аллоцируется");
-    let stats = doc_converter_wasm::docx_api::docx_build_display_list_sab(
+    // SAB аллоцируется здесь, а не через `sab_api` основного модуля: у моста
+    // в этом крейте нет доступа к аллокатору, да он и не нужен — ring работает
+    // с любым буфером подходящего размера.
+    let total = doc_converter_render::sab::HEADER_BYTES + (SLOT_CAPACITY as usize) * 2;
+    let sab = js_sys::SharedArrayBuffer::new(total as u32);
+    let stats = doc_converter_docx_wasm::docx_api::docx_build_display_list_sab(
         sab.clone(),
         SLOT_CAPACITY,
         0,
@@ -135,17 +141,18 @@ fn builds_a_frame_into_the_sab_slot() {
         "в слоте — DisplayList"
     );
 
-    doc_converter_wasm::docx_api::docx_close();
+    doc_converter_docx_wasm::docx_api::docx_close();
 }
 
 /// После закрытия собирать кадр не из чего: мост отвечает ошибкой, а не
 /// пустым кадром.
 #[wasm_bindgen_test]
 fn build_after_close_is_an_error() {
-    doc_converter_wasm::docx_api::docx_open(ONE_PARAGRAPH.to_vec()).expect("фикстура открывается");
-    doc_converter_wasm::docx_api::docx_close();
+    doc_converter_docx_wasm::docx_api::docx_open(ONE_PARAGRAPH.to_vec())
+        .expect("фикстура открывается");
+    doc_converter_docx_wasm::docx_api::docx_close();
 
-    let error = doc_converter_wasm::docx_api::docx_build_display_list(0, viewport())
+    let error = doc_converter_docx_wasm::docx_api::docx_build_display_list(0, viewport())
         .expect_err("после закрытия кадр не собирается");
     let message = error.as_string().unwrap_or_default();
     assert!(message.contains("no document"), "сообщение: {message}");

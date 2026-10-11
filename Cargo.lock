@@ -575,6 +575,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "doc-converter-docx-wasm"
+version = "0.1.0"
+dependencies = [
+ "doc-converter-docx",
+ "doc-converter-render",
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
+]
+
+[[package]]
 name = "doc-converter-pdf"
 version = "0.1.0"
 dependencies = [
@@ -618,7 +631,6 @@ dependencies = [
 name = "doc-converter-wasm"
 version = "0.2.0"
 dependencies = [
- "doc-converter-docx",
  "doc-converter-render",
  "doc-converter-xlsx",
  "js-sys",

@@ -78,6 +78,7 @@ pub struct SheetInfo {
 /// Что вышло из попытки собрать кадр.
 ///
 /// Общая форма для обоих форматов: и XLSX, и DOCX отдают её интерфейсу.
+/// Копия для DOCX живёт в `crates/docx-wasm` — модуль там самодостаточен.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildStats {
@@ -85,17 +86,6 @@ pub struct BuildStats {
     written: bool,
     cmds: u32,
     build_ms: f64,
-}
-
-impl BuildStats {
-    /// Заполняется мостами форматов (`xlsx_api`, `docx_api`).
-    pub(crate) fn new(written: bool, cmds: u32, build_ms: f64) -> Self {
-        Self {
-            written,
-            cmds,
-            build_ms,
-        }
-    }
 }
 
 /// Ошибка разбора — сообщением для человека: показывать её будет интерфейс.

@@ -7,8 +7,8 @@
 //! воркер однопоточный и обслуживает одно окно, а команды кадра уезжают прямо
 //! в слот ring'а, минуя `postMessage`.
 //!
-//! Форма статистики сборки и разбор окна — общие с XLSX ([`crate::xlsx_api`]):
-//! контракт кадра у обоих форматов один, и дублировать его незачем.
+//! Форма статистики сборки и разбор окна — общие с форматом кадра, но копия
+//! локальная: модуль не должен зависеть от XLSX-моста.
 
 use std::cell::RefCell;
 
@@ -17,10 +17,9 @@ use doc_converter_docx::{Document, LayoutOptions, PageLayout};
 use doc_converter_render::display_list::DisplayList;
 use doc_converter_render::font::FontRegistry;
 use doc_converter_render::sab::SabRing;
-use serde::Serialize;
+use doc_converter_render::viewport::Viewport;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
-
-use crate::xlsx_api::{to_js, viewport_of, BuildStats};
 
 /// Размер LRU-кэша метрик шрифта.
 ///
@@ -181,4 +180,63 @@ pub fn docx_build_display_list_sab(
 #[wasm_bindgen]
 pub fn docx_open_bytes(bytes: js_sys::Uint8Array) -> Result<JsValue, JsValue> {
     docx_open(bytes.to_vec())
+}
+
+/// Что вышло из попытки собрать кадр.
+///
+/// Форма общая с XLSX-мостом, но копия локальная: модуль не должен зависеть
+/// от чужого крейта ради одной структуры.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildStats {
+    /// Кадр уложился в слот ring'а.
+    written: bool,
+    cmds: u32,
+    build_ms: f64,
+}
+
+impl BuildStats {
+    /// Заполняется [`docx_build_display_list_sab`].
+    fn new(written: bool, cmds: u32, build_ms: f64) -> Self {
+        Self {
+            written,
+            cmds,
+            build_ms,
+        }
+    }
+}
+
+/// Ошибка разбора — сообщением для человека: показывать её будет интерфейс.
+fn to_js(error: impl std::fmt::Display) -> JsValue {
+    JsValue::from_str(&error.to_string())
+}
+
+/// Окно — то, что приходит из воркера.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewportJs {
+    #[serde(default)]
+    scroll_x: f32,
+    #[serde(default)]
+    scroll_y: f32,
+    width: f32,
+    height: f32,
+    #[serde(default = "one")]
+    scale: f32,
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+/// Перевести окно из JS в представление рендера.
+fn viewport_of(value: JsValue) -> Result<Viewport, JsValue> {
+    let js: ViewportJs = serde_wasm_bindgen::from_value(value).map_err(to_js)?;
+    Ok(Viewport::new(
+        js.scroll_x,
+        js.scroll_y,
+        js.width,
+        js.height,
+        js.scale,
+    ))
 }
