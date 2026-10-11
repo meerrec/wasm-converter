@@ -57,7 +57,8 @@ pub fn paint_display_list_sab(
     // Ring здесь строится второй раз (второй — внутри `paint_sab`): это две
     // обёртки над тем же SAB, копирования нет, а границу painter'а ради одного
     // `Atomics.store` размыкать не хочется.
-    let mut ring = doc_converter_render::sab::SabRing::from_sab(sab.clone(), slot_capacity as usize)?;
+    let mut ring =
+        doc_converter_render::sab::SabRing::from_sab(sab.clone(), slot_capacity as usize)?;
     let skipped = ring.advance_to_latest()?;
     let mut stats = OffscreenPainter::with(|painter| painter.paint_sab(sab, slot_capacity))??;
     if skipped > 0 {
