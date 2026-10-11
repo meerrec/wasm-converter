@@ -162,24 +162,35 @@ jobs:
       # сначала в /usr/local/sbin, /usr/local/bin, /usr/sbin, /usr/bin, /sbin,
       # /bin и /opt/google/chrome — и только потом в PATH (chrome_finder.cc:
       # GetApplicationDirs + GetPathsFromEnvironment). То есть на раннере
-      # выигрывает предустановленный Chrome образа, а не тот, что ставит action,
-      # поэтому драйвер берём ровно под него: скачанный wasm-pack'ом «самый
-      # свежий» уже разъезжался с браузером (локально — 155 при Chrome 154).
-      - name: chrome version
-        id: chrome
+      # выигрывает предустановленный Chrome образа, поэтому драйвер берём ровно
+      # под него: скачанный wasm-pack'ом «самый свежий» уже разъезжался с
+      # браузером (локально — 155 при Chrome 154).
+      # Драйвер качаем из бакета Chrome for Testing напрямую: у setup-chrome свой
+      # список «known good versions», который отстаёт от stable-канала образа, —
+      # на 154.0.8037.97 он падал «Version ... not found». Точной версии в
+      # бакете нет — падаем громко: подстановка `stable` вернула бы ровно тот
+      # баг, от которого уходим.
+      - name: chromedriver for the runner's chrome
         run: |
-          version=$(google-chrome --version 2>/dev/null | awk '{print $NF}')
-          echo "version=${version:-stable}" >> "$GITHUB_OUTPUT"
-
-      - uses: browser-actions/setup-chrome@v2
-        with:
-          chrome-version: ${{ steps.chrome.outputs.version }}
-          install-chromedriver: true
+          set -uo pipefail
+          version=$(google-chrome --version | awk '{print $NF}' || true)
+          if [ -z "$version" ]; then
+            echo "::error::google-chrome не найден на раннере — драйвер не подобрать"
+            exit 1
+          fi
+          url="https://storage.googleapis.com/chrome-for-testing-public/${version}/linux64/chromedriver-linux64.zip"
+          if ! curl --fail --silent --show-error --location --output "$RUNNER_TEMP/chromedriver.zip" "$url"; then
+            echo "::error::для Chrome ${version} нет chromedriver в бакете CfT: ${url}"
+            exit 1
+          fi
+          unzip -q -o "$RUNNER_TEMP/chromedriver.zip" -d "$RUNNER_TEMP/chromedriver"
+          sudo install -m 0755 "$RUNNER_TEMP/chromedriver/chromedriver-linux64/chromedriver" /usr/local/bin/chromedriver
+          chromedriver --version
 
       - run: cargo install wasm-pack --locked
 
       # wasm-pack берёт chromedriver из PATH, если он там есть, и качает свой
-      # только при его отсутствии — на PATH его как раз и кладёт action.
+      # только при его отсутствии — на PATH (/usr/local/bin) его кладёт шаг выше.
       - name: wasm-pack test
         run: wasm-pack test --headless --chrome crates/wasm
 
@@ -222,7 +233,22 @@ jobs:
       # Оба примера идут одной командой: браузеры складываются в общий кэш, а
       # `turbo run test` гоняет `test` всякого пакета, у которого он есть, —
       # включая пример DOCX (он в workspace с самого добавления).
-      - run: pnpm --filter @doc-converter/example-viewer-xlsx --filter @doc-converter/example-viewer-docx exec playwright install --with-deps chromium firefox webkit
+      # Повторы из-за фоновой установки пакетов в образе: `--with-deps` зовёт
+      # apt-get и падает на «Could not get lock /var/lib/apt/lists/lock», пока
+      # лок держит чужой процесс. Исчерпание попыток валит шаг ненулевым кодом.
+      - name: playwright browsers
+        run: |
+          set -uo pipefail
+          attempt=1
+          until pnpm --filter @doc-converter/example-viewer-xlsx --filter @doc-converter/example-viewer-docx exec playwright install --with-deps chromium firefox webkit; do
+            if [ "$attempt" -ge 3 ]; then
+              echo "::error::playwright install не удался за ${attempt} попытки — браузеры не поставлены"
+              exit 1
+            fi
+            echo "::warning::попытка ${attempt} упала (вероятно, лок apt-get) — повтор через 30 с"
+            attempt=$((attempt + 1))
+            sleep 30
+          done
 
       - run: pnpm turbo run typecheck test build
       # Гейт: регрессия бюджета блокирует merge (ROADMAP §9). Строка про wasm
