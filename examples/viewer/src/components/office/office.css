@@ -1,0 +1,679 @@
+/* Каркас примера в стиле Microsoft Office (лента, титульная строка, строка
+   состояния, линейка, строка формул). Стили живут одним файлом и подключены
+   через `index.ts` каркаса: классы с префиксом `ofc-` не пересекаются ни с
+   `styles.css` страниц, ни с разметкой вьюеров, которым страницы отдают
+   элементы по id. */
+
+:root {
+  --ofc-accent: #0f6cbd;
+  --ofc-accent-dark: #0b5cab;
+  --ofc-text: #201f1e;
+  --ofc-text-2: #605e5c;
+  --ofc-disabled: #a19f9d;
+  --ofc-ribbon-bg: #f3f2f1;
+  --ofc-ribbon-bg-2: #faf9f8;
+  --ofc-line: #e1dfdd;
+  --ofc-hover: #eae8e6;
+  --ofc-active-bg: #dbeaf9;
+  --ofc-active-line: #a9cff0;
+  --ofc-field-line: #d1cfcd;
+}
+
+/* Окно приложения: колонка «титульная строка — лента — содержимое — подвал».
+   Высоту задаёт `#root`, поэтому остаётся занять её целиком и дать середине
+   растянуться. */
+.ofc-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: #fff;
+  color: var(--ofc-text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+/* Вьюер занимает всё, что осталось от каркаса: страница вешает на него
+   разметку вьюера, и прокручиваться внутри должен он, а не окно. */
+.ofc-app #viewer {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Пустой холст — серый, как поле вокруг листа в Office: белым он сливался
+     бы с титульной строкой и лентой. */
+  background: #f1f0ef;
+}
+
+/* --- Титульная строка --------------------------------------------------- */
+
+.ofc-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Строка низкая и в одну линию: перенос из `header` из `styles.css` здесь
+     ломал бы раскладку окна. */
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 8px;
+  background: var(--ofc-ribbon-bg);
+  border-bottom: 1px solid var(--ofc-line);
+}
+
+.ofc-titlebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--ofc-accent);
+}
+
+.ofc-titlebar__app {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.ofc-titlebar__divider {
+  width: 1px;
+  height: 16px;
+  background: var(--ofc-line);
+}
+
+.ofc-titlebar__doc {
+  font-size: 13px;
+  color: var(--ofc-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ofc-titlebar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+  min-width: 0;
+}
+
+/* Контролы страницы в титульной строке (файл, фикстура) — мельче, чем в
+   документе: строка низкая, и крупные поля в неё не встают. */
+.ofc-titlebar__actions select,
+.ofc-titlebar__actions input {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--ofc-field-line);
+  border-radius: 3px;
+  background: #fff;
+  color: var(--ofc-text);
+  max-width: 220px;
+}
+
+/* Выбор файла: системный `input[type=file]` со своими «Choose File» и «No file
+   chosen» в титульной строке выглядел бы чужеродно, поэтому он растянут
+   прозрачным слоем внутри обычной кнопки — id `#file` остаётся на самом
+   поле, и страница по-прежнему может читать его `files`. */
+.ofc-file {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--ofc-field-line);
+  border-radius: 3px;
+  background: #fff;
+  color: var(--ofc-text);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ofc-file:hover {
+  background: var(--ofc-hover);
+}
+
+.ofc-file:focus-within {
+  border-color: var(--ofc-accent);
+}
+
+.ofc-file input[type="file"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.ofc-titlebar__spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+.ofc-titlebar__search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px 0 8px;
+  border: 1px solid var(--ofc-field-line);
+  border-radius: 13px;
+  background: #fff;
+  color: var(--ofc-text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.ofc-titlebar__search:hover:not(:disabled) {
+  background: var(--ofc-hover);
+}
+
+.ofc-titlebar__search:disabled {
+  color: var(--ofc-disabled);
+  cursor: default;
+}
+
+.ofc-titlebar__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--ofc-accent);
+  color: #fff;
+  flex: 0 0 auto;
+}
+
+/* --- Лента: вкладки ----------------------------------------------------- */
+
+.ofc-ribbon {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  background: var(--ofc-ribbon-bg);
+}
+
+.ofc-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 0 6px;
+  background: var(--ofc-ribbon-bg);
+}
+
+.ofc-tab {
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 4px 4px 0 0;
+  background: transparent;
+  color: var(--ofc-text);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ofc-tab:hover {
+  background: var(--ofc-hover);
+}
+
+/* Активная вкладка — белая с синей полосой снизу: полоса и есть метка
+   «здесь», белый фон связывает её с содержимым ленты. */
+.ofc-tab--active {
+  background: #fff;
+  box-shadow: inset 0 -3px 0 var(--ofc-accent);
+}
+
+/* «Файл» выделен цветом всегда: он открывает не ленту, а работу с файлом. */
+.ofc-tab--file {
+  background: var(--ofc-accent);
+  color: #fff;
+}
+
+.ofc-tab--file:hover {
+  background: var(--ofc-accent-dark);
+}
+
+.ofc-tab--file.ofc-tab--active {
+  background: var(--ofc-accent-dark);
+  box-shadow: inset 0 -3px 0 #fff;
+}
+
+/* --- Лента: содержимое -------------------------------------------------- */
+
+.ofc-ribbon-body {
+  display: flex;
+  align-items: stretch;
+  min-height: 92px;
+  padding: 4px 6px 0;
+  background: var(--ofc-ribbon-bg-2);
+  border-bottom: 1px solid var(--ofc-line);
+  /* Узкое окно: лента прокручивается по горизонтали, а не ломает раскладку
+     страницы вьюера. */
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.ofc-group {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  border-right: 1px solid var(--ofc-line);
+}
+
+.ofc-group:last-child {
+  border-right: none;
+}
+
+.ofc-group--grow {
+  flex: 1 1 auto;
+}
+
+.ofc-group__items {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 auto;
+}
+
+.ofc-group__label {
+  padding-top: 3px;
+  font-size: 12px;
+  color: var(--ofc-text-2);
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* --- Лента: элементы управления ----------------------------------------- */
+
+.ofc-btn,
+.ofc-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ofc-text);
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+/* 30 px, а не 32: лента обязана сложиться в окно 1280 без горизонтальной
+   прокрутки — иначе последние группы (экспорт, масштаб) уезжают за край. */
+.ofc-btn--small,
+.ofc-toggle {
+  width: 30px;
+  height: 30px;
+}
+
+/* Крупная кнопка: иконка сверху, подпись снизу — как «Вставить» в Office. */
+.ofc-btn--large {
+  flex-direction: column;
+  gap: 3px;
+  min-width: 64px;
+  height: 64px;
+  padding: 4px;
+}
+
+.ofc-btn__label {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  max-width: 62px;
+  font-size: 11px;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.ofc-btn:hover:not(:disabled),
+.ofc-toggle:hover:not(:disabled) {
+  background: var(--ofc-hover);
+  border-color: var(--ofc-field-line);
+}
+
+/* Нажатый переключатель и включённая кнопка — как в Office: голубая заливка
+   и рамка, а не только смена иконки. */
+.ofc-btn--active,
+.ofc-toggle--active {
+  background: var(--ofc-active-bg);
+  border-color: var(--ofc-active-line);
+}
+
+.ofc-btn--active:hover:not(:disabled),
+.ofc-toggle--active:hover:not(:disabled) {
+  background: #cfe4f7;
+}
+
+/* Недоступные команды серые и не отзываются на курсор: в Office это признак
+   «сейчас так нельзя», и подсказка у них остаётся. */
+.ofc-btn:disabled,
+.ofc-toggle:disabled {
+  color: var(--ofc-disabled);
+  background: transparent;
+  border-color: transparent;
+  cursor: default;
+}
+
+.ofc-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 44px;
+  height: 24px;
+  border: 1px solid var(--ofc-field-line);
+  border-radius: 3px;
+  background: #fff;
+  color: var(--ofc-text);
+  flex: 0 0 auto;
+}
+
+.ofc-select__input {
+  appearance: none;
+  width: 100%;
+  height: 100%;
+  padding: 0 18px 0 6px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ofc-select__input:disabled {
+  color: var(--ofc-disabled);
+  cursor: default;
+}
+
+/* Стрелка — своя, а не системная: у `appearance: none` её не остаётся вовсе. */
+.ofc-select > svg {
+  position: absolute;
+  right: 4px;
+  color: var(--ofc-text-2);
+  pointer-events: none;
+}
+
+.ofc-select:has(.ofc-select__input:disabled) > svg {
+  color: var(--ofc-disabled);
+}
+
+.ofc-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100px;
+  height: 46px;
+  padding: 2px 6px;
+  border: 1px solid var(--ofc-line);
+  border-radius: 3px;
+  background: #fff;
+  color: var(--ofc-text);
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.ofc-tile:hover:not(:disabled) {
+  border-color: var(--ofc-accent);
+}
+
+.ofc-tile:disabled {
+  cursor: default;
+}
+
+/* Узкая плитка — для ленты, которой галерея не даёт сложиться в окно 1280:
+   подпись в неё влезает, а группа экономит два десятка пикселей. */
+.ofc-tile--narrow {
+  width: 88px;
+}
+
+/* Образцы стилей отличаются начертанием даже у недоступной галереи: это
+   превью стиля, а не команда. */
+.ofc-tile__sample {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ofc-tile--normal .ofc-tile__sample {
+  font-size: 12px;
+}
+
+.ofc-tile--title1 .ofc-tile__sample {
+  /* 14 px, а не 15: подпись «Заголовок» должна влезать в узкую плитку
+     целиком — обрезанное многоточием название стиля читается как ошибка. */
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ofc-accent);
+}
+
+.ofc-tile--title2 .ofc-tile__sample {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ofc-accent);
+}
+
+/* Раскладка внутри группы: колонка строк и строка элементов. Классы — утилиты
+   для страниц, сам каркас их не рисует. */
+.ofc-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ofc-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* --- Линейка ------------------------------------------------------------ */
+
+.ofc-ruler {
+  position: relative;
+  height: 20px;
+  flex: 0 0 auto;
+  background: var(--ofc-ribbon-bg-2);
+  border-bottom: 1px solid var(--ofc-line);
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Поля страницы: серые участки, за которые текст не заходит. */
+.ofc-ruler__margin {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: #e6e4e2;
+}
+
+.ofc-ruler__tick {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  height: 5px;
+  background: #b3b0ad;
+}
+
+.ofc-ruler__tick--cm {
+  height: 9px;
+  background: #8a8886;
+}
+
+.ofc-ruler__num {
+  position: absolute;
+  top: 1px;
+  margin-left: 3px;
+  font-size: 9px;
+  color: var(--ofc-text-2);
+}
+
+/* --- Строка формул ------------------------------------------------------ */
+
+.ofc-formulabar {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  height: 24px;
+  background: #fff;
+  border-bottom: 1px solid var(--ofc-line);
+  font-size: 12px;
+}
+
+.ofc-formulabar__name {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 96px;
+  padding: 0 8px;
+  border-right: 1px solid var(--ofc-line);
+  color: var(--ofc-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ofc-formulabar__fx {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  padding: 0;
+  border: none;
+  border-right: 1px solid var(--ofc-line);
+  background: transparent;
+  color: var(--ofc-text-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ofc-formulabar__fx:disabled {
+  color: var(--ofc-disabled);
+  cursor: default;
+}
+
+.ofc-formulabar__formula {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  padding: 0 8px;
+  color: var(--ofc-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- Строка состояния --------------------------------------------------- */
+
+.ofc-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 10px;
+  background: var(--ofc-ribbon-bg);
+  border-top: 1px solid var(--ofc-line);
+  color: var(--ofc-text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  /* Узкое окно: содержимое подвала не переносится, а обрезается — высота
+     строки в Office постоянна. */
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ofc-statusbar b {
+  color: var(--ofc-text);
+  font-weight: 600;
+}
+
+.ofc-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+/* Метрики вьюера — в середине: они меняются часто, но читают их глазами, а
+   не мышью, поэтому и место у них нейтральное. */
+.ofc-statusbar__meters {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ofc-statusbar__sep {
+  width: 1px;
+  height: 14px;
+  background: var(--ofc-field-line);
+  flex: 0 0 auto;
+}
+
+.ofc-statusbar select {
+  font: inherit;
+  font-size: 12px;
+  padding: 1px 4px;
+  border: 1px solid var(--ofc-field-line);
+  border-radius: 3px;
+  background: #fff;
+  color: var(--ofc-text);
+}
+
+/* Список листов пуст, пока книга не открыта: недоступное поле серое, как и
+   недоступные кнопки. */
+.ofc-statusbar select:disabled {
+  color: var(--ofc-disabled);
+  background: var(--ofc-ribbon-bg-2);
+  cursor: default;
+}
+
+.ofc-statusbar__zoom,
+.ofc-statusbar__check,
+.ofc-statusbar__sheet {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ofc-text-2);
+}
+
+/* Зум в подвале — только показание: сама ручка живёт в ленте, поэтому здесь
+   ни id, ни отклика на курсор, как у величины в Office. */
+.ofc-statusbar__zoom {
+  cursor: default;
+}
+
+.ofc-statusbar__zoom svg {
+  color: var(--ofc-disabled);
+}
+
+/* Подсказка «перетащите файл» живёт в подвале и уступает место метрикам:
+   обрезается многоточием, а не выдавливает счётчики. */
+.ofc-statusbar #hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ofc-statusbar #status {
+  color: var(--ofc-text-2);
+}
