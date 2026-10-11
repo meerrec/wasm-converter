@@ -33,6 +33,12 @@ pub struct Paginator {
     current_y: f32,
     /// Секция текущей страницы; её геометрию унаследует следующая.
     current_section: Section,
+    /// Ширины колонок полосы набора текущей секции; одна — одноколоночная.
+    column_widths: Vec<f32>,
+    /// Промежуток между колонками (`w:space`), в пикселях.
+    column_gap: f32,
+    /// Текущая колонка: 0 — первая.
+    column_index: usize,
 }
 
 /// Пустая страница с номером `number` по геометрии секции.
@@ -53,14 +59,19 @@ impl Paginator {
         let current_page = page_for(1, section);
         let current_y = current_page.margins.top;
 
-        Self {
+        let mut paginator = Self {
             pages: Vec::new(),
             page_sections: Vec::new(),
             section_index: 0,
             current_page,
             current_y,
             current_section: section.clone(),
-        }
+            column_widths: Vec::new(),
+            column_gap: 0.0,
+            column_index: 0,
+        };
+        paginator.reset_columns();
+        paginator
     }
 
     /// Текущая позиция Y.
@@ -80,16 +91,62 @@ impl Paginator {
         &mut self.current_page
     }
 
-    /// Левая граница содержимого: от неё отсчитывается X элементов.
+    /// Текущая колонка: 0 — первая.
     #[must_use]
-    pub fn content_left(&self) -> f32 {
-        self.current_page.margins.left
+    pub fn column_index(&self) -> usize {
+        self.column_index
     }
 
-    /// Ширина полосы содержимого — ширина страницы без боковых полей.
+    /// Левая граница содержимого: от неё отсчитывается X элементов.
+    ///
+    /// В многоколоночной секции — левый край текущей колонки.
+    // Колонок в секции единицы: точность f32 для их счёта заведомо достаточна.
+    #[allow(clippy::cast_precision_loss)]
+    #[must_use]
+    pub fn content_left(&self) -> f32 {
+        let before: f32 = self.column_widths.iter().take(self.column_index).sum();
+        self.current_page.margins.left + before + self.column_gap * self.column_index as f32
+    }
+
+    /// Ширина полосы содержимого — ширина текущей колонки.
     #[must_use]
     pub fn content_width(&self) -> f32 {
-        self.current_page.width - self.current_page.margins.left - self.current_page.margins.right
+        self.column_widths
+            .get(self.column_index)
+            .copied()
+            .unwrap_or(
+                self.current_page.width
+                    - self.current_page.margins.left
+                    - self.current_page.margins.right,
+            )
+    }
+
+    /// Перейти к следующей колонке той же страницы.
+    ///
+    /// `false` — колонка последняя: следующей нет, начинать нужно новую
+    /// страницу. Курсор возвращается к верхней границе полосы набора: колонка
+    /// заполняется сверху вниз, где бы ни остановилась предыдущая.
+    pub fn next_column(&mut self) -> bool {
+        if self.column_index + 1 >= self.column_widths.len() {
+            return false;
+        }
+        self.column_index += 1;
+        self.current_y = self.current_page.margins.top;
+        true
+    }
+
+    /// Пересчитать колонки под текущую страницу и секцию.
+    ///
+    /// Новая страница и смена секции всегда начинаются с первой колонки,
+    /// поэтому здесь же сбрасывается её номер.
+    fn reset_columns(&mut self) {
+        let band = self.current_page.width
+            - self.current_page.margins.left
+            - self.current_page.margins.right;
+        let (widths, gap) = super::engine::column_geometry(&self.current_section, band);
+        self.column_widths = widths;
+        self.column_gap = gap;
+        self.column_index = 0;
     }
 
     /// Верхняя граница содержимого.
@@ -156,6 +213,7 @@ impl Paginator {
         let mut page = page_for(self.current_page.number, section);
         page.items = items;
         self.current_page = page;
+        self.reset_columns();
     }
 
     /// Отдать все страницы документа, включая текущую.
@@ -243,6 +301,7 @@ impl Paginator {
     fn break_page(&mut self, next: Page, finished_section: usize) -> Page {
         let finished = std::mem::replace(&mut self.current_page, next);
         self.current_y = self.current_page.margins.top;
+        self.reset_columns();
         self.pages.push(finished.clone());
         self.page_sections.push(finished_section);
         finished

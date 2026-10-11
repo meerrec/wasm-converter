@@ -469,10 +469,10 @@ fn layout_block(
 ) {
     match block {
         BlockItem::Paragraph(paragraph) => {
-            // Курсор страницы — источник истины: состояние возвращается к нему перед
-            // каждым абзацем, иначе элементы получают координаты от прошлого блока.
-            state.x = state.column_x;
-            state.y = paginator.current_y();
+            // Курсор и колонка пагинатора — источник истины: состояние
+            // возвращается к ним перед каждым абзацем, иначе элементы получают
+            // координаты от прошлого блока.
+            sync_frame(paginator, state);
 
             let mut line_breaker = LineBreaker::new(fonts, FontId::default());
             let layout = layout_paragraph(
@@ -569,6 +569,10 @@ fn place_lines(
 ) -> ParagraphPlacement {
     let images = collect_inline_images(paragraph);
     let images_first = layout.lines.is_empty() && !images.is_empty();
+    // Строки разложены по краю той колонки, где абзац начался; продолжаясь в
+    // соседней, они сдвигаются вместе с ней — ширина колонок секции одна и та
+    // же, поэтому переносить строки заново не приходится.
+    let paragraph_column_x = state.column_x;
     if images_first {
         place_inline_images(paginator, &images, media, placed_floats, state);
     }
@@ -583,6 +587,15 @@ fn place_lines(
         break_page(paginator, placed_floats, state);
     }
 
+    // Явный разрыв колонки: знак абзаца Word оставляет уже в следующей колонке.
+    if has_column_break(paragraph) {
+        paginator
+            .current_page_mut()
+            .items
+            .push(LayoutItem::ColumnBreak);
+        break_frame(paginator, placed_floats, state);
+    }
+
     // Сколько строк остаётся на текущей странице; хвост — на следующей.
     let kept = lines_kept_on_page(paginator, lines, layout);
 
@@ -594,10 +607,11 @@ fn place_lines(
     // Первая страница документа — не разрыв: там `before` остаётся (так же
     // кладёт LibreOffice — эталон фикстуры `basic/paragraph_spacing`).
     let starts_page = has_page_break(paragraph)
+        || has_column_break(paragraph)
         || kept == 0
         || layout.page_break_before
-        || (paginator.current_page().number > 1
-            && paginator.current_y() <= paginator.content_top());
+        || (paginator.current_y() <= paginator.content_top()
+            && (paginator.current_page().number > 1 || state.column_index > 0));
 
     // Верх фрагмента абзаца на странице, где он закончится: у разорванного
     // абзаца `relativeFrom="paragraph"` отсчитывается от полосы набора той
@@ -607,7 +621,7 @@ fn place_lines(
 
     for (index, line) in lines.iter().enumerate() {
         if index == kept {
-            break_page(paginator, placed_floats, state);
+            break_frame(paginator, placed_floats, state);
             fragment_top = state.y;
         }
         let first = index == 0;
@@ -648,7 +662,12 @@ fn place_lines(
             .items
             .push(LayoutItem::Paragraph {
                 node_id: paragraph.id,
-                rect: Rect::new(line.x, top, line.width, line.height),
+                rect: Rect::new(
+                    line.x + (state.column_x - paragraph_column_x),
+                    top,
+                    line.width,
+                    line.height,
+                ),
                 text: line.text.clone(),
                 line_height: line.height,
                 color: line.color,
@@ -693,7 +712,7 @@ fn place_inline_images(
             continue;
         }
         if !paginator.fits(height) && paginator.current_y() > paginator.content_top() {
-            break_page(paginator, placed_floats, state);
+            break_frame(paginator, placed_floats, state);
         }
         let rect = paginator.next_rect(width, height);
         paginator.advance(height);
@@ -866,6 +885,8 @@ fn place_table(
     placed_floats: &mut Vec<FloatElement>,
     state: &mut LayoutState,
 ) {
+    // Таблица ложится в текущую колонку: её левый край и ширину задаёт она.
+    sync_frame(paginator, state);
     let frame = compute_table_frame(table, state.column_x, state.column_width);
     let first = PageBand {
         top: paginator.current_y(),
@@ -882,6 +903,10 @@ fn place_table(
     for fragment in fragments {
         // Пустая страница — предел: фрагмент не влез в неё, но новых страниц
         // под него не будет, и разрыв оставил бы лист с одной таблицей за полем.
+        //
+        // Продолжение таблицы переходит на новую страницу, а не в соседнюю
+        // колонку: ячейки фрагмента разложены по левому краю той колонки, в
+        // которой таблица начиналась, и сдвиг одной рамки увёл бы их от неё.
         if fragment.starts_new_page && paginator.current_y() > paginator.content_top() {
             break_page(paginator, placed_floats, state);
         }
@@ -906,6 +931,18 @@ fn place(
     placed_floats: &mut Vec<FloatElement>,
     state: &mut LayoutState,
 ) {
+    // Переполнение в многоколоночной секции ведёт в соседнюю колонку той же
+    // страницы, а не сразу на новую. Пустая колонка — предел: элемент выше
+    // полосы набора остаётся в ней и выходит за нижнюю границу, иначе разрыв
+    // зациклил бы раскладку. Явный разрыв страницы колонку не выбирает.
+    if !page_break
+        && !paginator.fits(height)
+        && paginator.current_y() > paginator.content_top()
+        && paginator.next_column()
+    {
+        placed_floats.clear();
+        sync_frame(paginator, state);
+    }
     if paginator.add_item(height, page_break) {
         return;
     }
@@ -915,7 +952,30 @@ fn place(
     }
 }
 
+/// Продолжить поток: соседняя колонка той же страницы, а если её нет — новая.
+///
+/// Так ведёт себя и переполнение полосы набора, и `w:br w:type="column"`:
+/// колонка заполняется до низа, затем идёт следующая, и только после последней
+/// начинается новая страница с первой колонки.
+fn break_frame(
+    paginator: &mut Paginator,
+    placed_floats: &mut Vec<FloatElement>,
+    state: &mut LayoutState,
+) {
+    if paginator.next_column() {
+        // Обтекание принадлежит колонке: рисунок из прежней ширину строк в
+        // новой не режет — там он стоит в стороне от её текста.
+        placed_floats.clear();
+        sync_frame(paginator, state);
+        return;
+    }
+    break_page(paginator, placed_floats, state);
+}
+
 /// Начать новую страницу: обтекание и координаты живут в её пределах.
+///
+/// Новая страница всегда открывается первой колонкой: так ведут себя явный
+/// `w:br w:type="page"`, `w:pageBreakBefore` и разрыв секции.
 fn break_page(
     paginator: &mut Paginator,
     placed_floats: &mut Vec<FloatElement>,
@@ -923,6 +983,47 @@ fn break_page(
 ) {
     paginator.push_page();
     reset_page_state(paginator, placed_floats, state);
+}
+
+/// Ширины колонок полосы набора шириной `band` и промежуток между ними.
+///
+/// Равные колонки (`w:equalWidth`, умолчание Word) делят полосу за вычетом
+/// промежутков между ними. Явные `w:col` (`w:equalWidth="0"`) несут
+/// собственные ширины: подгонять их сумму под полосу Word не берётся, и
+/// раскладка тоже — остаток полосы остаётся пустым. Промежутки берутся у
+/// секции (`w:space`): индивидуальные `w:space` колонок уходят в исключение.
+// Колонок в секции единицы: точность f32 для их счёта заведомо достаточна.
+#[allow(clippy::cast_precision_loss)]
+pub(crate) fn column_geometry(section: &Section, band: f32) -> (Vec<f32>, f32) {
+    let columns = &section.columns;
+    let gap = twips_to_px(columns.space);
+    let count = columns.count.max(1) as usize;
+    if count > 1 && !columns.equal_width && columns.defs.len() == count {
+        let widths = columns
+            .defs
+            .iter()
+            .map(|def| twips_to_px(def.width))
+            .collect();
+        return (widths, gap);
+    }
+    if count > 1 {
+        let width = ((band - gap * (count - 1) as f32) / count as f32).max(0.0);
+        return (vec![width; count], gap);
+    }
+    (vec![band], gap)
+}
+
+/// Подтянуть координаты состояния к текущей колонке пагинатора.
+///
+/// Колонку выбирает пагинатор (он же ведёт курсор), состояние лишь несёт её
+/// координаты раскладывающим функциям: строки, таблицы и рисунки берут левый
+/// край и ширину из `state`.
+fn sync_frame(paginator: &Paginator, state: &mut LayoutState) {
+    state.column_index = paginator.column_index();
+    state.column_x = paginator.content_left();
+    state.column_width = paginator.content_width();
+    state.x = state.column_x;
+    state.y = paginator.current_y();
 }
 
 /// Вернуть состояние к началу полосы набора текущей страницы.
@@ -936,6 +1037,8 @@ fn reset_page_state(
 ) {
     placed_floats.clear();
     *state = LayoutState::for_page(paginator.current_page(), paginator.current_section());
+    // Разрыв всегда открывает первую колонку — состояние берёт её у пагинатора.
+    sync_frame(paginator, state);
 }
 
 /// Сколько строк абзаца остаётся на текущей странице.
@@ -983,6 +1086,18 @@ fn lines_kept_on_page(paginator: &Paginator, lines: &[&Line], layout: &Paragraph
         }
     }
     kept
+}
+
+/// Есть ли в абзаце явный разрыв колонки (`w:br w:type="column"`).
+fn has_column_break(paragraph: &Paragraph) -> bool {
+    paragraph.runs.iter().any(|inline| match inline {
+        Inline::Break(BreakKind::Column) => true,
+        Inline::Run(run) => run
+            .content
+            .iter()
+            .any(|content| matches!(content, RunContent::Break(BreakKind::Column))),
+        _ => false,
+    })
 }
 
 /// Есть ли в абзаце явный разрыв страницы (`w:br w:type="page"`).
@@ -1162,6 +1277,9 @@ fn layout_chrome_part(
     band_section.margins.bottom = Twips::new(0);
     band_section.margins.header = Some(Twips::new(0));
     band_section.margins.footer = Some(Twips::new(0));
+    // Колонтитул печатается поверх страницы целиком: колонки секции его не
+    // делят, иначе он встал бы в первую из них.
+    band_section.columns.count = 1;
 
     let mut paginator = Paginator::new(&band_section);
     let mut state = LayoutState::for_page(paginator.current_page(), &band_section);
@@ -1345,17 +1463,17 @@ impl Default for SectionProperties {
 }
 
 impl LayoutState {
-    /// Состояние на начало страницы: полоса набора внутри её полей.
+    /// Состояние на начало полосы набора: её первая колонка внутри полей.
     ///
-    /// Секция пока используется только для проверки числа колонок; поля и размеры
-    /// берутся из уже собранной страницы, чтобы состояние и страница не разъезжались.
+    /// Колонку дальше ведёт пагинатор и отдаёт её координаты состоянию при
+    /// переходе (см. `sync_frame`); здесь состояние получает первую — разрыв
+    /// страницы всегда открывает именно её. Поля и размеры берутся из уже
+    /// собранной страницы, чтобы состояние и страница не разъезжались.
     #[must_use]
     pub fn for_page(page: &Page, section: &Section) -> Self {
-        let column_width = page.width - page.margins.left - page.margins.right;
-        if section.columns.count > 1 {
-            // TODO (Спринт 10): многоколоночная раскладка — полосу набора предстоит
-            // делить между колонками; все фикстуры одноколоночные.
-        }
+        let band = page.width - page.margins.left - page.margins.right;
+        let (widths, _) = column_geometry(section, band);
+        let column_width = widths.first().copied().unwrap_or(band);
         Self {
             x: page.margins.left,
             y: page.margins.top,
@@ -1373,9 +1491,9 @@ mod tests {
     use super::*;
     use crate::model::raw::{ParagraphSpacing, Toggle};
     use crate::model::{
-        Body, BreakKind, Extent, Inline, InlineImage, InlineOrAnchor, Metadata, NumberingTable,
-        Paragraph, PositionH, PositionV, RelFromH, RelFromV, Relationships, Run, RunContent,
-        SectionType, Settings, StyleTable, WrapKind,
+        Body, BreakKind, ColumnDef, Columns, Extent, Inline, InlineImage, InlineOrAnchor, Metadata,
+        NumberingTable, Paragraph, PositionH, PositionV, RelFromH, RelFromV, Relationships, Run,
+        RunContent, SectionType, Settings, StyleTable, WrapKind,
     };
 
     /// Абзац из одного run'а; идентификаторы произвольные — раскладка их не сверяет.
@@ -1540,6 +1658,257 @@ mod tests {
             layout.pages.len(),
             1,
             "две строки ровно по нижнюю границу остаются на первой странице"
+        );
+    }
+
+    /// Одна строка 19.2 px: колонка такой высоты вмещает ровно строку.
+    const ONE_LINE_PAGE_TWIPS: i32 = 288;
+
+    /// Промежуток между колонками тестов: 0.5 дюйма, как у Word по умолчанию.
+    const COLUMN_GAP_TWIPS: i32 = 720;
+
+    /// Секция с равными колонками: A4 без полей, высота — `height_twips`.
+    fn section_with_columns(count: u32, height_twips: i32) -> Section {
+        let mut section = section_without_margins(height_twips);
+        section.columns = Columns {
+            count,
+            space: Twips::new(COLUMN_GAP_TWIPS),
+            equal_width: true,
+            separator: false,
+            defs: Vec::new(),
+        };
+        section.properties.columns = section.columns.clone();
+        section
+    }
+
+    /// Прямоугольники абзацев страницы в порядке отрисовки.
+    fn paragraph_rects(page: &Page) -> Vec<Rect> {
+        page.items
+            .iter()
+            .filter_map(|item| match item {
+                LayoutItem::Paragraph { rect, .. } => Some(*rect),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Левый край второй колонки секции из двух равных колонок.
+    fn second_column_x(page: &Page) -> f32 {
+        let gap = twips_to_px(Twips::new(COLUMN_GAP_TWIPS));
+        page.margins.left + (page.width - page.margins.left - page.margins.right - gap) / 2.0 + gap
+    }
+
+    /// Абзац с явным разрывом колонки (`w:br w:type="column"`).
+    fn paragraph_with_column_break(id: u64) -> Paragraph {
+        let mut paragraph = paragraph(id, "after the column break");
+        paragraph.runs.push(Inline::Break(BreakKind::Column));
+        paragraph
+    }
+
+    /// Абзац с явным разрывом страницы (`w:br w:type="page"`).
+    fn paragraph_with_page_break(id: u64) -> Paragraph {
+        let mut paragraph = paragraph(id, "after the page break");
+        paragraph.runs.push(Inline::Run(Run {
+            id: NodeId::new(id + 2),
+            content: vec![RunContent::Break(BreakKind::Page)],
+            ..Run::default()
+        }));
+        paragraph
+    }
+
+    /// Блокер Спринта 10: абзацы заполняют первую колонку, затем вторую той же
+    /// страницы — вторая колонка не открывает новую страницу.
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn columns_fill_the_first_column_then_the_second_on_one_page() {
+        let document = document_in_section(section_with_columns(2, ONE_LINE_PAGE_TWIPS), 2);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(layout.pages.len(), 1, "обе колонки — на одной странице");
+        let page = &layout.pages[0];
+        let rects = paragraph_rects(page);
+        assert_eq!(rects.len(), 2, "по абзацу в колонку");
+        assert_eq!(
+            rects[0].x, page.margins.left,
+            "первый абзац — в первой колонке"
+        );
+        assert_eq!(
+            rects[1].x,
+            second_column_x(page),
+            "второй абзац ушёл во вторую колонку, а не на новую страницу"
+        );
+        assert_eq!(rects[1].y, page.margins.top, "колонка начинается сверху");
+    }
+
+    /// Текст сверх всех колонок страницы начинается на новой странице с первой
+    /// колонки: её и открывает разрыв.
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn text_beyond_the_last_column_starts_a_new_page() {
+        let document = document_in_section(section_with_columns(2, ONE_LINE_PAGE_TWIPS), 3);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(
+            layout.pages.len(),
+            2,
+            "третьему абзацу нужна вторая страница"
+        );
+        assert_eq!(paragraph_rects(&layout.pages[0]).len(), 2, "колонки заняты");
+        let second = paragraph_rects(&layout.pages[1]);
+        assert_eq!(second.len(), 1);
+        assert_eq!(
+            second[0].x, layout.pages[1].margins.left,
+            "новая страница начинается с первой колонки"
+        );
+        assert_eq!(second[0].y, layout.pages[1].margins.top);
+    }
+
+    /// `w:br w:type="column"` переводит текст в соседнюю колонку той же
+    /// страницы и оставляет отметку разрыва в потоке.
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn an_explicit_column_break_moves_to_the_next_column() {
+        let items = vec![
+            BlockItem::Paragraph(paragraph(1, "left column")),
+            BlockItem::Paragraph(paragraph_with_column_break(3)),
+        ];
+        let document = document_with(items, vec![section_with_columns(2, TWO_LINE_PAGE_TWIPS)]);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(
+            layout.pages.len(),
+            1,
+            "разрыв колонки страницу не открывает"
+        );
+        let page = &layout.pages[0];
+        assert!(
+            page.items
+                .iter()
+                .any(|item| matches!(item, LayoutItem::ColumnBreak)),
+            "разрыв колонки отмечен в потоке"
+        );
+        let rects = paragraph_rects(page);
+        assert_eq!(rects.len(), 2);
+        assert_eq!(rects[0].x, page.margins.left, "текст до разрыва — слева");
+        assert_eq!(
+            rects[1].x,
+            second_column_x(page),
+            "текст после разрыва — во второй колонке"
+        );
+    }
+
+    /// Разрыв колонки в последней колонке открывает новую страницу.
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn a_column_break_in_the_last_column_starts_a_new_page() {
+        let items = vec![
+            BlockItem::Paragraph(paragraph(1, "left column")),
+            BlockItem::Paragraph(paragraph_with_column_break(3)),
+            BlockItem::Paragraph(paragraph(5, "next page")),
+        ];
+        let document = document_with(items, vec![section_with_columns(2, ONE_LINE_PAGE_TWIPS)]);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(layout.pages.len(), 2, "колонки кончились — нужна страница");
+        let second = paragraph_rects(&layout.pages[1]);
+        assert_eq!(second.len(), 1);
+        assert_eq!(
+            second[0].x, layout.pages[1].margins.left,
+            "новая страница начинается с первой колонки"
+        );
+    }
+
+    /// Явный разрыв страницы открывает первую колонку новой страницы, а не
+    /// соседнюю: колонка при нём не выбирается.
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn a_page_break_starts_the_first_column_of_a_new_page() {
+        let items = vec![
+            BlockItem::Paragraph(paragraph(1, "first page")),
+            BlockItem::Paragraph(paragraph_with_page_break(3)),
+        ];
+        let document = document_with(items, vec![section_with_columns(2, TWO_LINE_PAGE_TWIPS)]);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(layout.pages.len(), 2, "разрыв страницы страницу открывает");
+        let second = paragraph_rects(&layout.pages[1]);
+        assert_eq!(second.len(), 1);
+        assert_eq!(
+            second[0].x, layout.pages[1].margins.left,
+            "разрыв страницы ведёт в первую колонку"
+        );
+        assert_eq!(second[0].y, layout.pages[1].margins.top);
+    }
+
+    /// Одноколоночная секция от многоколоночной раскладки не меняется: полоса —
+    /// вся страница, обе строки на ней.
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn a_single_column_section_keeps_the_whole_band() {
+        let document = document_in_section(section_with_columns(1, TWO_LINE_PAGE_TWIPS), 2);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(layout.pages.len(), 1);
+        let page = &layout.pages[0];
+        let rects = paragraph_rects(page);
+        assert_eq!(rects.len(), 2);
+        assert!(
+            rects.iter().all(|rect| rect.x == page.margins.left),
+            "одна полоса по левому полю: {rects:?}"
+        );
+    }
+
+    /// `w:equalWidth="0"`: ширины колонок берутся из `w:col` как записаны, а
+    /// промежуток — из `w:space` секции.
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn explicit_column_defs_set_each_column_width() {
+        let mut section = section_with_columns(2, ONE_LINE_PAGE_TWIPS);
+        let gap = Twips::new(COLUMN_GAP_TWIPS);
+        section.columns.equal_width = false;
+        section.columns.defs = vec![
+            ColumnDef {
+                width: Twips::new(2000),
+                space: gap,
+            },
+            ColumnDef {
+                width: Twips::new(4000),
+                space: gap,
+            },
+        ];
+        section.properties.columns = section.columns.clone();
+        let document = document_in_section(section, 2);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        let page = &layout.pages[0];
+        let rects = paragraph_rects(page);
+        assert_eq!(rects.len(), 2);
+        assert_eq!(rects[0].x, page.margins.left);
+        assert_eq!(
+            rects[1].x,
+            page.margins.left + twips_to_px(Twips::new(2000)) + twips_to_px(gap),
+            "вторая колонка — за первой ровно на её ширину и промежуток"
         );
     }
 
