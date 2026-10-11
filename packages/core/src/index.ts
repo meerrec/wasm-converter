@@ -4,6 +4,7 @@ export type {
   Viewport,
   RenderConfig,
   PdfModuleUrls,
+  DocxModuleUrls,
   PdfOptions,
   HitResult,
   CellRef,

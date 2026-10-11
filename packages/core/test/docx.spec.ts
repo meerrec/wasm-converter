@@ -4,12 +4,7 @@ import type { InMsg, OutMsg, RenderConfig, Viewport } from '../src/protocol.js';
 
 /** Ответы wasm-модуля: воркер получает их вместо настоящего `@doc-converter/wasm`. */
 const wasm = vi.hoisted(() => {
-  const pages = [
-    { width: 595, height: 842 },
-    { width: 595, height: 842 },
-  ];
   return {
-    pages,
     init: vi.fn(async () => {}),
     alloc_sab: vi.fn(() => ({})),
     sab_total_bytes: vi.fn(() => 4096),
@@ -30,20 +25,31 @@ const wasm = vi.hoisted(() => {
     xlsx_open: vi.fn(() => []),
     xlsx_images: vi.fn(() => []),
     xlsx_image_bytes: vi.fn(() => new Uint8Array()),
-    docx_open_bytes: vi.fn(() => pages),
-    /** Страничный сборщик кадра: настроек показа у него в подписи нет. */
-    docx_build_display_list_sab: vi.fn(
-      (_sab: unknown, _slot: number, _page: number, _viewport: unknown) => ({
-        written: true,
-        cmds: 1,
-        buildMs: 0,
-      }),
-    ),
-    docx_close: vi.fn(),
   };
 });
 
 vi.mock('@doc-converter/wasm', () => ({ default: wasm.init, ...wasm }));
+
+/**
+ * Отметки заглушки ленивого DOCX-модуля (`test/fixtures/docx-module.js`):
+ * воркер грузит её по URL из `init`, поэтому из воркера её не видно — о вызовах
+ * она пишет в `globalThis`. Пустой список вызовов — функцию не звали.
+ */
+interface DocxStub {
+  loads: number;
+  initCalls: number;
+  pages: { width: number; height: number }[];
+  calls: Record<string, unknown[][]>;
+}
+
+const docxStub = (): DocxStub | undefined =>
+  (globalThis as { __docxStub?: DocxStub }).__docxStub;
+
+/** Вызовы функции заглушки: аргументы каждого вызова. */
+const stubCalls = (name: string): unknown[][] => docxStub()?.calls[name] ?? [];
+
+/** URL заглушки — тот же путь, каким его увидит воркер: рантайм-строкой. */
+const STUB_URL = new URL('./fixtures/docx-module.js', import.meta.url).href;
 
 type Handler = (ev: { data: InMsg }) => Promise<void>;
 
@@ -66,6 +72,7 @@ const rustViewport = { scrollX: 0, scrollY: 0, width: 800, height: 600, scale: 1
 const initMsg = (): InMsg => ({
   type: 'init',
   canvas: { getContext: () => ({}) } as unknown as OffscreenCanvas,
+  docx: { module: STUB_URL },
   slotCapacity: SLOT_CAPACITY,
 });
 
@@ -85,6 +92,9 @@ const ticks = () => posted.filter((m) => m.type === 'tick');
 beforeEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
+
+  // Заглушка живёт в реестре модулей рантайма: отметки начинаем с чистого листа.
+  (globalThis as { __docxStub?: DocxStub }).__docxStub = undefined;
 
   posted = [];
   const selfStub: SelfStub = {
@@ -117,9 +127,9 @@ describe('открытие DOCX', () => {
   it('разбирает документ и отвечает страницами вместо листов', async () => {
     await handler({ data: openMsg('docx') });
 
-    expect(wasm.docx_open_bytes).toHaveBeenCalledTimes(1);
+    expect(stubCalls('docx_open_bytes')).toHaveLength(1);
     expect(wasm.xlsx_open).not.toHaveBeenCalled();
-    expect(posted).toContainEqual({ type: 'docx-opened', pages: wasm.pages });
+    expect(posted).toContainEqual({ type: 'docx-opened', pages: docxStub()?.pages });
   });
 });
 
@@ -129,8 +139,8 @@ describe('кадр DOCX', () => {
     await handler({ data: renderMsg({ page: 1 }) });
 
     expect(wasm.xlsx_build_display_list_sab).not.toHaveBeenCalled();
-    expect(wasm.docx_build_display_list_sab).toHaveBeenCalledTimes(1);
-    const call = wasm.docx_build_display_list_sab.mock.calls[0];
+    expect(stubCalls('docx_build_display_list_sab')).toHaveLength(1);
+    const call = stubCalls('docx_build_display_list_sab')[0];
     expect(call?.[1]).toBe(SLOT_CAPACITY);
     expect(call?.[2]).toBe(1);
     expect(call?.[3]).toEqual(rustViewport);
@@ -143,14 +153,14 @@ describe('кадр DOCX', () => {
     await handler({ data: openMsg('docx') });
     await handler({ data: renderMsg({}) });
 
-    expect(wasm.docx_build_display_list_sab).not.toHaveBeenCalled();
+    expect(stubCalls('docx_build_display_list_sab')).toHaveLength(0);
     expect(ticks()).toHaveLength(0);
   });
 
   it('до открытия документа не собирается', async () => {
     await handler({ data: renderMsg({ page: 0 }) });
 
-    expect(wasm.docx_build_display_list_sab).not.toHaveBeenCalled();
+    expect(stubCalls('docx_build_display_list_sab')).toHaveLength(0);
     expect(ticks()).toHaveLength(0);
   });
 
@@ -159,8 +169,8 @@ describe('кадр DOCX', () => {
     await handler({ data: { type: 'close' } });
     await handler({ data: renderMsg({ page: 0 }) });
 
-    expect(wasm.docx_close).toHaveBeenCalledTimes(1);
-    expect(wasm.docx_build_display_list_sab).not.toHaveBeenCalled();
+    expect(stubCalls('docx_close')).toHaveLength(1);
+    expect(stubCalls('docx_build_display_list_sab')).toHaveLength(0);
   });
 });
 
@@ -169,7 +179,7 @@ describe('смена формата', () => {
     await handler({ data: openMsg('xlsx') });
     await handler({ data: renderMsg({ sheet: 1 }) });
 
-    expect(wasm.docx_build_display_list_sab).not.toHaveBeenCalled();
+    expect(stubCalls('docx_build_display_list_sab')).toHaveLength(0);
     expect(wasm.xlsx_build_display_list_sab).toHaveBeenCalledTimes(1);
     expect(wasm.xlsx_build_display_list_sab.mock.calls[0]?.[2]).toBe(1);
     expect(wasm.xlsx_build_display_list_sab.mock.calls[0]?.[4]).toEqual({
@@ -183,7 +193,7 @@ describe('смена формата', () => {
     await handler({ data: openMsg('docx') });
     await handler({ data: openMsg('xlsx') });
 
-    expect(wasm.docx_close).toHaveBeenCalledTimes(1);
+    expect(stubCalls('docx_close')).toHaveLength(1);
     expect(wasm.xlsx_open).toHaveBeenCalledTimes(1);
     // Отвечает как на книгу: листы, а не страницы.
     expect(posted.at(-1)).toEqual({ type: 'opened', sheets: [] });

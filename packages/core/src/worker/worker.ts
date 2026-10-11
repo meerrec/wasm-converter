@@ -1,9 +1,6 @@
 /// <reference lib="webworker" />
 import init, {
   alloc_sab,
-  docx_build_display_list_sab,
-  docx_close,
-  docx_open_bytes,
   drop_bitmap,
   init_painter,
   paint_display_list_sab,
@@ -18,6 +15,7 @@ import init, {
   xlsx_open,
 } from '@doc-converter/wasm';
 import type {
+  DocxModuleUrls,
   HyperlinkInfo,
   ImageInfo,
   InMsg,
@@ -81,6 +79,38 @@ async function loadPdfWasm(urls: PdfModuleUrls): Promise<PdfWasm> {
     return await pdfWasmLoading;
   } catch (e) {
     pdfWasmLoading = null;
+    throw e;
+  }
+}
+
+/** Тип ленивого DOCX-модуля берём у сгенерированных wasm-bindgen деклараций. */
+type DocxWasm = typeof import('@doc-converter/wasm-docx');
+
+/** Откуда грузить DOCX-модуль: заполняется на `init`, до него экспорта нет. */
+let docxUrls: DocxModuleUrls | null = null;
+/** Загруженный модуль: `import()` и `init()` платятся один раз за воркер. */
+let docxWasm: DocxWasm | null = null;
+/** Незавершённая загрузка — чтобы два открытия подряд не тянули модуль дважды. */
+let docxWasmLoading: Promise<DocxWasm> | null = null;
+
+/**
+ * Загрузить DOCX-модуль по требованию. Неудача не кэшируется: следующее
+ * открытие попробует снова, иначе один сетевой сбой навсегда ломал бы просмотр.
+ */
+async function loadDocxWasm(urls: DocxModuleUrls): Promise<DocxWasm> {
+  if (docxWasm) return docxWasm;
+  docxWasmLoading ??= (async () => {
+    // URL динамический: модуль лежит отдельным файлом, и статический импорт
+    // вернул бы его в основной бандл — ровно то, от чего мы ушли.
+    const mod = (await import(/* @vite-ignore */ urls.module)) as DocxWasm;
+    await mod.default(urls.binary);
+    docxWasm = mod;
+    return mod;
+  })();
+  try {
+    return await docxWasmLoading;
+  } catch (e) {
+    docxWasmLoading = null;
     throw e;
   }
 }
@@ -152,10 +182,10 @@ function reregisterBitmaps(): void {
  * Отпустить разобранный документ прежнего формата.
  *
  * Книга XLSX живёт в wasm до следующего `xlsx_open`, а у DOCX память держат
- * раскладка и реестр шрифтов: отпускает их только `docx_close`.
+ * раскладка и реестр шрифтов: отпускает их только `docx_close` ленивого модуля.
  */
 function releaseDocument(): void {
-  if (format === 'docx') docx_close();
+  if (format === 'docx') docxWasm?.docx_close();
   format = null;
 }
 
@@ -176,6 +206,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         if (!ctx) throw new Error('getContext("2d") returned null');
 
         pdfUrls = msg.pdf ?? null;
+        docxUrls = msg.docx ?? null;
         slotCapacity = msg.slotCapacity;
         // SAB — не transferable, шарится через structured clone.
         sab = alloc_sab(slotCapacity) as unknown as SharedArrayBuffer;
@@ -193,7 +224,12 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
             const target = frameTarget(format, pending);
             const stats = (
               target.kind === 'docx'
-                ? docx_build_display_list_sab(sab, slotCapacity, target.page, target.viewport)
+                ? docxWasm?.docx_build_display_list_sab(
+                    sab,
+                    slotCapacity,
+                    target.page,
+                    target.viewport,
+                  )
                 : xlsx_build_display_list_sab(
                     sab,
                     slotCapacity,
@@ -201,7 +237,11 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
                     target.viewport,
                     target.options,
                   )
-            ) as { written: boolean; cmds: number; buildMs: number };
+            ) as { written: boolean; cmds: number; buildMs: number } | undefined;
+            // Модуля DOCX нет — собирать кадр нечем: он дропается, как и при
+            // отсутствии свободного слота. Путь страховочный: открытие модуль
+            // уже загрузило.
+            if (!stats) return false;
             buildMs = stats.buildMs;
             // Свободного слота не было — кадр пропущен намеренно.
             return stats.written;
@@ -240,7 +280,17 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         // Формат выбирает и былл-функцию разбора, и форму ответа. Открытие
         // отдаёт JsValue: разбирает его serde, тип знает только Rust.
         if (msg.format === 'docx') {
-          const pages = docx_open_bytes(new Uint8Array(msg.bytes)) as PageInfo[];
+          const urls = docxUrls;
+          if (!urls) {
+            post({
+              type: 'error',
+              message: 'docx module is not configured: init has no docx urls',
+            });
+            break;
+          }
+          // Первое открытие платит за загрузку модуля; дальше он уже в памяти.
+          const mod = await loadDocxWasm(urls);
+          const pages = mod.docx_open_bytes(new Uint8Array(msg.bytes)) as PageInfo[];
           format = 'docx';
           pending = null;
           // Документ уходит в wasm целиком, а PDF-экспорт пока умеет только
