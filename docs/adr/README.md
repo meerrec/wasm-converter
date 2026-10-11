@@ -26,5 +26,6 @@
 | 0018 | Границы редактирования в v1 | [`0018-editing-boundaries.md`](0018-editing-boundaries.md) |
 | 0019 | NodeId | [`0019-node-id.md`](0019-node-id.md) |
 | 0020 | Границы парсера и writer | [`0020-parser-writer-boundary.md`](0020-parser-writer-boundary.md) |
+| 0021 | Два транспорта кадра: SAB и ArrayBuffer | [`0021-frame-transports.md`](0021-frame-transports.md) |
 
 Сводка принятых решений по спринтам — `ROADMAP.md` §11.
