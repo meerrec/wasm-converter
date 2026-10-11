@@ -1,0 +1,56 @@
+# apt-get, переживающий фоновую установку пакетов в образе раннера: она держит
+# локи apt, и голый apt-get в CI либо падает, либо виснет.
+#
+# Падение: лок списков (`/var/lib/apt/lists/lock`) apt-get берёт неблокирующим
+# `fcntl(F_SETLK)` (`apt-pkg/contrib/fileutl.cc: GetLock`) и сразу выходит с
+# кодом 100 — «Could not get lock …». Лечится повтором.
+#
+# Ожидание: у локов dpkg (`/var/lib/dpkg/lock-frontend`, `lock`) ожидание
+# включается только ключом `DPkg::Lock::Timeout` (`debSystem::Lock` в apt ≥ 2.0);
+# по умолчанию его нет — `apt` выставляет себе 120 с сам, `apt-get` нет. Даём
+# dpkg-локам 60 с: конфликт с фоновой установкой успевает рассосаться, а
+# бесконечного ожидания не бывает. Лок списков этим ключом не покрыт — от
+# заминки на нём защищает только повтор.
+#
+# Предел на команду: `timeout` снимает заминку любой другой природы (в прогоне
+# 38161310682 шаг `pdf tooling` провисел полчаса вместо десяти секунд). По
+# истечении посылается SIGTERM, и apt сворачивает текущую операцию сам, не
+# бросая dpkg.
+#
+# Исчерпание попыток валит шаг ненулевым кодом.
+name: apt install
+description: apt-get update + install с ограниченным ожиданием локов и повторами
+
+inputs:
+  packages:
+    description: Пакеты для `apt-get install` (через пробелы)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        APT_PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -uo pipefail
+
+        lock_wait=60      # предел ожидания dpkg-локов внутри apt, с
+        command_limit=180 # предел на каждую команду apt-get, с
+
+        # shellcheck disable=SC2206
+        packages=($APT_PACKAGES)
+
+        attempt=1
+        until sudo timeout "$command_limit" apt-get update \
+          && sudo timeout "$command_limit" apt-get \
+               -o DPkg::Lock::Timeout="$lock_wait" \
+               install -y --no-install-recommends "${packages[@]}"; do
+          if [ "$attempt" -ge 3 ]; then
+            echo "::error::apt-get не отработал за ${attempt} попытки — пакеты (${APT_PACKAGES}) не поставлены"
+            exit 1
+          fi
+          echo "::warning::попытка ${attempt} упала (вероятно, лок apt-get) — повтор через 30 с"
+          attempt=$((attempt + 1))
+          sleep 30
+        done
