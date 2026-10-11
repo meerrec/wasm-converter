@@ -420,8 +420,19 @@ compare_fixture() {
     return 0
   fi
 
+  # Растеризация и счётчики страниц обязаны сойтись: pdfinfo их берёт из PDF,
+  # pdftoppm рисует по одной картинке на страницу, а наше число печатает
+  # раскладка. Разошлись — сравнивать нечего, и сказать об этом надо в отчёте, а
+  # не упасть на `set -u` при обращении к несуществующему элементу массива.
+  if [ "${#lo_imgs[@]}" -ne "$lo_pages" ] || [ "${#our_imgs[@]}" -ne "$our_pages" ]; then
+    note+="${note:+; }страниц в PDF ${lo_pages}/${our_pages}, а растеризация дала ${#lo_imgs[@]}/${#our_imgs[@]}"
+    mark_fail 1 "сбой сравнения"
+  fi
+
   local shared=$lo_pages
   if [ "$our_pages" -lt "$shared" ]; then shared=$our_pages; fi
+  if [ "${#lo_imgs[@]}" -lt "$shared" ]; then shared=${#lo_imgs[@]}; fi
+  if [ "${#our_imgs[@]}" -lt "$shared" ]; then shared=${#our_imgs[@]}; fi
 
   local ssim_file=$workdir/ssim/$stem.txt
   : >"$ssim_file"
@@ -614,14 +625,6 @@ delta_line=$(printf '%s\n' "${rows[@]}" |
 # таблицы на сотню строк. Строки файла — «<ssim> <имя>», поэтому ключ первый.
 worst=$(sort -n "$workdir/ssim-first.txt" | head -10 | LC_ALL=C awk '{ printf "| %s | %.4f |\n", $2, $1 }')
 
-# «Эталон не открыл» — отдельным слагаемым: битые фикстуры `broken/**` до
-# сравнения не доходят, и в «ошибке окружения» они выглядели бы поломкой
-# харнесса, которой нет. В счётчик failed они входят: если эталон не открыл ни
-# одного документа прогона, это уже про окружение.
-ref_clause=""
-if [ "$ref_failed" -gt 0 ]; then
-  ref_clause=", эталон не открыл: $ref_failed"
-fi
 
 {
   echo "# DOCX: наш PDF против LibreOffice"
@@ -662,11 +665,11 @@ fi
     printf '%s\n' "$worst"
   fi
   echo
-  if [ "$failed" -gt 0 ]; then
-    echo "Сравнено: $compared (в допуске: $ok, расхождение страниц: $pages_failed), пропущено: $skipped${ref_clause}, с ошибкой: $failed (окружение: $env_failed, экспорт: $export_failed, сравнение: $cmp_failed)."
-  else
-    echo "Сравнено: $compared (в допуске: $ok, расхождение страниц: $pages_failed), пропущено: $skipped${ref_clause}, с ошибкой: $failed."
-  fi
+  # Слагаемые «с ошибкой» печатаются и нулевыми: по строке видно, что счётчики
+  # сходятся, а не что один из них потерялся. «Эталон не открыл» стоит первым
+  # слагаемым намеренно: битые фикстуры `broken/**` до сравнения не доходят, и в
+  # «ошибке окружения» они читались бы поломкой харнесса, которой нет.
+  echo "Сравнено: $compared (в допуске: $ok, расхождение страниц: $pages_failed), пропущено: $skipped, с ошибкой: $failed (эталон не открыл: $ref_failed, окружение: $env_failed, экспорт: $export_failed, сравнение: $cmp_failed)."
   if [ "${#fixtures[@]}" -lt 50 ]; then
     echo
     echo "Фикстур меньше 50: выборка не закрывает DoD «±1 страница на 50 фикстурах» —"
