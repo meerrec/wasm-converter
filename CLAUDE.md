@@ -20,7 +20,7 @@ cargo deny check                       # deny.toml: лицензии, баны, 
 wasm-pack test --headless --chrome crates/wasm   # wasm-bindgen-test (run_in_browser; нужен chromedriver)
 ```
 
-`crates/wasm` целиком под `#![cfg(target_arch = "wasm32")]`, поэтому на нативном таргете он пуст — `cargo clippy --workspace --all-targets` и `cargo test --workspace` не требуют выбора таргета.
+`crates/wasm`, `crates/pdf-wasm` и `crates/docx-wasm` целиком под `#![cfg(target_arch = "wasm32")]`, поэтому на нативном таргете они пусты — `cargo clippy --workspace --all-targets` и `cargo test --workspace` не требуют выбора таргета.
 
 ### Сборка WASM
 
@@ -28,7 +28,7 @@ wasm-pack test --headless --chrome crates/wasm   # wasm-bindgen-test (run_in_bro
 pnpm build:wasm   # = bash scripts/build-wasm.sh
 ```
 
-Скрипт гоняет `wasm-pack build crates/wasm --target web --out-dir packages/wasm/pkg --release` и затем системный `wasm-opt -O4`, если он есть в `PATH`. Встроенный в wasm-pack `wasm-opt` отключён (`crates/wasm/Cargo.toml`): rustc эмитит bulk-memory, который та версия не понимает.
+Скрипт собирает три модуля: `crates/wasm` → `packages/wasm/pkg`, `crates/pdf-wasm` → `packages/wasm-pdf/pkg`, `crates/docx-wasm` → `packages/wasm-docx/pkg`. Затем системный `wasm-opt -O4` по каждому из них, если он есть в `PATH`, — шаг по-прежнему опционален. Встроенный в wasm-pack `wasm-opt` отключён (`crates/wasm/Cargo.toml`): rustc эмитит bulk-memory, который та версия не понимает.
 
 ### JS/TS
 
@@ -42,7 +42,7 @@ pnpm -F @doc-converter/core exec vitest run -t 'coalesces repeated'  # один 
 pnpm size-limit                       # бюджеты из .size-limit.json
 ```
 
-Порядок не косметический: `@doc-converter/core` типизируется против сгенерированных `packages/wasm/pkg/*.d.ts`, а `packages/wasm/pkg/` в `.gitignore`. На свежем клоне без `pnpm build:wasm` typecheck упадёт. В CI `pkg/` приезжает артефактом из джобы `wasm` (`download-artifact` → `packages/wasm/pkg`).
+Порядок не косметический: `@doc-converter/core` типизируется против сгенерированных `packages/wasm/pkg/*.d.ts`, а `packages/wasm/pkg/` в `.gitignore`. На свежем клоне без `pnpm build:wasm` typecheck упадёт. В CI `pkg/` всех трёх модулей приезжает артефактами из джобы `wasm` (`download-artifact`: `wasm-pkg` → `packages/wasm/pkg`, `wasm-pdf-pkg` → `packages/wasm-pdf/pkg`, `wasm-docx-pkg` → `packages/wasm-docx/pkg`).
 
 `pnpm lint` сейчас холостой: скрипт `lint: eslint src` объявлен в `packages/core/package.json`, но eslint не установлен ни в зависимостях, ни в локе.
 
@@ -63,7 +63,8 @@ pnpm size-limit                       # бюджеты из .size-limit.json
 | `crates/xlsx` | Разбор книги целиком (`open()`), раскладка листа в пикселях и сборка `DisplayList` (`paint::build`) |
 | `crates/docx` | Пока заглушка: открывает архив, зовёт `validate_ooxml`, возвращает непрозрачный тип. Парсинг — TODO |
 | `crates/pdf` | Заглушка (`todo!()`); `options.rs` с `PdfOptions` уже есть |
-| `crates/wasm` | Только wasm-bindgen-экспорты, тонкий слой над render/display_list |
+| `crates/wasm` | Основной wasm-модуль просмотрщика: painter, SAB-аллокатор и XLSX-просмотрщик — тонкий слой wasm-bindgen-экспортов над render/xlsx |
+| `crates/docx-wasm` | Ленивый wasm-модуль просмотра DOCX: экспорты `docx_*`, отдельный `packages/wasm-docx/pkg`, грузится воркером при открытии `.docx` |
 
 ### Контракт Rust ↔ TS: DisplayList
 
