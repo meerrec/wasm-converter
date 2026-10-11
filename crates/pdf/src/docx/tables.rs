@@ -22,6 +22,8 @@ use crate::fonts::EmbeddedFonts;
 use crate::layout::{PageGeometry, RectPx};
 use crate::styles::to_pdf_color;
 
+use super::images::Images;
+
 /// Толщина границы, у которой не записан `w:sz`: 0.5 pt — умолчание Word для
 /// одиночной линии (`w:sz="4"`).
 const DEFAULT_BORDER_PT: f32 = 0.5;
@@ -72,6 +74,7 @@ pub(crate) fn draw(
     page: &PageGeometry,
     embedded: &EmbeddedFonts,
     registry: &mut FontRegistry,
+    images: &Images,
     offset_y: f32,
 ) {
     // Заливка — под содержимым, границы — над ней, поэтому ячейки обходятся
@@ -104,7 +107,7 @@ pub(crate) fn draw(
             continue;
         }
         let dy = offset_y + v_align_shift(cell);
-        super::draw_items(&cell.content, ops, page, embedded, registry, dy);
+        super::draw_items(&cell.content, ops, page, embedded, registry, images, dy);
     }
     // Штрих — состояние кисти потока: последняя граница могла быть пунктирной,
     // а следующий за таблицей элемент обязан рисоваться сплошной линией.

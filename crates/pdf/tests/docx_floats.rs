@@ -1,8 +1,12 @@
-//! Плавающие элементы DOCX (`wp:anchor`) в PDF: плейсхолдер и `behindDoc`.
+//! Плавающие элементы DOCX (`wp:anchor`) в PDF: рисунок, плейсхолдер и
+//! `behindDoc`.
 //!
 //! Фикстуры — те же из `test-fixtures/docx`, что читает `crates/docx`;
 //! координаты берутся у раскладки, а операции страницы разбираются `lopdf` —
-//! приёмы те же, что в `tests/docx.rs`.
+//! приёмы те же, что в `tests/docx.rs`. У фикстур слайса медиачасть есть, и
+//! анкор занимает свой прямоугольник настоящим рисунком; плейсхолдер остаётся
+//! ветке без байтов — её проверяет тот же тест, очистив медиатаблицу модели
+//! (`Document::media`).
 
 use std::path::{Path, PathBuf};
 
@@ -97,6 +101,25 @@ fn placeholder_stroke(content: &Content) -> usize {
         .expect("в потоке есть обводка контура")
 }
 
+/// Индекс отсечения по прямоугольнику — путь перед `W`.
+fn clip_path(content: &Content) -> usize {
+    content
+        .operations
+        .iter()
+        .position(|op| op.operator == "W")
+        .expect("в потоке есть отсечение")
+}
+
+/// Индекс отрисовки плавающего рисунка в потоке: сам `XObject` (`Do`) или
+/// обводка плейсхолдера (`S`) — смотря по тому, есть ли у анкора байты.
+fn float_drawing(content: &Content) -> usize {
+    content
+        .operations
+        .iter()
+        .position(|op| op.operator == "Do" || op.operator == "S")
+        .expect("в потоке есть рисунок или его плейсхолдер")
+}
+
 /// Вершины пути, нарисованного до операции `stroke`: пары `m`/`l`.
 fn path_points(content: &Content, stroke: usize) -> Vec<(f32, f32)> {
     content.operations[..stroke]
@@ -156,31 +179,52 @@ fn set_behind_text(doc: &mut Document, behind: bool) -> usize {
     changed
 }
 
-/// Плейсхолдер встаёт в прямоугольник анкера: вершины контура в PDF совпадают
-/// с `FloatElement::rect`, переведённым в точки.
+/// Рисунок (или его плейсхолдер) встаёт в прямоугольник анкера: вершины контура
+/// в PDF совпадают с `FloatElement::rect`, переведённым в точки.
+///
+/// У фикстур медиачасть есть, поэтому рисуется сам `XObject`, отсечённый по
+/// прямоугольнику анкера; ветка без байтов — та же фикстура с очищенной
+/// медиатаблицей: рисунку нечего показать, и на его месте остаётся контур.
 #[test]
-fn float_placeholder_lands_on_the_anchor_rect() {
+fn float_drawing_lands_on_the_anchor_rect() {
     for name in [
         "images/anchor_wrap_square.docx",
         "images/anchor_behind_text.docx",
     ] {
-        let doc = document(name);
-        let layout = layout(&doc);
-        let float = only_float(&layout);
-        let content = page_ops(&export(&doc));
+        let mut doc = document(name);
+        let with_media = layout(&doc);
+        let float = only_float(&with_media).clone();
 
-        let points = path_points(&content, placeholder_stroke(&content));
-        let expected = expected_corners(float.rect, layout.pages[0].height);
-        assert_eq!(points.len(), expected.len(), "{name}: вершин контура");
-        for corner in expected {
-            assert!(
-                points
-                    .iter()
-                    .any(|&(x, y)| (x - corner.0).abs() <= TOLERANCE_PT
-                        && (y - corner.1).abs() <= TOLERANCE_PT),
-                "{name}: вершины {corner:?} нет среди {points:?}"
-            );
-        }
+        let content = page_ops(&export(&doc));
+        assert_corners(
+            name,
+            &path_points(&content, clip_path(&content)),
+            expected_corners(float.rect, with_media.pages[0].height),
+        );
+
+        doc.media.clear();
+        let without_media = layout(&doc);
+        let float = only_float(&without_media).clone();
+        let content = page_ops(&export(&doc));
+        assert_corners(
+            name,
+            &path_points(&content, placeholder_stroke(&content)),
+            expected_corners(float.rect, without_media.pages[0].height),
+        );
+    }
+}
+
+/// Вершины `points` — те же, что у прямоугольника `expected`.
+fn assert_corners(name: &str, points: &[(f32, f32)], expected: [(f32, f32); 4]) {
+    assert_eq!(points.len(), expected.len(), "{name}: вершин контура");
+    for corner in expected {
+        assert!(
+            points
+                .iter()
+                .any(|&(x, y)| (x - corner.0).abs() <= TOLERANCE_PT
+                    && (y - corner.1).abs() <= TOLERANCE_PT),
+            "{name}: вершины {corner:?} нет среди {points:?}"
+        );
     }
 }
 
@@ -196,7 +240,7 @@ fn behind_text_draws_before_the_text_and_front_after() {
 
     let under = page_ops(&export(&doc));
     assert!(
-        placeholder_stroke(&under) < first_text_op(&under),
+        float_drawing(&under) < first_text_op(&under),
         "рисунок под текстом нарисован после него"
     );
 
@@ -207,7 +251,7 @@ fn behind_text_draws_before_the_text_and_front_after() {
     );
     let over = page_ops(&export(&doc));
     assert!(
-        first_text_op(&over) < placeholder_stroke(&over),
+        first_text_op(&over) < float_drawing(&over),
         "передний рисунок нарисован до текста"
     );
 }

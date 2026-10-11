@@ -108,8 +108,39 @@ pub fn place(
     rect: &Rect,
 ) -> Result<Vec<Op>, DecodeError> {
     check_rect(rect)?;
-    let (id, width_px, height_px) = register(resources, mime, bytes)?;
-    Ok(placement_ops(&id, width_px, height_px, rect))
+    Ok(register(resources, mime, bytes)?.ops(rect))
+}
+
+/// Изображение, уже лежащее в ресурсах документа: имя `XObject` и размеры
+/// исходника в пикселях.
+///
+/// Разделение [`register`] и [`Registered::ops`] нужно, когда прямоугольники
+/// размещения известны не сразу: `XObject`'ы — ресурсы документа, и запись
+/// страниц (`StreamSession`) читает их в момент вывода, поэтому зарегистрировать
+/// все картинки приходится до начала записи, а операции собрать потом. Так
+/// устроен путь DOCX (`crate::docx::images`): медиачасти он регистрирует одним
+/// проходом, а операции собирает при отрисовке страниц.
+#[derive(Debug, Clone)]
+pub struct Registered {
+    /// Имя `XObject` в ресурсах документа.
+    id: XObjectId,
+    /// Ширина исходника в пикселях.
+    width_px: usize,
+    /// Высота исходника в пикселях.
+    height_px: usize,
+}
+
+impl Registered {
+    /// Операции вывода изображения в прямоугольник страницы (точки, начало
+    /// координат — левый нижний угол).
+    ///
+    /// `rect` обязан быть невырожденным: стороны проверяет [`place`] до
+    /// регистрации (`check_rect`), а вызывающий, собирающий операции позже,
+    /// проверяет их сам — иначе нулевая сторона дала бы `NaN` в матрице.
+    #[must_use]
+    pub fn ops(&self, rect: &Rect) -> Vec<Op> {
+        placement_ops(&self.id, self.width_px, self.height_px, rect)
+    }
 }
 
 /// Изображение к размещению на странице.
@@ -191,7 +222,8 @@ fn check_rect(rect: &Rect) -> Result<(), DecodeError> {
 
 /// Кладёт изображение в ресурсы или находит уже собранный `XObject`.
 ///
-/// Возвращает имя `XObject` и размеры исходника в пикселях. Имя выводится из
+/// Возвращает [`Registered`]: имя `XObject` и размеры исходника в пикселях.
+/// Имя выводится из
 /// содержимого, поэтому одинаковые байты попадают в одну запись ресурсов:
 /// [`RawImage`] переезжает по владению только при первом размещении, повторы
 /// декодирования не требуют. Ключ — именно байты, а не id media-части из
@@ -201,11 +233,11 @@ fn check_rect(rect: &Rect) -> Result<(), DecodeError> {
 ///
 /// # Errors
 /// [`DecodeError`] от [`decode`] — если такой картинки в ресурсах ещё нет.
-fn register(
+pub fn register(
     resources: &mut PdfResources,
     mime: &str,
     bytes: &[u8],
-) -> Result<(XObjectId, usize, usize), DecodeError> {
+) -> Result<Registered, DecodeError> {
     let id = xobject_id(bytes);
     if let Some((Px(width), Px(height))) = resources
         .xobjects
@@ -213,15 +245,23 @@ fn register(
         .get(&id)
         .and_then(XObject::get_width_height)
     {
-        return Ok((id, width, height));
+        return Ok(Registered {
+            id,
+            width_px: width,
+            height_px: height,
+        });
     }
     let image = decode(mime, bytes)?;
-    let (width, height) = (image.width, image.height);
+    let (width_px, height_px) = (image.width, image.height);
     resources
         .xobjects
         .map
         .insert(id.clone(), XObject::Image(image));
-    Ok((id, width, height))
+    Ok(Registered {
+        id,
+        width_px,
+        height_px,
+    })
 }
 
 /// Имя `XObject` по содержимому media-части — ключ дедупликации.

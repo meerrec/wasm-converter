@@ -19,6 +19,7 @@
 //! (`crate::styles::CellStyle::underline`).
 
 mod floats;
+mod images;
 mod tables;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -68,13 +69,18 @@ pub(crate) fn export(doc: &Document, options: &PdfOptions) -> Result<Vec<u8>, Pd
     apply_metadata(&mut pdf, doc, options);
     let embedded = fonts::embed(&mut pdf, &mut warnings, collect_faces(&layout))?;
 
+    // `XObject`'ы — ресурсы документа: `StreamSession` переводит по ним
+    // `Op::UseXobject` в момент записи страницы, поэтому рисунки обязаны лечь в
+    // ресурсы до `begin` — так же, как у листа XLSX (`painter::image_ops`).
+    let images = images::Images::collect(doc, &mut pdf.resources);
+
     // Шрифты подрезаются до записи первой страницы (`StreamSession::begin`), а
     // подрезка перенумеровывает глифы: символ, не попавший в зонды, вывелся бы
     // нулевым глифом — молча. Поэтому символы собираются первой отрисовкой, той
     // же `draw_page`, что пойдёт в PDF, — так же, как у листа XLSX
     // (`painter::collect_glyphs`).
     let probe = probe_pages(
-        collect_glyphs(&layout, &embedded, &mut registry),
+        collect_glyphs(&layout, &embedded, &mut registry, &images),
         first_page,
     );
 
@@ -95,7 +101,7 @@ pub(crate) fn export(doc: &Document, options: &PdfOptions) -> Result<Vec<u8>, Pd
     )?;
     for page in &layout.pages {
         let geometry = geometry(page);
-        let ops = draw_page(page, &geometry, &embedded, &mut registry);
+        let ops = draw_page(page, &geometry, &embedded, &mut registry, &images);
         let pdf_page = PdfPage::new(
             Mm::from(Pt(geometry.width_pt())),
             Mm::from(Pt(geometry.height_pt())),
@@ -222,11 +228,12 @@ fn collect_glyphs(
     layout: &PageLayout,
     embedded: &EmbeddedFonts,
     registry: &mut FontRegistry,
+    images: &images::Images,
 ) -> BTreeMap<FontId, BTreeSet<char>> {
     let mut glyphs: BTreeMap<FontId, BTreeSet<char>> = BTreeMap::new();
     for page in &layout.pages {
         let geometry = geometry(page);
-        for op in draw_page(page, &geometry, embedded, registry) {
+        for op in draw_page(page, &geometry, embedded, registry, images) {
             if let Op::WriteText { font, items } = op {
                 let set = glyphs.entry(font.clone()).or_default();
                 for item in items {
@@ -246,9 +253,18 @@ fn draw_page(
     geometry: &PageGeometry,
     embedded: &EmbeddedFonts,
     registry: &mut FontRegistry,
+    images: &images::Images,
 ) -> Vec<Op> {
     let mut ops = Vec::new();
-    draw_items(&page.items, &mut ops, geometry, embedded, registry, 0.0);
+    draw_items(
+        &page.items,
+        &mut ops,
+        geometry,
+        embedded,
+        registry,
+        images,
+        0.0,
+    );
     ops
 }
 
@@ -266,6 +282,7 @@ fn draw_items(
     page: &PageGeometry,
     embedded: &EmbeddedFonts,
     registry: &mut FontRegistry,
+    images: &images::Images,
     offset_y: f32,
 ) {
     for item in items {
@@ -295,17 +312,19 @@ fn draw_items(
                 },
             ),
             LayoutItem::Table { cells, .. } => {
-                tables::draw(ops, cells, page, embedded, registry, offset_y);
+                tables::draw(ops, cells, page, embedded, registry, images, offset_y);
             }
             LayoutItem::Float(float) => {
-                floats::draw(ops, float, page, embedded, registry, offset_y)
+                floats::draw(ops, float, page, embedded, registry, images, offset_y);
             }
             // Разрывы — метки раскладки: страницы уже разрезаны, рисовать нечего.
             LayoutItem::PageBreak | LayoutItem::ColumnBreak => {}
-            // Встроенный рисунок места в раскладке уже занял (его прямоугольник
-            // входит в границы содержимого ячейки), но команд для картинок
-            // экспорт пока не собирает — в PDF он не рисуется.
-            LayoutItem::Image { .. } => {}
+            // Без байтов (`image_id: None`) рисунок не рисуется — поведение
+            // экспорта до этого среза: места в раскладке он уже занял, но
+            // показать нечего.
+            LayoutItem::Image { rect, image_id, .. } => {
+                ops.extend(images.ops(*image_id, *rect, offset_y, page));
+            }
         }
     }
 }
