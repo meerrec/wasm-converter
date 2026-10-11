@@ -68,15 +68,15 @@ jobs:
 
       - name: build (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
-        run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm --release
+        run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm --release
 
-      # На нативном таргете оба крейта пусты (`#![cfg(target_arch = "wasm32")]`),
+      # На нативном таргете все три крейта пусты (`#![cfg(target_arch = "wasm32")]`),
       # поэтому их доккомментарии проверяет только эта нога матрицы.
       - name: doc (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm --no-deps
+        run: cargo doc --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm --no-deps
 
   wasm:
     name: Wasm bindings
@@ -100,31 +100,52 @@ jobs:
       # wasm-bindgen собирает `#[wasm_bindgen]`-элементы из всего графа
       # зависимостей; wasm-API printpdf закрыт гейтом в форке
       # (vendor/printpdf/src/wasm/mod.rs, фича js-sys), поэтому любое
-      # постороннее имя здесь — регрессия.
+      # постороннее имя здесь — регрессия. Сверяются оба ленивых модуля.
       - name: check wasm exports
         run: |
           set -euo pipefail
-          dts=packages/wasm-pdf/pkg/doc_converter_pdf_wasm.d.ts
 
-          expected=$(grep -rhA1 '^#\[wasm_bindgen\]' crates/pdf-wasm/src --include='*.rs' \
-            | grep -oE 'pub fn [a-z_][a-z0-9_]*' | awk '{print $3}' | sort -u || true)
-          [ -n "$expected" ] || { echo "::error::в crates/pdf-wasm не найдено #[wasm_bindgen] pub fn"; exit 1; }
+          # $1 — сгенерированный .d.ts, $2 — каталог src его крейта.
+          check_exports() {
+            local dts=$1 crate_src=$2
 
-          # initSync — служебный конструктор wasm-bindgen, не экспорт крейта.
-          actual=$(grep -oE '^export function [A-Za-z_][A-Za-z0-9_]*' "$dts" \
-            | awk '{print $3}' | grep -vx initSync | sort -u || true)
-          [ -n "$actual" ] || { echo "::error::в $dts нет объявленных export function"; exit 1; }
+            expected=$(grep -rhA1 '^#\[wasm_bindgen\]' "$crate_src" --include='*.rs' \
+              | grep -oE 'pub fn [a-z_][a-z0-9_]*' | awk '{print $3}' | sort -u || true)
+            [ -n "$expected" ] || { echo "::error::в $crate_src не найдено #[wasm_bindgen] pub fn"; exit 1; }
 
-          unexpected=$(comm -23 <(printf '%s\n' "$actual") <(printf '%s\n' "$expected"))
-          missing=$(comm -23 <(printf '%s\n' "$expected") <(printf '%s\n' "$actual"))
+            # initSync — служебный конструктор wasm-bindgen, не экспорт крейта.
+            actual=$(grep -oE '^export function [A-Za-z_][A-Za-z0-9_]*' "$dts" \
+              | awk '{print $3}' | grep -vx initSync | sort -u || true)
+            [ -n "$actual" ] || { echo "::error::в $dts нет объявленных export function"; exit 1; }
 
-          if [ -n "$unexpected" ] || [ -n "$missing" ]; then
-            echo "::error::$dts разошёлся с экспортами crates/pdf-wasm"
-            [ -z "$unexpected" ] || printf 'лишние экспорты в .d.ts:\n%s\n' "$unexpected"
-            [ -z "$missing" ] || printf 'нет экспортов крейта:\n%s\n' "$missing"
+            unexpected=$(comm -23 <(printf '%s\n' "$actual") <(printf '%s\n' "$expected"))
+            missing=$(comm -23 <(printf '%s\n' "$expected") <(printf '%s\n' "$actual"))
+
+            if [ -n "$unexpected" ] || [ -n "$missing" ]; then
+              echo "::error::$dts разошёлся с экспортами $crate_src"
+              [ -z "$unexpected" ] || printf 'лишние экспорты в .d.ts:\n%s\n' "$unexpected"
+              [ -z "$missing" ] || printf 'нет экспортов крейта:\n%s\n' "$missing"
+              exit 1
+            fi
+            echo "OK: экспорты $dts совпадают с $crate_src"
+          }
+
+          check_exports packages/wasm-pdf/pkg/doc_converter_pdf_wasm.d.ts crates/pdf-wasm/src
+          check_exports packages/wasm-docx/pkg/doc_converter_docx_wasm.d.ts crates/docx-wasm/src
+
+      # Просмотрщик DOCX уехал из основного модуля в ленивый `wasm-docx`;
+      # экспорты `docx_*` в `packages/wasm/pkg` означают его возврат в основной
+      # бандл — регрессию бюджета `wasm (viewer)`.
+      - name: check viewer module has no docx exports
+        run: |
+          set -euo pipefail
+          if grep -rq 'docx_' packages/wasm/pkg/*.d.ts; then
+            echo "::error::packages/wasm/pkg/*.d.ts экспортирует docx_*:" \
+              "просмотрщик DOCX грузится лениво отдельным модулем wasm-docx," \
+              "его возврат в основной модуль — регрессия бюджета wasm (viewer)"
             exit 1
           fi
-          echo "OK: экспорты .d.ts совпадают с crates/pdf-wasm"
+          echo "OK: в основном модуле нет экспортов docx_*"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -135,6 +156,11 @@ jobs:
         with:
           name: wasm-pdf-pkg
           path: packages/wasm-pdf/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-docx-pkg
+          path: packages/wasm-docx/pkg
 
   # Браузерные wasm-bindgen-тесты до этой джобы не запускались нигде: в
   # crates/wasm/tests/ живут мост DOCX и регрессия кэша стилей painter'а, а
@@ -191,13 +217,18 @@ jobs:
 
       # wasm-pack берёт chromedriver из PATH, если он там есть, и качает свой
       # только при его отсутствии — на PATH (/usr/local/bin) его кладёт шаг выше.
-      # Профиль release обязателен: `painter_perf` меряет бюджет ROADMAP §9
-      # (кадр 1200×800 за < 16 мс) для поставляемой сборки, а debug-сборка
-      # (`test profile [unoptimized + debuginfo]`) даёт на том же тесте ~32 мс.
-      # Порог в тесте не ослабляем — меряем ту сборку, к которой бюджет и
-      # написан.
+      # Профиль release обязателен для обоих шагов: они собирают поставляемую
+      # сборку, а debug (`test profile [unoptimized + debuginfo]`) заметно
+      # медленнее на том же `painter_perf`. Гейт в нём мягкий и заведомо выше
+      # того, что даёт программный рендер раннера: жёсткие 16 мс мерили бы
+      # среду, а не сборку, — бюджет ROADMAP §9 (кадр 1200×800 за < 16 мс)
+      # остаётся целью для живой машины.
       - name: wasm-pack test
         run: wasm-pack test --headless --chrome --release crates/wasm
+
+      # Тесты моста DOCX переехали в отдельный крейт `crates/docx-wasm`.
+      - name: wasm-pack test (docx)
+        run: wasm-pack test --headless --chrome --release crates/docx-wasm
 
   js:
     name: JS (node ${{ matrix.node }})
@@ -223,12 +254,17 @@ jobs:
           name: wasm-pkg
           path: packages/wasm/pkg
 
-      # pkg/ обоих модулей приезжает артефактами, потому что генерируется
+      # pkg/ трёх модулей приезжает артефактами, потому что генерируется
       # wasm-bindgen.
       - uses: actions/download-artifact@v4
         with:
           name: wasm-pdf-pkg
           path: packages/wasm-pdf/pkg
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-docx-pkg
+          path: packages/wasm-docx/pkg
 
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 
@@ -265,7 +301,9 @@ jobs:
       - run: pnpm turbo run typecheck test build
       # Гейт: регрессия бюджета блокирует merge (ROADMAP §9). Строка про wasm
       # просмотрщика в `.size-limit.mjs` держит ленивость PDF: если модуль
-      # экспорта вернётся в основной бандл, бюджет покраснеет.
+      # экспорта вернётся в основной бандл, бюджет покраснеет. Так же держится
+      # и ленивость DOCX: просмотрщик уехал в отдельный модуль, и его возврат в
+      # основной бандл поймает та же строка бюджета.
       - if: matrix.node == 20
         run: pnpm size-limit
 
