@@ -34,6 +34,8 @@ thread_local! {
     static DOC: RefCell<Option<OpenDoc>> = const { RefCell::new(None) };
     /// Буфер кадра: переиспользуется, чтобы не аллоцировать на каждый кадр.
     static FRAME: RefCell<DisplayList> = RefCell::new(DisplayList::new());
+    /// Байты кадра: сериализация тоже переиспользует буфер.
+    static SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Открытый документ: разобранная модель, реестр шрифтов и готовая раскладка.
@@ -108,36 +110,70 @@ pub fn docx_is_open() -> bool {
     DOC.with(|doc| doc.borrow().is_some())
 }
 
-/// Собрать кадр страницы в буфер и вернуть его байты.
-///
-/// Нужен там, где `SharedArrayBuffer` недоступен: при отсутствии
-/// COOP/COEP-заголовков кадр уезжает в воркер копией.
+/// Собрать кадр страницы и отдать его байты транспорту вызывающего.
 ///
 /// Номера страниц приходят из интерфейса, поэтому страница за пределами
 /// документа даёт пустой кадр, а не ошибку: так решено в
-/// [`doc_converter_docx::render::build`].
+/// [`doc_converter_docx::render::build`]. Сборка и сериализация у обоих путей
+/// (SAB и без него) общие — разница только в том, куда байты деваются.
+///
+/// # Errors
+/// Если документ не открыт, окно описано неверно или запись не удалась.
+fn with_frame_bytes(
+    page: usize,
+    viewport: Viewport,
+    write: impl FnOnce(&[u8]) -> Result<bool, JsValue>,
+) -> Result<BuildStats, JsValue> {
+    let started = js_sys::Date::now();
+    DOC.with(|doc| -> Result<BuildStats, JsValue> {
+        let doc = doc.borrow();
+        let open = doc.as_ref().ok_or_else(|| to_js("no document is open"))?;
+
+        FRAME.with(|frame| {
+            let mut frame = frame.borrow_mut();
+            doc_converter_docx::render::build(&open.layout, page, viewport, &mut frame);
+            let cmds = u32::try_from(frame.len()).unwrap_or(u32::MAX);
+
+            SCRATCH.with(|scratch| {
+                let mut scratch = scratch.borrow_mut();
+                frame.to_bytes_into(&mut scratch);
+                let bytes = u32::try_from(scratch.len()).unwrap_or(u32::MAX);
+                Ok(BuildStats::new(
+                    write(&scratch)?,
+                    cmds,
+                    bytes,
+                    js_sys::Date::now() - started,
+                ))
+            })
+        })
+    })
+}
+
+/// Собрать кадр страницы и вернуть его байты.
+///
+/// Годится тому, кто рисует кадр в другом модуле wasm: кадр самодостаточен.
+/// Просмотрщик ходит через [`docx_build_display_list_into`] — там буфер
+/// вызывающего переиспользуется, а тут кадр каждый раз новый массив.
 ///
 /// # Errors
 /// Если документ не открыт или окно описано неверно.
 #[wasm_bindgen]
 pub fn docx_build_display_list(page: usize, viewport: JsValue) -> Result<Vec<u8>, JsValue> {
     let viewport = viewport_of(viewport)?;
-    DOC.with(|doc| {
-        let doc = doc.borrow();
-        let open = doc.as_ref().ok_or_else(|| to_js("no document is open"))?;
-        FRAME.with(|frame| {
-            let mut frame = frame.borrow_mut();
-            doc_converter_docx::render::build(&open.layout, page, viewport, &mut frame);
-            Ok(frame.to_bytes())
-        })
-    })
+    let mut out = Vec::new();
+    with_frame_bytes(page, viewport, |bytes| {
+        out.extend_from_slice(bytes);
+        Ok(true)
+    })?;
+    Ok(out)
 }
 
 /// Собрать кадр страницы сразу в слот ring'а.
 ///
 /// Возвращает `written: false`, если свободного слота не было: кадр теряется,
 /// но следующий за ним рисуется — так и задумано, догонять прокрутку
-/// устаревшими кадрами незачем.
+/// устаревшими кадрами незачем. Второй случай `written: false` — кадр больше
+/// слота: `bytes` скажет, насколько.
 ///
 /// # Errors
 /// Если документ не открыт, окно описано неверно или SAB не тот.
@@ -149,27 +185,38 @@ pub fn docx_build_display_list_sab(
     viewport: JsValue,
 ) -> Result<JsValue, JsValue> {
     let viewport = viewport_of(viewport)?;
-    let started = js_sys::Date::now();
-
-    let stats = DOC.with(|doc| -> Result<BuildStats, JsValue> {
-        let doc = doc.borrow();
-        let open = doc.as_ref().ok_or_else(|| to_js("no document is open"))?;
-
-        FRAME.with(|frame| {
-            let mut frame = frame.borrow_mut();
-            doc_converter_docx::render::build(&open.layout, page, viewport, &mut frame);
-            let cmds = u32::try_from(frame.len()).unwrap_or(u32::MAX);
-
-            let mut ring = SabRing::from_sab(sab, slot_capacity as usize)?;
-            let written = ring.try_write(&frame.to_bytes())?;
-            Ok(BuildStats::new(
-                written,
-                cmds,
-                js_sys::Date::now() - started,
-            ))
-        })
+    let stats = with_frame_bytes(page, viewport, |bytes| {
+        let mut ring = SabRing::from_sab(sab, slot_capacity as usize)?;
+        ring.try_write(bytes)
     })?;
+    serde_wasm_bindgen::to_value(&stats).map_err(to_js)
+}
 
+/// Собрать кадр страницы в буфер вызывающего — путь без `SharedArrayBuffer`.
+///
+/// Байты пишутся в готовый массив: воркер держит два и заполняет то один, то
+/// другой, поэтому на кадр нет ни аллокации под сам кадр, ни копии из памяти
+/// wasm в JS (копия в память painter'а неизбежна: он живёт в другом модуле).
+/// `written: false` вместе с `bytes` больше длины буфера означает, что буфер
+/// мал: воркер вырастит его и повторит сборку.
+///
+/// # Errors
+/// Если документ не открыт или окно описано неверно.
+#[wasm_bindgen]
+pub fn docx_build_display_list_into(
+    out: &js_sys::Uint8Array,
+    page: usize,
+    viewport: JsValue,
+) -> Result<JsValue, JsValue> {
+    let viewport = viewport_of(viewport)?;
+    let stats = with_frame_bytes(page, viewport, |bytes| {
+        let length = bytes.len() as u32;
+        if length > out.length() {
+            return Ok(false);
+        }
+        out.subarray(0, length).copy_from(bytes);
+        Ok(true)
+    })?;
     serde_wasm_bindgen::to_value(&stats).map_err(to_js)
 }
 
@@ -189,18 +236,21 @@ pub fn docx_open_bytes(bytes: js_sys::Uint8Array) -> Result<JsValue, JsValue> {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BuildStats {
-    /// Кадр уложился в слот ring'а.
+    /// Кадр уложился в буфер: слот ring'а или буфер вызывающего.
     written: bool,
     cmds: u32,
+    /// Размер кадра в байтах: по нему воркер понимает, что буфер мал, и растит его.
+    bytes: u32,
     build_ms: f64,
 }
 
 impl BuildStats {
-    /// Заполняется [`docx_build_display_list_sab`].
-    fn new(written: bool, cmds: u32, build_ms: f64) -> Self {
+    /// Заполняется `docx_build_display_list_sab` и `docx_build_display_list_into`.
+    fn new(written: bool, cmds: u32, bytes: u32, build_ms: f64) -> Self {
         Self {
             written,
             cmds,
+            bytes,
             build_ms,
         }
     }

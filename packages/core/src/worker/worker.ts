@@ -3,10 +3,12 @@ import init, {
   alloc_sab,
   drop_bitmap,
   init_painter,
+  paint_display_list_bytes,
   paint_display_list_sab,
   register_bitmap,
   resize_canvas,
   sab_total_bytes,
+  xlsx_build_display_list_into,
   xlsx_build_display_list_sab,
   xlsx_hit_test,
   xlsx_hyperlink_at,
@@ -16,6 +18,7 @@ import init, {
 } from '@doc-converter/wasm';
 import type {
   DocxModuleUrls,
+  FrameTransport,
   HyperlinkInfo,
   ImageInfo,
   InMsg,
@@ -27,16 +30,38 @@ import type {
   SheetInfo,
 } from '../protocol.js';
 import { exportPng } from '../render/export_png.js';
-import { frameTarget, toViewport, type OpenFormat } from './frame_args.js';
-import { startFrameLoop } from './frame_loop';
+import { frameTarget, toViewport, type FrameTarget, type OpenFormat } from './frame_args.js';
+import { startFrameLoop, type BuildOutcome } from './frame_loop';
+import { FramePool, pickTransport } from './transport.js';
 
 type Ctx = OffscreenCanvasRenderingContext2D;
 
 /** Тип ленивого модуля берём у сгенерированных wasm-bindgen деклараций. */
 type PdfWasm = typeof import('@doc-converter/wasm-pdf');
 
+/**
+ * Что такое `BuildStats` из Rust: сколько вышло из попытки собрать кадр.
+ *
+ * `bytes` — размер кадра; он нужен, когда кадр не влез в буфер: по нему видно,
+ * насколько буфер мал.
+ */
+interface BuildStatsJs {
+  written: boolean;
+  cmds: number;
+  bytes: number;
+  buildMs: number;
+}
+
+/** Что такое `PaintStats` из Rust: метрики отрисовки без номера кадра. */
+type PaintStatsJs = Omit<PaintStats, 'frameId'>;
+
 let ctx: Ctx | null = null;
+/** Транспорт кадра: выбирается на `init`, дальше не меняется. */
+let transport: FrameTransport = 'bytes';
+/** Ring SAB-пути; `null` на пути без SAB. */
 let sab: SharedArrayBuffer | null = null;
+/** Двойной буфер пути без SAB; `null` на SAB-пути. */
+let pool: FramePool | null = null;
 let slotCapacity = 0;
 let loop: ReturnType<typeof startFrameLoop> | null = null;
 /** Последний запрос на кадр: перерисовка идёт по нему, а не по сообщению. */
@@ -192,6 +217,107 @@ function releaseDocument(): void {
   format = null;
 }
 
+/**
+ * Выделить ring. Неудача — не ошибка: без COOP/COEP `SharedArrayBuffer` в
+ * странице просто нет, и это штатный случай, а не сбой.
+ */
+function tryAllocSab(capacity: number): SharedArrayBuffer | null {
+  if (typeof SharedArrayBuffer === 'undefined') return null;
+  try {
+    return alloc_sab(capacity) as unknown as SharedArrayBuffer;
+  } catch (e) {
+    console.warn('[frame] SharedArrayBuffer недоступен:', String(e));
+    return null;
+  }
+}
+
+/** Размер слота: у обоих путей он означает одно — сколько влезает кадр. */
+function frameCapacity(): number {
+  return transport === 'bytes' ? (pool?.slotCapacity ?? slotCapacity) : slotCapacity;
+}
+
+/** Вырасти под кадр длиной `bytes`. */
+function growFrameBuffer(bytes: number): void {
+  if (transport === 'bytes') {
+    pool?.grow(bytes);
+    return;
+  }
+  const grown = tryAllocSab(Math.max(bytes, slotCapacity * 2));
+  // Памяти на новый ring не нашлось — кадр пропущен, как раньше: следующий
+  // может оказаться меньше и влезет в старый слот.
+  if (!grown) return;
+  slotCapacity = Math.max(bytes, slotCapacity * 2);
+  sab = grown;
+}
+
+/** Путь без SAB: кадр пишется в готовый буфер пула. */
+function buildBytes(target: FrameTarget): BuildStatsJs | null {
+  const buffers = pool;
+  if (!buffers) return null;
+  const out = buffers.beginBuild();
+  const stats = (
+    target.kind === 'docx'
+      ? docxWasm?.docx_build_display_list_into(out, target.page, target.viewport)
+      : xlsx_build_display_list_into(out, target.sheet, target.viewport, target.options)
+  ) as BuildStatsJs | undefined;
+  if (!stats) {
+    buffers.abortBuild();
+    return null;
+  }
+  if (stats.written) buffers.commitBuild(stats.bytes);
+  else buffers.abortBuild();
+  return stats;
+}
+
+/** SAB-путь: кадр пишется прямо в слот ring'а. */
+function buildSab(target: FrameTarget): BuildStatsJs | null {
+  const shared = sab;
+  if (!shared) return null;
+  const stats = (
+    target.kind === 'docx'
+      ? docxWasm?.docx_build_display_list_sab(shared, slotCapacity, target.page, target.viewport)
+      : xlsx_build_display_list_sab(
+          shared,
+          slotCapacity,
+          target.sheet,
+          target.viewport,
+          target.options,
+        )
+  ) as BuildStatsJs | undefined;
+  return stats ?? null;
+}
+
+/** Собрать кадр в свободный буфер выбранного транспорта. */
+function buildFrame(): BuildOutcome {
+  const req = pending;
+  // Документа ещё нет — собирать нечего; это не ошибка, а пустой ход.
+  if (!req || !format) return 'idle';
+  const target = frameTarget(format, req);
+  const stats = transport === 'bytes' ? buildBytes(target) : buildSab(target);
+  // Модуля DOCX нет — собирать кадр нечем. Путь страховочный: открытие модуль
+  // уже загрузило.
+  if (!stats) return 'idle';
+  buildMs = stats.buildMs;
+  if (stats.written) return 'built';
+  // Слота не хватило: либо он занят (backpressure — кадр пропущен намеренно),
+  // либо кадр больше слота. Во втором случае буфер растят: кадр, который
+  // никогда не влезает, — это замерший экран.
+  if (stats.bytes > frameCapacity()) growFrameBuffer(stats.bytes);
+  return 'dropped';
+}
+
+/** Нарисовать самый свежий готовый кадр; промежуточные транспорт отпускает сам. */
+function paintFrame(): PaintStatsJs {
+  if (transport === 'bytes') {
+    const frame = pool?.takeLatest();
+    if (!frame) return { cmds: 0, dropped: true, paintMs: 0 };
+    return paint_display_list_bytes(frame) as PaintStatsJs;
+  }
+  const shared = sab;
+  if (!shared) return { cmds: 0, dropped: true, paintMs: 0 };
+  return paint_display_list_sab(shared, slotCapacity) as PaintStatsJs;
+}
+
 self.onmessage = async (ev: MessageEvent<InMsg>) => {
   const msg = ev.data;
   switch (msg.type) {
@@ -211,51 +337,25 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         pdfUrls = msg.pdf ?? null;
         docxUrls = msg.docx ?? null;
         slotCapacity = msg.slotCapacity;
-        // SAB — не transferable, шарится через structured clone.
-        sab = alloc_sab(slotCapacity) as unknown as SharedArrayBuffer;
+        // SAB — не transferable, шарится через structured clone; живёт он в
+        // воркере, поэтому на main уезжает не он, а решение о транспорте.
+        const shared = msg.transport === 'bytes' ? null : tryAllocSab(slotCapacity);
+        transport = pickTransport(msg.transport, shared);
+        sab = transport === 'sab' ? shared : null;
+        if (transport === 'bytes') pool = new FramePool(slotCapacity);
         post({
           type: 'ready',
-          sab,
+          transport,
           slotCapacity,
-          totalBytes: sab_total_bytes(slotCapacity),
+          totalBytes: transport === 'sab' ? sab_total_bytes(slotCapacity) : slotCapacity * 2,
+          crossOriginIsolated:
+            typeof crossOriginIsolated === 'boolean' ? crossOriginIsolated : false,
         });
 
         init_painter(ctx);
         loop = startFrameLoop({
-          build: () => {
-            if (!pending || !sab) return false;
-            const target = frameTarget(format, pending);
-            const stats = (
-              target.kind === 'docx'
-                ? docxWasm?.docx_build_display_list_sab(
-                    sab,
-                    slotCapacity,
-                    target.page,
-                    target.viewport,
-                  )
-                : xlsx_build_display_list_sab(
-                    sab,
-                    slotCapacity,
-                    target.sheet,
-                    target.viewport,
-                    target.options,
-                  )
-            ) as { written: boolean; cmds: number; buildMs: number } | undefined;
-            // Модуля DOCX нет — собирать кадр нечем: он дропается, как и при
-            // отсутствии свободного слота. Путь страховочный: открытие модуль
-            // уже загрузило.
-            if (!stats) return false;
-            buildMs = stats.buildMs;
-            // Свободного слота не было — кадр пропущен намеренно.
-            return stats.written;
-          },
-          paint: () => {
-            const stats = paint_display_list_sab(sab!, slotCapacity) as Omit<
-              PaintStats,
-              'frameId'
-            >;
-            return stats;
-          },
+          build: buildFrame,
+          paint: paintFrame,
           onTick: (s) => post({ type: 'tick', stats: { ...s, buildMs } }),
         });
       } catch (e) {

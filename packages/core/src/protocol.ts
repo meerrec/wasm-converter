@@ -55,9 +55,26 @@ export type WorkerRequest =
 
 export interface FrameTimings { buildMs: number; paintMs: number }
 
+/**
+ * Чем кадр едет от сборщика к painter'у. Для хоста пути неразличимы: тот же
+ * API, та же картинка, отличается только транспорт и, вслед за ним, скорость.
+ *
+ * - `sab` — ring из двух слотов в `SharedArrayBuffer`; доступен странице,
+ *   отданной с COOP/COEP (`crossOriginIsolated`);
+ * - `bytes` — два обычных буфера `ArrayBuffer`, которые воркер заполняет по
+ *   очереди; работают всегда, в том числе в iframe без заголовков.
+ */
+export type FrameTransport = 'sab' | 'bytes';
+
 /** Метрики одного кадра painter'а. Источник — Rust `PaintStats`. */
 export interface PaintStats {
   cmds: number;
+  /**
+   * Кадр, который просили нарисовать, не нарисован. Что именно случилось,
+   * зависит от транспорта: на `sab` ring был полон и промежуточный кадр
+   * пропущен, на `bytes` готового кадра не оказалось вовсе. Общее одно: этот
+   * кадр хосту не показывали, следующий покажут.
+   */
   dropped: boolean;
   paintMs: number;
   frameId: number;
@@ -142,6 +159,13 @@ export interface InitMsg {
   /** Где лежит DOCX-модуль. Не задан — открыть документ не получится. */
   docx?: DocxModuleUrls | undefined;
   slotCapacity: number;
+  /**
+   * Транспорт кадра. `auto` (по умолчанию) — `sab`, если `SharedArrayBuffer`
+   * доступен, иначе `bytes`; `sab` требует cross-origin isolation и падает
+   * внятной ошибкой, если её нет. Задавать явно стоит только ради отладки и
+   * тестов: оба пути first-class.
+   */
+  transport?: 'auto' | FrameTransport | undefined;
 }
 
 export interface ResizeMsg { type: 'resize'; cssW: number; cssH: number; dpr: number }
@@ -246,12 +270,25 @@ export type InMsg =
   | ExportDocxPdfMsg
   | ExportDocxTextMsg;
 
+/**
+ * Воркер инициализирован. `sab` в сообщении нет намеренно: ring живёт в
+ * воркере, main им не пользуется, а готовность воркера и наличие
+ * `SharedArrayBuffer` — независимые факты (без COOP/COEP второго просто нет).
+ */
 export interface ReadyMsg {
   type: 'ready';
-  sab: SharedArrayBuffer;
+  /** Каким путём поедут кадры. */
+  transport: FrameTransport;
+  /** Размер одного слота: у `sab` — слота ring'а, у `bytes` — буфера. */
   slotCapacity: number;
+  /** Сколько байт отдано под транспорт кадров — у обоих путей поровну. */
   totalBytes: number;
+  /** Cross-origin isolation страницы: без неё `SharedArrayBuffer` недоступен. */
+  crossOriginIsolated: boolean;
 }
+
+/** `ReadyMsg` без тега: то, что просмотрщик знает о воркере после `init`. */
+export type ReadyInfo = Omit<ReadyMsg, 'type'>;
 export interface TickMsg { type: 'tick'; stats: PaintStats }
 /** Книга разобрана: листы и их размеры. */
 export interface OpenedMsg { type: 'opened'; sheets: SheetInfo[] }

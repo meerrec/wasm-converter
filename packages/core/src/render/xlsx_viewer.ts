@@ -1,10 +1,12 @@
 import type {
+  FrameTransport,
   HyperlinkInfo,
   InMsg,
   OutMsg,
   PaintStats,
   PdfModuleUrls,
   PdfOptions,
+  ReadyInfo,
   RenderConfig,
   SheetInfo,
   Viewport,
@@ -13,6 +15,11 @@ import { computeDpr } from './resize_observer.js';
 
 /** Что умеет открытая книга. */
 export interface XlsxViewerHandle {
+  /**
+   * Каким путём воркер возит кадры: SAB, если страница отдана с COOP/COEP,
+   * иначе буферы. Функциональность от этого не зависит — поле для диагностики.
+   */
+  readonly transport: FrameTransport;
   /** Имена и размеры листов, как их видит рендер. */
   readonly sheets: SheetInfo[];
   /** Номер показанного листа. */
@@ -64,6 +71,12 @@ export interface XlsxViewerOptions {
   pdfWasm?: PdfModuleUrls;
   /** Размер слота ring'а в байтах. */
   slotCapacity?: number;
+  /**
+   * Транспорт кадра. `auto` (по умолчанию) — SAB, если страница отдана с
+   * COOP/COEP, иначе буферы. Задавать явно стоит ради отладки и тестов:
+   * `sab` без заголовков — ошибка инициализации, а не тихая подмена.
+   */
+  transport?: 'auto' | FrameTransport;
   /** Начальный зум. */
   zoom?: number;
   showGrid?: boolean;
@@ -186,12 +199,17 @@ export async function createXlsxViewer(
     }
   });
 
-  await new Promise<void>((resolve, reject) => {
+  const ready = await new Promise<ReadyInfo>((resolve, reject) => {
     const onMessage = (ev: MessageEvent) => {
-      const data = ev.data as { type?: string; message?: string };
+      const data = ev.data as { type?: string; message?: string } & Partial<ReadyInfo>;
       if (data?.type === 'ready') {
         worker.removeEventListener('message', onMessage);
-        resolve();
+        resolve({
+          transport: data.transport ?? 'bytes',
+          slotCapacity: data.slotCapacity ?? slotCapacity,
+          totalBytes: data.totalBytes ?? 0,
+          crossOriginIsolated: data.crossOriginIsolated ?? false,
+        });
       } else if (data?.type === 'error') {
         worker.removeEventListener('message', onMessage);
         reject(new Error(data.message ?? 'worker init error'));
@@ -206,6 +224,7 @@ export async function createXlsxViewer(
         wasmUrl: options.wasmUrl,
         pdf: options.pdfWasm,
         slotCapacity,
+        transport: options.transport,
       } satisfies InMsg,
       [off],
     );
@@ -334,6 +353,8 @@ export async function createXlsxViewer(
   resizeCanvas();
 
   return {
+    transport: ready.transport,
+
     get sheets() {
       return sheets;
     },

@@ -1,12 +1,14 @@
 import type {
   DocxModuleUrls,
   DocxTextFormat,
+  FrameTransport,
   InMsg,
   OutMsg,
   PageInfo,
   PaintStats,
   PdfModuleUrls,
   PdfOptions,
+  ReadyInfo,
   RenderConfig,
   Viewport,
 } from '../protocol.js';
@@ -14,6 +16,11 @@ import { computeDpr } from './resize_observer.js';
 
 /** Что умеет открытый документ. */
 export interface DocxViewerHandle {
+  /**
+   * Каким путём воркер возит кадры: SAB, если страница отдана с COOP/COEP,
+   * иначе буферы. Функциональность от этого не зависит — поле для диагностики.
+   */
+  readonly transport: FrameTransport;
   /** Размеры страниц в пикселях раскладки, как их видит рендер. */
   readonly pages: PageInfo[];
   /** Сколько страниц в документе. */
@@ -71,6 +78,12 @@ export interface DocxViewerOptions {
   pdfWasm?: PdfModuleUrls;
   /** Размер слота ring'а в байтах. */
   slotCapacity?: number;
+  /**
+   * Транспорт кадра. `auto` (по умолчанию) — SAB, если страница отдана с
+   * COOP/COEP, иначе буферы. Задавать явно стоит ради отладки и тестов:
+   * `sab` без заголовков — ошибка инициализации, а не тихая подмена.
+   */
+  transport?: 'auto' | FrameTransport;
   /** Начальный зум. */
   zoom?: number;
   /** Зазор между страницами в пикселях раскладки. */
@@ -208,12 +221,17 @@ export async function createDocxViewer(
     }
   });
 
-  await new Promise<void>((resolve, reject) => {
+  const ready = await new Promise<ReadyInfo>((resolve, reject) => {
     const onMessage = (ev: MessageEvent) => {
-      const data = ev.data as { type?: string; message?: string };
+      const data = ev.data as { type?: string; message?: string } & Partial<ReadyInfo>;
       if (data?.type === 'ready') {
         worker.removeEventListener('message', onMessage);
-        resolve();
+        resolve({
+          transport: data.transport ?? 'bytes',
+          slotCapacity: data.slotCapacity ?? slotCapacity,
+          totalBytes: data.totalBytes ?? 0,
+          crossOriginIsolated: data.crossOriginIsolated ?? false,
+        });
       } else if (data?.type === 'error') {
         worker.removeEventListener('message', onMessage);
         reject(new Error(data.message ?? 'worker init error'));
@@ -229,6 +247,7 @@ export async function createDocxViewer(
         docx: options.docxWasm,
         pdf: options.pdfWasm,
         slotCapacity,
+        transport: options.transport,
       } satisfies InMsg,
       [off],
     );
@@ -360,6 +379,8 @@ export async function createDocxViewer(
   }
 
   return {
+    transport: ready.transport,
+
     get pages() {
       return pages;
     },

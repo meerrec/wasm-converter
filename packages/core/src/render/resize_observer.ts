@@ -1,6 +1,6 @@
+/** Мост к воркеру: `attachResize` умеет только слать сообщения. */
 export interface RpcLike {
   call(method: string, params: unknown): unknown;
-  attachSab?(sab: SharedArrayBuffer, capacity: number): void;
 }
 
 export interface AttachResizeOpts {

@@ -1,37 +1,46 @@
 import type {
+  FrameTransport,
   HitResult,
   InMsg,
   OutMsg,
   PaintStats,
   PdfOptions,
+  ReadyInfo,
   RenderRequest,
 } from '../protocol.js';
 import { attachResize, type RpcLike } from './resize_observer.js';
 
-/** Передаёт OffscreenCanvas воркеру ровно один раз. */
+/**
+ * Передаёт OffscreenCanvas воркеру ровно один раз.
+ *
+ * Готовность воркера — это `ready`, а не наличие в нём `SharedArrayBuffer`:
+ * без COOP/COEP кадры поедут буферами, и просмотрщик от этого работать не
+ * перестаёт. Воркер сам решает, каким транспортом везти кадры, и говорит об
+ * этом в `ready`.
+ */
 export function initOffscreen(
   canvas: HTMLCanvasElement,
   worker: Worker,
   rpc: RpcLike,
   wasmUrl?: string,
   slotCapacity = 1 << 20,
-): Promise<void> {
+  transport?: 'auto' | FrameTransport,
+): Promise<ReadyInfo> {
   if (!('transferControlToOffscreen' in canvas)) {
     return Promise.reject(new Error('transferControlToOffscreen unsupported'));
   }
   const off = canvas.transferControlToOffscreen();
   return new Promise((resolve, reject) => {
     const onMsg = (ev: MessageEvent) => {
-      const data = ev.data as {
-        type: string;
-        sab?: SharedArrayBuffer;
-        slotCapacity?: number;
-        message?: string;
-      };
-      if (data?.type === 'ready' && data.sab) {
+      const data = ev.data as { type?: string; message?: string } & Partial<ReadyInfo>;
+      if (data?.type === 'ready' && data.transport) {
         worker.removeEventListener('message', onMsg);
-        rpc.attachSab?.(data.sab, data.slotCapacity ?? slotCapacity);
-        resolve();
+        resolve({
+          transport: data.transport,
+          slotCapacity: data.slotCapacity ?? slotCapacity,
+          totalBytes: data.totalBytes ?? 0,
+          crossOriginIsolated: data.crossOriginIsolated ?? false,
+        });
       } else if (data?.type === 'error') {
         worker.removeEventListener('message', onMsg);
         reject(new Error(data.message ?? 'worker init error'));
@@ -39,13 +48,18 @@ export function initOffscreen(
     };
     worker.addEventListener('message', onMsg);
     worker.postMessage(
-      { type: 'init', canvas: off, wasmUrl, slotCapacity } satisfies InMsg,
+      { type: 'init', canvas: off, wasmUrl, slotCapacity, transport } satisfies InMsg,
       [off],
     );
   });
 }
 
 export interface ViewerHandle {
+  /**
+   * Каким путём воркер возит кадры. Интерфейсу это знать не нужно — оба пути
+   * дают один и тот же кадр, — но для диагностики и тестов полезно.
+   */
+  readonly transport: FrameTransport;
   render(req: RenderRequest): Promise<void>;
   /** Фаза 4. */
   exportPdf(opts: PdfOptions): Promise<Uint8Array>;
@@ -64,6 +78,12 @@ export interface ViewerOptions {
   wasmUrl?: string;
   /** Размер одного слота ring'а в байтах. */
   slotCapacity?: number;
+  /**
+   * Транспорт кадра. `auto` (по умолчанию) — SAB, если страница отдана с
+   * COOP/COEP, иначе буферы. Задавать явно стоит ради отладки и тестов:
+   * `sab` без заголовков — ошибка инициализации, а не тихая подмена.
+   */
+  transport?: 'auto' | FrameTransport;
 }
 
 export function supportsOffscreen(): boolean {
@@ -85,6 +105,8 @@ export async function createViewer(
   canvas: HTMLCanvasElement,
   opts: ViewerOptions = {},
 ): Promise<ViewerHandle> {
+  // Внятное сообщение вместо `Worker is not defined` в SSR и в тестах без DOM.
+  assertFallbackAvailable();
   if (!supportsOffscreen()) {
     throw new Error('OffscreenCanvas + transferControlToOffscreen not supported');
   }
@@ -126,13 +148,18 @@ export async function createViewer(
     call(method, params) {
       worker.postMessage({ type: method, ...(params as object) } as InMsg);
     },
-    attachSab() {
-      // SAB остаётся в воркере; main им не пользуется.
-    },
   };
 
+  let ready: ReadyInfo;
   try {
-    await initOffscreen(canvas, worker, rpc, opts.wasmUrl, opts.slotCapacity);
+    ready = await initOffscreen(
+      canvas,
+      worker,
+      rpc,
+      opts.wasmUrl,
+      opts.slotCapacity,
+      opts.transport,
+    );
   } catch (e) {
     worker.terminate();
     throw e;
@@ -141,6 +168,7 @@ export async function createViewer(
   const detachResize = opts.manualResize ? undefined : attachResize(canvas, rpc);
 
   return {
+    transport: ready.transport,
     render: (req) => {
       worker.postMessage({ type: 'render', req } satisfies InMsg);
       return Promise.resolve();

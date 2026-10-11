@@ -1,6 +1,8 @@
 export type {
   WorkerRequest,
   WorkerResponse,
+  FrameTransport,
+  ReadyInfo,
   Viewport,
   RenderConfig,
   PdfModuleUrls,

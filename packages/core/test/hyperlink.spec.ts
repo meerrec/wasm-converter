@@ -48,7 +48,13 @@ class FakeWorker {
   postMessage(msg: Record<string, unknown>, ..._rest: unknown[]): void {
     this.sent.push(msg);
     if (msg.type === 'init') {
-      this.reply({ type: 'ready', sab: {}, slotCapacity: 0, totalBytes: 0 });
+      this.reply({
+        type: 'ready',
+        transport: 'bytes',
+        slotCapacity: 0,
+        totalBytes: 0,
+        crossOriginIsolated: false,
+      });
     }
     if (msg.type === 'open') {
       this.reply({ type: 'opened', sheets: [SHEET] });
