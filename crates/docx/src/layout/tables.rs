@@ -506,9 +506,6 @@ pub fn layout_table_fragments(
                         continues_below: !done,
                         header_repeat: false,
                     });
-                    cursor += avail;
-                    avail = 0.0;
-                    body += 1;
                     if done {
                         row += 1;
                         start.clear();
@@ -536,8 +533,6 @@ pub fn layout_table_fragments(
                         continues_below: !done,
                         header_repeat: false,
                     });
-                    cursor += height;
-                    body += 1;
                     if done {
                         row += 1;
                         start.clear();
@@ -559,8 +554,6 @@ pub fn layout_table_fragments(
                     continues_below: false,
                     header_repeat: false,
                 });
-                cursor += remainder;
-                body += 1;
                 row += 1;
                 start.clear();
                 partial = false;
