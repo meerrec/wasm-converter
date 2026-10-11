@@ -8,11 +8,16 @@ license = "Apache-2.0"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+doc-converter-docx = { workspace = true }
 doc-converter-pdf = { workspace = true }
 doc-converter-xlsx = { workspace = true }
 wasm-bindgen = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+js-sys = "0.3"
 
 # rustc эмитит bulk-memory, а bundled wasm-opt в wasm-pack его не понимает.
 # Оптимизацию делает scripts/build-wasm.sh системным wasm-opt, если он есть.
