@@ -17,15 +17,15 @@ Rust-тест гейта считает его сам — иначе прове�
 результата поля — рекурсивно; `trim()`, пустые строки выброшены; сноски, концевые
 сноски, комментарии и колонтитулы в список не входят.
 
-Кандидаты — все 97 фикстур минус `broken/`, `alternate_content/` (mammoth читает
+Кандидаты — все 104 фикстур минус `broken/`, `alternate_content/` (mammoth читает
 `mc:Fallback`, мы `mc:Choice`), `track_changes/` (наши non-goal) и `notes/`
-(mammoth выносит их отдельно): 76.
+(mammoth выносит их отдельно): 83.
 
 ## Оракул
 
 [`test-fixtures/docx/mammoth-oracle.json`](../../test-fixtures/docx/mammoth-oracle.json)
 пишет тот же скрипт: заголовок (`generator`, `mammoth`, `threshold`,
-`min_comparable`, `candidates`) и `fixtures` — по записи на каждую из 97 фикстур,
+`min_comparable`, `candidates`) и `fixtures` — по записи на каждую из 104 фикстур,
 ключи по возрастанию:
 
 - `comparable` — фикстура входит в набор и mammoth её прочитал;
@@ -43,7 +43,7 @@ Rust-тест гейта считает его сам — иначе прове�
 - `expected` — расхождение принято и объяснено (политика mammoth или наше решение);
   **остаётся в знаменателе метрики**;
 - `non-goal` — фикстура вне области сравнения (элемента нет в модели v1 или его не
-  читает mammoth); **выводится из знаменателя**, потолок — 8 из 76;
+  читает mammoth); **выводится из знаменателя**, потолок — 8 из 83;
 - `bug` — дефект нашего парсера;
 - `unclassified` — решение не принято — значение по умолчанию.
 
@@ -56,14 +56,14 @@ Rust-тест гейта считает его сам — иначе прове�
 
 | Метрика | Значение |
 |---|---|
-| Кандидатов | 76 |
-| Сопоставимо (mammoth прочитал) | 76 |
-| `match` | 74 |
+| Кандидатов | 83 |
+| Сопоставимо (mammoth прочитал) | 83 |
+| `match` | 81 |
 | `expected` | 0 |
 | `non-goal` | 2 |
 | `bug` | 0 |
 | `unclassified` | 0 |
-| Доля match / (кандидаты − non-goal) | 74/74 = 1.0000 (порог 0.95) |
+| Доля match / (кандидаты − non-goal) | 81/81 = 1.0000 (порог 0.95) |
 | Гейт | пройден |
 
 ## Кандидаты
@@ -139,11 +139,18 @@ Rust-тест гейта считает его сам — иначе прове�
 | `styles/table_style` | match | — | 4 / 4 |
 | `tables/alignment_widths` | match | — | 10 / 10 |
 | `tables/borders_shading` | match | — | 4 / 4 |
+| `tables/cant_split_rows` | match | — | 35 / 35 |
+| `tables/cell_margins_valign` | match | — | 7 / 7 |
 | `tables/grid_span` | match | — | 6 / 6 |
 | `tables/header_repeat` | match | — | 62 / 62 |
+| `tables/long_table` | match | — | 180 / 180 |
+| `tables/long_table_header_repeat` | match | — | 120 / 120 |
 | `tables/nested` | match | — | 9 / 9 |
+| `tables/row_taller_than_page` | match | — | 61 / 61 |
 | `tables/simple_2x2` | match | — | 4 / 4 |
 | `tables/simple_3x3` | match | — | 9 / 9 |
+| `tables/table_100_pages` | match | — | 14400 / 14400 |
+| `tables/table_wider_than_page` | match | — | 6 / 6 |
 | `tables/tbl_look` | match | — | 4 / 4 |
 | `tables/v_merge` | match | — | 4 / 4 |
 
