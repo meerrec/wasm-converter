@@ -49,7 +49,9 @@ jobs:
       # в wasm32-ноге матрицы тесты не гоняются.
       - name: pdf tooling
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qpdf poppler-utils
+        uses: ./.github/actions/apt-install
+        with:
+          packages: qpdf poppler-utils
 
       - name: test
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -340,7 +342,9 @@ jobs:
       # macOS это `-l`, на Linux — GNU `-v`. В ubuntu-образе раннера GNU time
       # может отсутствовать.
       - name: time tooling
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends time
+        uses: ./.github/actions/apt-install
+        with:
+          packages: time
 
       # Бенчи не должны сгнивать: компилируем все бенчи workspace, не запуская.
       - name: bench compile
@@ -416,7 +420,9 @@ jobs:
       # на macOS это `-l`, на Linux — GNU `-v`. В ubuntu-образе раннера GNU
       # time может отсутствовать.
       - name: time tooling
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends time
+        uses: ./.github/actions/apt-install
+        with:
+          packages: time
 
       - uses: pnpm/action-setup@v4
 
