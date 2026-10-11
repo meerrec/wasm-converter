@@ -134,22 +134,22 @@ fn substitute(inlines: &mut [Inline], context: FieldContext, saw_num_pages: &mut
         if field_kind == Computed::NumPages {
             *saw_num_pages = true;
         }
-        *inline = value_inline(field, context.value(field_kind, &cached_text(field)));
+        *inline = value_inline(field, context.value(field_kind, field));
     }
 }
 
 impl FieldContext {
     /// Значение поля: `PAGE` — текущая страница, `NUMPAGES` — число страниц.
     ///
-    /// Кэш документа идёт в дело, лишь пока число страниц не посчитано: на
-    /// первом проходе показывается он, на втором вычисленное значение замещает
-    /// его целиком — как пересчёт полей при печати в Word.
-    fn value(&self, field: Computed, cached: &str) -> String {
+    /// Пока число страниц не посчитано (первый проход), `NUMPAGES` показывает
+    /// кэш документа; на втором проходе вычисленное значение замещает его
+    /// целиком — как пересчёт полей при печати в Word.
+    fn value(&self, field: Computed, source: &Field) -> String {
         match field {
             Computed::Page => self.page.to_string(),
             Computed::NumPages => self
                 .num_pages
-                .map_or_else(|| cached.to_owned(), |total| total.to_string()),
+                .map_or_else(|| cached_text(source), |total| total.to_string()),
         }
     }
 }
