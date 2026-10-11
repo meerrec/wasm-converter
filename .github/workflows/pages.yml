@@ -50,7 +50,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 
-      # pkg/ обоих wasm-модулей генерируется wasm-pack; в репозитории его нет.
+      # pkg/ всех трёх wasm-модулей генерируется wasm-pack; в репозитории его нет.
       - run: bash scripts/build-wasm.sh
 
       # Core собирается первым: пример импортирует его из dist/.
