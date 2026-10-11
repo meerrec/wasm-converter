@@ -775,7 +775,9 @@ fn v_align_shift(cell: &TableCellLayout) -> f32 {
     let mut bounds: Option<(f32, f32)> = None;
     for item in &cell.content {
         let rect = match item {
-            LayoutItem::Paragraph { rect, .. } | LayoutItem::Table { rect, .. } => rect,
+            LayoutItem::Paragraph { rect, .. }
+            | LayoutItem::Table { rect, .. }
+            | LayoutItem::Image { rect, .. } => rect,
             LayoutItem::Float(float) => &float.rect,
             LayoutItem::PageBreak | LayoutItem::ColumnBreak => continue,
         };

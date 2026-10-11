@@ -360,7 +360,9 @@ fn content_bounds(items: &[LayoutItem]) -> Option<(f32, f32)> {
     let mut bounds: Option<(f32, f32)> = None;
     for item in items {
         let rect = match item {
-            LayoutItem::Paragraph { rect, .. } | LayoutItem::Table { rect, .. } => rect,
+            LayoutItem::Paragraph { rect, .. }
+            | LayoutItem::Table { rect, .. }
+            | LayoutItem::Image { rect, .. } => rect,
             LayoutItem::Float(float) => &float.rect,
             LayoutItem::PageBreak | LayoutItem::ColumnBreak => continue,
         };

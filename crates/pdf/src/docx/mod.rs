@@ -198,7 +198,10 @@ fn collect_faces(layout: &PageLayout) -> FaceSet {
                         walk(&cell.content, faces);
                     }
                 }
-                LayoutItem::Float(_) | LayoutItem::PageBreak | LayoutItem::ColumnBreak => {}
+                LayoutItem::Float(_)
+                | LayoutItem::Image { .. }
+                | LayoutItem::PageBreak
+                | LayoutItem::ColumnBreak => {}
             }
         }
     }
@@ -299,6 +302,10 @@ fn draw_items(
             }
             // Разрывы — метки раскладки: страницы уже разрезаны, рисовать нечего.
             LayoutItem::PageBreak | LayoutItem::ColumnBreak => {}
+            // Встроенный рисунок места в раскладке уже занял (его прямоугольник
+            // входит в границы содержимого ячейки), но команд для картинок
+            // экспорт пока не собирает — в PDF он не рисуется.
+            LayoutItem::Image { .. } => {}
         }
     }
 }
