@@ -40,3 +40,4 @@ fuzz/corpus/
 fuzz/artifacts/
 fuzz/target/
 oracle-out/
+oracle-out-docx/
