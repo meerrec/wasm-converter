@@ -885,10 +885,11 @@ enum MeasuredBlock<'a> {
 }
 
 impl MeasuredBlock<'_> {
-    /// Высота блока.
+    /// Высота блока — вместе с интервалами абзаца: в ячейке они отнимают место
+    /// у полосы набора так же, как в теле ([`super::engine`]).
     fn height(&self) -> f32 {
         match self {
-            Self::Line(line) => line.height,
+            Self::Line(line) => line.space_before + line.height + line.space_after,
             Self::Nested { height, .. } => *height,
         }
     }
@@ -908,6 +909,10 @@ struct CellLine {
     width: f32,
     /// Высота строки.
     height: f32,
+    /// Интервал перед абзацем (`w:spacing w:before`) — только у первой строки.
+    space_before: f32,
+    /// Интервал после абзаца (`w:spacing w:after`) — только у последней строки.
+    space_after: f32,
     color: Option<u32>,
     font_family: Option<String>,
     size: HalfPoint,
@@ -975,8 +980,17 @@ fn measure_cell<'a>(
     let inner_width = (width - padding.left - padding.right).max(0.0);
 
     let mut blocks = Vec::new();
+    // Хвостовой интервал последнего абзаца ячейку не растягивает: так же его
+    // понимают Word и LibreOffice — интервал остаётся за нижней границей
+    // содержимого. На этом стоит `w:vAlign` фикстуры `cell_margins_valign`:
+    // у её абзацев `after` есть только из `docDefaults`, и без правила
+    // единственный абзац поднял бы высоту ячейки до высоты строки.
+    let last_paragraph = cell
+        .items
+        .iter()
+        .rposition(|item| matches!(item, BlockItem::Paragraph(_)));
 
-    for item in &cell.items {
+    for (index, item) in cell.items.iter().enumerate() {
         match item {
             BlockItem::Paragraph(paragraph) => {
                 // Абзац ячейки раскладывается тем же `layout_paragraph`, что и
@@ -1000,14 +1014,34 @@ fn measure_cell<'a>(
                         true,
                     )
                 };
+                // Интервалы достаются крайним строкам абзаца: `before` — первой,
+                // `after` — последней. Строку между ними они не сдвигают, а
+                // высота блока и позиция текста считаются по ним одной арифметикой
+                // (см. [`MeasuredBlock::height`] и `layout_cell_blocks`).
+                let space_after = if Some(index) == last_paragraph {
+                    0.0
+                } else {
+                    layout.space_after
+                };
+                let last_line = layout.lines.len().saturating_sub(1);
                 // Пустой абзац — одна строка нулевой ширины, как и в абзацах тела.
-                for line in layout.lines {
+                for (number, line) in layout.lines.into_iter().enumerate() {
                     blocks.push(MeasuredBlock::Line(CellLine {
                         node_id: paragraph.id,
                         text: line.text,
                         x: line.x,
                         width: line.width,
                         height: line.height,
+                        space_before: if number == 0 {
+                            layout.space_before
+                        } else {
+                            0.0
+                        },
+                        space_after: if number == last_line {
+                            space_after
+                        } else {
+                            0.0
+                        },
                         color: line.color,
                         font_family: line.font_family,
                         size: line.size,
@@ -1586,6 +1620,10 @@ fn layout_cell_blocks(
                 // Строка приходит из раскладки абзаца уже измеренной и в своём
                 // стиле: мерить её здесь ещё раз незачем — другая мерка
                 // разошлась бы с той, по которой разбит текст.
+                //
+                // Интервалы абзаца — те же, что в [`MeasuredBlock::height`]:
+                // `before` поднимает строку, `after` остаётся под ней.
+                cursor += line.space_before;
                 items.push(LayoutItem::Paragraph {
                     node_id: line.node_id,
                     rect: Rect::new(left + line.x, cursor, line.width, line.height),
@@ -1598,7 +1636,7 @@ fn layout_cell_blocks(
                     italic: line.italic,
                     underline: line.underline,
                 });
-                cursor += line.height;
+                cursor += line.height + line.space_after;
             }
             MeasuredBlock::Nested {
                 table,
@@ -1761,7 +1799,9 @@ fn vertical_align(cell: &Cell) -> VAlign {
 mod tests {
     use super::*;
     use crate::layout::engine::{layout_document, LayoutOptions};
-    use crate::model::raw::{Color, RawPPr, RawRPr, RawTblPr, ShadingPattern, StyleId};
+    use crate::model::raw::{
+        Color, ParagraphSpacing, RawPPr, RawRPr, RawTblPr, ShadingPattern, StyleId,
+    };
     use crate::model::{
         CellMargins, GridCol, Inline, Paragraph, ParagraphStyle, Run, RunContent, TableLayout,
     };
@@ -2332,6 +2372,69 @@ mod tests {
             "w:jc=center центрирует строку в полосе ячейки: {} > {}",
             rect.x,
             cell.rect.x
+        );
+    }
+
+    /// Интервалы `w:spacing` абзацев ячейки растягивают высоту строки: `before`
+    /// считается у всех абзацев, `after` — у всех, кроме последнего.
+    ///
+    /// Хвостовой интервал ячейку не растягивает: так же его понимают Word и
+    /// `LibreOffice`, и на этом стоит `w:vAlign` фикстуры
+    /// `tables/cell_margins_valign.docx` — у её единственного абзаца `after`
+    /// есть только из `docDefaults`.
+    #[test]
+    fn cell_paragraph_spacing_stretches_the_row_except_the_last_after() {
+        /// Абзац текста с интервалами `w:before`/`w:after` в twips.
+        fn paragraph(id: u64, before: i32, after: i32) -> BlockItem {
+            BlockItem::Paragraph(Paragraph {
+                id: NodeId::new(id),
+                ppr: Box::new(RawPPr {
+                    spacing: Some(ParagraphSpacing {
+                        before: Some(Twips::new(before)),
+                        after: Some(Twips::new(after)),
+                        ..ParagraphSpacing::default()
+                    }),
+                    ..RawPPr::default()
+                }),
+                runs: vec![Inline::Run(Run {
+                    id: NodeId::new(id + 1),
+                    content: vec![RunContent::Text("x".to_owned())],
+                    ..Run::default()
+                })],
+                ..Paragraph::default()
+            })
+        }
+
+        /// Высота единственной строки таблицы с абзацами `items`.
+        fn row_height(items: Vec<BlockItem>) -> f32 {
+            let mut table = table(1, 1, None, TableLook::default());
+            table.rows[0].cells[0].items = items;
+            layout(&table, &styles(Vec::new())).rows[0].height
+        }
+
+        // 240 twips = 16 px, а две строки не дают упереться в минимум высоты
+        // строки: разница видна точно.
+        let spacing = twips_to_px(Twips::new(240));
+        let plain = row_height(vec![paragraph(10, 0, 0), paragraph(20, 0, 0)]);
+
+        let before = row_height(vec![paragraph(10, 0, 0), paragraph(20, 240, 0)]);
+        assert!(
+            (before - plain - spacing).abs() < EPS,
+            "`before` абзаца не растянул строку: {before} против {plain}"
+        );
+
+        let after = row_height(vec![paragraph(10, 0, 240), paragraph(20, 0, 0)]);
+        assert!(
+            (after - plain - spacing).abs() < EPS,
+            "`after` не-последнего абзаца не растянул строку: {after} против {plain}"
+        );
+
+        // Хвостовой интервал: абзац с большим `after` даёт ту же высоту, что и без него.
+        let single = row_height(vec![paragraph(10, 0, 0)]);
+        let trailing = row_height(vec![paragraph(10, 0, 2400)]);
+        assert!(
+            (trailing - single).abs() < EPS,
+            "`after` последнего абзаца растянул строку: {trailing} против {single}"
         );
     }
 
