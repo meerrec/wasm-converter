@@ -973,6 +973,17 @@ mod tests {
 
     /// `w:vAlign` сдвигает содержимое ячейки вниз, а не повторяется рисованием:
     /// строки стоят там, где их положила раскладка.
+    ///
+    /// Сдвиг есть только там, где в полосе ряда осталось свободное место. В
+    /// первой строке `tables/cell_margins_valign.docx` его нет: полосу держат
+    /// интервалы `after` из `docDefaults` и поля `w:tcMar`, все три ячейки
+    /// занимают её целиком — ни `center`, ни `bottom` текст не двигают. Так же
+    /// эту строку рисует и `LibreOffice`: в эталонном PDF (`soffice --headless
+    /// --convert-to pdf`) у «Сверху», «По центру» и «Снизу» одна и та же
+    /// базовая линия — `pdftotext -bbox` даёт yMin 57.2 pt у всех трёх. Во
+    /// второй строке место есть, и ячейка с `center` стоит ниже соседки с
+    /// `top` — у эталона тоже (yMin 122.7 pt против 104.2 pt): полосу ряда
+    /// держат поля по максимуму от его ячеек, а не поля самой высокой из них.
     #[test]
     fn cell_valign_shifts_the_content_down() {
         let layout = fixture_layout("tables/cell_margins_valign.docx");
@@ -986,9 +997,40 @@ mod tests {
                 .unwrap_or_else(|| panic!("нет строки {text:?} в кадре"))
                 .y
         };
+        // Высота строки текста — из самой раскладки: утверждения о сдвиге не
+        // держат кегль числом.
+        let line = first_table_cells(&layout)
+            .iter()
+            .flat_map(|cell| &cell.content)
+            .find_map(|item| match item {
+                LayoutItem::Paragraph { rect, text, .. } if text == "Широкие боковые" => {
+                    Some(rect.height)
+                }
+                _ => None,
+            })
+            .expect("абзац второй строки разложен");
+
+        // Первая строка: свободного места нет — ни `center`, ни `bottom` не
+        // сдвигают содержимое (у эталона на этой строке они тоже не сдвинуты).
         let (top, center, bottom) = (y("Сверху"), y("По центру"), y("Снизу"));
-        assert!(center > top, "центр ниже верха: {center} > {top}");
-        assert!(bottom > center, "низ ниже центра: {bottom} > {center}");
+        assert_px(
+            center,
+            top,
+            "`center` без свободного места не сдвигает строку",
+        );
+        assert_px(
+            bottom,
+            top,
+            "`bottom` без свободного места не сдвигает строку",
+        );
+
+        // Вторая строка: свободна половина полосы ряда — сдвиг `center` виден и
+        // больше строки текста.
+        let shift = y("Большие поля сверху и снизу") - y("Широкие боковые");
+        assert!(
+            shift > line,
+            "`center` не сдвинул содержимое вниз: {shift} px при строке {line} px"
+        );
 
         // Приписывать сдвиг второй раз нельзя: строка ячейки с `vAlign` рисуется
         // ровно там, где её поставила раскладка.
@@ -1006,6 +1048,31 @@ mod tests {
                 assert_px(drawn.y, expected, "верх строки ячейки");
             }
         }
+    }
+
+    /// Свободное место ячейка с `vAlign=bottom` забирает всё: её содержимое
+    /// упирается в низ полосы ряда, а не в его верх.
+    ///
+    /// В третьей строке `tables/alignment_widths.docx` у двух однострочных
+    /// ячеек с `vAlign=bottom` место есть (высоту ряда задаёт соседка с двумя
+    /// абзацами), и низ их строки — низ полосы: там же последняя строка
+    /// соседки. Хвостовые интервалы `after` у ячеек общие, поэтому их строки
+    /// совпадают точно.
+    #[test]
+    fn cell_valign_bottom_rests_on_the_row_bottom() {
+        let layout = fixture_layout("tables/alignment_widths.docx");
+        let dl = frame(&layout, 0);
+        let texts = drawn_texts(&dl);
+
+        let y = |text: &str| {
+            texts
+                .iter()
+                .find(|drawn| drawn.text == text)
+                .unwrap_or_else(|| panic!("нет строки {text:?} в кадре"))
+                .y
+        };
+        let (bottom, last) = (y("По правому краю"), y("Вторая строка"));
+        assert_px(bottom, last, "`bottom` опускает строку к низу полосы ряда");
     }
 
     /// Кадр переживает сериализацию: painter получает его из ring'а байтами.

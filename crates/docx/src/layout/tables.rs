@@ -351,18 +351,18 @@ fn table_offset(table: &Table, available: f32, table_width: f32) -> f32 {
 /// * `rows` - строки таблицы
 ///
 /// # Returns
-/// Вектор высот строк в пикселях. `0.0` означает «высота по содержимому»
-/// (`w:trHeight` отсутствует или `w:hRule="auto"`): содержимого эта функция не
-/// видит, высоту считает [`measure_row_heights`], там же применяется и минимум
-/// [`MIN_ROW_HEIGHT`] (приватен, поэтому без ссылки).
+/// Вектор высот строк в пикселях. `0.0` означает «высота по содержимому» —
+/// `w:trHeight` у строки нет: содержимого эта функция не видит, высоту считает
+/// [`measure_row_heights`], там же применяется и минимум [`MIN_ROW_HEIGHT`]
+/// (приватен, поэтому без ссылки).
+///
+/// Заданная высота возвращается и при умолчании `w:hRule` (`auto`): и Word, и
+/// `LibreOffice` читают её как «не ниже» (см. `measure_rows`).
 #[must_use]
 pub fn compute_row_heights(rows: &[Row]) -> Vec<f32> {
     rows.iter()
         .map(|row| match row.height.as_ref() {
-            Some(row_height) => match row_height.rule {
-                HeightRule::Exact | HeightRule::AtLeast => twips_to_px(row_height.value),
-                HeightRule::Auto => 0.0,
-            },
+            Some(row_height) => twips_to_px(row_height.value),
             None => 0.0,
         })
         .collect()
@@ -371,8 +371,8 @@ pub fn compute_row_heights(rows: &[Row]) -> Vec<f32> {
 /// Высоты строк таблицы: `w:trHeight` либо по содержимому, не ниже [`MIN_ROW_HEIGHT`].
 ///
 /// `w:hRule="exact"` держит высоту ровно заданной (содержимое может её
-/// перерасти — так же в Word), `atLeast` — не ниже её, `auto` и отсутствие
-/// `w:trHeight` — по самой высокой ячейке.
+/// перерасти — так же в Word), `atLeast` и умолчание `auto` — не ниже её,
+/// отсутствие `w:trHeight` — по самой высокой ячейке.
 #[must_use]
 pub fn measure_row_heights(
     table: &Table,
@@ -764,15 +764,14 @@ fn row_rest_height(measure: &MeasuredRow<'_>, start: &[usize]) -> f32 {
         .enumerate()
         .map(|(index, cell)| {
             let from = start.get(index).copied().unwrap_or(0);
-            cell.padding_bottom
-                + cell
-                    .blocks
-                    .iter()
-                    .skip(from)
-                    .map(MeasuredBlock::height)
-                    .sum::<f32>()
+            cell.blocks
+                .iter()
+                .skip(from)
+                .map(MeasuredBlock::height)
+                .sum::<f32>()
         })
         .fold(MIN_ROW_HEIGHT, f32::max)
+        + measure.margin_bottom
 }
 
 /// Блоки, помещающиеся в `avail`: по одной границе на ячейку.
@@ -793,8 +792,8 @@ fn fit_blocks(
             .copied()
             .unwrap_or(0)
             .min(cell.blocks.len());
-        // Верхнее поле ячейки остаётся на первой странице: у продолжения его нет.
-        let mut used = if partial { 0.0 } else { cell.padding_top };
+        // Верхнее поле ряда остаётся на первой странице: у продолжения его нет.
+        let mut used = if partial { 0.0 } else { measure.margin_top };
         let mut end = from;
         for block in cell.blocks.iter().skip(from) {
             if used + block.height() <= avail + EPS {
@@ -835,7 +834,7 @@ fn force_blocks(
         };
         if end > from {
             any = true;
-            let top = if partial { 0.0 } else { cell.padding_top };
+            let top = if partial { 0.0 } else { measure.margin_top };
             height = height.max(top + cell.blocks[from].height());
         }
         parts.push(from..end);
@@ -844,9 +843,21 @@ fn force_blocks(
 }
 
 /// Измеренная строка таблицы: высота и содержимое ячеек без координат.
+///
+/// Вертикальные поля ячеек ряд берёт по максимуму от своих ячеек: полоса
+/// содержимого — `[верх ряда + margin_top, низ ряда − margin_bottom]`, и в её
+/// границах выравнивается `w:vAlign`. Так это делает `LibreOffice` (пробники
+/// через `soffice`: ячейка с `w:tcMar w:top="480"` поднимает текст соседки без
+/// полей на 24 pt, а строка растёт на максимум полей сверху и снизу, а не на
+/// поля самой высокой ячейки), и на этом стоит фикстура
+/// `tables/cell_margins_valign.docx`.
 struct MeasuredRow<'a> {
     /// Высота строки: `w:trHeight` либо по содержимому, не ниже [`MIN_ROW_HEIGHT`].
     height: f32,
+    /// Верхнее поле ряда — максимум `padding_top` его ячеек.
+    margin_top: f32,
+    /// Нижнее поле ряда — максимум `padding_bottom` его ячеек.
+    margin_bottom: f32,
     /// Содержимое ячеек — по одной записи на ячейку.
     cells: Vec<MeasuredCell<'a>>,
 }
@@ -861,11 +872,10 @@ struct MeasuredCell<'a> {
 }
 
 impl MeasuredCell<'_> {
-    /// Высота содержимого с полями.
-    fn height(&self) -> f32 {
-        self.padding_top
-            + self.padding_bottom
-            + self.blocks.iter().map(MeasuredBlock::height).sum::<f32>()
+    /// Высота содержимого без полей: их ряд берёт по максимуму от ячеек
+    /// (см. [`MeasuredRow::margin_top`]).
+    fn content_height(&self) -> f32 {
+        self.blocks.iter().map(MeasuredBlock::height).sum()
     }
 }
 
@@ -939,23 +949,37 @@ fn measure_rows<'a>(
         let value = declared.get(index).copied().unwrap_or(0.0);
         let mut cells = Vec::with_capacity(row.cells.len());
         let mut content_height = 0.0_f32;
+        let mut margin_top = 0.0_f32;
+        let mut margin_bottom = 0.0_f32;
         let mut col = 0usize;
         for cell in &row.cells {
             let span = grid_span(cell);
             let width = frame.cell_width(col, span);
             col += span;
             let measured_cell = measure_cell(cell, table, width, fonts, depth, styles, &mut cache);
-            content_height = content_height.max(measured_cell.height());
+            content_height = content_height.max(measured_cell.content_height());
+            margin_top = margin_top.max(measured_cell.padding_top);
+            margin_bottom = margin_bottom.max(measured_cell.padding_bottom);
             cells.push(measured_cell);
         }
 
+        // Ряд резервирует максимум полей своих ячеек, а не поля самой высокой:
+        // ячейка с большими `w:tcMar` поднимает текст соседей (см. [`MeasuredRow`]).
+        let content_height = margin_top + content_height + margin_bottom;
         let height = match row.height.as_ref().map(|height| height.rule) {
             Some(HeightRule::Exact) => value,
-            Some(HeightRule::AtLeast) => value.max(content_height),
-            _ => content_height,
+            // `w:hRule` по умолчанию — `auto`, и его `w:val`, если он есть,
+            // резервируется под содержимое: Word и LibreOffice держат строку не
+            // ниже заданной (так эталон отводит строке `w:trHeight w:val="970"`
+            // без `w:hRule` ровно 970 twips). Буква ECMA-376 «auto — высота по
+            // содержимому» — не то, по чему строят обе программы.
+            Some(HeightRule::AtLeast | HeightRule::Auto) => value.max(content_height),
+            None => content_height,
         };
         measured.push(MeasuredRow {
             height: height.max(MIN_ROW_HEIGHT),
+            margin_top,
+            margin_bottom,
             cells,
         });
     }
@@ -980,17 +1004,13 @@ fn measure_cell<'a>(
     let inner_width = (width - padding.left - padding.right).max(0.0);
 
     let mut blocks = Vec::new();
-    // Хвостовой интервал последнего абзаца ячейку не растягивает: так же его
-    // понимают Word и LibreOffice — интервал остаётся за нижней границей
-    // содержимого. На этом стоит `w:vAlign` фикстуры `cell_margins_valign`:
-    // у её абзацев `after` есть только из `docDefaults`, и без правила
-    // единственный абзац поднял бы высоту ячейки до высоты строки.
-    let last_paragraph = cell
-        .items
-        .iter()
-        .rposition(|item| matches!(item, BlockItem::Paragraph(_)));
-
-    for (index, item) in cell.items.iter().enumerate() {
+    // Хвостовой интервал последнего абзаца ячейку растягивает: LibreOffice
+    // сдвигает следующую строку ровно на `after` (проверено на пробниках
+    // через `soffice`: `after=2400` — следующая строка ниже на 120 pt), и там,
+    // где свободного места от `after` не остаётся, `w:vAlign` сдвига нет — так
+    // нарисована первая строка `tables/cell_margins_valign.docx`. Word считает
+    // так же: интервал — часть высоты строки, а не то, что остаётся за ней.
+    for item in &cell.items {
         match item {
             BlockItem::Paragraph(paragraph) => {
                 // Абзац ячейки раскладывается тем же `layout_paragraph`, что и
@@ -1018,11 +1038,7 @@ fn measure_cell<'a>(
                 // `after` — последней. Строку между ними они не сдвигают, а
                 // высота блока и позиция текста считаются по ним одной арифметикой
                 // (см. [`MeasuredBlock::height`] и `layout_cell_blocks`).
-                let space_after = if Some(index) == last_paragraph {
-                    0.0
-                } else {
-                    layout.space_after
-                };
+                let space_after = layout.space_after;
                 let last_line = layout.lines.len().saturating_sub(1);
                 // Пустой абзац — одна строка нулевой ширины, как и в абзацах тела.
                 for (number, line) in layout.lines.into_iter().enumerate() {
@@ -1541,7 +1557,16 @@ fn layout_pieces(
             let content = if matches!(slot, MergeSlot::Continue { .. }) {
                 Vec::new()
             } else {
-                layout_cell_blocks(cell, cell_measure, &part, &rect, fonts, depth, ctx.styles)
+                layout_cell_blocks(
+                    cell,
+                    cell_measure,
+                    measure,
+                    &part,
+                    &rect,
+                    fonts,
+                    depth,
+                    ctx.styles,
+                )
             };
 
             // Прямая заливка ячейки старше стиля таблицы; условный формат
@@ -1580,9 +1605,14 @@ fn layout_pieces(
 }
 
 /// Разложить блоки ячейки, попавшие в часть строки.
+///
+/// `row` — измеренная строка: её поля задают полосу содержимого, в которой
+/// выравнивается `w:vAlign` (см. [`MeasuredRow`]).
+#[allow(clippy::too_many_arguments)]
 fn layout_cell_blocks(
     cell: &Cell,
     measure: &MeasuredCell<'_>,
+    row: &MeasuredRow<'_>,
     part: &Range<usize>,
     rect: &Rect,
     fonts: &mut FontRegistry,
@@ -1598,12 +1628,8 @@ fn layout_cell_blocks(
     let content_height: f32 = blocks.iter().map(|block| block.height()).sum();
 
     // Верхнее поле осталось на прошлой странице вместе с началом строки.
-    let top = if part.start == 0 {
-        measure.padding_top
-    } else {
-        0.0
-    };
-    let room = (rect.height - top - measure.padding_bottom).max(0.0);
+    let top = if part.start == 0 { row.margin_top } else { 0.0 };
+    let room = (rect.height - top - row.margin_bottom).max(0.0);
     let shift = match cell.v_align {
         CellVAlign::Center => ((room - content_height) / 2.0).max(0.0),
         CellVAlign::Bottom => (room - content_height).max(0.0),
@@ -2376,14 +2402,15 @@ mod tests {
     }
 
     /// Интервалы `w:spacing` абзацев ячейки растягивают высоту строки: `before`
-    /// считается у всех абзацев, `after` — у всех, кроме последнего.
+    /// — у всех абзацев, `after` — у всех, включая последний.
     ///
-    /// Хвостовой интервал ячейку не растягивает: так же его понимают Word и
-    /// `LibreOffice`, и на этом стоит `w:vAlign` фикстуры
-    /// `tables/cell_margins_valign.docx` — у её единственного абзаца `after`
-    /// есть только из `docDefaults`.
+    /// Хвостовой интервал входит в высоту строки: `LibreOffice` сдвигает
+    /// следующее содержимое ровно на `after` (пробник с `after=2400` поднял
+    /// строку под ним на 120 pt), и на первой строке фикстуры
+    /// `tables/cell_margins_valign.docx` от него не остаётся свободного места —
+    /// потому `w:vAlign` её ячеек сдвига не даёт.
     #[test]
-    fn cell_paragraph_spacing_stretches_the_row_except_the_last_after() {
+    fn cell_paragraph_spacing_stretches_the_row() {
         /// Абзац текста с интервалами `w:before`/`w:after` в twips.
         fn paragraph(id: u64, before: i32, after: i32) -> BlockItem {
             BlockItem::Paragraph(Paragraph {
@@ -2429,13 +2456,71 @@ mod tests {
             "`after` не-последнего абзаца не растянул строку: {after} против {plain}"
         );
 
-        // Хвостовой интервал: абзац с большим `after` даёт ту же высоту, что и без него.
-        let single = row_height(vec![paragraph(10, 0, 0)]);
-        let trailing = row_height(vec![paragraph(10, 0, 2400)]);
+        // Хвостовой интервал: он у последнего абзаца тот же, что у прочих, и
+        // строка растёт ровно на него.
+        let trailing = row_height(vec![paragraph(10, 0, 0), paragraph(20, 0, 240)]);
         assert!(
-            (trailing - single).abs() < EPS,
-            "`after` последнего абзаца растянул строку: {trailing} против {single}"
+            (trailing - plain - spacing).abs() < EPS,
+            "`after` последнего абзаца не растянул строку: {trailing} против {plain}"
         );
+    }
+
+    /// Полосу ряда задают поля `w:tcMar` по максимуму от ячеек, а не поля самой
+    /// высокой из них: большие поля одной ячейки поднимают содержимое соседей и
+    /// растят ряд. Так же ряд считает `LibreOffice` (пробники через `soffice`:
+    /// ячейка с `w:top="480"` поднимает текст соседки без полей на 24 pt).
+    #[test]
+    fn the_row_band_takes_the_widest_cell_margins() {
+        /// Три абзаца по строке в правой ячейке ряда — она самая высокая.
+        fn fill_tall(table: &mut Table) {
+            let mut items = Vec::new();
+            for step in 0..3u64 {
+                let id = 900 + step * 2;
+                items.push(BlockItem::Paragraph(Paragraph {
+                    id: NodeId::new(id),
+                    runs: vec![Inline::Run(Run {
+                        id: NodeId::new(id + 1),
+                        content: vec![RunContent::Text("x".to_owned())],
+                        ..Run::default()
+                    })],
+                    ..Paragraph::default()
+                }));
+            }
+            table.rows[0].cells[1].items = items;
+        }
+
+        let mut plain = table(1, 2, None, TableLook::default());
+        fill_tall(&mut plain);
+        let plain_height = layout(&plain, &styles(Vec::new())).rows[0].height;
+
+        let band = twips_to_px(Twips::new(480));
+        let mut margined = table(1, 2, None, TableLook::default());
+        fill_tall(&mut margined);
+        margined.rows[0].cells[0].margins = CellMargins {
+            top: Some(Twips::new(480)),
+            bottom: Some(Twips::new(480)),
+            ..CellMargins::default()
+        };
+        let laid_out = layout(&margined, &styles(Vec::new()));
+        assert!(
+            (laid_out.rows[0].height - plain_height - 2.0 * band).abs() < EPS,
+            "ряд не вырос на поля по максимуму: {} против {plain_height}",
+            laid_out.rows[0].height
+        );
+
+        // Обе ячейки начинаются на верхней кромке полосы ряда: у высокой ячейки
+        // своих полей нет, но её содержимое поднимает поле соседки.
+        for cell in &laid_out.rows[0].cells {
+            let Some(LayoutItem::Paragraph { rect, .. }) = cell.content.first() else {
+                panic!("ячейка разложена абзацем");
+            };
+            let expected = cell.rect.y + band;
+            assert!(
+                (rect.y - expected).abs() < EPS,
+                "верх полосы ряда: ожидалось {expected}, получено {}",
+                rect.y
+            );
+        }
     }
 
     /// Фикстура `tables/tbl_look.docx`: `TableGrid` даёт границы, `w:tblLook` — флаги.
