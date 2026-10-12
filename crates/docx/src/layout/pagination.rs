@@ -42,6 +42,13 @@ pub struct Paginator {
 }
 
 /// Пустая страница с номером `number` по геометрии секции.
+///
+/// `Section::orientation` здесь не спрашивается намеренно: в OOXML альбомную
+/// страницу производитель уже развернул — `w:w`/`w:h` при `w:orient="landscape"`
+/// переставлены, — и `page_size` несёт готовые ширину и высоту. `LibreOffice`
+/// (эталон `scripts/oracle-docx-pages.sh`) считает так же: у файла с
+/// `w:orient="landscape"` и книжными `w:w`/`w:h` страница выходит книжной.
+/// Разворот по `w:orient` разошёлся бы с эталоном на таком файле.
 fn page_for(number: u32, section: &Section) -> Page {
     Page {
         number,

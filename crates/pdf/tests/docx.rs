@@ -275,6 +275,82 @@ fn landscape_page_keeps_its_orientation() {
     assert_pages_match_layout("basic/sections.docx", &layout, &export(&doc));
 }
 
+/// Альбомная секция посреди документа: страницы берут геометрию своей секции.
+///
+/// У `sections.docx` альбомная секция последняя, и ошибки «геометрия секции
+/// залипает на весь документ» на ней не видно: книжных страниц после альбомной
+/// нет. Здесь тот же материал фикстуры укладывается в «книжная → альбомная →
+/// книжная»: так выглядят реальные документы с альбомными вставками (например,
+/// широкими таблицами), и книжные страницы после вставки обязаны остаться
+/// книжными.
+#[test]
+fn a_landscape_section_does_not_capture_its_neighbours() {
+    /// A4 в пикселях раскладки: twips / 15 (96 dpi против 1440 twips в дюйме).
+    const A4_W_PX: f32 = 11_906.0 / 15.0;
+    const A4_H_PX: f32 = 16_838.0 / 15.0;
+
+    let mut doc = document("basic/sections.docx");
+    let portrait = doc.body.sections[0].clone();
+    let landscape = doc.body.sections[1].clone();
+    let paragraphs: Vec<_> = doc
+        .body
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            BlockItem::Paragraph(paragraph) => Some(paragraph.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(paragraphs.len(), 2, "в фикстуре два абзаца с текстом");
+
+    // Абзац, которым кончается секция, остаётся в ней же, а следующий абзац
+    // открывает уже новую секцию (`collect_sections` в `document.rs`).
+    let mut first_break = paragraphs[0].clone();
+    first_break.section_break = Some(Box::new(portrait.properties.clone()));
+    let mut second_break = paragraphs[1].clone();
+    second_break.section_break = Some(Box::new(landscape.properties.clone()));
+
+    doc.body.items = vec![
+        BlockItem::Paragraph(first_break),
+        BlockItem::Paragraph(paragraphs[1].clone()),
+        BlockItem::Paragraph(second_break),
+        BlockItem::Paragraph(paragraphs[0].clone()),
+        BlockItem::SectPr(portrait.properties.clone()),
+    ];
+    let portrait_again = portrait.clone();
+    doc.body.sections = vec![portrait, landscape, portrait_again];
+
+    let layout = layout(&doc);
+    let bytes = export(&doc);
+    let sizes = page_sizes(&bytes);
+
+    // Альбомная страница — те же стороны, что у книжной, но в обратном порядке:
+    // так их и переставляет сам OOXML-производитель, `w:orient` раскладка не
+    // читает (см. `page_for` в `crates/docx/src/layout/pagination.rs`).
+    let expected = [(A4_W_PX, A4_H_PX), (A4_H_PX, A4_W_PX), (A4_W_PX, A4_H_PX)];
+    assert_eq!(sizes.len(), expected.len(), "трём секциям — три страницы");
+    for (index, want) in expected.into_iter().enumerate() {
+        let page = &layout.pages[index];
+        assert!(
+            (page.width - want.0).abs() < 0.01 && (page.height - want.1).abs() < 0.01,
+            "страница {index}: раскладка {}x{} вместо {want:?} px",
+            page.width,
+            page.height
+        );
+        let got = sizes[index];
+        assert!(
+            (got.0 - want.0 / PX_PER_POINT).abs() <= SIZE_TOLERANCE_PT
+                && (got.1 - want.1 / PX_PER_POINT).abs() <= SIZE_TOLERANCE_PT,
+            "страница {index}: PDF {got:?} вместо {want:?} px — геометрия не из своей секции"
+        );
+    }
+    assert_pages_match_layout(
+        "sections.docx (книжная → альбомная → книжная)",
+        &layout,
+        &bytes,
+    );
+}
+
 /// Размер и поля секции из документа доезжают до страницы PDF.
 ///
 /// Геометрия задаётся прямо в модели (Letter вместо A4 и поля в дюйм): третья
