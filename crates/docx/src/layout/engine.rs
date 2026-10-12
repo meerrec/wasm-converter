@@ -16,7 +16,7 @@ use crate::layout::cascade::StyleCache;
 use crate::layout::fields::{resolve_paragraph, FieldPass};
 use crate::layout::float::{emu_to_px, layout_floats_on_page, FloatElement, FloatKind};
 use crate::layout::line_break::LineBreaker;
-use crate::layout::pagination::Paginator;
+use crate::layout::pagination::{HeaderExtent, Paginator};
 use crate::layout::paragraph::{layout_paragraph, Line, ParagraphLayout};
 use crate::layout::tables::{
     compute_table_frame, layout_table_fragments, table_item, PageBand, TableRowLayout,
@@ -212,7 +212,10 @@ pub struct Page {
 /// Раскладка полей страницы в пикселях.
 #[derive(Debug, Clone, Copy)]
 pub struct MarginsLayout {
-    /// Верхнее поле.
+    /// Верхнее поле — верхняя граница полосы набора.
+    ///
+    /// Больше `w:pgMar/@w:top`, когда колонтитул в поле не поместился: тело
+    /// отодвигается под него ([`Paginator::set_header_extents`]), как в Word.
     pub top: f32,
     /// Правое поле.
     pub right: f32,
@@ -440,6 +443,11 @@ fn layout_pass(
 
     let first_section = section_at(document, 0);
     let mut paginator = Paginator::new(&first_section);
+    // Колонтитулы мерятся до тела: их низ — верхняя граница полосы набора
+    // каждой страницы. Мерятся тем же проходом полей, что и сама раскладка, —
+    // колонтитулы с `PAGE`/`NUMPAGES` считаются одинаково там и здесь.
+    let extents = header_extents(document, options, fonts, &mut pass);
+    paginator.set_header_extents(extents, document.settings.even_and_odd_headers);
     let mut state = LayoutState::for_page(paginator.current_page(), &first_section);
     let mut cache = StyleCache::new();
     // Секция, в которой идёт раскладка: `sections[i]` описывает секцию, которую
@@ -1319,10 +1327,8 @@ fn chrome_part(
 
 /// Разложить один колонтитул в координатах страницы.
 ///
-/// Содержимое колонтитула раскладывается тем же [`layout_block`], что и тело,
-/// но в полосе всей страницы: поля тела сняты, иначе колонтитул не поместился бы
-/// в промежуток до полосы набора. Word при переполнении отодвигает тело —
-/// здесь колонтитул просто ложится поверх (ограничение слайса).
+/// Содержимое колонтитула раскладывается тем же [`layout_block`], что и тело:
+/// разложенная полоса ([`layout_chrome_items`]) сдвигается на своё место.
 #[allow(clippy::too_many_arguments)]
 fn layout_chrome_part(
     document: &Document,
@@ -1334,57 +1340,7 @@ fn layout_chrome_part(
     fonts: &mut FontRegistry,
     pass: &mut FieldPass,
 ) -> Vec<LayoutItem> {
-    let Some(part) = part else {
-        return Vec::new();
-    };
-    // Части нет в пакете (битая ссылка) — страница без колонтитула, а не паника.
-    let content = match band {
-        ChromeBand::Header => document.headers.get(&part.target),
-        ChromeBand::Footer => document.footers.get(&part.target),
-    };
-    let Some(content) = content else {
-        return Vec::new();
-    };
-
-    let mut band_section = section.clone();
-    band_section.margins.top = Twips::new(0);
-    band_section.margins.bottom = Twips::new(0);
-    band_section.margins.header = Some(Twips::new(0));
-    band_section.margins.footer = Some(Twips::new(0));
-    // Колонтитул печатается поверх страницы целиком: колонки секции его не
-    // делят, иначе он встал бы в первую из них.
-    band_section.columns.count = 1;
-
-    let mut paginator = Paginator::new(&band_section);
-    let mut state = LayoutState::for_page(paginator.current_page(), &band_section);
-    let mut cache = StyleCache::new();
-    let mut placed_floats = Vec::new();
-    let mut deferred_floats = Vec::new();
-    for block in &content.body.items {
-        layout_block(
-            document,
-            block,
-            options,
-            fonts,
-            &mut cache,
-            &mut paginator,
-            &mut placed_floats,
-            &mut deferred_floats,
-            &mut state,
-            pass,
-        );
-    }
-
-    // Колонтитул выше страницы — вырожденный случай, которого Word не создаёт:
-    // берём то, что легло на первую страницу полосы.
-    let (band_pages, _) = paginator.finish_with_sections();
-    let mut items = band_pages
-        .into_iter()
-        .next()
-        .map_or_else(Vec::new, |band_page| band_page.items);
-    // Разрыв страницы в колонтитуле бессмыслен: он не начинает новую страницу,
-    // а лишь сдвинул бы содержимое.
-    items.retain(|item| !matches!(item, LayoutItem::PageBreak | LayoutItem::ColumnBreak));
+    let mut items = layout_chrome_items(document, part, section, band, options, fonts, pass).items;
     if items.is_empty() {
         return items;
     }
@@ -1400,6 +1356,167 @@ fn layout_chrome_part(
     };
     translate_items(&mut items, dy);
     items
+}
+
+/// Разложенная полоса колонтитула.
+struct ChromeBandLayout {
+    /// Элементы в координатах полосы: `(0, 0)` — её верхний левый угол.
+    items: Vec<LayoutItem>,
+    /// Высота занятого полосой места — насколько содержимое колонтитула
+    /// отстоит от её верха. Это не то же, что низ последнего элемента: за
+    /// последним абзацем остаётся его отбивка (`w:spacing/@w:after`), и Word
+    /// с `LibreOffice` её считают — тело отодвигается и на неё тоже.
+    height: f32,
+}
+
+/// Разложить один колонтитул в координатах его полосы.
+///
+/// Полоса — вся страница с полями тела, снятыми: иначе колонтитул не поместился
+/// бы в промежуток до полосы набора. Начало координат — верхний левый угол
+/// полосы; на страницу её кладёт [`layout_chrome_part`].
+fn layout_chrome_items(
+    document: &Document,
+    part: Option<&PartRef>,
+    section: &Section,
+    band: ChromeBand,
+    options: &LayoutOptions,
+    fonts: &mut FontRegistry,
+    pass: &mut FieldPass,
+) -> ChromeBandLayout {
+    let empty = ChromeBandLayout {
+        items: Vec::new(),
+        height: 0.0,
+    };
+    let Some(part) = part else {
+        return empty;
+    };
+    // Части нет в пакете (битая ссылка) — страница без колонтитула, а не паника.
+    let content = match band {
+        ChromeBand::Header => document.headers.get(&part.target),
+        ChromeBand::Footer => document.footers.get(&part.target),
+    };
+    let Some(content) = content else {
+        return empty;
+    };
+
+    let band_section = chrome_band_section(section);
+    let mut paginator = Paginator::new(&band_section);
+    let mut state = LayoutState::for_page(paginator.current_page(), &band_section);
+    let mut cache = StyleCache::new();
+    let mut placed_floats = Vec::new();
+    let mut deferred_floats = Vec::new();
+    let mut height = 0.0;
+    for block in &content.body.items {
+        layout_block(
+            document,
+            block,
+            options,
+            fonts,
+            &mut cache,
+            &mut paginator,
+            &mut placed_floats,
+            &mut deferred_floats,
+            &mut state,
+            pass,
+        );
+        // Курсор — высота содержимого вместе с отбивкой за последним блоком.
+        // Берётся только с первой страницы полосы: колонтитул выше страницы —
+        // вырожденный случай, и продолжение на второй странице его места не
+        // уменьшает.
+        if paginator.current_page().number == 1 {
+            height = paginator.current_y();
+        }
+    }
+
+    // Колонтитул выше страницы — вырожденный случай, которого Word не создаёт:
+    // берём то, что легло на первую страницу полосы.
+    let (band_pages, _) = paginator.finish_with_sections();
+    let mut items = band_pages
+        .into_iter()
+        .next()
+        .map_or_else(Vec::new, |band_page| band_page.items);
+    // Разрыв страницы в колонтитуле бессмыслен: он не начинает новую страницу,
+    // а лишь сдвинул бы содержимое.
+    items.retain(|item| !matches!(item, LayoutItem::PageBreak | LayoutItem::ColumnBreak));
+    ChromeBandLayout { items, height }
+}
+
+/// Секция полосы колонтитула: поля тела сняты, колонок нет.
+///
+/// Колонтитул печатается поверх страницы целиком: колонки секции его не делят,
+/// иначе он встал бы в первую из них.
+fn chrome_band_section(section: &Section) -> Section {
+    let mut band_section = section.clone();
+    band_section.margins.top = Twips::new(0);
+    band_section.margins.bottom = Twips::new(0);
+    band_section.margins.header = Some(Twips::new(0));
+    band_section.margins.footer = Some(Twips::new(0));
+    band_section.columns.count = 1;
+    band_section
+}
+
+/// Низы верхних колонтитулов по секциям: ниже них начинается тело.
+///
+/// Колонтитул, которому мало верхнего поля, сдвигает полосу набора вниз — так
+/// делают Word и `LibreOffice`, и без этого первое содержимое страницы легло бы
+/// поверх строк колонтитула. Низ считается до раскладки тела: от него зависит
+/// верхняя граница полосы набора каждой страницы ([`Paginator`]), а сама полоса
+/// колонтитула от тела не зависит. Вариант колонтитула выбирается теми же
+/// флагами, что и в [`chrome_part`], — `first` на первой странице секции при
+/// `w:titlePg`, `even` на чётной при `w:evenAndOddHeaders`.
+fn header_extents(
+    document: &Document,
+    options: &LayoutOptions,
+    fonts: &mut FontRegistry,
+    pass: &mut FieldPass,
+) -> Vec<HeaderExtent> {
+    document
+        .body
+        .sections
+        .iter()
+        .map(|section| HeaderExtent {
+            default: header_extent(document, section, false, false, options, fonts, pass),
+            first: header_extent(document, section, true, false, options, fonts, pass),
+            even: header_extent(document, section, false, true, options, fonts, pass),
+        })
+        .collect()
+}
+
+/// Низ полосы одного верхнего колонтитула в координатах страницы.
+///
+/// `0.0` — колонтитула нет: тело начинается от верхнего поля. Номер страницы
+/// для полей (`PAGE`) при измерении — первый: полоса набора от его подстановки
+/// не зависит, а до раскладки тела другого номера у колонтитула и нет.
+fn header_extent(
+    document: &Document,
+    section: &Section,
+    first_in_section: bool,
+    even_page: bool,
+    options: &LayoutOptions,
+    fonts: &mut FontRegistry,
+    pass: &mut FieldPass,
+) -> f32 {
+    let part = chrome_part(section, ChromeBand::Header, first_in_section, even_page);
+    let band = layout_chrome_items(
+        document,
+        part,
+        section,
+        ChromeBand::Header,
+        options,
+        fonts,
+        pass,
+    );
+    if band.items.is_empty() {
+        return 0.0;
+    }
+    let bottom = band
+        .items
+        .iter()
+        .map(item_bottom)
+        .fold(band.height, f32::max);
+    // `w:header` — расстояние до полосы, её низ отстоит от начала страницы
+    // на эту величину плюс высоту содержимого.
+    MarginsLayout::from_margins(&section.margins).header + bottom
 }
 
 /// Нижняя граница элемента в координатах полосы колонтитула.
@@ -1587,9 +1704,10 @@ mod tests {
     use super::*;
     use crate::model::raw::{ParagraphSpacing, Toggle};
     use crate::model::{
-        Body, BreakKind, ColumnDef, Columns, Extent, Field, FieldKind, Inline, InlineImage,
-        InlineOrAnchor, Metadata, NumberingTable, Paragraph, PositionH, PositionV, RelFromH,
-        RelFromV, Relationships, Run, RunContent, SectionType, Settings, StyleTable, WrapKind,
+        Body, BreakKind, ColumnDef, Columns, Extent, Field, FieldKind, HeaderFooter, Inline,
+        InlineImage, InlineOrAnchor, Metadata, NumberingTable, Paragraph, PartRef, PositionH,
+        PositionV, RelFromH, RelFromV, Relationships, Run, RunContent, SectionType, Settings,
+        StyleTable, WrapKind,
     };
 
     /// Абзац из одного run'а; идентификаторы произвольные — раскладка их не сверяет.
@@ -3511,5 +3629,204 @@ mod tests {
             .expect("раскладка не должна падать");
 
         assert_eq!(page_texts(&layout.pages[0]), ["one", "two"]);
+    }
+
+    /// Верхнее поле тестовых секций: 1440 twips = 96 px, как у [`default_section`].
+    const TOP_MARGIN_TWIPS: i32 = 1440;
+
+    /// Поле до верхнего колонтитула (`w:header`): 709 twips = 47.27 px — как в фикстурах.
+    const HEADER_GAP_TWIPS: i32 = 709;
+
+    /// Имя части колонтитула `default` в карте `Document::headers`.
+    const DEFAULT_HEADER_PART: &str = "word/header1.xml";
+
+    /// Имя части колонтитула `first` — своя, иначе карта не различила бы варианты.
+    const FIRST_HEADER_PART: &str = "word/header2.xml";
+
+    /// Секция A4 с верхним полем 96 px и полем колонтитула 47.27 px.
+    fn section_with_header_gap() -> Section {
+        let mut section = default_section();
+        section.margins.header = Some(Twips::new(HEADER_GAP_TWIPS));
+        section.properties.margins = section.margins.clone();
+        section
+    }
+
+    /// Колонтитул из `lines` однострочных абзацев: строка — 19.2 px.
+    fn header_of(part: &str, lines: usize) -> HeaderFooter {
+        let items = (0..lines)
+            .map(|index| {
+                let id = u64::try_from(index).unwrap_or(u64::MAX) * 2 + 1;
+                BlockItem::Paragraph(paragraph(id, &format!("header line {index}")))
+            })
+            .collect();
+        HeaderFooter {
+            id: NodeId::new(900),
+            part: part.to_owned(),
+            body: Body {
+                id: NodeId::new(901),
+                items,
+                sections: Vec::new(),
+            },
+        }
+    }
+
+    /// Ссылка на колонтитул: раскладке нужен только `target`.
+    fn header_ref(part: &str) -> PartRef {
+        PartRef {
+            rel_id: "rIdHeader".to_owned(),
+            target: part.to_owned(),
+            external: false,
+        }
+    }
+
+    /// Дать единственной секции документа колонтитул `default` из `lines` абзацев.
+    fn with_default_header(mut document: Document, lines: usize) -> Document {
+        document.headers.insert(
+            DEFAULT_HEADER_PART.to_owned(),
+            header_of(DEFAULT_HEADER_PART, lines),
+        );
+        document.body.sections[0].header_default = Some(header_ref(DEFAULT_HEADER_PART));
+        document
+    }
+
+    /// Низ полосы колонтитула: максимум низов её элементов.
+    fn chrome_bottom(items: &[LayoutItem]) -> f32 {
+        items
+            .iter()
+            .map(item_bottom)
+            .reduce(f32::max)
+            .unwrap_or(0.0)
+    }
+
+    /// Высокий колонтитул отодвигает тело: верхнее поле растёт до его низа.
+    #[test]
+    fn a_tall_header_pushes_the_body_below_it() {
+        // Четыре строки по 19.2 px: 47.27 + 76.8 = 124.07 px — выше поля в 96 px.
+        let document = with_default_header(document_in_section(section_with_header_gap(), 1), 4);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert_eq!(layout.pages.len(), 1, "тело — один абзац");
+        let page = &layout.pages[0];
+        let field = twips_to_px(Twips::new(TOP_MARGIN_TWIPS));
+        let bottom = chrome_bottom(&layout.chrome[0].header);
+        assert!(
+            bottom > field,
+            "колонтитул должен не помещаться в поле: {bottom} <= {field}"
+        );
+        assert!(
+            page.margins.top > field,
+            "верхнее поле должно вырасти: {} <= {field}",
+            page.margins.top
+        );
+        assert!(
+            page.margins.top >= bottom,
+            "верхнее поле не может кончаться выше низа колонтитула: {} < {bottom}",
+            page.margins.top
+        );
+        let first = paragraph_rects(page)[0];
+        assert!(
+            first.y >= bottom,
+            "первый абзац тела поверх колонтитула: {} < {bottom}",
+            first.y
+        );
+        assert!(
+            first.y >= page.margins.top - 0.01,
+            "первый абзац тела не выше полосы набора: {} < {}",
+            first.y,
+            page.margins.top
+        );
+    }
+
+    /// Короткий колонтитул ничего не двигает: поле — из `w:pgMar` на всех страницах.
+    #[test]
+    fn a_short_header_leaves_the_top_margin_alone() {
+        // Одна строка: 47.27 + 19.2 = 66.47 px — помещается в поле в 96 px.
+        let document = with_default_header(document_in_section(section_with_header_gap(), 150), 1);
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert!(
+            layout.pages.len() > 1,
+            "нужно несколько страниц, получено {}",
+            layout.pages.len()
+        );
+        let field = twips_to_px(Twips::new(TOP_MARGIN_TWIPS));
+        for page in &layout.pages {
+            assert_px(page.margins.top, field, "верхнее поле");
+            let first = paragraph_rects(page)[0];
+            assert_px(first.y, field, "первый абзац от верхнего поля");
+        }
+    }
+
+    /// `w:titlePg`: страница секции отодвигается под свой вариант колонтитула —
+    /// первая под `first`, вторая под `default`, хотя поле у них одно.
+    #[test]
+    fn a_title_page_header_moves_only_the_first_page() {
+        let mut section = section_with_header_gap();
+        section.title_pg = true;
+        section.header_default = Some(header_ref(DEFAULT_HEADER_PART));
+        section.header_first = Some(header_ref(FIRST_HEADER_PART));
+        let mut document = document_in_section(section, 150);
+        document.headers.insert(
+            DEFAULT_HEADER_PART.to_owned(),
+            header_of(DEFAULT_HEADER_PART, 1),
+        );
+        document.headers.insert(
+            FIRST_HEADER_PART.to_owned(),
+            header_of(FIRST_HEADER_PART, 4),
+        );
+        let mut fonts = FontRegistry::new(64);
+
+        let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
+            .expect("раскладка не должна падать");
+
+        assert!(
+            layout.pages.len() > 1,
+            "нужны две страницы, получено {}",
+            layout.pages.len()
+        );
+        assert_eq!(
+            layout.chrome[0].header.len(),
+            4,
+            "на первой странице — колонтитул `first`"
+        );
+        assert_eq!(
+            layout.chrome[1].header.len(),
+            1,
+            "на второй странице — колонтитул `default`"
+        );
+        let first_bottom = chrome_bottom(&layout.chrome[0].header);
+        assert!(
+            layout.pages[0].margins.top >= first_bottom,
+            "верхнее поле первой страницы не может кончаться выше низа колонтитула: {} < {first_bottom}",
+            layout.pages[0].margins.top
+        );
+        assert!(
+            paragraph_rects(&layout.pages[0])[0].y >= first_bottom,
+            "тело первой страницы поверх колонтитула `first`"
+        );
+        // `default` в поле помещается — поле второй страницы остаётся из `w:pgMar`.
+        let field = twips_to_px(Twips::new(TOP_MARGIN_TWIPS));
+        assert_px(
+            layout.pages[1].margins.top,
+            field,
+            "верхнее поле второй страницы",
+        );
+        assert_px(
+            paragraph_rects(&layout.pages[1])[0].y,
+            field,
+            "тело второй страницы от поля",
+        );
+        assert!(
+            layout.pages[0].margins.top > layout.pages[1].margins.top,
+            "колонтитул `first` выше `default`: {} <= {}",
+            layout.pages[0].margins.top,
+            layout.pages[1].margins.top
+        );
     }
 }

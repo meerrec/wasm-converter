@@ -534,6 +534,58 @@ fn test_layout_header_sits_in_the_margin_band() {
     );
 }
 
+/// Колонтитул, помещающийся в поле, отодвигает тело не дальше своей полосы.
+///
+/// `w:pgMar/@w:top` фикстуры — 1134 twips (75.6 px), `w:header` — 709 twips
+/// (47.27 px); строки колонтитула кончаются на 66.26 px, то есть внутри поля.
+/// Поле не сжимается ни на странице, а тело начинается ровно от него и ниже
+/// низа колонтитула.
+#[test]
+fn test_layout_header_that_fits_pushes_the_body_by_the_header_band_only() {
+    let (_, layout) = chrome_layout("default_header_footer", 150);
+    let field = 1134.0 / 15.0;
+
+    assert!(
+        layout.pages.len() > 1,
+        "тело растянуто на несколько страниц, получено {}",
+        layout.pages.len()
+    );
+    for (index, page) in layout.pages.iter().enumerate() {
+        let bottom = paragraph_bounds(&layout.chrome[index].header)
+            .iter()
+            .map(|(y, height)| y + height)
+            .fold(0.0, f32::max);
+        let Some(&(first_y, _)) = paragraph_bounds(&page.items).first() else {
+            panic!("на странице {index} нет абзаца тела");
+        };
+        // Поле не сжимается: колонтитул может только опустить тело.
+        assert!(
+            page.margins.top >= field - 0.01,
+            "верхнее поле страницы {index} меньше поля из `w:pgMar`: {} < {field}",
+            page.margins.top
+        );
+        // Полоса набора начинается от поля и не выше низа колонтитула.
+        assert_px(
+            first_y,
+            page.margins.top,
+            "первый абзац тела от полосы набора",
+        );
+        assert!(
+            first_y >= bottom - 0.01,
+            "тело страницы {index} поверх колонтитула: {first_y} < {bottom}"
+        );
+        // Отбивка последнего абзаца (`w:spacing/@w:after` = 160 twips, 10.67 px)
+        // тянет низ полосы до 76.93 px — на 1.33 px ниже поля; поле вырастает
+        // ровно на это, но не больше полосы колонтитула.
+        let header_h = bottom - 709.0 / 15.0;
+        assert!(
+            page.margins.top - field <= header_h + 160.0 / 15.0 + 0.01,
+            "поле страницы {index} выросло больше полосы колонтитула: {}",
+            page.margins.top
+        );
+    }
+}
+
 #[test]
 fn test_layout_title_pg_uses_the_first_page_header() {
     let (doc, layout) = chrome_layout("title_pg_first", 150);

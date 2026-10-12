@@ -39,6 +39,51 @@ pub struct Paginator {
     column_gap: f32,
     /// Текущая колонка: 0 — первая.
     column_index: usize,
+    /// Низ полос верхних колонтитулов по секциям (индекс — `Document::body.sections`).
+    ///
+    /// Пусто — колонтитулы телу не переданы: полоса набора остаётся на верхнем
+    /// поле. Вровень с секциями, а не с страницами: колонтитул выбирается по
+    /// секции, номеру страницы и `w:titlePg`, и на момент создания страницы
+    /// известны только они (см. [`Paginator::apply_header_extent`]).
+    header_extents: Vec<HeaderExtent>,
+    /// `w:evenAndOddHeaders`: включает колонтитул чётных страниц.
+    even_and_odd: bool,
+    /// Текущая страница открывает свою секцию — ей достаётся колонтитул `first`.
+    first_in_section: bool,
+}
+
+/// Низ полосы верхнего колонтитула в координатах страницы.
+///
+/// Значения — абсолютные координаты по вертикали; `0.0` — колонтитула нет, и
+/// тело начинается от верхнего поля. Колонтитул, не поместившийся в верхнее
+/// поле, отодвигает тело вниз — как это делают Word и `LibreOffice`. Без этого
+/// первая таблица документа легла бы поверх строк колонтитула.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HeaderExtent {
+    /// `w:headerReference w:type="default"`.
+    pub default: f32,
+    /// `w:headerReference w:type="first"` — первая страница секции при `w:titlePg`.
+    pub first: f32,
+    /// `w:headerReference w:type="even"` — чётные страницы при `w:evenAndOddHeaders`.
+    pub even: f32,
+}
+
+impl HeaderExtent {
+    /// Низ полосы того колонтитула, который печатается на странице.
+    ///
+    /// Выбор повторяет `chrome_part`: `first` при `w:titlePg` на первой странице
+    /// секции, `even` на чётной, иначе `default`. Отсутствующую часть уже
+    /// подменил расчёт ([`HeaderExtent`] приходит из раскладки колонтитулов),
+    /// поэтому здесь достаточно выбора по флагам.
+    fn bottom_of(&self, section: &Section, first_in_section: bool, even_page: bool) -> f32 {
+        if first_in_section && section.title_pg {
+            self.first
+        } else if even_page {
+            self.even
+        } else {
+            self.default
+        }
+    }
 }
 
 /// Пустая страница с номером `number` по геометрии секции.
@@ -76,6 +121,9 @@ impl Paginator {
             column_widths: Vec::new(),
             column_gap: 0.0,
             column_index: 0,
+            header_extents: Vec::new(),
+            even_and_odd: false,
+            first_in_section: true,
         };
         paginator.reset_columns();
         paginator
@@ -91,6 +139,23 @@ impl Paginator {
     #[must_use]
     pub fn current_page(&self) -> &Page {
         &self.current_page
+    }
+
+    /// Передать пагинатору низы верхних колонтитулов по секциям.
+    ///
+    /// Вызывается один раз, сразу после [`Paginator::new`]: от низов зависит
+    /// верхняя граница полосы набора каждой страницы, а её пагинатор отдаёт
+    /// блокам через [`Paginator::content_top`]. Если текущая страница ещё пуста,
+    /// колонтитул сдвигает и её — иначе тело первой страницы осталось бы поверх
+    /// колонтитула, пока следующие страницы уже отодвинуты.
+    pub fn set_header_extents(&mut self, extents: Vec<HeaderExtent>, even_and_odd: bool) {
+        self.header_extents = extents;
+        self.even_and_odd = even_and_odd;
+        let empty = self.current_page.items.is_empty();
+        self.apply_header_extent();
+        if empty {
+            self.current_y = self.current_page.margins.top;
+        }
     }
 
     /// Текущая страница для заполнения.
@@ -182,7 +247,7 @@ impl Paginator {
     pub fn push_page(&mut self) -> Page {
         let section_index = self.section_index;
         let next = page_for(self.current_page.number + 1, &self.current_section);
-        self.break_page(next, section_index)
+        self.break_page(next, section_index, false)
     }
 
     /// Завершить текущую страницу и продолжить раскладку в другой секции.
@@ -196,7 +261,8 @@ impl Paginator {
         self.current_section = section.clone();
         self.section_index = index;
         let next = page_for(self.current_page.number + 1, &self.current_section);
-        self.break_page(next, finished_section)
+        // Страница открывает секцию: её колонтитул выбирается по `w:titlePg`.
+        self.break_page(next, finished_section, true)
     }
 
     /// Секция, в геометрии которой идёт раскладка.
@@ -215,6 +281,10 @@ impl Paginator {
     pub fn set_section(&mut self, section: &Section, index: usize) {
         self.current_section = section.clone();
         self.section_index = index;
+        // По номеру страница первая в новой секции (в `layout_chrome` она же
+        // признаётся первой по секции предыдущей страницы). Полосу набора ей
+        // колонтитул не двигает: содержимое уже разложено и курсор стоит в нём.
+        self.first_in_section = true;
 
         let items = std::mem::take(&mut self.current_page.items);
         let mut page = page_for(self.current_page.number, section);
@@ -262,7 +332,7 @@ impl Paginator {
         if needs_page_break || !self.fits(height) {
             let section_index = self.section_index;
             let next = page_for(self.current_page.number + 1, &self.current_section);
-            self.break_page(next, section_index);
+            self.break_page(next, section_index, false);
             return false;
         }
 
@@ -305,13 +375,38 @@ impl Paginator {
     /// Завершённая страница уходит в список для [`Paginator::finish`] вместе
     /// с номером своей секции (`finished_section`), но возвращается и
     /// вызывающему — отсюда копия.
-    fn break_page(&mut self, next: Page, finished_section: usize) -> Page {
+    ///
+    /// `starts_section` — новая страница открывает секцию `finished_section`:
+    /// от этого зависит её колонтитул, а через него — верхняя граница полосы
+    /// набора ([`Paginator::apply_header_extent`]).
+    fn break_page(&mut self, next: Page, finished_section: usize, starts_section: bool) -> Page {
         let finished = std::mem::replace(&mut self.current_page, next);
+        self.first_in_section = starts_section;
+        self.apply_header_extent();
         self.current_y = self.current_page.margins.top;
         self.reset_columns();
         self.pages.push(finished.clone());
         self.page_sections.push(finished_section);
         finished
+    }
+
+    /// Опустить верхнюю границу полосы набора под колонтитул текущей страницы.
+    ///
+    /// Низ колонтитула приходит из раскладки колонтитулов (`layout_chrome`) как
+    /// координата страницы, но самой раскладке тела страницы ещё нет: полоса
+    /// набора одной страницы не зависит от содержимого других, поэтому низ
+    /// считается заранее по секции, номеру страницы и `w:titlePg`.
+    fn apply_header_extent(&mut self) {
+        let Some(extent) = self.header_extents.get(self.section_index) else {
+            return;
+        };
+        // Чётность — как в `layout_chrome`: она включается только флагом
+        // `w:evenAndOddHeaders`, иначе чётная страница несёт колонтитул `default`.
+        let even_page = self.even_and_odd && self.current_page.number.is_multiple_of(2);
+        let bottom = extent.bottom_of(&self.current_section, self.first_in_section, even_page);
+        if bottom > self.current_page.margins.top {
+            self.current_page.margins.top = bottom;
+        }
     }
 }
 
