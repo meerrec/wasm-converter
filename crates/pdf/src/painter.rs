@@ -25,7 +25,7 @@ use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
 use doc_converter_render::text_measure::measure_text;
 use doc_converter_xlsx::layout::{SheetLayout, PX_PER_POINT};
 use doc_converter_xlsx::paint::{anchor_rect, display_text};
-use doc_converter_xlsx::{CellValue, Sheet, Workbook, WorkbookImage};
+use doc_converter_xlsx::{CellValue, Orientation, Sheet, Workbook, WorkbookImage};
 use printpdf::streaming::StreamSession;
 use printpdf::{
     ExtendedGraphicsState, ExtendedGraphicsStateId, FontId, Line, LinePoint, Mm, Op, PdfDocument,
@@ -35,7 +35,7 @@ use printpdf::{
 use crate::fonts::{EmbeddedFonts, Face};
 use crate::image;
 use crate::layout::{PageGeometry, RectPx};
-use crate::options::{Margins, PdfOptions};
+use crate::options::{Margins, PageOrientation, PdfOptions};
 use crate::overlay::{self, Align, OverlayMargins, PageContext, Watermark, WatermarkLayer};
 use crate::pagination::{paginate, print_scale, PageSlice, PaintedCell, SheetPage};
 use crate::styles::to_pdf_color;
@@ -797,9 +797,10 @@ fn sheet_margins(sheet: &Sheet) -> Option<Margins> {
 /// Подготовить лист к записи: раскладка, геометрия, срезы, диаграммы.
 ///
 /// Масштаб считается на лист: `fit_to_width`/`fit_to_height` — настройка
-/// листа, и у листов одной книги он выходит разным. Остальные настройки
-/// страницы общие, поэтому геометрия собирается из копии конфига с итоговым
-/// масштабом.
+/// листа, и у листов одной книги он выходит разным. Поля и ориентация — тоже
+/// свойства листа, и незаданные вызывающим подставляются из книги
+/// (`<pageMargins>`, `<pageSetup>`); остальные настройки страницы общие,
+/// поэтому геометрия собирается из копии конфига с итоговым масштабом.
 fn prepare_sheet<'a>(
     book: &'a Workbook,
     sheet_index: usize,
@@ -815,6 +816,21 @@ fn prepare_sheet<'a>(
     // без этой подстановки лист уезжает от эталона на разницу полей. Заданные
     // вызывающим поля сильнее — он печатает не «как Excel», а как ему сказали.
     page_cfg.margins = page_cfg.margins.or_else(|| sheet_margins(sheet));
+    // Ориентация — тоже свойство листа (`<pageSetup orientation>`), и при
+    // `Auto` (умолчание) она берётся из книги: без подстановки альбомный лист
+    // печатался портретом. `Orientation::Default` листа (атрибута нет) — это
+    // ориентация принтера по схеме; у PDF принтера нет, и Excel такой лист
+    // печатает книжно. Явные Portrait/Landscape вызывающего сильнее
+    // листовых — он печатает не «как Excel», а как ему сказали. Подстановка
+    // до `print_scale`: подбор «уместить по ширине» считает ширину области
+    // содержимого, а у альбомной страницы она другая.
+    page_cfg.orientation = match page_cfg.orientation {
+        PageOrientation::Auto => match sheet.print.orientation {
+            Orientation::Landscape => PageOrientation::Landscape,
+            Orientation::Portrait | Orientation::Default => PageOrientation::Portrait,
+        },
+        explicit => explicit,
+    };
     // `fit_to_width` пересчитывает масштаб до сборки геометрии: от него зависят
     // и полосы, и координаты ячеек.
     page_cfg.scale = print_scale(&page_cfg, sheet, &layout);

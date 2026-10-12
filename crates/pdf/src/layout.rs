@@ -29,7 +29,11 @@ pub fn page_size_pt(cfg: &PageConfig) -> (f32, f32) {
         PageSize::Custom { w_mm, h_mm } => (w_mm, h_mm),
     };
     let (w_mm, h_mm) = match cfg.orientation {
-        PageOrientation::Portrait => (w_mm, h_mm),
+        // `Auto` разрешается настройками листа в `prepare_sheet`; сюда он
+        // доходит только с конфигом в обход него — у DOCX-страниц размер уже
+        // пришёл повёрнутым из раскладки. Такой конфиг печатается книжным —
+        // как печатался до появления `Auto`.
+        PageOrientation::Portrait | PageOrientation::Auto => (w_mm, h_mm),
         PageOrientation::Landscape => (h_mm, w_mm),
     };
     (w_mm * PT_PER_MM, h_mm * PT_PER_MM)

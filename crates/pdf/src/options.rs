@@ -11,9 +11,21 @@ pub enum PageSize {
     Custom { w_mm: f32, h_mm: f32 },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// Ориентация страницы PDF для листа XLSX.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub enum PageOrientation {
+    /// Ориентация листа из книги (`<pageSetup orientation>`), а если лист её
+    /// не объявляет — портрет.
+    ///
+    /// Умолчание, потому что печать книги без явной настройки обязана
+    /// совпадать с Excel: альбомный лист Excel печатает альбомным, и
+    /// подстановка портрета разворачивала бы его на 90°. Вызывающий, которому
+    /// ориентация нужна своя, задаёт её явно.
+    #[default]
+    Auto,
+    /// Книжная ориентация независимо от настроек листа.
     Portrait,
+    /// Альбомная ориентация независимо от настроек листа.
     Landscape,
 }
 
@@ -46,6 +58,8 @@ impl Default for Margins {
 #[serde(default)]
 pub struct PageConfig {
     pub size: PageSize,
+    /// Ориентация страницы; [`PageOrientation::Auto`] — ориентация листа из
+    /// книги (`<pageSetup>`), иначе портрет.
     pub orientation: PageOrientation,
     /// Поля страницы; `None` — взять поля листа из документа (`<pageMargins>`
     /// части листа), как это делает при печати само приложение.
@@ -100,7 +114,7 @@ impl Default for PageConfig {
     fn default() -> Self {
         Self {
             size: PageSize::A4,
-            orientation: PageOrientation::Portrait,
+            orientation: PageOrientation::default(),
             margins: None,
             scale: 1.0,
             fit_to_width: None,
