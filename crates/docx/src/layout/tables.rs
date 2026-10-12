@@ -44,14 +44,16 @@ use doc_converter_core::NodeId;
 use doc_converter_render::font::{FontId, FontRegistry};
 
 use crate::layout::line_break::LineBreaker;
-use crate::model::raw::{Border, BorderStyle, Color, HalfPoint, Justification};
+use crate::model::raw::{Border, BorderStyle, HalfPoint, Justification};
 use crate::model::{
-    BlockItem, CellBorders, ConditionalFormat, Inline, Paragraph, RunContent, Shading, StyleTable,
-    TableBorders, TableLook, TableStyle, TableStyleCondition,
+    BlockItem, CellBorders, ConditionalFormat, Shading, StyleTable, TableBorders, TableLook,
+    TableStyle, TableStyleCondition,
 };
 use crate::{Cell, CellVAlign, CellWidth, HeightRule, Row, Table, TableWidth, Twips, VMerge};
 
-use super::engine::{LayoutItem, Rect, TableCellLayout, VAlign};
+use super::cascade::StyleCache;
+use super::engine::{LayoutItem, LayoutOptions, LayoutState, Rect, TableCellLayout, VAlign};
+use super::paragraph::layout_paragraph_styled;
 
 /// Преобразовать twips в пиксели: 1 twip = 1/1440 дюйма, 1 пиксель = 1/96 дюйма.
 /// Отношение: (1/1440) / (1/96) = 96/1440 = 1/15.
@@ -67,12 +69,6 @@ fn twips_to_px(twips: Twips) -> f32 {
 /// Применяется к готовой высоте строки, а не к `w:trHeight`: там `0.0` означает
 /// «считать по содержимому», и пол, наложенный раньше, стёр бы это отличие.
 const MIN_ROW_HEIGHT: f32 = 20.0;
-
-/// Кегль по умолчанию — тот же, что у остальной раскладки (12 pt).
-///
-/// `FontRegistry` не ищет шрифт по имени, поэтому `w:rFonts`/`w:sz` из свойств
-/// ячейки и run'ов пока не применяются.
-const DEFAULT_SIZE_HALF_POINTS: HalfPoint = HalfPoint::new(24);
 
 /// Поля ячейки по умолчанию по бокам: 108 twips (0.075″) — умолчание Word.
 ///
@@ -387,10 +383,18 @@ pub fn measure_row_heights(
         x: 0.0,
         col_widths: col_widths.to_vec(),
     };
-    measure_rows(table, &frame, fonts, MAX_TABLE_DEPTH)
-        .iter()
-        .map(|row| row.height)
-        .collect()
+    // Стилей у вызывающего нет: содержимое меряется умолчаниями движка, а не
+    // каскадом документа (абзац со стилем может оказаться другого кегля).
+    measure_rows(
+        table,
+        &frame,
+        fonts,
+        MAX_TABLE_DEPTH,
+        &StyleTable::default(),
+    )
+    .iter()
+    .map(|row| row.height)
+    .collect()
 }
 
 /// Разложить таблицу целиком от `y`, без переноса на другие страницы.
@@ -418,7 +422,7 @@ pub fn layout_table(
     styles: &StyleTable,
 ) -> TableLayoutResult {
     let frame = compute_table_frame(table, x, available_width);
-    let measured = measure_rows(table, &frame, fonts, MAX_TABLE_DEPTH);
+    let measured = measure_rows(table, &frame, fonts, MAX_TABLE_DEPTH, styles);
     let ctx = StyleContext::new(styles, table);
     layout_whole(table, &frame, &measured, y, fonts, MAX_TABLE_DEPTH, &ctx)
 }
@@ -454,7 +458,7 @@ pub fn layout_table_fragments(
     styles: &StyleTable,
 ) -> Vec<TableFragment> {
     let ctx = StyleContext::new(styles, table);
-    let measured = measure_rows(table, frame, fonts, MAX_TABLE_DEPTH);
+    let measured = measure_rows(table, frame, fonts, MAX_TABLE_DEPTH, styles);
     let header_rows = header_row_count(table);
     let mut fragments = Vec::new();
 
@@ -652,7 +656,7 @@ fn layout_nested(
     styles: &StyleTable,
 ) -> (LayoutItem, f32) {
     let frame = compute_table_frame(table, x, width);
-    let measured = measure_rows(table, &frame, fonts, depth);
+    let measured = measure_rows(table, &frame, fonts, depth, styles);
     // У вложенной таблицы свой `w:tblStyle` — разрешается тем же набором стилей.
     let ctx = StyleContext::new(styles, table);
     let result = layout_whole(table, &frame, &measured, y, fonts, depth, &ctx);
@@ -890,12 +894,26 @@ impl MeasuredBlock<'_> {
     }
 }
 
-/// Строка текста абзаца ячейки.
+/// Строка текста абзаца ячейки: всё, что нужно, чтобы положить её без каскада.
+///
+/// Стиль строки — как у строки тела ([`super::paragraph::Line`]): кегль, цвет и
+/// начертание берёт отрезок, открывший строку, а координата `x` уже включает
+/// сдвиг по `w:jc` и отступы `w:ind`.
 struct CellLine {
     node_id: NodeId,
     text: String,
+    /// Позиция X от левого края содержимого ячейки.
+    x: f32,
+    /// Ширина строки — той же меркой, что и `x`.
+    width: f32,
+    /// Высота строки.
     height: f32,
     color: Option<u32>,
+    font_family: Option<String>,
+    size: HalfPoint,
+    bold: bool,
+    italic: bool,
+    underline: bool,
 }
 
 /// Измерить строки таблицы: высоты и блоки содержимого.
@@ -904,8 +922,12 @@ fn measure_rows<'a>(
     frame: &TableFrame,
     fonts: &mut FontRegistry,
     depth: usize,
+    styles: &StyleTable,
 ) -> Vec<MeasuredRow<'a>> {
     let declared = compute_row_heights(&table.rows);
+    // Кэш каскада — на вызов, как и требует [`StyleCache`]; своей таблицы стилей
+    // у ячейки нет, она резолвится той же [`StyleTable`], что и `w:tblStyle`.
+    let mut cache = StyleCache::new();
     let mut measured = Vec::with_capacity(table.rows.len());
 
     for (index, row) in table.rows.iter().enumerate() {
@@ -917,7 +939,7 @@ fn measure_rows<'a>(
             let span = grid_span(cell);
             let width = frame.cell_width(col, span);
             col += span;
-            let measured_cell = measure_cell(cell, table, width, fonts, depth);
+            let measured_cell = measure_cell(cell, table, width, fonts, depth, styles, &mut cache);
             content_height = content_height.max(measured_cell.height());
             cells.push(measured_cell);
         }
@@ -943,6 +965,8 @@ fn measure_cell<'a>(
     width: f32,
     fonts: &mut FontRegistry,
     depth: usize,
+    styles: &StyleTable,
+    cache: &mut StyleCache,
 ) -> MeasuredCell<'a> {
     let padding = cell_padding(cell, table);
     // Узкая колонка с широкими полями даёт нулевую (и отрицательную) ширину:
@@ -950,42 +974,51 @@ fn measure_cell<'a>(
     // конечной — одной строкой на абзац.
     let inner_width = (width - padding.left - padding.right).max(0.0);
 
-    let line_height =
-        LineBreaker::new(fonts, FontId::default()).line_height(DEFAULT_SIZE_HALF_POINTS);
     let mut blocks = Vec::new();
 
     for item in &cell.items {
         match item {
             BlockItem::Paragraph(paragraph) => {
-                let text = paragraph_text(paragraph);
+                // Абзац ячейки раскладывается тем же `layout_paragraph`, что и
+                // абзац тела: кегль, цвет, начертание, `w:jc` и `w:ind` приходят
+                // из каскада стилей, а не из умолчаний движка. Полосу набора
+                // задаёт ширина ячейки, вертикаль строк ведёт таблица — от
+                // состояния абзацу нужна только ширина.
+                //
                 // Разбиватель держит `fonts` заимствованными: его заимствование
-                // живёт ровно на время разбивки одного абзаца, чтобы не
+                // живёт ровно на время раскладки одного абзаца, чтобы не
                 // пересечься с измерением вложенной таблицы ниже.
-                let mut ranges = {
+                let layout = {
                     let mut breaker = LineBreaker::new(fonts, FontId::default());
-                    breaker.break_lines(
-                        &text,
-                        FontId::default(),
-                        DEFAULT_SIZE_HALF_POINTS,
-                        inner_width,
+                    layout_paragraph_styled(
+                        styles,
+                        paragraph,
+                        &LayoutState::for_cell(inner_width),
+                        &LayoutOptions::default(),
+                        cache,
+                        &mut breaker,
+                        true,
                     )
                 };
                 // Пустой абзац — одна строка нулевой ширины, как и в абзацах тела.
-                if ranges.is_empty() {
-                    ranges.push(0..0);
-                }
-                let color = paragraph_color(paragraph);
-                for range in ranges {
+                for line in layout.lines {
                     blocks.push(MeasuredBlock::Line(CellLine {
                         node_id: paragraph.id,
-                        text: text[range].to_owned(),
-                        height: line_height,
-                        color,
+                        text: line.text,
+                        x: line.x,
+                        width: line.width,
+                        height: line.height,
+                        color: line.color,
+                        font_family: line.font_family,
+                        size: line.size,
+                        bold: line.bold,
+                        italic: line.italic,
+                        underline: line.underline,
                     }));
                 }
             }
             BlockItem::Table(nested) if depth > 0 => {
-                let height = nested_table_height(nested, inner_width, fonts, depth - 1);
+                let height = nested_table_height(nested, inner_width, fonts, depth - 1, styles);
                 blocks.push(MeasuredBlock::Nested {
                     table: nested,
                     width: inner_width,
@@ -1005,9 +1038,15 @@ fn measure_cell<'a>(
 }
 
 /// Высота вложенной таблицы: сумма высот её строк.
-fn nested_table_height(table: &Table, width: f32, fonts: &mut FontRegistry, depth: usize) -> f32 {
+fn nested_table_height(
+    table: &Table,
+    width: f32,
+    fonts: &mut FontRegistry,
+    depth: usize,
+    styles: &StyleTable,
+) -> f32 {
     let frame = compute_table_frame(table, 0.0, width);
-    measure_rows(table, &frame, fonts, depth)
+    measure_rows(table, &frame, fonts, depth, styles)
         .iter()
         .map(|row| row.height)
         .sum()
@@ -1034,64 +1073,6 @@ fn cell_padding(cell: &Cell, table: &Table) -> Padding {
         left: resolve(cell.margins.left, table.cell_margins.left, side),
         right: resolve(cell.margins.right, table.cell_margins.right, side),
     }
-}
-
-/// Текст абзаца: runs, а также содержимое ссылок и результаты полей — по порядку.
-fn paragraph_text(paragraph: &Paragraph) -> String {
-    let mut text = String::new();
-    collect_inline_text(&paragraph.runs, &mut text);
-    text
-}
-
-/// Собрать текст inline-элементов в `out`, заходя во вложенные runs.
-fn collect_inline_text(inlines: &[Inline], out: &mut String) {
-    for inline in inlines {
-        match inline {
-            Inline::Run(run) => {
-                for content in &run.content {
-                    if let RunContent::Text(text) = content {
-                        out.push_str(text);
-                    }
-                }
-            }
-            Inline::Hyperlink(link) => collect_inline_text(&link.runs, out),
-            Inline::Field(field) => collect_inline_text(&field.result, out),
-            _ => {}
-        }
-    }
-}
-
-/// Цвет текста абзаца ячейки — первый явный `w:color` среди его runs.
-///
-/// Каскад до ячеек пока не доходит, поэтому читается собственный `w:rPr` run'а;
-/// `auto` и `none` цвета не задают. Строка несёт один цвет, а run'ы ячейки не
-/// разбиваются по метрикам, поэтому из нескольких цветов берётся первый.
-fn paragraph_color(paragraph: &Paragraph) -> Option<u32> {
-    fn first_color(inlines: &[Inline]) -> Option<u32> {
-        for inline in inlines {
-            match inline {
-                Inline::Run(run) => {
-                    if let Some(Color::Rgb(value)) = &run.rpr.color {
-                        return Some(*value);
-                    }
-                }
-                Inline::Hyperlink(link) => {
-                    if let Some(value) = first_color(&link.runs) {
-                        return Some(value);
-                    }
-                }
-                Inline::Field(field) => {
-                    if let Some(value) = first_color(&field.result) {
-                        return Some(value);
-                    }
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-
-    first_color(&paragraph.runs)
 }
 
 /// Что даёт ячейке вертикальное объединение.
@@ -1602,26 +1583,20 @@ fn layout_cell_blocks(
     for block in blocks {
         match block {
             MeasuredBlock::Line(line) => {
-                // Разбиватель держит `fonts` заимствованными; измерение строки
-                // заканчивается до ветки вложенной таблицы, которой `fonts`
-                // нужен сам.
-                let line_width = {
-                    let mut breaker = LineBreaker::new(fonts, FontId::default());
-                    breaker.measure_text(&line.text, FontId::default(), DEFAULT_SIZE_HALF_POINTS)
-                };
+                // Строка приходит из раскладки абзаца уже измеренной и в своём
+                // стиле: мерить её здесь ещё раз незачем — другая мерка
+                // разошлась бы с той, по которой разбит текст.
                 items.push(LayoutItem::Paragraph {
                     node_id: line.node_id,
-                    rect: Rect::new(left, cursor, line_width, line.height),
+                    rect: Rect::new(left + line.x, cursor, line.width, line.height),
                     text: line.text.clone(),
                     line_height: line.height,
                     color: line.color,
-                    // Ячейки не проходят каскад: гарнитура и начертание берутся
-                    // не из `w:rPr`, а из умолчания движка.
-                    font_family: None,
-                    size: DEFAULT_SIZE_HALF_POINTS,
-                    bold: false,
-                    italic: false,
-                    underline: false,
+                    font_family: line.font_family.clone(),
+                    size: line.size,
+                    bold: line.bold,
+                    italic: line.italic,
+                    underline: line.underline,
                 });
                 cursor += line.height;
             }
@@ -1786,8 +1761,10 @@ fn vertical_align(cell: &Cell) -> VAlign {
 mod tests {
     use super::*;
     use crate::layout::engine::{layout_document, LayoutOptions};
-    use crate::model::raw::{RawPPr, RawRPr, RawTblPr, ShadingPattern, StyleId};
-    use crate::model::{CellMargins, GridCol, Run, TableLayout};
+    use crate::model::raw::{Color, RawPPr, RawRPr, RawTblPr, ShadingPattern, StyleId};
+    use crate::model::{
+        CellMargins, GridCol, Inline, Paragraph, ParagraphStyle, Run, RunContent, TableLayout,
+    };
 
     /// Граница-одиночная линия заданной толщины (восьмые доли пункта).
     fn single(sz: u32) -> Border {
@@ -1860,6 +1837,23 @@ mod tests {
             styles.table.insert(style.id.clone(), style);
         }
         styles
+    }
+
+    /// Абзацный стиль; не заданное здесь — пусто.
+    fn paragraph_style(id: &str, ppr: RawPPr, rpr: RawRPr) -> ParagraphStyle {
+        ParagraphStyle {
+            id: StyleId::new(id),
+            name: None,
+            based_on: None,
+            next: None,
+            link: None,
+            is_default: false,
+            hidden: false,
+            custom: true,
+            aliases: Vec::new(),
+            ppr,
+            rpr,
+        }
     }
 
     /// Ячейка с одним абзацем и без прямого форматирования.
@@ -2283,6 +2277,62 @@ mod tests {
                 assert_eq!(border.color, Some(Color::Rgb(0x007F_7F7F)));
             }
         }
+    }
+
+    /// Абзац ячейки резолвится каскадом так же, как абзац тела: кегль и цвет
+    /// приходят из `w:pStyle`, а `w:jc` сдвигает строку в полосе ячейки.
+    ///
+    /// Так набран баннер первой страницы реального документа
+    /// (стиль `phtitlepagedocument`): без каскада текст рисовался бы базовым
+    /// кеглем и чёрным.
+    #[test]
+    fn a_cell_paragraph_takes_its_size_and_color_from_the_paragraph_style() {
+        let mut styles = styles(Vec::new());
+        styles.paragraph.insert(
+            StyleId::new("phtitlepagedocument"),
+            paragraph_style(
+                "phtitlepagedocument",
+                RawPPr {
+                    jc: Some(Justification::Center),
+                    ..RawPPr::default()
+                },
+                RawRPr {
+                    color: Some(Color::Rgb(0x00FF_FFFF)),
+                    sz: Some(HalfPoint::new(36)),
+                    ..RawRPr::default()
+                },
+            ),
+        );
+
+        let mut table = table(1, 1, None, TableLook::default());
+        table.rows[0].cells[0].items = vec![BlockItem::Paragraph(Paragraph {
+            id: NodeId::new(7),
+            style_ref: Some(StyleId::new("phtitlepagedocument")),
+            runs: vec![Inline::Run(Run {
+                id: NodeId::new(8),
+                content: vec![RunContent::Text("ПМТ СУС".to_owned())],
+                ..Run::default()
+            })],
+            ..Paragraph::default()
+        })];
+
+        let layout = layout(&table, &styles);
+        let cell = &layout.rows[0].cells[0];
+        let Some(LayoutItem::Paragraph {
+            rect, size, color, ..
+        }) = cell.content.first()
+        else {
+            panic!("абзац ячейки разложен строкой");
+        };
+
+        assert_eq!(*size, HalfPoint::new(36), "кегль пришёл из w:pStyle");
+        assert_eq!(*color, Some(0x00FF_FFFF), "цвет пришёл из w:pStyle");
+        assert!(
+            rect.x > cell.rect.x + 1.0,
+            "w:jc=center центрирует строку в полосе ячейки: {} > {}",
+            rect.x,
+            cell.rect.x
+        );
     }
 
     /// Фикстура `tables/tbl_look.docx`: `TableGrid` даёт границы, `w:tblLook` — флаги.

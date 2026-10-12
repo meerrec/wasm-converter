@@ -22,10 +22,10 @@ use doc_converter_render::font::FontId;
 
 use crate::model::raw::{HalfPoint, Underline};
 use crate::model::{
-    Anchor, Document, Inline, InlineOrAnchor, Justification, Paragraph, Run, RunContent,
+    Anchor, Document, Inline, InlineOrAnchor, Justification, Paragraph, Run, RunContent, StyleTable,
 };
 
-use super::cascade::{resolve_paragraph, resolve_run, ResolvedParagraph, StyleCache};
+use super::cascade::{resolve_paragraph_styled, resolve_run_styled, ResolvedParagraph, StyleCache};
 use super::engine::{LayoutOptions, LayoutState};
 use super::line_break::{LineBreaker, MetricSpan};
 
@@ -187,36 +187,72 @@ fn is_underlined(underline: Option<&Underline>) -> bool {
 /// лицо, и строка несёт его имя, а не имя из документа: иначе painter поставил
 /// бы canvas'у шрифт, которым раскладка не мерила.
 fn segments(
-    document: &Document,
+    styles: &StyleTable,
     paragraph: &Paragraph,
     resolved: &ResolvedParagraph,
     cache: &mut StyleCache,
     line_breaker: &LineBreaker,
+    nested: bool,
 ) -> Vec<Segment> {
     let mut segments: Vec<Segment> = Vec::new();
-    for inline in &paragraph.runs {
-        let Inline::Run(run) = inline else {
-            // Прочие варианты `Inline` (гиперссылки, поля) раскладка пока не несёт.
-            continue;
-        };
-        let text = run_text(run);
-        if text.is_empty() {
-            continue;
+    if nested {
+        // Абзац ячейки несёт ещё и текст ссылок и полей: ни подстановку полей,
+        // ни раскладку ссылок движок к таблице не применяет, и без захода в них
+        // оглавление в ячейке пропало бы целиком.
+        let mut runs = Vec::new();
+        collect_runs(&paragraph.runs, &mut runs);
+        for run in runs {
+            push_segment(&mut segments, styles, resolved, run, cache, line_breaker);
         }
-        let rpr = resolve_run(document, resolved, run, cache);
-        let family = rpr.font_family.as_deref();
-        segments.push(Segment {
-            text,
-            font_id: line_breaker.resolve_family(family),
-            draw_family: line_breaker.drawable_family(family).map(str::to_owned),
-            size: rpr.size,
-            bold: rpr.bold,
-            italic: rpr.italic,
-            underline: is_underlined(rpr.underline.as_ref()),
-            color: rpr.color,
-        });
+    } else {
+        for inline in &paragraph.runs {
+            let Inline::Run(run) = inline else {
+                // Прочие варианты `Inline` (гиперссылки, поля) раскладка пока не несёт.
+                continue;
+            };
+            push_segment(&mut segments, styles, resolved, run, cache, line_breaker);
+        }
     }
     segments
+}
+
+/// Прогоны inline-элементов в порядке текста, с заходом в ссылки и поля.
+fn collect_runs<'a>(inlines: &'a [Inline], runs: &mut Vec<&'a Run>) {
+    for inline in inlines {
+        match inline {
+            Inline::Run(run) => runs.push(run),
+            Inline::Hyperlink(link) => collect_runs(&link.runs, runs),
+            Inline::Field(field) => collect_runs(&field.result, runs),
+            _ => {}
+        }
+    }
+}
+
+/// Отрезок одного прогона: текст с разрешённым по каскаду стилем знака.
+fn push_segment(
+    segments: &mut Vec<Segment>,
+    styles: &StyleTable,
+    resolved: &ResolvedParagraph,
+    run: &Run,
+    cache: &mut StyleCache,
+    line_breaker: &LineBreaker,
+) {
+    let text = run_text(run);
+    if text.is_empty() {
+        return;
+    }
+    let rpr = resolve_run_styled(styles, resolved, run, cache);
+    let family = rpr.font_family.as_deref();
+    segments.push(Segment {
+        text,
+        font_id: line_breaker.resolve_family(family),
+        draw_family: line_breaker.drawable_family(family).map(str::to_owned),
+        size: rpr.size,
+        bold: rpr.bold,
+        italic: rpr.italic,
+        underline: is_underlined(rpr.underline.as_ref()),
+        color: rpr.color,
+    });
 }
 
 /// Разложить абзац в строки.
@@ -234,7 +270,38 @@ pub fn layout_paragraph(
     cache: &mut StyleCache,
     line_breaker: &mut LineBreaker,
 ) -> ParagraphLayout {
-    let resolved = resolve_paragraph(document, paragraph, cache);
+    layout_paragraph_styled(
+        &document.styles,
+        paragraph,
+        state,
+        options,
+        cache,
+        line_breaker,
+        false,
+    )
+}
+
+/// Разложить абзац по явно данным стилям — путь абзаца в ячейке таблицы.
+///
+/// Тело документа приходит сюда через [`layout_paragraph`]; таблица знает только
+/// `&StyleTable` (ею же разрешается `w:tblStyle`), и абзац ячейки резолвится тем
+/// же каскадом, что и абзац тела. Раскладка у обоих путей одна: кегль, цвет,
+/// начертание, `w:jc`, `w:ind` и межстрочный интервал считаются здесь, а
+/// вертикаль строк ведёт владелец абзаца.
+///
+/// `nested` — обход прогонов с заходом в ссылки и поля (см. [`segments`]).
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn layout_paragraph_styled(
+    styles: &StyleTable,
+    paragraph: &Paragraph,
+    state: &LayoutState,
+    options: &LayoutOptions,
+    cache: &mut StyleCache,
+    line_breaker: &mut LineBreaker,
+    nested: bool,
+) -> ParagraphLayout {
+    let resolved = resolve_paragraph_styled(styles, paragraph, cache);
     let ind = resolved.ppr.ind;
     let jc = resolved.ppr.jc.as_ref();
 
@@ -245,7 +312,7 @@ pub fn layout_paragraph(
     let origin = state.x + ind.left_px;
 
     let mut lines = Vec::new();
-    let segments = segments(document, paragraph, &resolved, cache, line_breaker);
+    let segments = segments(styles, paragraph, &resolved, cache, line_breaker, nested);
     let flow = ParagraphText::new(&segments);
 
     // Первую строку абзаца отрезаем её полосой отдельно: перенос идёт по всему

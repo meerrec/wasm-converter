@@ -28,7 +28,7 @@ use crate::layout::line_break::LineRule;
 use crate::model::{
     CharacterStyle, Color, Document, HalfPoint, Highlight, Ind, Justification, LineSpacing,
     LineSpacingRule, NumPr, Paragraph, ParagraphBorders, ParagraphSpacing, RawPPr, RawRPr, Run,
-    Shading, StyleId, Toggle, Twips, Underline, VertAlign,
+    Shading, StyleId, StyleTable, Toggle, Twips, Underline, VertAlign,
 };
 
 /// Предел глубины цепочки `basedOn` — как в `model::validate` (ADR-0016 §2).
@@ -348,12 +348,12 @@ impl StyleCache {
     }
 
     /// `docDefaults` в виде готовых значений — низ каскада.
-    fn defaults(&mut self, document: &Document) -> &(ResolvedPPr, ResolvedRPr) {
+    fn defaults(&mut self, styles: &StyleTable) -> &(ResolvedPPr, ResolvedRPr) {
         self.doc_defaults.get_or_insert_with(|| {
             let mut ppr = ResolvedPPr::default();
-            ppr.apply(&document.styles.doc_defaults.p_pr);
+            ppr.apply(&styles.doc_defaults.p_pr);
             let mut rpr = ResolvedRPr::default();
-            rpr.apply(&document.styles.doc_defaults.r_pr);
+            rpr.apply(&styles.doc_defaults.r_pr);
             (ppr, rpr)
         })
     }
@@ -366,6 +366,20 @@ pub fn resolve_paragraph(
     paragraph: &Paragraph,
     cache: &mut StyleCache,
 ) -> ResolvedParagraph {
+    resolve_paragraph_styled(&document.styles, paragraph, cache)
+}
+
+/// Резолвит свойства абзаца по одной таблице стилей.
+///
+/// То же, что [`resolve_paragraph`], но без [`Document`]: раскладка таблицы
+/// знает только стили (ими же разрешается `w:tblStyle`) и резолвит абзацы ячеек
+/// тем же каскадом, что и тело документа (см. `tables::measure_cell`).
+#[must_use]
+pub(crate) fn resolve_paragraph_styled(
+    styles: &StyleTable,
+    paragraph: &Paragraph,
+    cache: &mut StyleCache,
+) -> ResolvedParagraph {
     // `style_ref` — копия `w:pStyle` (модель дублирует её для раскладки); берём её, но
     // абзац, собранный не парсером, может заполнить только `ppr.style`.
     let style = paragraph
@@ -373,8 +387,8 @@ pub fn resolve_paragraph(
         .as_ref()
         .or(paragraph.ppr.style.as_ref());
     let (mut ppr, rpr) = match style {
-        Some(id) => paragraph_base(document, id, cache),
-        None => cache.defaults(document).clone(),
+        Some(id) => paragraph_base(styles, id, cache),
+        None => cache.defaults(styles).clone(),
     };
     ppr.apply(&paragraph.ppr);
 
@@ -395,11 +409,23 @@ pub fn resolve_run(
     run: &Run,
     cache: &mut StyleCache,
 ) -> ResolvedRPr {
+    resolve_run_styled(&document.styles, paragraph, run, cache)
+}
+
+/// Резолвит свойства знака run'а по одной таблице стилей — пара к
+/// [`resolve_paragraph_styled`].
+#[must_use]
+pub(crate) fn resolve_run_styled(
+    styles: &StyleTable,
+    paragraph: &ResolvedParagraph,
+    run: &Run,
+    cache: &mut StyleCache,
+) -> ResolvedRPr {
     let mut rpr = paragraph.rpr.clone();
     let style = run.style_ref.as_ref().or(run.rpr.style.as_ref());
     if let Some(id) = style {
-        for style_id in character_chain(document, id, cache) {
-            if let Some(style) = document.styles.character.get(style_id) {
+        for style_id in character_chain(styles, id, cache) {
+            if let Some(style) = styles.character.get(style_id) {
                 rpr.apply(&style.rpr);
             }
         }
@@ -410,7 +436,7 @@ pub fn resolve_run(
 
 /// `docDefaults` плюс цепочка `basedOn` абзацного стиля `id`; результат кэшируется.
 fn paragraph_base(
-    document: &Document,
+    styles: &StyleTable,
     id: &StyleId,
     cache: &mut StyleCache,
 ) -> (ResolvedPPr, ResolvedRPr) {
@@ -418,15 +444,14 @@ fn paragraph_base(
         return base.clone();
     }
 
-    let (mut ppr, mut rpr) = cache.defaults(document).clone();
+    let (mut ppr, mut rpr) = cache.defaults(styles).clone();
     for style_id in based_on_chain(id, |style_id| {
-        document
-            .styles
+        styles
             .paragraph
             .get(style_id)
             .map(|style| style.based_on.clone())
     }) {
-        if let Some(style) = document.styles.paragraph.get(&style_id) {
+        if let Some(style) = styles.paragraph.get(&style_id) {
             ppr.apply(&style.ppr);
             rpr.apply(&style.rpr);
         }
@@ -440,14 +465,13 @@ fn paragraph_base(
 
 /// Цепочка `basedOn` знакового стиля `id`, от корня к листу; результат кэшируется.
 fn character_chain<'a>(
-    document: &Document,
+    styles: &StyleTable,
     id: &StyleId,
     cache: &'a mut StyleCache,
 ) -> &'a [StyleId] {
     cache.character.entry(id.clone()).or_insert_with(|| {
         based_on_chain(id, |style_id| {
-            document
-                .styles
+            styles
                 .character
                 .get(style_id)
                 .map(|style: &CharacterStyle| style.based_on.clone())

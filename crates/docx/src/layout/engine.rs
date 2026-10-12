@@ -1559,6 +1559,27 @@ impl LayoutState {
             content_bottom: page.height - page.margins.bottom,
         }
     }
+
+    /// Состояние абзаца внутри ячейки таблицы: одна колонка шириной `width`.
+    ///
+    /// Абзац ячейки раскладывается тем же [`layout_paragraph`], что и абзац тела,
+    /// и от состояния ему нужна только полоса набора — левая граница и ширина.
+    /// Вертикаль строк ведёт таблица: координаты, которые абзац вернёт, читаются
+    /// как смещения от содержимого ячейки, а не от страницы.
+    ///
+    /// [`layout_paragraph`]: super::paragraph::layout_paragraph
+    #[must_use]
+    pub(crate) fn for_cell(width: f32) -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            column_index: 0,
+            column_width: width,
+            column_x: 0.0,
+            content_top: 0.0,
+            content_bottom: 0.0,
+        }
+    }
 }
 
 #[cfg(test)]
