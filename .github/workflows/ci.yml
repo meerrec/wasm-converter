@@ -283,15 +283,13 @@ jobs:
       # не от ошибки в коде, а от отсутствия браузера. Ставится на обе ноги
       # матрицы — `turbo run test` запускает их при любой версии Node.
       # Ставим из одного пакета: браузеры ложатся в общий кэш
-      # (`~/.cache/ms-playwright`), а версия playwright в примерах одна и та же
-      # (`@playwright/test ^1.63.0`), так что второй вызов не добавит ничего, а
-      # `turbo run test` гоняет `test` всякого пакета, у которого он есть, —
-      # включая пример DOCX (он в workspace с самого добавления).
-      # Два `--filter` в одной команде pnpm запускает параллельно, и тогда два
-      # `playwright install --with-deps` дерутся за лок apt
-      # (`/var/lib/apt/lists/lock`) — один падает с exit 100 каждую попытку.
-      # При разъезде версий playwright в примерах установку придётся развести
-      # на два последовательных шага.
+      # (`~/.cache/ms-playwright`), откуда их берёт любой пакет workspace'а, — а
+      # `turbo run test` гоняет `test` всякого пакета, у которого он есть.
+      # Второй `--filter` в ту же команду добавлять нельзя: pnpm запускает
+      # фильтры параллельно, и два `playwright install --with-deps` дерутся за
+      # лок apt (`/var/lib/apt/lists/lock`) — один падает с exit 100 каждую
+      # попытку. Если в workspace появится второй пакет со своим playwright,
+      # установку придётся развести на два последовательных шага.
       # Повторы из-за фоновой установки пакетов в образе: `--with-deps` зовёт
       # apt-get и падает на «Could not get lock /var/lib/apt/lists/lock», пока
       # лок держит чужой процесс. Исчерпание попыток валит шаг ненулевым кодом.
@@ -306,7 +304,7 @@ jobs:
         run: |
           set -uo pipefail
           attempt=1
-          until timeout 300 pnpm --filter @doc-converter/example-viewer-xlsx exec playwright install --with-deps chromium firefox webkit; do
+          until timeout 300 pnpm --filter @doc-converter/example-viewer exec playwright install --with-deps chromium firefox webkit; do
             if [ "$attempt" -ge 3 ]; then
               echo "::error::playwright install не удался за ${attempt} попытки — браузеры не поставлены"
               exit 1

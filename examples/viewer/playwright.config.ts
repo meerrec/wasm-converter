@@ -1,10 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Порт отдельный от остальных примеров: сервер поднимает сам Playwright, а
- * 5178 и 5179 заняты старыми примерами — они ещё живы.
+ * Порт закреплён: 5178 — исторический порт просмотрщика, по нему в документации
+ * и в привычке. Сервер поднимает сам Playwright.
  */
-const PORT = 5180;
+const PORT = 5178;
 
 export default defineConfig({
   testDir: './e2e',
