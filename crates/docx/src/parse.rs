@@ -725,6 +725,10 @@ fn has_style(styles: &StyleTable, style: &StyleId) -> bool {
 /// остаются в [`Document::media`]: архив живёт только внутри разбора, а
 /// рисующему нужны байты после него.
 ///
+/// Срез — часть контракта (слайс S12): у вызывающего могут быть только
+/// заимствованные байты (fuzz, тесты, бенчи). Если буфер отдаётся во владение,
+/// дешевле [`parse_docx_owned`] — здесь архив начинает с копии.
+///
 /// # Errors
 /// [`Error::EncryptedDocument`] — зашифрованный OOXML; [`Error::LegacyFormat`] —
 /// бинарный `.doc`; [`Error::MacroEnabledDocument`] — `.docm`;
@@ -735,9 +739,34 @@ fn has_style(styles: &StyleTable, style: &StyleId) -> bool {
 /// лимиты ZIP (ADR-0015); [`Error::TooManyWarnings`] — предупреждений больше
 /// порога (ADR-0016 §6).
 pub fn parse_docx(bytes: &[u8], limits: ZipLimits) -> Result<Document> {
-    reject_ole_container(bytes)?;
+    parse_docx_owned(bytes.to_vec(), limits)
+}
 
-    let mut archive = Archive::open_with_limits(bytes.to_vec(), limits)?;
+/// Разбирает пакет DOCX в модель, принимая байты пакета во владение.
+///
+/// От [`parse_docx`] отличается только способом передачи буфера: архив
+/// получает его как есть, без копии. Разбор большой пакет целиком держит в
+/// памяти плюс байты медиачастей, поэтому копия — это лишние байты пика,
+/// равные размеру входа (на 50-МБ DOCX — ~57 МБ). Путь, где буфер и так
+/// достаётся владением (файл, `fetch`, [`crate::open`]), копировать не обязан.
+///
+/// Во всём остальном ведёт себя как [`parse_docx`]: восстановимые нарушения
+/// копятся в [`Document::warnings`] и попадают в лог (ADR-0016 §1, §4), а
+/// байты медиачастей остаются в [`Document::media`], потому что архив живёт
+/// только внутри разбора.
+///
+/// # Errors
+/// Тот же набор, что у [`parse_docx`]: [`Error::EncryptedDocument`],
+/// [`Error::LegacyFormat`], [`Error::MacroEnabledDocument`],
+/// [`Error::StrictNotSupported`] — ранние отказы по сигнатуре пакета;
+/// [`Error::MissingPart`] / [`Error::MissingDocumentXml`] — нет обязательной
+/// части; [`Error::XmlFatal`] / [`Error::Malformed`] — часть не читается;
+/// [`Error::Core`] — распаковка и лимиты ZIP (ADR-0015);
+/// [`Error::TooManyWarnings`] — предупреждений больше порога (ADR-0016 §6).
+pub fn parse_docx_owned(bytes: Vec<u8>, limits: ZipLimits) -> Result<Document> {
+    reject_ole_container(&bytes)?;
+
+    let mut archive = Archive::open_with_limits(bytes, limits)?;
     let mut ctx = ParseCtx::new();
     adopt_archive_warnings(&mut archive, &mut ctx)?;
 

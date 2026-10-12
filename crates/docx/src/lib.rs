@@ -76,20 +76,21 @@ pub use model::table::{
     TableBorders, TableLayout, TableLook, TableWidth, VMerge,
 };
 pub use model::{BlockItem, Body, Document, Metadata, Relationships};
-pub use parse::parse_docx;
+pub use parse::{parse_docx, parse_docx_owned};
 
 use doc_converter_core::zip_limits::ZipLimits;
 
 /// Открыть DOCX из сырых байт.
 ///
-/// Владение буфером берётся, хотя разбору пока хватает среза: так подпись
-/// совпадает с прежним публичным API и с тем, что отдаёт вызывающий (файл или
-/// `fetch`), а `parse_docx` по контракту слайса S12 принимает срез.
+/// Владение буфером берётся, чтобы отдать его разбору без копии: вызывающий
+/// и так расстаётся с байтами (файл или `fetch`), а пакет целиком живёт в
+/// памяти весь разбор — копия входа стоила бы пика размером с сам файл
+/// (на 50-МБ DOCX — это ~57 МБ лишнего пика, ROADMAP §9). Срезовый
+/// [`parse_docx`] остаётся для вызывающих, у которых есть только срез.
 ///
 /// # Errors
 /// Если байты не OOXML-пакет, в нём нет `word/document.xml` или разбор упёрся в фатальное нарушение
 /// (см. [`Error`]); восстановимые нарушения попадают в [`Document::warnings()`].
-#[allow(clippy::needless_pass_by_value)]
 pub fn open(bytes: Vec<u8>) -> Result<Document> {
-    parse::parse_docx(&bytes, ZipLimits::default())
+    parse::parse_docx_owned(bytes, ZipLimits::default())
 }
