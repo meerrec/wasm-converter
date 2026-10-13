@@ -8,8 +8,9 @@ Self-host статического сайта Euro-Office — это редак�
 
 Сайт не собирается из исходников: он скачивается шестью готовыми npm-частями
 `@kreijstal/eurooffice-*` (версия пинится одной константой) и раскладывается overlay'ем
-в один каталог `site/`. Ни одной своей зависимости у спайка нет — только Node и `tar`;
-каталог лежит вне pnpm-workspace, как `experiments/x2t-spike`.
+в один каталог `site/`. Единственная dev-зависимость спайка — `typescript` (сборка
+нашей TS-оболочки просмотрщика в `dist/`); каталог лежит вне pnpm-workspace, как
+`experiments/x2t-spike`, со своим `pnpm-lock.yaml`.
 
 ## Состав сайта
 
@@ -52,16 +53,30 @@ Self-host статического сайта Euro-Office — это редак�
   сервер честно отдаёт несжатый `x2t.wasm` без заголовка кодирования (URL с `.br` — это
   только имя).
 
-## Наш просмотрщик (viewer.html)
+## Наш просмотрщик (TypeScript)
 
-- iframe `src="/editor.html?embed=1"` (clean URL `/editor` сервер тоже умеет — сайт на
-  него ссылается);
-- после `document:ready` страница читает выбранный файл сама (`file.arrayBuffer()`) и
-  шлёт `document:open-buffer` `{ fileName, buffer, readonly: true }`; выбор до
-  `document:ready` кладётся в очередь и открывается по готовности;
-- статус — `#viewer-status` с `data-state="ready|opening|opened|error"`, ошибки редактора
-  расшифровываются (код -82 — конвертация не удалась, -85 — содержимое не совпадает с
-  расширением), кнопок сохранения/редактирования нет;
+`viewer.html` — тонкая оболочка (каркас страницы и ссылки на `dist/`); вся логика —
+в `src/viewer/`, компилируется `tsc` в `dist/` (`pnpm run build`), `assemble`
+копирует `dist/` и `viewer.html` в `site/`.
+
+- `src/viewer/protocol.ts` — типы и клиент Embed API (`createEditorClient`):
+  команды `document:open-buffer/open-file/open-url/set-readonly/save/get-state`,
+  события `document:ready/opened/saved/state/dirty-changed/readonly-changed/error`;
+  очередь команд до `document:ready`, уникальные id, ответные события матчатся
+  по id (запоздавший ответ отменённой команды не доставляется), проверка origin
+  и source; `describeEditorError` расшифровывает коды ошибок (-82/-85);
+- `src/viewer/main.ts` — UI-оболочка: тулбар, выбор файла (кнопка + drag&drop
+  с оверлеем поверх области просмотра), статус, iframe. Файл читает родитель
+  (`file.arrayBuffer()`) и шлёт `document:open-buffer { fileName, buffer, readonly: true }`;
+  выбор до `document:ready` кладётся в очередь и открывается по готовности;
+- `src/viewer/style.css` — свой компактный «порт» визуального языка сайта:
+  значения сняты с `site/ran-tokens.*.css` (серые/статусные шкалы ran-*, радиусы
+  6/12/9999, стек Geist), шрифты — `site/ran-fonts/`; тёмный тулбар, имя документа
+  по центру, статус с точкой-индикатором справа;
+- статус — `#viewer-status` с `data-state="ready|opening|opened|error"` (плюс
+  начальный `loading`), ошибки редактора расшифровываются (код -82 — конвертация
+  не удалась, -85 — содержимое не совпадает с расширением), кнопок
+  сохранения/редактирования нет;
 - повторный выбор файла открывает новый документ в том же iframe;
 - `window.euroofficeViewer` (`state`, `openedCount`, `lastFileName`, `lastError`) — хук для
   `tools/viewer-check.mjs`: по счётчику открытий проверка не путает новый файл со старым
@@ -70,10 +85,15 @@ Self-host статического сайта Euro-Office — это редак�
 ## Запуск
 
 ```bash
+pnpm install                      # свой node_modules и lockfile (каталог вне pnpm-workspace)
+pnpm run build                    # tsc → dist/main.js + dist/style.css
 node scripts/assemble.mjs         # ~110 МиБ загрузок в .cache/ + ~390 МиБ в site/; идемпотентен
 node scripts/serve.mjs            # http://127.0.0.1:5271/viewer.html (редактор — /editor)
 node tools/viewer-check.mjs       # приёмка Playwright: docx и xlsx → document:opened + canvas
 ```
+
+`pnpm run assemble` = `pnpm run build` + `node scripts/assemble.mjs`; `assemble`
+сам требует готовый `dist/` и падает с подсказкой, если его нет.
 
 `serve.mjs` — статик-сервер для `site/`: порт из аргумента или `VIEWER_PORT`/`PORT`
 (по умолчанию 5271), MIME-карта (`.wasm` — `application/wasm`, шрифты, картинки), clean
@@ -98,8 +118,10 @@ URL (`/editor` → `editor.html`), `.br`-файлы с `Content-Encoding: br`, �
   brotli не пересчитывается); brotli-копия разжимается обратно в `x2t.wasm` байт-в-байт;
 - `serve.mjs`: `/editor` → `200 text/html`; `assets/editor-*.js` → `200 text/javascript`;
   `sdkjs/common/wasm/x2t/x2t.wasm.br` → `200`, `application/wasm`, `Content-Encoding: br`;
-  `viewer.html` → `200 text/html`; `/` → `index.html`; `..`-пути с процентным кодированием →
-  404;
+  `viewer.html` → `200 text/html`; `dist/main.js` → `200 text/javascript`;
+  `dist/style.css` → `200 text/css`; `/` → `index.html`; `..`-пути с процентным
+  кодированием → 404;
+- сборка TS-оболочки: `pnpm run build` → `dist/main.js` + `dist/style.css`, tsc в strict-режиме;
 - состав `site/`: `editor.html`, `assets/editor-*.js`, `sdkjs/word/sdk-all.js`,
   `ran-fonts/` со шрифтами, x2t со вдвое большим `sdk-all.js` — все на месте.
 
@@ -121,9 +143,16 @@ URL (`/editor` → `editor.html`), `.br`-файлы с `Content-Encoding: br`, �
 
 ## Файлы
 
+- `package.json`, `tsconfig.json`, `pnpm-lock.yaml` — сборка TS-оболочки (devDep: typescript);
+- `pnpm-workspace.yaml` — пустой (packages: []): каталог — самостоятельный pnpm-проект,
+  без него `pnpm install` отсюда ушёл бы в корневой workspace;
+- `src/viewer/protocol.ts` — типы и клиент Embed API;
+- `src/viewer/main.ts` — UI-оболочка просмотрщика;
+- `src/viewer/style.css` — стили оболочки (в `dist/` их кладёт скрипт сборки);
+- `scripts/copy-assets.mjs` — копия `src/viewer/style.css` → `dist/style.css` (часть `pnpm run build`);
 - `scripts/assemble.mjs` — скачивание частей в `.cache/`, overlay в `site/`, копирование
-  `viewer.html`, brotli-копия x2t, проверка обязательных путей;
+  `viewer.html` и `dist/`, brotli-копия x2t, проверка обязательных путей;
 - `scripts/serve.mjs` — статик-сервер `site/` (clean URL, MIME, `.br`);
-- `viewer.html` — наша страница-просмотрщик поверх Embed API;
+- `viewer.html` — тонкая HTML-оболочка страницы-просмотрщика;
 - `tools/viewer-check.mjs` — приёмка Playwright (браузерный прогон — за координатором);
-- `site/`, `.cache/` — генерируемые, в `.gitignore`.
+- `site/`, `.cache/`, `dist/`, `node_modules/` — генерируемые, в `.gitignore`.

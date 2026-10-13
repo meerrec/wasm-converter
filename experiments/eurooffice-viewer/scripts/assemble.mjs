@@ -3,14 +3,15 @@
 // Что делает: берёт у реестра npm метаданные каждой части (версия пинится
 // константой), скачивает тарболы в .cache/ (повторные запуски берут их оттуда),
 // распаковывает в site/ overlay'ем — подчинённые части первыми, главный пакет
-// последним, — копирует наш viewer.html и готовит brotli-копию x2t.wasm.br
-// (в частях лежит только несжатый x2t.wasm, а сайт ходит за .br), после чего
-// проверяет обязательные пути собранного сайта.
+// последним, — копирует наш просмотрщик (viewer.html и собранную TS-оболочку
+// dist/, см. pnpm run build) и готовит brotli-копию x2t.wasm.br (в частях
+// лежит только несжатый x2t.wasm, а сайт ходит за .br), после чего проверяет
+// обязательные пути собранного сайта.
 //
 // Запуск: node scripts/assemble.mjs
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, createWriteStream, copyFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, createWriteStream, copyFileSync, writeFileSync, rmSync } from 'node:fs';
 import { once } from 'node:events';
 import { Readable } from 'node:stream';
 import { brotliCompress, constants as zlibConstants } from 'node:zlib';
@@ -105,6 +106,18 @@ function extractTarball(tgz) {
   execFileSync('tar', ['-xzf', tgz, '-C', SITE_DIR, '--strip-components=1']);
 }
 
+/** Рекурсивная копия каталога: целевой затирается, чтобы не копить устаревшие файлы. */
+function copyDir(source, target) {
+  rmSync(target, { recursive: true, force: true });
+  mkdirSync(target, { recursive: true });
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    const from = join(source, entry.name);
+    const to = join(target, entry.name);
+    if (entry.isDirectory()) copyDir(from, to);
+    else copyFileSync(from, to);
+  }
+}
+
 /**
  * x2t.wasm.br — то, что редактор реально просит (WASM_PATH в assets/document-*.js).
  * В опубликованных частях есть только несжатый x2t.wasm (35,8 МиБ), поэтому
@@ -163,6 +176,8 @@ function checkSite() {
   requireFile('sdkjs/common/wasm/x2t/x2t.js');
   requireFile('sdkjs/common/wasm/x2t/x2t.wasm.br');
   requireFile('ran-fonts/fonts.css');
+  requireFile('dist/main.js');
+  requireFile('dist/style.css');
   requireDirNonEmpty('sdkjs/word');
   requireDirNonEmpty('ran-fonts');
 
@@ -214,6 +229,13 @@ async function main() {
   const viewerSource = join(SPIKE_DIR, 'viewer.html');
   copyFileSync(viewerSource, join(SITE_DIR, 'viewer.html'));
   console.log(`\nнаш просмотрщик: viewer.html → site/viewer.html`);
+
+  const distSource = join(SPIKE_DIR, 'dist');
+  if (!existsSync(join(distSource, 'main.js')) || !existsSync(join(distSource, 'style.css'))) {
+    throw new Error(`dist/ не собран (нет dist/main.js или dist/style.css) — запустите pnpm run build`);
+  }
+  copyDir(distSource, join(SITE_DIR, 'dist'));
+  console.log(`наш просмотрщик: dist/ → site/dist/`);
 
   await ensureX2tBrotli();
 
