@@ -1,7 +1,11 @@
-// Приёмка страницы харнесса x2t: поднимает её, проверяет просмотр документа нашим вьюером и
-// прогоняет три конвертации мелкой фикстуры — docx → odt, docx → txt и попытку docx → pdf.
+// Приёмка страницы харнесса x2t: поднимает её, проверяет просмотр документа нашим вьюером,
+// прогоняет три конвертации мелкой фикстуры — docx → odt, docx → txt и попытку docx → pdf, —
+// и следом смоук пакета @doc-converter/browser-convert: docx → odt, docx → pdf и
+// extractDocxMediaUrls через X2TConverter из собранного dist (src/bc-smoke.ts, тянется
+// страницей из evaluate мимо воркера харнесса).
 //
 // Запуск:
+//   pnpm -F @doc-converter/browser-convert build   # dist смоука — собирает вызывающий
 //   node experiments/x2t-spike/tools/preview-check.mjs
 //
 // Сервер: если на порту из vite.config.ts уже отвечает харнесс (например, поднятый
@@ -13,10 +17,11 @@
 // Последнее — прогон без x2t: страница и вьюер работают без него, и в окружении, где сторонний
 // wasm запускать нельзя, проверяется ровно то, что можно.
 //
-// РЕЗУЛЬТАТ: выходы, скриншоты и preview-check.json в /tmp/x2t-preview-check + сводка в stdout.
-// Код возврата 1 — если не сошлась проверка просмотра, модуль x2t не поднялся или не сошлась
-// проверка odt/txt; попытка pdf неудачей не считается: у сборки нет движка раскладки, и оба
-// известных исхода — «нет pdf».
+// РЕЗУЛЬТАТ: выходы, скриншоты и preview-check.json (поле browserConvert) в
+// /tmp/x2t-preview-check + сводка в stdout. Код возврата 1 — если не сошлась проверка
+// просмотра, модуль x2t не поднялся, не сошлась проверка odt/txt или разошёлся смоук
+// browser-convert; попытка pdf неудачей не считается ни у воркера, ни у смоука: у сборки нет
+// движка раскладки, и ожидаемый исход — код 80 без выходного файла.
 
 import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -35,6 +40,26 @@ const FOREIGN_FIXTURE = resolve(
   'test-fixtures',
   'xlsx',
   'content-single-cell.xlsx',
+);
+/** Собранный dist пакета browser-convert: скрипт его не собирает, только проверяет наличие. */
+const BROWSER_CONVERT_DIST = resolve(
+  SPIKE_DIR,
+  '..',
+  '..',
+  'packages',
+  'browser-convert',
+  'dist',
+  'index.js',
+);
+/** Фикстура с медиа (word/media/tight.png) — для extractDocxMediaUrls. */
+const MEDIA_FIXTURE = resolve(
+  SPIKE_DIR,
+  '..',
+  '..',
+  'test-fixtures',
+  'docx',
+  'images',
+  'anchor_wrap_tight.docx',
 );
 const OUT_DIR = process.env.X2T_OUT ?? '/tmp/x2t-preview-check';
 const CONVERT_TIMEOUT_MS = Number(process.env.X2T_TIMEOUT ?? 120_000);
@@ -452,6 +477,150 @@ async function runConversions(page, result) {
   return { odtOk, txtOk };
 }
 
+/**
+ * Байты из отчёта смоука в Buffer. Playwright сериализует typed arrays между браузером и
+ * Node, и на выходе они приезжают Buffer'ом или Uint8Array — принимаем оба вида.
+ */
+function toBuffer(value) {
+  if (value === null || value === undefined) return Buffer.alloc(0);
+  if (Buffer.isBuffer(value)) return value;
+  if (value instanceof Uint8Array) {
+    return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  }
+  return Buffer.alloc(0);
+}
+
+/**
+ * Смоук пакета @doc-converter/browser-convert: страница гоняет конвертации через
+ * `X2TConverter` из собранного dist — мимо воркера харнесса, на главном потоке (модуль
+ * src/bc-smoke.ts тянется из evaluate динамическим import() через Vite, в разметке его нет).
+ * Байты фикстур читает Node и передаёт в evaluate; отчёты — сериализуемые структуры.
+ *
+ * Сборку dist скрипт не делает — только проверяет наличие и просит собрать
+ * (`pnpm -F @doc-converter/browser-convert build`): так надёжнее для CI-стиля запуска, где
+ * сборку делает вызывающий. Сбои смоука валят приёмку, кроме pdf-кода 80 (нет движка
+ * раскладки, ADR-0024) — это ожидаемый исход, и он печатается как таковой.
+ */
+async function runBrowserConvertSmoke(page, result, server) {
+  if (!existsSync(BROWSER_CONVERT_DIST)) {
+    throw new Error(
+      `browser-convert не собран: нет ${BROWSER_CONVERT_DIST} — соберите пакет ` +
+        '(pnpm -F @doc-converter/browser-convert build) и повторите',
+    );
+  }
+  if (!existsSync(MEDIA_FIXTURE)) {
+    throw new Error(`фикстура не найдена: ${MEDIA_FIXTURE}`);
+  }
+  // Прогрев как для воркера в ensureServer: первый запрос модуля на холодном dev-сервере
+  // изредка уходит мимо трансформации. Готовый чужой сервер не трогаем — он уже прогрет.
+  if (server !== null) {
+    await server.transformRequest('/src/bc-smoke.ts');
+  }
+  console.log(
+    `browser-convert: dist готов (${formatBytes(statSync(BROWSER_CONVERT_DIST).size)})`,
+  );
+  result.browserConvert = { dist: BROWSER_CONVERT_DIST };
+
+  // docx → odt через X2TConverter: выход обязан быть zip с записью mimetype. Это первый вызов
+  // смоука — он поднимает свой модуль x2t на странице (38 МБ wasm), поэтому бюджет как у
+  // подъёма воркера: таймаут конвертации плюс таймаут подъёма.
+  const odtStartedAt = Date.now();
+  const odt = await page.evaluate(
+    async ({ bytes, name, targetExt }) => {
+      const { bcSmoke } = await import('/src/bc-smoke.ts');
+      return bcSmoke({ convert: { bytes, name, targetExt } });
+    },
+    { bytes: new Uint8Array(readFileSync(FIXTURE)), name: 'doc_defaults.docx', targetExt: 'odt' },
+    { timeout: CONVERT_TIMEOUT_MS + BOOT_TIMEOUT_MS },
+  );
+  const odtOutBytes = toBuffer(odt.convert?.outBytes ?? null);
+  const odtNames = odtOutBytes.byteLength > 0 ? zipEntryNames(odtOutBytes) : null;
+  const odtMimetype = odtNames === null ? -1 : odtNames.indexOf('mimetype');
+  const odtOk = odt.convert !== null && odt.convert.code === 0 && odtMimetype >= 0;
+  result.browserConvert.odt = {
+    code: odt.convert?.code ?? null,
+    boot: odt.boot,
+    stderr: odt.convert?.stderr ?? '',
+    bytes: odtOutBytes.byteLength,
+    entries: odtNames,
+    mimetypeFirst: odtMimetype === 0,
+    wallMs: Date.now() - odtStartedAt,
+    ok: odtOk,
+  };
+  const odtShape =
+    odtNames === null
+      ? 'не zip'
+      : `zip, записей ${odtNames.length}, mimetype ${odtMimetype < 0 ? 'нет' : odtMimetype === 0 ? 'первой записью' : `записью №${odtMimetype + 1}`}`;
+  const odtBoot =
+    odt.boot === 'booted'
+      ? 'модуль поднят этим вызовом'
+      : odt.boot === 'reused'
+        ? 'модуль переиспользован'
+        : 'модуль не поднимался';
+  console.log(
+    `browser-convert → odt: код ${result.browserConvert.odt.code}, ` +
+      `${formatBytes(odtOutBytes.byteLength)} за ${result.browserConvert.odt.wallMs} мс — ` +
+      `${odtShape} (${odtBoot})${odtOk ? '' : ' — ПРОВАЛ'}`,
+  );
+
+  // docx → pdf через X2TConverter: рендер-цель, движка раскладки в wasm-сборке нет (ADR-0024) —
+  // ожидаем код 80 и пустой выход. Любой другой исход — расхождение, он валит приёмку.
+  const pdfStartedAt = Date.now();
+  const pdf = await page.evaluate(
+    async ({ bytes, name, targetExt }) => {
+      const { bcSmoke } = await import('/src/bc-smoke.ts');
+      return bcSmoke({ convert: { bytes, name, targetExt } });
+    },
+    { bytes: new Uint8Array(readFileSync(FIXTURE)), name: 'doc_defaults.docx', targetExt: 'pdf' },
+    { timeout: CONVERT_TIMEOUT_MS },
+  );
+  const pdfOutBytes = toBuffer(pdf.convert?.outBytes ?? null);
+  const pdfOk = pdf.convert !== null && pdf.convert.code === 80 && pdfOutBytes.byteLength === 0;
+  result.browserConvert.pdf = {
+    code: pdf.convert?.code ?? null,
+    boot: pdf.boot,
+    stderr: pdf.convert?.stderr ?? '',
+    bytes: pdfOutBytes.byteLength,
+    wallMs: Date.now() - pdfStartedAt,
+    ok: pdfOk,
+  };
+  console.log(
+    pdfOk
+      ? `browser-convert → pdf: код 80, выход пуст за ${result.browserConvert.pdf.wallMs} мс — ` +
+          'ожидаемо (движка раскладки нет)'
+      : `browser-convert → pdf: код ${result.browserConvert.pdf.code}, ` +
+          `${formatBytes(pdfOutBytes.byteLength)} за ${result.browserConvert.pdf.wallMs} мс — ` +
+          'ПРОВАЛ (ждали код 80 и пустой выход)',
+  );
+
+  // extractDocxMediaUrls на фикстуре с медиа: word/media/tight.png → ключ 'media/tight.png'.
+  const mediaStartedAt = Date.now();
+  const media = await page.evaluate(
+    async (bytes) => {
+      const { bcSmoke } = await import('/src/bc-smoke.ts');
+      return bcSmoke({ media: bytes });
+    },
+    new Uint8Array(readFileSync(MEDIA_FIXTURE)),
+    { timeout: CONVERT_TIMEOUT_MS },
+  );
+  const mediaKeys = media.media?.mediaKeys ?? [];
+  const mediaOk =
+    media.media !== null && mediaKeys.length >= 1 && mediaKeys.every((key) => key.startsWith('media/'));
+  result.browserConvert.media = {
+    keys: mediaKeys,
+    wallMs: Date.now() - mediaStartedAt,
+    ok: mediaOk,
+  };
+  console.log(
+    `browser-convert: media — ключей ${mediaKeys.length}: ${mediaKeys.join(', ') || 'нет'}` +
+      `${mediaOk ? '' : ' — ПРОВАЛ (ждали ≥1 ключа вида media/…)'}`,
+  );
+
+  const ok = odtOk && pdfOk && mediaOk;
+  result.browserConvert.ok = ok;
+  return { ok };
+}
+
 async function main() {
   mkdirSync(OUT_DIR, { recursive: true });
   if (!existsSync(FIXTURE)) {
@@ -528,7 +697,8 @@ async function main() {
       result.ok = viewer.ok && foreign.ok;
     } else {
       const { odtOk, txtOk } = await runConversions(page, result);
-      result.ok = viewer.ok && foreign.ok && odtOk && txtOk;
+      const browserConvert = await runBrowserConvertSmoke(page, result, server);
+      result.ok = viewer.ok && foreign.ok && odtOk && txtOk && browserConvert.ok;
     }
   } catch (error) {
     result.failure = String(error?.message ?? error);
@@ -546,7 +716,7 @@ async function main() {
   console.log(`сводка: ${join(OUT_DIR, 'preview-check.json')}`);
   console.log(
     result.ok === true
-      ? `OK: просмотр${SKIP_CONVERT ? '' : ', odt и txt'} сошлись`
+      ? `OK: просмотр${SKIP_CONVERT ? '' : ', odt, txt и browser-convert'} сошлись`
       : 'ПРОВАЛ: подробности выше и в сводке',
   );
   process.exit(result.ok === true ? 0 : 1);
