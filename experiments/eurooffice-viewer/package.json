@@ -5,8 +5,12 @@
   "type": "module",
   "description": "Спайк: self-host просмотрщика на стеке @kreijstal/eurooffice (движок ONLYOFFICE/Euro-Office в браузере)",
   "scripts": {
-    "assemble": "node scripts/assemble.mjs",
+    "build": "tsc -p . && node scripts/copy-assets.mjs",
+    "assemble": "pnpm run build && node scripts/assemble.mjs",
     "serve": "node scripts/serve.mjs",
     "check": "node tools/viewer-check.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
   }
 }
