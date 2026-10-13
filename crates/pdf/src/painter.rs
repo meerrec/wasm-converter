@@ -35,7 +35,7 @@ use printpdf::{
 use crate::fonts::{EmbeddedFonts, Face};
 use crate::image;
 use crate::layout::{PageGeometry, RectPx};
-use crate::options::{Margins, PageOrientation, PdfOptions};
+use crate::options::{Margins, PageConfig, PageOrientation, PdfOptions};
 use crate::overlay::{self, Align, OverlayMargins, PageContext, Watermark, WatermarkLayer};
 use crate::pagination::{paginate, print_scale, PageSlice, PaintedCell, SheetPage};
 use crate::styles::to_pdf_color;
@@ -794,13 +794,64 @@ fn sheet_margins(sheet: &Sheet) -> Option<Margins> {
     })
 }
 
+/// Граница «уместить на N страниц» из листового `fitToWidth`/`fitToHeight`.
+///
+/// `0` по семантике Excel — «сколько потребуется», то есть границы нет;
+/// отсутствующий атрибут разбор уже заменил дефолтом схемы (1).
+fn fit_pages(pages: u32) -> Option<u32> {
+    (pages != 0).then_some(pages)
+}
+
+/// Разрешить масштаб печати в конфиге листа: явные настройки вызывающего
+/// сильнее листовых, листовые — сильнее умолчания.
+///
+/// Уровни сверху вниз, первое сработавшее решает:
+/// 1. `fit_to_width`/`fit_to_height` вызывающего (`Some`) — как есть;
+/// 2. `scale` вызывающего, если он отличается от умолчания 1.0: ручной
+///    масштаб и «уместить» в Excel взаимоисключающие;
+/// 3. `fitToPage` листа — его `fitToWidth`/`fitToHeight` (`0` — «сколько
+///    потребуется», то есть границы нет);
+/// 4. `scale` листа, если это не дефолтные 100%;
+/// 5. умолчание — уместить по ширине: широкая таблица печатается одной
+///    страницей по ширине, а не полосами столбцов; по высоте — сколько
+///    потребуется.
+///
+/// Уровень 2 нужен ради явных вызывающих: интерфейс зовёт `exportPdf({})` и
+/// полей не присылает вовсе, а CLI передаёт `--scale` явно.
+// Сравнение с умолчанием точное: `1.0` — литерал `PageConfig::default`, а не
+// результат вычислений.
+#[allow(clippy::float_cmp)]
+fn resolve_page_scale(page: &mut PageConfig, sheet: &Sheet) {
+    let print = &sheet.print;
+    if page.fit_to_width.is_some() || page.fit_to_height.is_some() {
+        return;
+    }
+    if page.scale != 1.0 {
+        return;
+    }
+    if print.fit_to_page {
+        page.fit_to_width = fit_pages(print.fit_to_width);
+        page.fit_to_height = fit_pages(print.fit_to_height);
+        return;
+    }
+    if print.scale != 100 {
+        // Масштаб — процент, счётчик много меньше 2^24: точности f32 хватает.
+        #[allow(clippy::cast_precision_loss)]
+        let scale = print.scale as f32 / 100.0;
+        page.scale = scale;
+        return;
+    }
+    page.fit_to_width = Some(1);
+}
+
 /// Подготовить лист к записи: раскладка, геометрия, срезы, диаграммы.
 ///
 /// Масштаб считается на лист: `fit_to_width`/`fit_to_height` — настройка
-/// листа, и у листов одной книги он выходит разным. Поля и ориентация — тоже
-/// свойства листа, и незаданные вызывающим подставляются из книги
-/// (`<pageMargins>`, `<pageSetup>`); остальные настройки страницы общие,
-/// поэтому геометрия собирается из копии конфига с итоговым масштабом.
+/// листа, и у листов одной книги он выходит разным. Поля, ориентация и
+/// масштаб — тоже свойства листа, и незаданные вызывающим подставляются из
+/// книги (`<pageMargins>`, `<pageSetup>`), а если лист молчит — умолчанием
+/// [`resolve_page_scale`]; остальные настройки страницы общие, поэтому
+/// геометрия собирается из копии конфига с итоговым масштабом.
 fn prepare_sheet<'a>(
     book: &'a Workbook,
     sheet_index: usize,
@@ -831,6 +882,11 @@ fn prepare_sheet<'a>(
         },
         explicit => explicit,
     };
+    // Масштаб — из настроек листа или умолчания, до `print_scale`: без этой
+    // подстановки лист, который Excel печатает ужатым по ширине (`fitToPage`),
+    // режется на страницы-полосы, а широкая таблица без настроек — и вовсе на
+    // произведение полос столбцов и строк.
+    resolve_page_scale(&mut page_cfg, sheet);
     // `fit_to_width` пересчитывает масштаб до сборки геометрии: от него зависят
     // и полосы, и координаты ячеек.
     page_cfg.scale = print_scale(&page_cfg, sheet, &layout);

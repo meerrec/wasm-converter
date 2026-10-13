@@ -19,10 +19,10 @@
 //! дубля на первой странице нет, а их высота и ширина вычитаются из полезной
 //! области полосы: иначе на шапку налезли бы строки, которых она лишила места.
 //!
-//! Ячейка объединения рисуется один раз — на своей левой верхней: остальные
-//! пусты и отдельного текста не несут. Объединение, пересёкшее границу полосы,
-//! рисуется целиком от своей левой верхней: разрыв объединений между полосами
-//! не поддержан.
+//! Ячейка объединения рисуется на своей левой верхней: остальные пусты и
+//! отдельного текста не несут. Объединение, пересёкшее границу полосы, попадает
+//! в каждую полосу, которую пересекает: часть, вышедшая за край листа,
+//! отсекается краем страницы, а не пропадает вместе с ячейкой.
 //!
 //! Центрирование ([`PageConfig::center_horizontally`] и
 //! [`PageConfig::center_vertically`]) сдвигает полосу набора страницы — вместе с
@@ -126,7 +126,9 @@ pub fn print_scale(cfg: &PageConfig, sheet: &Sheet, layout: &SheetLayout) -> f32
         // не напечатал бы ничего.
         return if cfg.scale > 0.0 { cfg.scale } else { 1.0 };
     }
-    let Some(used) = sheet.cells.used_range() else {
+    // Ужимать есть смысл по видимым ячейкам: пустой стилевой запас листа за
+    // значениями не печатается и в ширину полосы не входит.
+    let Some(used) = sheet.visible_used_range() else {
         return 1.0;
     };
     // Область содержимого в пикселях раскладки — по геометрии при 100%, чтобы
@@ -237,7 +239,7 @@ pub fn paginate<'a>(
     page: &PageGeometry,
     cfg: &PageConfig,
 ) -> SheetPagination<'a> {
-    let Some(used) = sheet.cells.used_range() else {
+    let Some(used) = sheet.visible_used_range() else {
         return SheetPagination {
             faces: FaceSet::default(),
             pages: vec![empty_page()],
@@ -284,8 +286,6 @@ pub fn paginate<'a>(
         // разрыве внутри строки (A4) полос у неё две: строка продолжается на
         // следующей странице, и ячейка нужна обеим.
         let in_header = header_rows.contains(&row);
-        let row_band = bands_y.partition_point(|band| band.rows.end <= row)
-            ..bands_y.partition_point(|band| band.rows.start <= row);
         for cell in row_cells {
             let at = cell.at(row);
             let Some(rect) = cell_rect(sheet, layout, at) else {
@@ -294,17 +294,21 @@ pub fn paginate<'a>(
             if rect.w <= 0.0 || rect.h <= 0.0 {
                 continue;
             }
+            // Ячейка объединения шире или выше полосы — она нужна каждой полосе,
+            // которую пересекает: painter вычтет сдвиг полосы, и часть,
+            // вышедшая за край листа, отсечётся краем страницы, а не пропадёт
+            // вместе со всей ячейкой.
+            let (col_span, row_span) = cell_span(sheet, at);
             let in_repeat = repeat_cols.contains(&at.col);
-            let col_band = bands_x.partition_point(|band| band.end <= at.col);
             let rows = if in_header {
                 0..bands_y.len()
             } else {
-                row_band.clone()
+                row_bands_over(&bands_y, &row_span)
             };
             let cols = if in_repeat {
                 0..bands_x.len()
             } else {
-                col_band..col_band + 1
+                column_bands_over(&bands_x, &col_span)
             };
             let style = styles::resolve(book, cell);
             faces.insert(Face::of(style.bold, style.italic));
@@ -619,6 +623,40 @@ fn column_bands(
     }
     bands.push(start..last + 1);
     bands
+}
+
+/// Индексы полос столбцов, пересекающих диапазон столбцов `span`.
+///
+/// Полосы идут по порядку и не перекрываются, поэтому пересекающие их диапазон
+/// — сплошной отрезок: от первой, чей конец заходит за начало `span`, до первой,
+/// начинающейся не раньше его конца.
+fn column_bands_over(bands: &[Range<u32>], span: &Range<u32>) -> Range<usize> {
+    bands.partition_point(|band| band.end <= span.start)
+        ..bands.partition_point(|band| band.start < span.end)
+}
+
+/// Индексы полос строк, пересекающих диапазон строк `span`.
+///
+/// Полосы могут налегать одна на другую строкой разрыва ([`row_bands`] при
+/// `avoid_row_break = false`): такую строку содержат обе, и ячейка нужна обеим.
+fn row_bands_over(bands: &[RowBand], span: &Range<u32>) -> Range<usize> {
+    bands.partition_point(|band| band.rows.end <= span.start)
+        ..bands.partition_point(|band| band.rows.start < span.end)
+}
+
+/// Диапазоны столбцов и строк, которые накрывает ячейка: своя клетка или всё
+/// объединение, чья она левая верхняя.
+///
+/// Закрытая чужим объединением ячейка сюда не доходит — её отсеивает
+/// [`cell_rect`].
+fn cell_span(sheet: &Sheet, at: CellRef) -> (Range<u32>, Range<u32>) {
+    match sheet.merges.anchored_at(at) {
+        Some(range) => (
+            range.first.col..range.last.col + 1,
+            range.first.row..range.last.row + 1,
+        ),
+        None => (at.col..at.col + 1, at.row..at.row + 1),
+    }
 }
 
 /// Прямоугольник ячейки в пикселях раскладки; `None` — ячейку закрывает
@@ -1037,6 +1075,160 @@ mod tests {
             .filter(|(row, cell)| cols.contains(&cell.at(*row).col))
             .map(|(_, cell)| std::ptr::from_ref(cell))
             .collect()
+    }
+
+    /// Лист `rows` × `cols` из чисел с объединениями (границы включительно).
+    fn merged_grid(rows: u32, cols: u32, merges: &[(u32, u32, u32, u32)]) -> Sheet {
+        const PART: &str = "xl/worksheets/sheet1.xml";
+        let mut builder = WorksheetBuilder::new(PART);
+        for row in 0..rows {
+            for col in 0..cols {
+                builder
+                    .push(row, Cell::new(col, 0, CellValue::Number(1.0)))
+                    .expect("ячейка вставляется");
+            }
+        }
+        let mut content = SheetContent {
+            cells: builder.finish(),
+            ..SheetContent::default()
+        };
+        for &(first_row, first_col, last_row, last_col) in merges {
+            content.merges.push(doc_converter_xlsx::Range {
+                first: CellRef::new(first_row, first_col),
+                last: CellRef::new(last_row, last_col),
+            });
+        }
+        Sheet::new(
+            WorksheetMeta {
+                name: "Лист1".into(),
+                part: PART.into(),
+                state: SheetState::Visible,
+            },
+            content,
+        )
+    }
+
+    /// Книга из одного листа: `paginate` нужна таблица стилей.
+    fn book_of(sheet: Sheet) -> Workbook {
+        Workbook::new(
+            vec![sheet],
+            SharedStrings::default(),
+            StyleTable::default(),
+            Theme::default(),
+            false,
+        )
+    }
+
+    /// Указатель ячейки листа по её адресу.
+    fn cell_ptr(sheet: &Sheet, at: CellRef) -> *const Cell {
+        sheet
+            .cells
+            .rows()
+            .flat_map(|(row, cells)| cells.iter().map(move |cell| (row, cell)))
+            .find(|(row, cell)| cell.at(*row) == at)
+            .map(|(_, cell)| std::ptr::from_ref(cell))
+            .expect("ячейка есть")
+    }
+
+    /// Страница `slice.cols`, на которой нарисована ячейка `at`, и её
+    /// прямоугольник там; по одной записи на страницу.
+    fn places_of(
+        pagination: &SheetPagination<'_>,
+        sheet: &Sheet,
+        at: CellRef,
+    ) -> Vec<(Range<u32>, RectPx)> {
+        let anchor = cell_ptr(sheet, at);
+        let mut places = Vec::new();
+        for sheet_page in &pagination.pages {
+            for painted in &sheet_page.cells {
+                if std::ptr::from_ref(painted.cell) == anchor {
+                    places.push((sheet_page.slice.cols.clone(), painted.rect));
+                }
+            }
+        }
+        places
+    }
+
+    /// Объединение шире полосы столбцов печатается на каждой полосе, которую
+    /// пересекает, и целиком: его край режет страница, а не пагинация.
+    #[test]
+    fn merged_cell_lands_in_every_column_band_it_crosses() {
+        // 30 столбцов по 64 px — три полосы по десять; A1:M1 (0..13) накрывает
+        // первую и вторую и достаёт до границы с третьей.
+        let book = book_of(merged_grid(2, 30, &[(0, 0, 0, 12)]));
+        let sheet = &book.sheets()[0];
+        let layout = SheetLayout::new(sheet);
+        let cfg = PageConfig {
+            fit_to_height: Some(1),
+            ..PageConfig::default()
+        };
+        let page = geometry(&cfg, sheet, &layout);
+        let pagination = paginate(&book, sheet, &layout, &page, &cfg);
+
+        let merge = cell_rect(sheet, &layout, CellRef::new(0, 0)).expect("якорь видим");
+        let places = places_of(&pagination, sheet, CellRef::new(0, 0));
+        assert_eq!(
+            places,
+            vec![(0..10, merge), (10..20, merge)],
+            "объединение пропало на полосе-продолжении или обрезано срезом"
+        );
+    }
+
+    /// Объединение выше полосы строк: и его вторая половина печатается на
+    /// странице-продолжении.
+    #[test]
+    fn merged_cell_lands_in_every_row_band_it_crosses() {
+        // 60 строк по 20 px не помещаются в область содержимого (971,3 px):
+        // полосы строк — 0..48 и 48..60. Объединение A41:A56 пересекает
+        // границу на строке 48.
+        let book = book_of(merged_grid(60, 2, &[(40, 0, 55, 0)]));
+        let sheet = &book.sheets()[0];
+        let layout = SheetLayout::new(sheet);
+        let cfg = PageConfig::default();
+        let page = geometry(&cfg, sheet, &layout);
+        let pagination = paginate(&book, sheet, &layout, &page, &cfg);
+
+        let merge = cell_rect(sheet, &layout, CellRef::new(40, 0)).expect("якорь видим");
+        let rows: Vec<Range<u32>> = pagination
+            .pages
+            .iter()
+            .map(|sheet_page| sheet_page.slice.rows.clone())
+            .collect();
+        assert_eq!(rows, vec![0..48, 48..60], "полосы строк разъехались");
+        let anchor = cell_ptr(sheet, CellRef::new(40, 0));
+        for sheet_page in &pagination.pages {
+            assert!(
+                sheet_page
+                    .cells
+                    .iter()
+                    .any(|painted| std::ptr::from_ref(painted.cell) == anchor),
+                "страница со строками {:?} осталась без объединения",
+                sheet_page.slice.rows
+            );
+            for painted in &sheet_page.cells {
+                if std::ptr::from_ref(painted.cell) == anchor {
+                    assert_eq!(painted.rect, merge, "объединение обрезано срезом");
+                }
+            }
+        }
+    }
+
+    /// Объединение внутри одной полосы по-прежнему рисуется один раз.
+    #[test]
+    fn merged_cell_inside_one_band_is_printed_once() {
+        let book = book_of(merged_grid(2, 30, &[(0, 0, 0, 2)]));
+        let sheet = &book.sheets()[0];
+        let layout = SheetLayout::new(sheet);
+        let cfg = PageConfig {
+            fit_to_height: Some(1),
+            ..PageConfig::default()
+        };
+        let page = geometry(&cfg, sheet, &layout);
+        let pagination = paginate(&book, sheet, &layout, &page, &cfg);
+
+        let places = places_of(&pagination, sheet, CellRef::new(0, 0));
+        assert_eq!(places.len(), 1, "объединение размножилось: {places:?}");
+        assert_eq!(places[0].0, 0..10, "объединение уехало из своей полосы");
     }
 
     /// A3, `DoD`: шапка есть на каждой странице и ровно один раз.

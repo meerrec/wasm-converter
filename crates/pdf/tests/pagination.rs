@@ -17,6 +17,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use doc_converter_pdf::{PageConfig, PdfExporter, PdfOptions};
+use doc_converter_xlsx::{
+    Cell, CellRef, CellValue, PrintSettings, SharedStrings, Sheet, SheetContent, SheetState,
+    StyleTable, Theme, Workbook, WorksheetBuilder, WorksheetMeta,
+};
 use lopdf::{Object, ObjectId};
 
 /// Начальное значение FNV-1a.
@@ -113,14 +117,18 @@ fn drawing_hash(bytes: &[u8]) -> u64 {
 /// Сколько страниц обязана давать книга при настройках по умолчанию.
 ///
 /// Числа сняты с вывода: 600 строк отчёта — 13 страниц A4, 5000 строк — 105.
-/// Широкие листы после разбивки по столбцам (A2) дают произведение полос
-/// строк и столбцов: 100×20 — 2 полосы столбцов по 10 и 3 полосы строк по 48 —
-/// 6 страниц; 20×100 — 10 полос по 10 столбцов и одна полоса строк — 10.
+/// Узкие листы делит только высота (`content-empty-sheet` — одна страница).
+///
+/// Широкие листы печатаются целиком: умолчание разрешения масштаба — уместить
+/// по ширине (`resolve_page_scale`, уровень 5), поэтому полос столбцов у них
+/// больше нет, а страницы даёт деление по высоте: `content-dense` (100 строк по
+/// 20 столбцов) ужимается вдвое и делится на 2 страницы, `size-20x100x1`
+/// (20 строк по 100 столбцов) — одна страница.
 const PAGE_COUNTS: &[(&str, usize)] = &[
     ("scale-ten-pages.xlsx", 13),
     ("edge-many-rows.xlsx", 105),
-    ("content-dense.xlsx", 6),
-    ("size-20x100x1.xlsx", 10),
+    ("content-dense.xlsx", 2),
+    ("size-20x100x1.xlsx", 1),
     ("content-empty-sheet.xlsx", 1),
 ];
 
@@ -166,6 +174,10 @@ fn cursor_x_range(content: &[u8]) -> (f32, f32) {
 /// Лист 30×30 даёт три полосы столбцов по десять; все страницы непустые, а
 /// сумма нарисованных ячеек равна ячейкам листа. До разбивки ячейки правее
 /// области содержимого молча отбрасывались (`painter.rs:208-211`).
+///
+/// Явный `fit_to_height` нужен, чтобы ширина осталась естественной: умолчание
+/// умещает лист в одну страницу по ширине (`resolve_page_scale`, уровень 5), и
+/// полос столбцов при нём не бывает вовсе.
 #[test]
 fn all_cells_survive_column_split() {
     const FIXTURE: &str = "size-30x30x2.xlsx";
@@ -177,7 +189,13 @@ fn all_cells_survive_column_split() {
         "{FIXTURE}: фикстура изменилась — сверьте ожидания"
     );
 
-    let bytes = export(FIXTURE);
+    let bytes = export_with(
+        FIXTURE,
+        PageConfig {
+            fit_to_height: Some(1),
+            ..PageConfig::default()
+        },
+    );
     let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
     let pages = doc.get_pages();
     assert_eq!(pages.len(), 3, "30 столбцов — три полосы по десять");
@@ -236,13 +254,18 @@ fn page_counts_are_pinned() {
 /// верхней кромки (`Rect::to_polygon` в вендоренной 0.8.2), и каждая заливка
 /// уезжала вниз на высоту своего прямоугольника. Эталон был снят с багованной
 /// отрисовки — потому баг и не ловился.
+///
+/// Умолчание «уместить по ширине» (`resolve_page_scale`, уровень 5) пересчитало
+/// широкие листы ещё раз: у `content-dense`, `size-20x100x1` и
+/// `layout-column-widths` теперь одна полоса столбцов, а масштаб ужат под
+/// ширину страницы.
 const DRAWING: &[(&str, u64)] = &[
     ("scale-ten-pages.xlsx", 0x3bf0_903d_d1d3_8661),
     ("edge-many-rows.xlsx", 0xc3e5_d8ee_f8a4_8594),
-    ("content-dense.xlsx", 0x5015_7836_f1fb_005b),
-    ("size-20x100x1.xlsx", 0x16ce_a0a3_828a_5d4b),
+    ("content-dense.xlsx", 0x25c9_aa94_f10e_ae39),
+    ("size-20x100x1.xlsx", 0x023e_4388_37ac_0e3e),
     ("values-strings.xlsx", 0x4d43_ca4c_6296_2b61),
-    ("layout-column-widths.xlsx", 0xe441_31e2_0ecc_ad13),
+    ("layout-column-widths.xlsx", 0xeccf_06e1_ec97_c654),
     ("edge-merged-styled.xlsx", 0x6463_5275_1058_4c2d),
     ("content-empty-sheet.xlsx", 0x615d_6ab3_aa58_b40f),
 ];
@@ -468,6 +491,9 @@ fn repeat_header_rows_on_every_page() {
 }
 
 /// A3: первые столбцы повторяются на каждой полосе столбцов.
+///
+/// `fit_to_height` — чтобы ширина осталась естественной: умолчание уместило бы
+/// лист в одну страницу по ширине, и полос для повтора не стало бы.
 #[test]
 fn first_columns_repeat_on_every_page() {
     const FIXTURE: &str = "size-30x30x2.xlsx";
@@ -475,6 +501,7 @@ fn first_columns_repeat_on_every_page() {
         FIXTURE,
         PageConfig {
             repeat_first_columns: 1,
+            fit_to_height: Some(1),
             ..PageConfig::default()
         },
     );
@@ -565,4 +592,365 @@ fn avoid_row_break_false_repeats_split_row() {
     // каждой странице, кроме последней).
     assert_eq!(plain_sections.iter().sum::<usize>(), 601 * 6);
     assert_eq!(split_sections.iter().sum::<usize>(), (601 + 12) * 6);
+}
+
+/// Синтетическая книга: лист `cols` столбцов на `rows` строк из чисел и
+/// заданные настройки печати.
+///
+/// Фикстур с `fitToPage` в `test-fixtures/xlsx` нет (генератор их не пишет), а
+/// зависеть от реальных книг пользователя тест не должен. Столбец здесь —
+/// дефолтные 64 px, строка — 20 px (`xlsx::layout`): на A4 с полями по
+/// умолчанию по ширине помещается 10 столбцов, масштаб 100 %.
+fn fit_workbook(cols: u32, rows: u32, print: PrintSettings) -> Workbook {
+    const PART: &str = "xl/worksheets/sheet1.xml";
+    let mut builder = WorksheetBuilder::new(PART);
+    for row in 0..rows {
+        for col in 0..cols {
+            builder
+                .push(
+                    row,
+                    Cell::new(col, 0, CellValue::Number(f64::from(row * cols + col))),
+                )
+                .expect("ячейка");
+        }
+    }
+    let content = SheetContent {
+        cells: builder.finish(),
+        print,
+        ..SheetContent::default()
+    };
+    let meta = WorksheetMeta {
+        name: "Лист1".to_owned(),
+        part: PART.to_owned(),
+        state: SheetState::Visible,
+    };
+    Workbook::new(
+        vec![Sheet::new(meta, content)],
+        SharedStrings::default(),
+        StyleTable::default(),
+        Theme::default(),
+        false,
+    )
+}
+
+/// Экспортировать синтетический лист с заданными настройками страницы.
+fn fit_export(book: &Workbook, page: PageConfig) -> Vec<u8> {
+    PdfExporter::new(PdfOptions {
+        page,
+        ..PdfOptions::default()
+    })
+    .export_xlsx_sheet(book, 0)
+    .expect("лист экспортируется")
+}
+
+/// Число страниц готового PDF.
+fn fit_pages(bytes: &[u8]) -> usize {
+    lopdf::Document::load_mem(bytes)
+        .expect("PDF разбирается lopdf")
+        .get_pages()
+        .len()
+}
+
+/// Умолчание — уместить по ширине: широкий лист печатается одной полосой
+/// столбцов, хотя без границ (контроль с естественной шириной) их две.
+#[test]
+fn wide_sheet_fits_width_by_default() {
+    let book = fit_workbook(12, 3, PrintSettings::default());
+    let natural = fit_export(
+        &book,
+        PageConfig {
+            fit_to_height: Some(1),
+            ..PageConfig::default()
+        },
+    );
+    assert_eq!(
+        fit_pages(&natural),
+        2,
+        "контроль: 12 столбцов по 64 px не влезают в 680 px одной полосы"
+    );
+    let default = fit_export(&book, PageConfig::default());
+    assert_eq!(
+        fit_pages(&default),
+        1,
+        "широкий лист не уместился по ширине"
+    );
+}
+
+/// `fitToPage` листа задаёт сетку страниц: `fitToWidth = 1`, `fitToHeight = 0`
+/// — одна полоса столбцов и столько страниц, сколько полос строк, а не
+/// произведение полос (без листовой настройки их 2 × 2).
+#[test]
+fn sheet_fit_to_page_drives_pagination() {
+    let book = fit_workbook(
+        12,
+        100,
+        PrintSettings {
+            fit_to_page: true,
+            fit_to_width: 1,
+            fit_to_height: 0,
+            ..PrintSettings::default()
+        },
+    );
+    // Явная ширина в три страницы 100 %-масштаб не трогает (12 столбцов и так
+    // влезают в две полосы): видно произведение полос — 2 × 3.
+    let natural = fit_export(
+        &book,
+        PageConfig {
+            fit_to_width: Some(3),
+            ..PageConfig::default()
+        },
+    );
+    assert_eq!(
+        fit_pages(&natural),
+        6,
+        "контроль: 2 полосы столбцов × 3 полосы строк"
+    );
+    let fitted = fit_export(&book, PageConfig::default());
+    assert_eq!(
+        fit_pages(&fitted),
+        2,
+        "одна полоса столбцов, две полосы строк"
+    );
+}
+
+/// `fitToWidth = 2` листа — две страницы по ширине там, где умолчание
+/// («уместить в одну») ужимает лист до одной: настройка листа сильнее.
+#[test]
+fn sheet_fit_to_width_counts_pages_wide() {
+    let book = fit_workbook(
+        20,
+        3,
+        PrintSettings {
+            fit_to_page: true,
+            fit_to_width: 2,
+            fit_to_height: 0,
+            ..PrintSettings::default()
+        },
+    );
+    assert_eq!(
+        fit_pages(&fit_export(&book, PageConfig::default())),
+        2,
+        "две страницы по ширине: 20 столбцов — две полосы по десять"
+    );
+    let plain = fit_workbook(20, 3, PrintSettings::default());
+    assert_eq!(
+        fit_pages(&fit_export(&plain, PageConfig::default())),
+        1,
+        "умолчание уместило бы те же 20 столбцов в одну страницу"
+    );
+}
+
+/// Явный `fit_to_width` вызывающего сильнее листового `fitToWidth`.
+#[test]
+fn explicit_fit_beats_sheet_fit() {
+    let book = fit_workbook(
+        27,
+        3,
+        PrintSettings {
+            fit_to_page: true,
+            fit_to_width: 1,
+            fit_to_height: 0,
+            ..PrintSettings::default()
+        },
+    );
+    let page = PageConfig {
+        fit_to_width: Some(3),
+        ..PageConfig::default()
+    };
+    assert_eq!(
+        fit_pages(&fit_export(&book, page)),
+        3,
+        "явные три страницы по ширине сильнее листовой одной"
+    );
+}
+
+/// Умолчание только ужимает: лист, помещающийся по ширине, печатается в
+/// 100 % — отрисовка та же, что с естественной шириной.
+#[test]
+fn narrow_sheet_keeps_full_scale() {
+    let book = fit_workbook(6, 3, PrintSettings::default());
+    let default = fit_export(&book, PageConfig::default());
+    let natural = fit_export(
+        &book,
+        PageConfig {
+            fit_to_height: Some(1),
+            ..PageConfig::default()
+        },
+    );
+    assert_eq!(fit_pages(&default), 1);
+    assert_eq!(
+        drawing_hash(&default),
+        drawing_hash(&natural),
+        "умолчание увеличило узкий лист"
+    );
+}
+
+/// Масштаб `scale` листа применяется, когда `fitToPage` нет, и даёт ту же
+/// отрисовку, что явный масштаб вызывающего.
+#[test]
+fn sheet_scale_applies_without_fit_to_page() {
+    let sheet_book = fit_workbook(
+        6,
+        3,
+        PrintSettings {
+            scale: 50,
+            ..PrintSettings::default()
+        },
+    );
+    let plain_book = fit_workbook(6, 3, PrintSettings::default());
+    let from_sheet = fit_export(&sheet_book, PageConfig::default());
+    let from_caller = fit_export(
+        &plain_book,
+        PageConfig {
+            scale: 0.5,
+            ..PageConfig::default()
+        },
+    );
+    assert_eq!(
+        drawing_hash(&from_sheet),
+        drawing_hash(&from_caller),
+        "листовые 50 % должны совпасть с явными 0.5"
+    );
+}
+
+/// Явный `scale` вызывающего сильнее листового `scale`.
+#[test]
+fn explicit_scale_beats_sheet_scale() {
+    let sheet_book = fit_workbook(
+        6,
+        3,
+        PrintSettings {
+            scale: 50,
+            ..PrintSettings::default()
+        },
+    );
+    let plain_book = fit_workbook(6, 3, PrintSettings::default());
+    let page = PageConfig {
+        scale: 0.25,
+        ..PageConfig::default()
+    };
+    assert_eq!(
+        drawing_hash(&fit_export(&sheet_book, page.clone())),
+        drawing_hash(&fit_export(&plain_book, page)),
+        "явные 0.25 должны перебить листовые 50 %"
+    );
+}
+
+/// Книга `rows` × `cols` из чисел с объединением (границы включительно), чья
+/// левая верхняя ячейка несёт текст `text`.
+fn merge_workbook(rows: u32, cols: u32, merge: (u32, u32, u32, u32), text: &str) -> Workbook {
+    const PART: &str = "xl/worksheets/sheet1.xml";
+    let (first_row, first_col, last_row, last_col) = merge;
+    let mut builder = WorksheetBuilder::new(PART);
+    for row in 0..rows {
+        for col in 0..cols {
+            let value = if row == first_row && col == first_col {
+                CellValue::InlineString(text.into())
+            } else {
+                CellValue::Number(f64::from(row * cols + col))
+            };
+            builder.push(row, Cell::new(col, 0, value)).expect("ячейка");
+        }
+    }
+    let mut content = SheetContent {
+        cells: builder.finish(),
+        ..SheetContent::default()
+    };
+    content.merges.push(doc_converter_xlsx::Range {
+        first: CellRef::new(first_row, first_col),
+        last: CellRef::new(last_row, last_col),
+    });
+    let meta = WorksheetMeta {
+        name: "Лист1".to_owned(),
+        part: PART.to_owned(),
+        state: SheetState::Visible,
+    };
+    Workbook::new(
+        vec![Sheet::new(meta, content)],
+        SharedStrings::default(),
+        StyleTable::default(),
+        Theme::default(),
+        false,
+    )
+}
+
+/// Сколько раз текст встречается на странице.
+fn text_count(doc: &lopdf::Document, page_id: ObjectId, needle: &str) -> usize {
+    page_text(doc, page_id).matches(needle).count()
+}
+
+/// Объединение шире полосы столбцов: на страницах-продолжениях часть таблицы
+/// не должна пропадать — объединение печатается на каждой полосе, которую
+/// пересекает.
+#[test]
+fn merged_cell_survives_column_bands() {
+    const TEXT: &str = "СКВОЗНОЙЗАГОЛОВОК";
+    // 30 столбцов по 64 px — три полосы по десять; A1:M1 (0..13) накрывает
+    // первую и вторую и не достаёт до третьей. `fit_to_height` оставляет ширину
+    // естественной: умолчание уместило бы лист в одну страницу по ширине, и
+    // полос не стало бы.
+    let book = merge_workbook(2, 30, (0, 0, 0, 12), TEXT);
+    let bytes = fit_export(
+        &book,
+        PageConfig {
+            fit_to_height: Some(1),
+            ..PageConfig::default()
+        },
+    );
+    let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
+    let pages = doc.get_pages();
+    assert_eq!(pages.len(), 3, "30 столбцов — три полосы");
+    // Полосы идут в порядке страниц: объединение нужно первой и второй, третьей
+    // (за границей 13-го столбца) — нет.
+    let expected = [1, 1, 0];
+    for ((number, page_id), expected) in pages.iter().zip(expected) {
+        assert_eq!(
+            text_count(&doc, *page_id, TEXT),
+            expected,
+            "страница {number}: объединение не в своей полосе"
+        );
+    }
+}
+
+/// Объединение выше полосы строк: его вторая половина печатается на
+/// странице-продолжении.
+#[test]
+fn merged_cell_survives_row_bands() {
+    const TEXT: &str = "ВЕРТИКАЛЬНОЕОБЪЕДИНЕНИЕ";
+    // 60 строк по 20 px не помещаются в область содержимого: полосы строк —
+    // 0..48 и 48..60; A41:A56 пересекает границу.
+    let book = merge_workbook(60, 2, (40, 0, 55, 0), TEXT);
+    let bytes = fit_export(&book, PageConfig::default());
+    let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
+    let pages = doc.get_pages();
+    assert_eq!(pages.len(), 2, "60 строк — две полосы");
+    for (number, page_id) in &pages {
+        assert_eq!(
+            text_count(&doc, *page_id, TEXT),
+            1,
+            "страница {number}: объединения нет в её полосе"
+        );
+    }
+}
+
+/// Объединение внутри одной полосы по-прежнему печатается один раз.
+#[test]
+fn merged_cell_inside_one_band_prints_once() {
+    const TEXT: &str = "ВНУТРИПОЛОСЫ";
+    let book = merge_workbook(2, 30, (0, 0, 0, 2), TEXT);
+    let bytes = fit_export(
+        &book,
+        PageConfig {
+            fit_to_height: Some(1),
+            ..PageConfig::default()
+        },
+    );
+    let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
+    let pages = doc.get_pages();
+    assert_eq!(pages.len(), 3, "30 столбцов — три полосы");
+    let total: usize = pages
+        .values()
+        .map(|page_id| text_count(&doc, *page_id, TEXT))
+        .sum();
+    assert_eq!(total, 1, "объединение внутри полосы размножилось");
 }

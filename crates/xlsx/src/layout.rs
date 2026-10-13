@@ -117,7 +117,9 @@ impl SheetLayout {
     #[must_use]
     pub fn with_margin(sheet: &Sheet, margin: u32) -> Self {
         let format = sheet.dims.format;
-        let used = sheet.cells.used_range();
+        // Границы — по видимым ячейкам: пустой стилевой запас листа за
+        // значениями не должен растягивать ни прокрутку, ни печать.
+        let used = sheet.visible_used_range();
         let (cols, rows) = used.map_or((1, 1), |range| {
             (
                 (range.last.col + 1 + margin).min(MAX_COL + 1),

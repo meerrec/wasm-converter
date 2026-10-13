@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 use crate::cellref::{CellRef, Range, MAX_COL, MAX_ROW};
 use crate::comments::Comment;
@@ -261,6 +262,174 @@ impl Worksheet {
             last: CellRef::new(last_row, max_col),
         })
     }
+
+    /// Границы ячеек, которые что-то рисуют: как [`Self::used_range`], но
+    /// невидимые ячейки границу не держат.
+    ///
+    /// Невидима ячейка без значения, текста и формулы, чей формат не даёт ни
+    /// заливки, ни рамки, ни начертания и которую не закрашивает условное
+    /// форматирование (`conditional`). Excel помечает так запас листа под ввод:
+    /// в книге «Уведомления» значения кончаются на столбце J, а 8649 пустых
+    /// ячеек доходят до IW — по ним лист печатался 248 почти пустыми страницами
+    /// вместо 35.
+    ///
+    /// Обрезаются только края: пустые строки и столбцы внутри границы
+    /// остаются — их держит геометрия таблицы.
+    ///
+    /// `conditional` — блоки условного форматирования этого листа
+    /// ([`Sheet::conditional_formatting`]): правило с дифференциальным форматом
+    /// может закрасить и пустую ячейку, тогда она видима.
+    #[must_use]
+    pub fn visible_used_range(
+        &self,
+        styles: &StyleTable,
+        conditional: &[ConditionalFormatting],
+    ) -> Option<Range> {
+        let painted = conditional_paint_ranges(styles, conditional);
+        let mut first_row = None;
+        let mut last_row = None;
+        let mut min_col = MAX_COL;
+        let mut max_col = 0;
+        for (row, cells) in self.rows() {
+            // Столбцы внутри строки отсортированы, а её крайние видимые ячейки
+            // ищутся с концов: заливка целой строки — это одна видимая ячейка на
+            // краю, а не двадцать тысяч проверок.
+            let Some(first) = cells
+                .iter()
+                .position(|cell| paints(styles, &painted, row, cell))
+            else {
+                continue;
+            };
+            let last = cells
+                .iter()
+                .rposition(|cell| paints(styles, &painted, row, cell))
+                .unwrap_or(first);
+            first_row.get_or_insert(row);
+            last_row = Some(row);
+            min_col = min_col.min(cells[first].col);
+            max_col = max_col.max(cells[last].col);
+        }
+        let (Some(first_row), Some(last_row)) = (first_row, last_row) else {
+            return None;
+        };
+
+        Some(Range {
+            first: CellRef::new(first_row, min_col),
+            last: CellRef::new(last_row, max_col),
+        })
+    }
+}
+
+/// Рисует ли ячейка строки `row` хоть что-нибудь.
+///
+/// `painted` — диапазоны условного форматирования, способного закрасить пустую
+/// ячейку; пустой срез — самое частое: правил на листе нет.
+fn paints(styles: &StyleTable, painted: &[Range], row: u32, cell: &Cell) -> bool {
+    // Формула — тоже содержимое: её результата модель не считает, но Excel
+    // покажет его, и печатать лист без такой ячейки нельзя.
+    if !matches!(cell.value, CellValue::Empty) || cell.formula.is_some() {
+        return true;
+    }
+    let format = styles.resolve(cell.style);
+    if styles
+        .fill(format.fill)
+        .is_some_and(|fill| fill.pattern != FillPattern::None)
+        || styles.border(format.border).is_some_and(border_paints)
+        || styles.font(format.font).is_some_and(font_paints)
+    {
+        return true;
+    }
+    let at = CellRef::new(row, cell.col);
+    painted.iter().any(|range| range.contains(at))
+}
+
+/// Пересекаются ли прямоугольники; общая ячейка — пересечение, касание
+/// границей (`A1:B2` и `B2:C3` делят ячейку B2) — тоже.
+fn overlaps(a: Range, b: Range) -> bool {
+    a.first.row <= b.last.row
+        && b.first.row <= a.last.row
+        && a.first.col <= b.last.col
+        && b.first.col <= a.last.col
+}
+
+/// Наименьший прямоугольник, накрывающий оба диапазона.
+fn enclosing(a: Range, b: Range) -> Range {
+    Range {
+        first: CellRef::new(a.first.row.min(b.first.row), a.first.col.min(b.first.col)),
+        last: CellRef::new(a.last.row.max(b.last.row), a.last.col.max(b.last.col)),
+    }
+}
+
+/// Видна ли рамка: любая сторона с линией.
+fn border_paints(border: &Border) -> bool {
+    [
+        border.left,
+        border.right,
+        border.top,
+        border.bottom,
+        border.diagonal,
+    ]
+    .iter()
+    .any(|side| side.style != BorderStyle::None)
+}
+
+/// Видно ли начертание: начертание — это то, что шрифт выделяет, — полужирный,
+/// курсив, подчёркивание, зачёркивание.
+///
+/// Гарнитура и кегль сюда не входят: у пустой ячейки их видно нечем, а так
+/// помечены целые прямоугольники под сетку — например, Arial 10 по всей
+/// таблице. Цвет — тем более: без текста он не рисует ничего.
+fn font_paints(font: &Font) -> bool {
+    font.bold || font.italic || font.underline || font.strike
+}
+
+/// Диапазоны условного форматирования, которые могут закрасить пустую ячейку.
+///
+/// Считать сами условия отсюда нечем — вычислитель живёт в `conditional` и
+/// требует книгу целиком, — да и не нужно: граница листа обязана быть
+/// безопасной, и лишняя полоса страницы дешевле отрезанной ячейки.
+fn conditional_paint_ranges(
+    styles: &StyleTable,
+    conditional: &[ConditionalFormatting],
+) -> Vec<Range> {
+    let mut ranges = Vec::new();
+    for block in conditional {
+        for rule in &block.rules {
+            if rule_paints_empty(styles, rule) {
+                ranges.extend(block.ranges.iter().map(|range| range.normalized()));
+            }
+        }
+    }
+    ranges
+}
+
+/// Может ли правило закрасить пустую ячейку.
+///
+/// Закрасить её может только дифференциальный формат: значения у ячейки нет, а
+/// `dxf` ложится на неё независимо от него. Шкалы, гистограммы и значки сюда не
+/// попадают — они считаются по числу, которого у пустой ячейки нет; как и
+/// правила без `dxf` или с видом, который модель не разбирает (`top10` и
+/// родственные): такие не применяет и `paint`.
+fn rule_paints_empty(styles: &StyleTable, rule: &ConditionalRule) -> bool {
+    let has_condition = match &rule.kind {
+        RuleKind::CellIs { formulas, .. } | RuleKind::Expression { formulas } => {
+            !formulas.is_empty()
+        }
+        _ => false,
+    };
+    has_condition
+        && rule
+            .dxf_id
+            .and_then(|id| styles.dxf(id))
+            .is_some_and(dxf_paints)
+}
+
+/// Задаёт ли `dxf` видимое: заливку, рамку или начертание.
+fn dxf_paints(dxf: &Dxf) -> bool {
+    dxf.fill
+        .is_some_and(|fill| fill.pattern != FillPattern::None)
+        || dxf.border.is_some_and(|border| border_paints(&border))
+        || dxf.font.as_ref().is_some_and(font_paints)
 }
 
 /// Сборщик листа.
@@ -1200,6 +1369,12 @@ pub struct Sheet {
     pub images: Vec<SheetImage>,
     /// Диаграммы листа.
     pub charts: Vec<SheetChart>,
+    /// Таблица стилей книги.
+    ///
+    /// Одна на книгу, отсюда `Arc`: копия на каждый лист — это лишние сотни
+    /// килобайт, а таблица нужна границам видимых ячеек
+    /// ([`Sheet::visible_used_range`]). Прикладывает её [`Workbook::new`].
+    styles: Option<Arc<StyleTable>>,
 }
 
 impl Sheet {
@@ -1218,7 +1393,66 @@ impl Sheet {
             conditional_formatting: content.conditional_formatting,
             images: content.images,
             charts: content.charts,
+            styles: None,
         }
+    }
+
+    /// Границы ячеек, которые что-то рисуют, — то, что лист занимает на экране
+    /// и на печати (см. [`Worksheet::visible_used_range`]).
+    ///
+    /// К ним добавляются объединения: объединённый диапазон рисуется целиком от
+    /// своей левой верхней ячейки — заливка и рамка якоря ложатся на весь
+    /// прямоугольник, `paint` кладёт под него фон и прячет внутри сетку, — так
+    /// что задевшее границу объединение расходится по ней целиком. Расширение
+    /// может задеть следующее объединение, поэтому проход повторяется, пока есть
+    /// что добавлять.
+    ///
+    /// Якорь объединения, лежащего в стороне от видимого, сам невидим, и границу
+    /// такое объединение не двигает: иначе пустое объединение в запасе листа
+    /// растягивало бы его, как растягивали невидимые ячейки. Отдельной проверки
+    /// «якорь видим» не нужно: видимый якорь — видимая ячейка, а значит, уже
+    /// лежит внутри границы и его объединение её задевает.
+    ///
+    /// У листа без таблицы стилей (собранного в обход [`Workbook::new`])
+    /// отвечает [`Worksheet::used_range`]: какие из его ячеек невидимы, без
+    /// таблицы не отличить, а обрезать лишнее дешевле, чем отрезать видимое.
+    #[must_use]
+    pub fn visible_used_range(&self) -> Option<Range> {
+        let mut range = match self.styles.as_deref() {
+            Some(styles) => self
+                .cells
+                .visible_used_range(styles, &self.conditional_formatting),
+            None => self.cells.used_range(),
+        }?;
+        loop {
+            let mut grown = false;
+            for merge in self.merges.ranges() {
+                if overlaps(range, merge) {
+                    let wider = enclosing(range, merge);
+                    grown |= wider != range;
+                    range = wider;
+                }
+            }
+            if !grown {
+                return Some(range);
+            }
+        }
+    }
+
+    /// Приложить к листу таблицу стилей книги; ею распоряжается
+    /// [`Workbook::new`] — таблица одна на всю книгу.
+    pub(crate) fn share_styles(&mut self, styles: &Arc<StyleTable>) {
+        self.styles = Some(Arc::clone(styles));
+    }
+
+    /// Лист с приложенной таблицей стилей.
+    ///
+    /// Тем же листом распоряжается [`Workbook::new`]; отдельный вход нужен
+    /// сборкам листа в обход книги — тестам и внешним потребителям модели.
+    #[must_use]
+    pub fn with_styles(mut self, styles: &StyleTable) -> Self {
+        self.styles = Some(Arc::new(styles.clone()));
+        self
     }
 
     /// Объединение, накрывающее ячейку.
@@ -1266,7 +1500,7 @@ pub struct WorkbookImage {
 pub struct Workbook {
     sheets: Vec<Sheet>,
     shared_strings: SharedStrings,
-    styles: StyleTable,
+    styles: Arc<StyleTable>,
     theme: Theme,
     date1904: bool,
     images: Vec<WorkbookImage>,
@@ -1274,6 +1508,10 @@ pub struct Workbook {
 
 impl Workbook {
     /// Собрать книгу из листов и общих таблиц.
+    ///
+    /// Листы получают общую таблицу стилей: без неё не отличить видимую ячейку
+    /// от пустышки, а границы видимых ячеек листа спрашивают раскладка и
+    /// печать ([`Sheet::visible_used_range`]).
     #[must_use]
     pub fn new(
         sheets: Vec<Sheet>,
@@ -1282,6 +1520,16 @@ impl Workbook {
         theme: Theme,
         date1904: bool,
     ) -> Self {
+        let styles = Arc::new(styles);
+        // Таблица прикладывается к листам до того, как они лягут в книгу:
+        // иначе её пришлось бы хранить по копии на лист.
+        let sheets = sheets
+            .into_iter()
+            .map(|mut sheet| {
+                sheet.share_styles(&styles);
+                sheet
+            })
+            .collect();
         Self {
             sheets,
             shared_strings,
@@ -1468,6 +1716,356 @@ mod tests {
                 first: CellRef::new(2, 3),
                 last: CellRef::new(2, 3),
             })
+        );
+    }
+
+    /// Индексы форматов из [`visibility_styles`].
+    ///
+    /// `ARIAL` повторяет `s="72"` из живой книги: гарнитура и кегль свои, а
+    /// заливки, рамки и начертания нет — пустая ячейка под ним невидима.
+    const FILL_FORMAT: u32 = 1;
+    const BORDER_FORMAT: u32 = 2;
+    const BOLD_FORMAT: u32 = 3;
+    const ARIAL_FORMAT: u32 = 4;
+
+    /// Таблица стилей для проверки видимости: 0 — по умолчанию, 1 — заливка,
+    /// 2 — рамка, 3 — полужирный, 4 — «пустой» формат живой книги.
+    fn visibility_styles() -> StyleTable {
+        use BTreeMap as Map;
+        StyleTable::new(
+            vec![
+                CellFormat::default(),
+                CellFormat {
+                    fill: 1,
+                    ..CellFormat::default()
+                },
+                CellFormat {
+                    border: 1,
+                    ..CellFormat::default()
+                },
+                CellFormat {
+                    font: 1,
+                    ..CellFormat::default()
+                },
+                CellFormat {
+                    font: 2,
+                    ..CellFormat::default()
+                },
+            ],
+            vec![
+                Font::default(),
+                bold_arial(),
+                Font {
+                    name: "Arial".into(),
+                    size: 10.0,
+                    ..Font::default()
+                },
+            ],
+            vec![
+                Fill::default(),
+                Fill {
+                    pattern: FillPattern::Solid,
+                    foreground: Color::Rgb(0x00_FF_00),
+                    ..Fill::default()
+                },
+            ],
+            vec![
+                Border::default(),
+                Border {
+                    left: BorderSide {
+                        style: BorderStyle::Thin,
+                        color: Color::None,
+                    },
+                    ..Border::default()
+                },
+            ],
+            Map::new(),
+        )
+    }
+
+    /// Лист как «Уведомления» в книге СУС: значения в A..J, а за ними пустой
+    /// стилевой запас до IW (столбца 256) — 43 строки значений и 8649 пустых
+    /// ячеек.
+    fn padded_sheet(padding_format: u32) -> Worksheet {
+        let mut b = WorksheetBuilder::new("sheet1.xml");
+        for row in 0..43 {
+            for col in 0..10 {
+                b.push(row, number(col, 1.0)).unwrap();
+            }
+            for col in 10..=256 {
+                b.push(row, Cell::new(col, padding_format, CellValue::Empty))
+                    .unwrap();
+            }
+        }
+        b.finish()
+    }
+
+    #[test]
+    fn visible_range_ignores_empty_styled_cells() {
+        let styles = visibility_styles();
+        let ws = padded_sheet(ARIAL_FORMAT);
+
+        // Ячейки доходят до IW...
+        assert_eq!(
+            ws.used_range(),
+            Some(Range {
+                first: CellRef::new(0, 0),
+                last: CellRef::new(42, 256),
+            })
+        );
+        // ...но рисуют только столбцы A..J: запас пуст, заливки и рамок у него нет.
+        assert_eq!(
+            ws.visible_used_range(&styles, &[]),
+            Some(Range {
+                first: CellRef::new(0, 0),
+                last: CellRef::new(42, 9),
+            })
+        );
+    }
+
+    #[test]
+    fn fill_border_and_font_effects_widen_the_range() {
+        let styles = visibility_styles();
+
+        for format in [FILL_FORMAT, BORDER_FORMAT, BOLD_FORMAT] {
+            let ws = padded_sheet(format);
+            assert_eq!(
+                ws.visible_used_range(&styles, &[]).unwrap().last,
+                CellRef::new(42, 256),
+                "формат {format} рисует и без значения"
+            );
+        }
+
+        // Кегль с гарнитурой без начертания пустую ячейку не рисуют.
+        let ws = padded_sheet(ARIAL_FORMAT);
+        assert_eq!(
+            ws.visible_used_range(&styles, &[]).unwrap().last,
+            CellRef::new(42, 9)
+        );
+    }
+
+    #[test]
+    fn conditional_format_shows_an_empty_cell() {
+        let styles = visibility_styles().with_dxfs(vec![Dxf {
+            fill: Some(Fill {
+                pattern: FillPattern::Solid,
+                foreground: Color::Rgb(0x00_FF_00),
+                ..Fill::default()
+            }),
+            ..Dxf::default()
+        }]);
+        let ws = padded_sheet(ARIAL_FORMAT);
+        let range = Range {
+            first: CellRef::new(0, 10),
+            last: CellRef::new(42, 256),
+        };
+        let rule = |dxf_id: Option<u32>, kind: RuleKind| ConditionalRule {
+            priority: 1,
+            stop_if_true: false,
+            dxf_id,
+            kind,
+        };
+        let cell_is = || RuleKind::CellIs {
+            operator: CellIsOperator::GreaterThan,
+            formulas: vec!["0".into()],
+        };
+
+        // Правило с `dxf` закрашивает и пустую ячейку.
+        let painted = [ConditionalFormatting {
+            ranges: vec![range],
+            rules: vec![rule(Some(0), cell_is())],
+        }];
+        assert_eq!(
+            ws.visible_used_range(&styles, &painted).unwrap().last,
+            CellRef::new(42, 256)
+        );
+
+        // А правило без `dxf` оформления не задаёт, и вид, который модель не
+        // разбирает, не применяется даже с ним.
+        for rules in [
+            vec![rule(None, cell_is())],
+            vec![rule(
+                Some(0),
+                RuleKind::Other {
+                    rule_type: "top10".into(),
+                },
+            )],
+        ] {
+            let blocks = [ConditionalFormatting {
+                ranges: vec![range],
+                rules,
+            }];
+            assert_eq!(
+                ws.visible_used_range(&styles, &blocks).unwrap().last,
+                CellRef::new(42, 9)
+            );
+        }
+    }
+
+    #[test]
+    fn visible_range_trims_only_edges() {
+        let styles = visibility_styles();
+        let mut b = WorksheetBuilder::new("sheet1.xml");
+        b.push(0, Cell::new(0, ARIAL_FORMAT, CellValue::Empty))
+            .unwrap();
+        b.push(0, Cell::new(20, ARIAL_FORMAT, CellValue::Empty))
+            .unwrap();
+        b.push(1, number(0, 1.0)).unwrap();
+        b.push(2, Cell::new(0, ARIAL_FORMAT, CellValue::Empty))
+            .unwrap();
+        b.push(2, Cell::new(30, ARIAL_FORMAT, CellValue::Empty))
+            .unwrap();
+        b.push(3, number(7, 2.0)).unwrap();
+        b.push(5, Cell::new(0, ARIAL_FORMAT, CellValue::Empty))
+            .unwrap();
+        let ws = b.finish();
+
+        // Строка 2 пуста, но она внутри границ — её держит геометрия таблицы.
+        // Строки 0 и 5 и столбцы 20 и 30 стоят за границами и обрезаются.
+        assert_eq!(
+            ws.visible_used_range(&styles, &[]),
+            Some(Range {
+                first: CellRef::new(1, 0),
+                last: CellRef::new(3, 7),
+            })
+        );
+    }
+
+    /// Лист из ячеек и объединений, со стилями книги: без них не отличить
+    /// видимую ячейку от пустышки.
+    fn merged_sheet(cells: Worksheet, merges: &[&str]) -> Sheet {
+        let mut content = SheetContent {
+            cells,
+            ..SheetContent::default()
+        };
+        for merge in merges {
+            content.merges.push(Range::parse(merge).unwrap());
+        }
+        Sheet::new(
+            WorksheetMeta {
+                name: "Лист1".into(),
+                part: "xl/worksheets/sheet1.xml".into(),
+                state: SheetState::Visible,
+            },
+            content,
+        )
+        .with_styles(&visibility_styles())
+    }
+
+    #[test]
+    fn merge_extends_the_range_to_its_full_rectangle() {
+        let mut b = WorksheetBuilder::new("sheet1.xml");
+        b.push(0, number(0, 1.0)).unwrap();
+        // Заливка стоит на якоре объединения: ею и рисуется весь диапазон,
+        // остальные его ячейки пусты.
+        b.push(0, Cell::new(1, FILL_FORMAT, CellValue::Empty))
+            .unwrap();
+        let sheet = merged_sheet(b.finish(), &["B1:D3"]);
+
+        // Без объединения граница кончалась бы залитой ячейкой B1...
+        assert_eq!(
+            sheet
+                .cells
+                .visible_used_range(&visibility_styles(), &[])
+                .unwrap()
+                .last,
+            CellRef::new(0, 1)
+        );
+        // ...а объединение держит её по всему своему прямоугольнику.
+        assert_eq!(
+            sheet.visible_used_range().unwrap(),
+            Range {
+                first: CellRef::new(0, 0),
+                last: CellRef::new(2, 3),
+            }
+        );
+    }
+
+    #[test]
+    fn merge_touching_the_range_expands_it_from_an_invisible_anchor() {
+        let mut b = WorksheetBuilder::new("sheet1.xml");
+        for row in 0..3 {
+            b.push(row, number(0, 1.0)).unwrap();
+        }
+        // Якорь A2 ничем не оформлен, но объединение задевает границу таблицы —
+        // и рисуется целиком.
+        let sheet = merged_sheet(b.finish(), &["A2:C2"]);
+
+        assert_eq!(sheet.visible_used_range().unwrap().last, CellRef::new(2, 2));
+    }
+
+    #[test]
+    fn merging_grows_the_range_until_nothing_touches_it() {
+        let mut b = WorksheetBuilder::new("sheet1.xml");
+        b.push(0, number(0, 1.0)).unwrap();
+        // Объединения записаны так, что расширение идёт против порядка списка:
+        // A1:C1 примыкает к ячейке, а C1:E2 — к границе, которую подвинуло
+        // первое.
+        let sheet = merged_sheet(b.finish(), &["C1:E2", "A1:C1"]);
+
+        assert_eq!(
+            sheet.visible_used_range().unwrap(),
+            Range {
+                first: CellRef::new(0, 0),
+                last: CellRef::new(1, 4),
+            }
+        );
+    }
+
+    #[test]
+    fn merge_away_from_the_visible_cells_does_not_widen_the_range() {
+        let mut b = WorksheetBuilder::new("sheet1.xml");
+        for col in 0..3 {
+            b.push(0, number(col, 1.0)).unwrap();
+        }
+        // Пустое объединение в стороне от таблицы не рисует ничего — границу не
+        // двигает, как не двигали бы невидимые ячейки.
+        let sheet = merged_sheet(b.finish(), &["F10:H12"]);
+
+        assert_eq!(
+            sheet.visible_used_range().unwrap(),
+            Range {
+                first: CellRef::new(0, 0),
+                last: CellRef::new(0, 2),
+            }
+        );
+    }
+
+    #[test]
+    fn sheet_takes_the_styles_of_its_workbook() {
+        let meta = WorksheetMeta {
+            name: "Лист1".into(),
+            part: "xl/worksheets/sheet1.xml".into(),
+            state: SheetState::Visible,
+        };
+        let content = SheetContent {
+            cells: padded_sheet(ARIAL_FORMAT),
+            ..SheetContent::default()
+        };
+
+        // Лист в обход книги таблицы стилей не знает: какие ячейки невидимы, без
+        // неё не отличить, и границы считаются по всем присутствующим ячейкам.
+        let bare = Sheet::new(meta.clone(), content.clone());
+        assert_eq!(bare.visible_used_range(), bare.cells.used_range());
+
+        // `Workbook::new` прикладывает таблицу — границы считаются по видимым.
+        let book = Workbook::new(
+            vec![bare],
+            SharedStrings::default(),
+            visibility_styles(),
+            Theme::default(),
+            false,
+        );
+        assert_eq!(
+            book.sheets()[0].visible_used_range().unwrap().last,
+            CellRef::new(42, 9)
+        );
+
+        // Явный вход — для сборок листа в обход книги.
+        let styled = Sheet::new(meta, content).with_styles(&visibility_styles());
+        assert_eq!(
+            styled.visible_used_range().unwrap().last,
+            CellRef::new(42, 9)
         );
     }
 
