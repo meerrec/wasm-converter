@@ -308,6 +308,9 @@ fileInput.addEventListener('change', () => {
     inputName = '';
     return;
   }
+  // Chromium не шлёт `change`, если выбран тот же самый файл: без сброса повторный выбор
+  // (в приёмке — вторая конвертация той же фикстуры) не запускал бы ничего.
+  fileInput.value = '';
   inputName = file.name;
   const extension = extensionOf(file.name);
   void file.arrayBuffer().then((buffer) => {
