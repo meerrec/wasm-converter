@@ -441,7 +441,7 @@ async function runConversions(page, result) {
   console.log(`docx → pdf: ${pdfLines[pdfKind]} за ${pdf.wallMs} мс`);
 
   const memoryAfter = await readMemory(page);
-  if (memory !== null && memoryAfter !== null) {
+  if (memoryAfter !== null) {
     result.memoryAfter = memoryAfter;
     console.log(`память после прогона: heap ${formatBytes(memoryAfter.used)}`);
   }
