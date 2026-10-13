@@ -13,7 +13,7 @@ experiments/lowa-spike/public/lowa/zeta.js filter=lfs diff=lfs merge=lfs -text
 # чтобы не раздувать историю. Харнесс раздаёт их как есть (`-text`: байты бинарные
 # и сжатые, любая нормализация переводов строк их испортит).
 # После клона нужен `git lfs pull` (см. README рядом с артефактами).
-experiments/x2t-spike/public/x2t/*.wasm filter=lfs diff=lfs merge=lfs -text
-experiments/x2t-spike/public/x2t/*.wasm.br filter=lfs diff=lfs merge=lfs -text
-experiments/x2t-spike/public/x2t/*.js filter=lfs diff=lfs merge=lfs -text
-experiments/x2t-spike/public/x2t/*.js.br filter=lfs diff=lfs merge=lfs -text
+vendor/x2t/*.wasm filter=lfs diff=lfs merge=lfs -text
+vendor/x2t/*.wasm.br filter=lfs diff=lfs merge=lfs -text
+vendor/x2t/*.js filter=lfs diff=lfs merge=lfs -text
+vendor/x2t/*.js.br filter=lfs diff=lfs merge=lfs -text
