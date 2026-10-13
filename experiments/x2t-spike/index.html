@@ -16,6 +16,11 @@
       #metrics { max-height: 12rem; }
       #preview { max-height: 22rem; }
       #log { max-height: 14rem; }
+      /* Просмотр — главный элемент страницы: холст занимает высоту окна и не сжимается метриками. */
+      #viewer { margin: 0.8rem 0; }
+      #viewer h2 { font-size: 1rem; margin: 0 0 0.3rem; }
+      #viewerHost { height: 70vh; min-height: 24rem; border: 1px solid #bbb; background: #f0f0f0; }
+      #viewerStatus { margin-left: 0.5rem; }
       button { padding: 0.2rem 0.6rem; }
       .hint { color: #444; }
     </style>
@@ -25,10 +30,13 @@
     <p class="hint">
       Конвертация форматов односторонним вызовом конвертера. PDF здесь нет: движок раскладки
       вырезан из сборки, поэтому <code>docx → pdf</code> не работает — подробности в
-      <code>packages/x2t/vendor/README.md</code>.
+      <code>packages/x2t/vendor/README.md</code>. Документ показывается нашим вьюером:
+      <code>.docx</code> — сразу при выборе файла, остальные форматы — после конвертации в
+      <code>docx</code> (модуль x2t поднимается по первой конвертации).
     </p>
     <p>
-      Состояние: <span id="status" class="status status-booting">подъём модуля</span>
+      Состояние: <span id="status" class="status status-booting">подъём страницы</span>
+      <span class="hint" id="moduleStatus">модуль x2t: не поднят</span>
     </p>
     <p>
       Файл:
@@ -53,6 +61,13 @@
       <button id="convert" type="button" disabled>Конвертировать</button>
       <button id="pdfCheck" type="button" disabled>Проверить PDF (ожидается отказ)</button>
     </p>
+    <section id="viewer">
+      <h2>
+        Просмотр документа
+        <span class="hint" id="viewerStatus">документ не открыт</span>
+      </h2>
+      <div id="viewerHost"></div>
+    </section>
     <p><a id="download" hidden>Скачать результат</a></p>
     <pre id="metrics"></pre>
     <pre id="preview"><span class="hint">Предпросмотр появится здесь.</span></pre>
