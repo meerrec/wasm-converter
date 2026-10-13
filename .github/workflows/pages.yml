@@ -65,8 +65,10 @@ jobs:
       - run: pnpm -F @doc-converter/example-viewer build
 
       # Обход COOP/COEP на Pages — это service worker, который отдаёт заголовки
-      # сам; без него SharedArrayBuffer не поднимется и пример покажет пустой
-      # лист. Публикуется результат сборки, так что проверяем его здесь, а не
+      # сам; с ним поднимается SharedArrayBuffer и транспорт `sab`. Без него
+      # вьюер не ломается: автовыбор уходит в first-class путь `bytes`
+      # (ADR-0021), проверено дым-прогоном S2.3 (docs/sprint-12/demo.md).
+      # Публикуется результат сборки, так что проверяем его здесь, а не
       # после деплоя.
       - name: check coi service worker
         run: |
