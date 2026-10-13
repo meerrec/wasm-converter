@@ -123,6 +123,33 @@ function fixtures(): Plugin {
   };
 }
 
+/**
+ * Возвращает точке входа `@doc-converter/browser-convert/worker` сайд-эффекты.
+ *
+ * Пакет объявлен как `sideEffects: false`, но его `/worker` — как раз голый
+ * сайд-эффект: модуль подписывает воркер на сообщения и ничего не экспортирует
+ * наружу. В сборке Vite верит `sideEffects: false` и выбрасывает модуль целиком —
+ * чанк воркера получается пустым, а конвертация молча не работает. Здесь резолв
+ * делегируется дальше по конвейеру, и только флаг сайд-эффектов переопределяется:
+ * пакету следовало бы объявить исключение самому.
+ *
+ * Подключается в `worker.plugins`: воркеры собираются отдельным прогоном Rollup,
+ * и плагины из общего списка `plugins` в него не попадают.
+ */
+function keepConvertWorkerSideEffects(): Plugin {
+  return {
+    name: 'doc-converter-keep-convert-worker-side-effects',
+    enforce: 'pre',
+    async resolveId(source, importer, options) {
+      if (source !== '@doc-converter/browser-convert/worker') return null;
+      // skipSelf: без него резолв вернулся бы в этот же плагин и зациклился.
+      const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
+      if (resolved === null) return null;
+      return { id: resolved.id, moduleSideEffects: true };
+    },
+  };
+}
+
 export default defineConfig({
   // Pages отдаёт проект по `/wasm-converter/`, значение базы приходит из
   // workflow; локально и в тестах база остаётся корнем.
@@ -141,5 +168,8 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
-  worker: { format: 'es' },
+  worker: {
+    format: 'es',
+    plugins: () => [keepConvertWorkerSideEffects()],
+  },
 });

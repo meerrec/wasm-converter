@@ -5,14 +5,15 @@
   "type": "module",
   "description": "Пример просмотрщика DOCX и XLSX в одном приложении: воркер, OffscreenCanvas и наш парсер.",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "node scripts/copy-x2t.mjs && vite",
+    "build": "node scripts/copy-x2t.mjs && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "playwright test",
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@doc-converter/browser-convert": "workspace:*",
     "@doc-converter/core": "workspace:*",
     "@doc-converter/wasm-docx": "workspace:*",
     "@doc-converter/wasm-pdf": "workspace:*",

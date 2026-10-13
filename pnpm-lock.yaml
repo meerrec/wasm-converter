@@ -47,6 +47,9 @@ importers:
 
   examples/viewer:
     dependencies:
+      '@doc-converter/browser-convert':
+        specifier: workspace:*
+        version: link:../../packages/browser-convert
       '@doc-converter/core':
         specifier: workspace:*
         version: link:../../packages/core
