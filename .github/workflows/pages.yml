@@ -28,7 +28,12 @@ jobs:
     env:
       VITE_BASE: /${{ github.event.repository.name }}/
     steps:
+      # Артефакты x2t (packages/x2t/vendor) лежат в Git LFS: без их выкачки
+      # в dist уедут пойнтеры (~130 Б), и страница конвертера молча потеряет
+      # работоспособность.
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -58,11 +63,27 @@ jobs:
       # пробрасывает незадекларированные env-переменные, а VITE_BASE как раз такая.
       - run: pnpm -F @doc-converter/core build
 
+      # И browser-convert с зависимостью x2t: их exports указывают в dist/,
+      # которого в репозитории нет, — Vite резолвит пакеты оттуда.
+      - run: pnpm -F @doc-converter/browser-convert... build
+
       # Пример один — объединённый просмотрщик, и публикуется он целиком, как
       # есть: XLSX в отдельном DOCX-подкаталоге держать больше не нужно. Сайт
-      # живёт по адресу из README (`/<имя-репозитория>/`), а обе страницы —
-      # `/#/docx` («Слово») и `/#/xlsx` («ДваИксель»); корень ведёт на `/#/docx`.
+      # живёт по адресу из README (`/<имя-репозитория>/`), а страницы —
+      # `/#/docx` («Слово»), `/#/xlsx` («ДваИксель») и `/#/convert`
+      # («Конвертер»); корень ведёт на `/#/docx`.
       - run: pnpm -F @doc-converter/example-viewer build
+
+      # Артефакты x2t копируются в dist из vendor, только если LFS выкачан:
+      # при пойнтерах копирование скипается, и страница конвертера молча
+      # деградирует. Гейт: без рабочих артефактов деплой не публикуем.
+      - name: check x2t assets
+        run: |
+          set -euo pipefail
+          f=examples/viewer/dist/x2t/x2t.wasm
+          [ -s "$f" ] || { echo "::error::$f не попал в публикуемый каталог — LFS не выкачан?"; exit 1; }
+          size=$(wc -c < "$f")
+          [ "$size" -gt 1048576 ] || { echo "::error::$f подозрительно мал ($size Б) — похоже на LFS-пойнтер"; exit 1; }
 
       # Обход COOP/COEP на Pages — это service worker, который отдаёт заголовки
       # сам; с ним поднимается SharedArrayBuffer и транспорт `sab`. Без него
