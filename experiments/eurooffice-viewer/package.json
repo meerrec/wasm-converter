@@ -1,0 +1,12 @@
+{
+  "name": "eurooffice-viewer-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Спайк: self-host просмотрщика на стеке @kreijstal/eurooffice (движок ONLYOFFICE/Euro-Office в браузере)",
+  "scripts": {
+    "assemble": "node scripts/assemble.mjs",
+    "serve": "node scripts/serve.mjs",
+    "check": "node tools/viewer-check.mjs"
+  }
+}
