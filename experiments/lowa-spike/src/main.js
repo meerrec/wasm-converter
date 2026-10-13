@@ -284,7 +284,15 @@ export function status() {
   return { ...state, log: [...state.log] };
 }
 
-window.lowaHarness = { boot, probe, convertFile, readPdfBase64, status };
+window.lowaHarness = {
+  boot,
+  probe,
+  convertFile,
+  readPdfBase64,
+  status,
+  // Низкоуровневый ход к офису: диагностика и отрицательные проверки (например, путь вне memfs).
+  request: (msg, timeoutMs) => send(msg, timeoutMs),
+};
 
 // Страница поднимает офис сразу: пользователю остаётся выбрать файл.
 document.getElementById('file').addEventListener('change', (event) => {
