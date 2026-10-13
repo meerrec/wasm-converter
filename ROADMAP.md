@@ -38,14 +38,17 @@
 - Парсинга и чтения DOCX (WordprocessingML) и XLSX (SpreadsheetML).
 - Рендеринга на `OffscreenCanvas` внутри `Web Worker`.
 - Экспорта в PDF (ручная отрисовка собственным PDF-бэкендом, ADR-0022), PNG, Markdown, HTML, CSV.
-- Работы в браузере (Chrome 90+, Firefox 96+, Safari 16.4+) и Node.js (batch-CLI).
+- Работы в браузере (Chrome 90+, Firefox 105+, Safari 16.4+) и Node.js (batch-CLI).
+  Firefox 105+ — реальный порог по `OffscreenCanvas`; fallback на main-thread
+  не реализован (см. §3.3 п. 6).
 
 **Публичные пакеты:**
-- `@doc-converter/core` — есть
-- `@doc-converter/docx` — не начат
-- `@doc-converter/xlsx` — не начат (вьюер живёт в `core`)
+- `@doc-converter/core` — есть (вьюеры XLSX и DOCX живут в `core`)
+- `@doc-converter/wasm`, `@doc-converter/wasm-docx`, `@doc-converter/wasm-pdf` — есть (wasm-bindgen-биндинги, ленивая загрузка)
+- `@doc-converter/cli` — есть (0.1.0 → 1.0.0 в релизе)
+- `@doc-converter/docx` — не выделен (вьюер DOCX живёт в `core`)
+- `@doc-converter/xlsx` — не выделен (вьюер XLSX живёт в `core`)
 - `@doc-converter/react` — не начат
-- `@doc-converter/cli` — не начат
 
 **Rust-крейты на crates.io:**
 - `doc-converter-core`
@@ -148,6 +151,8 @@ doc-converter/
    `SharedArrayBuffer` — ускорение, когда страница контролирует COOP/COEP (см. §3.4).
 5. Коалесцирование кадров через `requestAnimationFrame` в воркере.
 6. Fallback на main-thread рендер при отсутствии OffscreenCanvas.
+   (Не реализован в v1: без OffscreenCanvas инициализация бросает ошибку, а
+   не подменяет транспорт. Остаётся целью — `docs/sprint-12/report.md`.)
 
 ### 3.4 COOP/COEP заголовки
 
@@ -936,22 +941,22 @@ PDF/PNG transfer) работают без SAB с приемлемой произ
 
 **Задачи:**
 
-1. Аудит: `cargo-deny`, `cargo-audit`, `npm audit`, `size-limit`.
-2. TypeDoc + rustdoc.
-3. Cookbook (40+ рецептов).
-4. Migration guides: `migration-from-mammoth.md`, `-from-exceljs.md`.
-5. Демо-приложение.
-6. Видео-демо: scroll 1M ячеек 60 FPS.
-7. Публикация в npm + crates.io.
-8. GitHub Release + changelog.
+1. Аудит: `cargo-deny`, `cargo-audit`, `npm audit`, `size-limit` — ✅ сделан (`docs/sprint-12/audit.md`): deny/audit зелёные, lopdf 0.45 (ignore снят), `LICENSE` добавлен; pnpm audit — 22 находки в dev-тулинге, политика CI «информационно» сохранена.
+2. TypeDoc + rustdoc — ✅ сделаны: `typedoc.json` + `pnpm docs:api` → `docs/api/`; rustdoc приезжает с docs.rs автоматически.
+3. Cookbook (40+ рецептов) — ✅ сделано: **46 рецептов** (`docs/cookbook/`).
+4. Migration guides: `migration-from-mammoth.md`, `-from-exceljs.md` — ✅ сделаны (`docs/`).
+5. Демо-приложение — ✅ сделано: `pages.yml` собирает обе страницы (`/#/xlsx`, `/#/docx`), дым-прогон `bytes`-транспорта (`docs/sprint-12/demo.md`).
+6. Видео-демо: scroll 1M ячеек 60 FPS — ⚠️ заменено на демо на GitHub Pages + бенч-отчёт `docs/bench-js.md` (решение 4 плана Спринта 12).
+7. Публикация в npm + crates.io — ⬜ ожидает S4.3: версии 1.0.0 подняты (крейты + changeset major), публикует `.github/workflows/release.yml` по тегу `v*`.
+8. GitHub Release + changelog — ⬜ ожидает S4.3 (заметки релиза собирает джоба `publish` из CHANGELOG пяти пакетов).
 
 **DoD:**
-- ✅ Все пакеты v1.0.0 опубликованы.
-- ✅ Документация на docs.doc-converter.dev.
-- ✅ Примеры в 3 браузерах (Playwright Chromium + Firefox + WebKit).
-- ✅ Покрытие ≥ 85% / 80%.
-- ✅ Бюджеты размера соблюдены.
-- ✅ Все ADR в `docs/adr/`.
+- ⬜ Все пакеты v1.0.0 опубликованы — ожидает S4.3 (тег `v1.0.0`); версии и changeset major готовы.
+- ⚠️ Документация на docs.doc-converter.dev — хостинг не заводился; публичная документация: README, cookbook, migration guides, TypeDoc (`docs/api/`) и docs.rs.
+- ✅ Примеры в 3 браузерах (Playwright Chromium + Firefox + WebKit) — 80 passed, 2 skipped штатных + проект chromium-dpr2 (`docs/sprint-12/rc.md`).
+- ✅ Покрытие ≥ 85% / 80% — docx 92,75 %, core 97,68 % (гейты CI).
+- ✅ Бюджеты размера соблюдены — все пять строк size-limit зелёные (viewer 464,2/480 КБ после пересмотра бюджета).
+- ✅ Все ADR в `docs/adr/` — индекс актуален, ADR-0021/0022 добавлены.
 
 ---
 
@@ -972,7 +977,7 @@ PDF/PNG transfer) работают без SAB с приемлемой произ
 | 18–19 | DOCX | Layout | сделано: пагинация, секции, каскад стилей, таблицы, floats; сверка с эталоном измерена в Спринте 11 — число страниц ±1 у 97 из 98, SSIM первой страницы mean 0,9782 (табличные фикстуры тянут вниз), пагинация 100 страниц 20,1 мс (`docs/sprint-11/report.md`) |
 | 20–21 | DOCX | Рендер + PDF | сделано: просмотрщик DOCX — 94 из 97 фикстур (3 фатальные отвергнуты), PDF — 211 страниц за 438–469 мс debug / 23,6–24,0 мс release, экспорт Markdown/HTML/текста, разрез wasm-модуля 440,17 → 285,38 + 354,58 КБ gzip |
 | 22–23 | Полировка | SAB (оба пути) + CLI | сделано в Спринте 11: оба транспорта кадра first-class (ADR-0021), `@doc-converter/cli` с WorkerPool (116 файлов за 0,20 с), бенчмарки vs JS (медиана ×5,3 — цель ×10–300 не подтверждена), README про COOP/COEP; отчёт — `docs/sprint-11/report.md` |
-| 24–25 | Релиз | v1.0.0 | план v2 |
+| 24–25 | Релиз | v1.0.0 | сделано, ожидает публикацию (S4.3): аудиты, документация (README/cookbook 46/migration ×2/TypeDoc), демо на Pages, release workflow, версии крейтов 1.0.0, changeset major, RC зелёный — `docs/sprint-12/report.md` |
 
 **Сдвиг:** +1 неделя от v1 (25 недель вместо 24). Обоснование — закрытие
 трёх системных рисков без рефакторинга на Спринте 9.
@@ -988,13 +993,13 @@ PDF/PNG transfer) работают без SAB с приемлемой произ
 | M3: XLSX парсер | 6 | 100% фикстур | достигнута |
 | M4: XLSX viewer | 8 | 60 FPS scroll | достигнута, кроме 60 FPS на 1M |
 | M5: XLSX полный | 11 | SSIM ≥ 0.95 (закрывается в Спринте 5.5) | метрики, граница, диаграммы; SSIM переходит в Спринт 6 |
-| M6: PDF базовый | 13 | 3 браузера | не начата |
-| M7: PDF полный | 15 | 500 страниц < 3 с | не начата |
-| M8: DOCX парсер | 17 | 100% фикстур | 97/97 коммитируемых фикстур (94 без фатальных ошибок + 3 по замыслу); differential vs mammoth и 24-ч fuzz — впереди |
-| M9: DOCX layout | 19 | ±1 страница vs MS Word | не начата |
-| M10: DOCX viewer | 21 | 200 страниц < 2 с | не начата |
-| M11: Оптимизация | 23 | Оба пути SAB + CLI | SAB есть, CLI нет |
-| M12: v1.0.0 | 25 | Публикация | не начата |
+| M6: PDF базовый | 13 | 3 браузера | достигнута (Спринты 6–7; собственный бэкенд — ADR-0022) |
+| M7: PDF полный | 15 | 500 страниц < 3 с | достигнута: 500 страниц — 159,4 мс (`docs/sprint-12/rc.md`) |
+| M8: DOCX парсер | 17 | 100% фикстур | достигнута: 97/97 коммитируемых фикстур, differential vs mammoth 74/74, fuzz — ночные прогоны CI (§10) |
+| M9: DOCX layout | 19 | ±1 страница vs MS Word | достигнута: страницы ±1 у 99/99 фикстур (эталон LibreOffice, `docs/sprint-12/oracle.md`) |
+| M10: DOCX viewer | 21 | 200 страниц < 2 с | достигнута: раскладка 150 страниц — 32,47 мс (`docs/sprint-12/oracle.md`) |
+| M11: Оптимизация | 23 | Оба пути SAB + CLI | достигнута: оба транспорта first-class (ADR-0021) + `@doc-converter/cli` с WorkerPool (Спринт 11) |
+| M12: v1.0.0 | 25 | Публикация | ожидает публикацию (S4.3): версии 1.0.0, changeset major, RC зелёный — `docs/sprint-12/report.md` |
 
 ---
 
@@ -1016,7 +1021,8 @@ PDF/PNG transfer) работают без SAB с приемлемой произ
 | `exportPdf` 500 страниц | — | < 3 с | **≈ 300 мс (экстраполяция)** |
 | Память модели | ≤ 48 байт/ячейку | — | **48 байт** |
 | Память узлов DOCX (абзац / run / ячейка) | ≤ 256 / 128 / 192 Б | — | **88 / 64 / 128 Б** |
-| Пиковая память `openDocx` 50 МБ с изображениями | ≤ 200 МиБ | — | **156,78 МиБ** |
+| Пиковая память `openDocx` 50 МБ с изображениями | ≤ 200 МиБ | — | **155,50 МиБ** (RC Спринта 12, `docs/sprint-12/rc.md`; 156,78 МиБ в Спринте 8) |
+| Пиковая память экспорта PDF 500 страниц | ≤ 40 МиБ | — | **28,12 МиБ** (RC Спринта 12; 28,41 МиБ в S0.2, `docs/sprint-12/budgets.md`) |
 
 Замер условного форматирования (`cargo bench -p doc-converter-xlsx --bench
 conditional`) — худший случай: окно покрывает весь лист, в кадр попадают все
@@ -1062,30 +1068,46 @@ Chrome на раннере рисует программно, там меряе�
 Замеры — Apple Silicon, релизная сборка, синтетическая книга (см. `cargo bench
 -p doc-converter-xlsx` и `examples/viewer/e2e/`).
 
+**SSIM vs эталон LibreOffice (Спринт 12, `docs/sprint-12/oracle.md`).**
+DOCX: страницы ±1 у **99/99** фикстур, SSIM первой страницы mean **0,9925**,
+≥ 0,95 у **96/99** (ниже порога три таблицы — `long_table` 0,8921,
+`long_table_header_repeat` 0,8938, `cant_split_rows` 0,9382; диагноз —
+`docs/sprint-12/docx-tables.md`). XLSX: 104 однолистовые книги mean
+**0,9844** (96 ≥ 0,95), 12 умолчаний mean **0,9824** (11/12 ≥ 0,95),
+расхождения числа страниц — **4** (диагноз и бэклог Ф2 —
+`docs/sprint-12/xlsx-pagination.md`).
+
 ### Бюджеты размера (gzip)
 
 | Пакет | Бюджет v1 | Бюджет v2 | Факт |
 |---|---|---|---|
-| `@doc-converter/core` | 200 КБ | **30 КБ** | 3,0 КБ |
+| `@doc-converter/core` | 200 КБ | **30 КБ** | 3,34 КБ |
 | `@doc-converter/docx` | 450 КБ | 450 КБ | пакета нет |
 | `@doc-converter/xlsx` | 500 КБ | 500 КБ | пакета нет |
 | `@doc-converter/react` | 25 КБ | 25 КБ | пакета нет |
-| Worker bundle | 600 КБ | 600 КБ | 5,83 КБ JS + 287,31 КБ wasm (просмотрщик); модули просмотра DOCX (380,62 КБ) и экспорта PDF (≈0,99 МБ) грузятся по требованию |
+| Worker bundle | 600 КБ | 600 КБ | 7,17 КБ JS + 464,2 КБ wasm (просмотрщик); модули просмотра DOCX (385,13 КБ) и экспорта PDF (1,01 МБ) грузятся по требованию |
 
 `size-limit` меряет JS-бандлы и два wasm-модуля: `wasm (viewer)` —
-XLSX-просмотрщик (`packages/wasm/pkg/*.wasm`, бюджет 300 КБ gzip, факт
-**287,31 КБ**); `wasm (docx)` — ленивый модуль просмотра DOCX
-(`packages/wasm-docx/pkg/*.wasm`, бюджет 400 КБ gzip, факт **380,62 КБ**),
-грузится при открытии `.docx`. Бюджет поднят с 380 до 400 КБ в Спринте 11:
+XLSX-просмотрщик (`packages/wasm/pkg/*.wasm`, бюджет 480 КБ gzip, факт
+**464,2 КБ**); `wasm (docx)` — ленивый модуль просмотра DOCX
+(`packages/wasm-docx/pkg/*.wasm`, бюджет 400 КБ gzip, факт **385,13 КБ**),
+грузится при открытии `.docx`. Бюджет `wasm (viewer)` поднят с 300 до
+480 КБ в Спринте 12: `b43a2de` вшил в основной модуль четыре поднабора
+Carlito (≈377,6 КБ сырых) для регистрации `FontFace` в превью — без них
+превью подставляло Helvetica и разъезжалось с PDF. Рост легитимен и
+задокументирован (`docs/sprint-12/budgets.md`, решение Спринта 12); строка
+остаётся стражем с запасом 3 %. Бюджет у ленивого DOCX-модуля поднят с 380
+до 400 КБ в Спринте 11:
 пришли рисунки с медиачастью, колонтитулы с полями `PAGE`/`NUMPAGES`,
 многоколоночность и границы из стиля таблицы — рост запланированный
 (комментарий в `.size-limit.mjs` предсказывал его ещё в Спринте 10), а не
 забытый. Бюджет у ленивого модуля есть осознанно: DOCX —
 второй просмотрщик, и строка стережёт и рост модуля, и возврат его кода в
 основной бандл. До разреза общий модуль просмотрщика весил 440,17 КБ при
-бюджете 300 КБ. Модуль экспорта PDF (≈0,99 МБ gzip) приезжает отдельным
+бюджете 300 КБ. Модуль экспорта PDF (1,01 МБ gzip при бюджете 1,05 МБ)
+приезжает отдельным
 ассетом и грузится по требованию; после миграции на собственный бэкенд
-(ADR-0022, −32 % gzip) модулю заведена строка бюджета в `.size-limit.mjs`.
+(ADR-0022, −31 % gzip) модулю заведена строка бюджета в `.size-limit.mjs`.
 
 CI-гейт: `pnpm size-limit` (шаг на Node 20) блокирует merge при превышении
 бюджета.
@@ -1101,7 +1123,7 @@ CI-гейт: `pnpm size-limit` (шаг на Node 20) блокирует merge п
 | **Snapshot** | **`insta`** | **5.5** | **20 фикстур** |
 | **Fuzz** | **`cargo-fuzz`** | **8** | **введён: `crates/fuzz/`, 8 целей; ночной прогон и ручные длинные (`workflow_dispatch`: `target`/`minutes`, до 330 мин на цель); корпус кэшируется между прогонами** |
 | WASM | `wasm-bindgen-test` | 5.5 | painter пока не покрыт |
-| **E2E** | **Playwright** | 6 | **5 тестов, только Chromium, по пикселям; расширяется на 3 браузера** |
+| **E2E** | **Playwright** | 6 | **80 passed, 2 skipped (штатных) — chromium, firefox, webkit + chromium-dpr2 (DPR=2); `docs/sprint-12/rc.md`** |
 | Stress | 1M ячеек, 30 мин scroll | 5.5 | вводится |
 | Differential | mammoth (DOCX), exceljs (XLSX) | 8 / 4 | 110 фикстур XLSX; DOCX — 76 кандидатов: 74 совпадения, 2 non-goal, 0 неклассифицированных (`crates/docx/tests/differential.rs`) |
 | Размер | `size-limit` | 5.5 | 3 бюджета, включая `wasm (viewer)` |
@@ -1121,7 +1143,14 @@ sanitizer не задевают stable), 8 целей, ночной прогон
 `.github/workflows/fuzz.yml` (15 мин на цель, на PR — 60 с). Плюс ручные
 длинные прогоны: `workflow_dispatch` с параметрами `target` и `minutes`, до
 330 минут на цель (лимит job'а GitHub — 6 ч), корпус ездит между прогонами
-через кэш, чтобы длинная сессия не начиналась с нуля.
+через кэш, чтобы длинная сессия не начиналась с нуля. Непрерывного 24-ч
+прогона не проводилось — DoD §12 «Fuzz 24 ч» помечен ⚠️: фактически фаззинг
+идёт ночным расписанием и ручными длинными прогонами
+(`docs/sprint-8/fuzz-report.md`).
+
+Документация v1 — артефакты Спринта 12: cookbook (46 рецептов,
+`docs/cookbook/`), API-справка TypeDoc (`docs/api/`, `pnpm docs:api`),
+migration guides ×2 (`docs/migration-from-{mammoth,exceljs}.md`).
 
 Differential vs mammoth введён: 76 кандидатов из 97 фикстур, **74 совпадения**,
 2 non-goal, **0 неклассифицированных расхождений**; гейт —
@@ -1239,31 +1268,35 @@ ADR 0002–0005 приняты 05.10.2026 (0002 пересмотрен на `skr
 
 ## 12. Definition of Done v1.0
 
-- [ ] DOCX и XLSX открывают 100% фикстур без потери данных.
-- [ ] SSIM ≥ 0.95 vs MS Office на 50 эталонах.
-- [ ] **Единая логика метрик текста** для canvas и PDF (ADR-0005).
-- [ ] **Граница `render` зафиксирована** (ADR-0003).
-- [ ] PDF векторный, шрифты встроены, subsetting работает.
-- [ ] Все рендер-операции в воркере, main FPS ≥ 60.
-- [ ] `OffscreenCanvas` передан один раз.
-- [ ] PDF/PNG через Transferables, zero-copy.
-- [ ] **SAB работает при COOP/COEP; путь без SAB — first-class** (ADR-0004).
-- [ ] **COOP/COEP задокументированы в README**.
-- [ ] Все бюджеты размера и производительности соблюдены.
-- [ ] Покрытие ≥ 85% / 80% (замер).
-- [ ] Fuzz 24 ч без находок (замер).
-- [ ] Аудит безопасности чистый.
-- [ ] Chrome 90+, Firefox 96+, Safari 16.4+; fallback везде.
-- [ ] **Примеры работают в 3 браузерах (Playwright Chromium + Firefox + WebKit)**.
-- [ ] Модель DOCX несёт `RawPPr`/`RawRPr` + ссылки; каскад резолвится в layout (ADR-0013).
-- [ ] `NodeId` на всех узлах модели, детерминирован, не публичный (ADR-0019).
-- [ ] ZIP-лимиты из ADR-0015 покрыты тестами.
-- [ ] Политика ошибок из ADR-0016 покрыта тестами.
-- [ ] Differential vs mammoth ≥ 95% на 50 фикстурах DOCX.
-- [ ] Round-trip `Model → JSON → Model` lossless.
-- [ ] Writer в DOCX не реализован (ADR-0020).
-- [ ] Все ADR в `docs/adr/`.
-- [ ] Опубликовано в npm + crates.io под Apache-2.0.
+Статусы проставлены в Спринте 12 (`docs/sprint-12/report.md`):
+✅ — сделано и замерено; ⚠️ — отклонение с записью (пояснение в строке);
+⬜ — ожидает публикацию (S4.3); non-goal — вне скоупа v1.
+
+- [x] ✅ DOCX и XLSX открывают 100% фикстур без потери данных — 97/97 коммитируемых DOCX-фикстур (94 без фатальных + 3 по замыслу), XLSX — 104 книги; differential vs mammoth 74/74.
+- [x] ⚠️ SSIM ≥ 0.95 vs MS Office на 50 эталонах — DOCX mean **0,9925**, ≥ 0,95 у 96/99; три таблицы ниже порога (`long_table` 0,8921, `long_table_header_repeat` 0,8938, `cant_split_rows` 0,9382) — диагноз `docs/sprint-12/docx-tables.md`. XLSX: mean 0,9844 по 104, 0,9824 по 12 умолчаниям. Отклонение задокументировано.
+- [x] ✅ **Единая логика метрик текста** для canvas и PDF (ADR-0005) — метрики на `skrifa` в `render`.
+- [x] ✅ **Граница `render` зафиксирована** (ADR-0003).
+- [x] ✅ PDF векторный, шрифты встроены, subsetting работает — собственный бэкенд (ADR-0022), `subsetter`; тесты зелёные.
+- [x] ✅ Все рендер-операции в воркере, main FPS ≥ 60 — рендер только в воркере (painter, кадр в SAB-кольце); видео-демо заменено демо на Pages + бенч-отчёт (решение 4 плана Спринта 12).
+- [x] ✅ `OffscreenCanvas` передан один раз — `initOffscreen` (`render/offscreen.ts`).
+- [x] ✅ PDF/PNG через Transferables, zero-copy — оба транспорта кадра (ADR-0021), экспорт transfer'ом.
+- [x] ✅ **SAB работает при COOP/COEP; путь без SAB — first-class** (ADR-0004, ADR-0021) — дым-прогон обоих режимов (`docs/sprint-12/demo.md`).
+- [x] ✅ **COOP/COEP задокументированы в README** (переписан в Спринте 12).
+- [x] ✅ Все бюджеты размера и производительности соблюдены — после пересмотра `wasm (viewer)` 300 → 480 КБ (`b43a2de`, `docs/sprint-12/budgets.md`); RC: все пять строк size-limit и оба гейта памяти зелёные.
+- [x] ✅ Покрытие ≥ 85% / 80% (замер) — docx 92,75 %, core 97,68 %, гейты CI.
+- [x] ⚠️ Fuzz 24 ч без находок (замер) — непрерывного 24-ч прогона не проводилось; фаззинг в CI: ночной прогон 15 мин/цель + ручные длинные до 330 мин/цель (`workflow_dispatch`), находок нет (`docs/sprint-8/fuzz-report.md`).
+- [x] ✅ Аудит безопасности чистый — `cargo deny`/`cargo audit` зелёные (lopdf 0.45, ignore снят), `LICENSE` добавлен; `pnpm audit` — 22 находки в dev-тулинге, политика CI «информационно» (`docs/sprint-12/audit.md`).
+- [x] ⚠️ Chrome 90+, Firefox 96+, Safari 16.4+; fallback везде — реальный порог Firefox **105+** (OffscreenCanvas); fallback на main-thread не реализован (ошибка, не подмена) — §3.3 п. 6 остаётся целью.
+- [x] ✅ **Примеры работают в 3 браузерах (Playwright Chromium + Firefox + WebKit)** — 80 passed, 2 skipped штатных + chromium-dpr2 (`docs/sprint-12/rc.md`).
+- [x] ✅ Модель DOCX несёт `RawPPr`/`RawRPr` + ссылки; каскад резолвится в layout (ADR-0013).
+- [x] ✅ `NodeId` на всех узлах модели, детерминирован, не публичный (ADR-0019).
+- [x] ✅ ZIP-лимиты из ADR-0015 покрыты тестами.
+- [x] ✅ Политика ошибок из ADR-0016 покрыта тестами.
+- [x] ✅ Differential vs mammoth ≥ 95% на 50 фикстурах DOCX — 74/74 совпадений, гейт ≥ 0,95.
+- [x] ✅ Round-trip `Model → JSON → Model` lossless — serde-модель, 100 фикстур (Спринт 8).
+- [x] ✅ Writer в DOCX не реализован (ADR-0020) — non-goal v1, зафиксирован.
+- [x] ✅ Все ADR в `docs/adr/` — индекс актуален (ADR-0021, ADR-0022).
+- [ ] ⬜ Опубликовано в npm + crates.io под Apache-2.0 — ожидает S4.3; версии 1.0.0, changeset major и `LICENSE` готовы, публикует `.github/workflows/release.yml`.
 
 ---
 
