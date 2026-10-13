@@ -2,8 +2,10 @@
 name = "doc-converter-docx"
 version.workspace = true
 edition.workspace = true
+description = "WordprocessingML (DOCX) parsing, document model, and pagination"
 license.workspace = true
-repository.workspace = true
+# workspace-URL не совпадает с фактическим remote (meerrec/wasm-converter)
+repository = "https://github.com/meerrec/wasm-converter"
 
 [dependencies]
 doc-converter-core   = { workspace = true }

@@ -2,8 +2,10 @@
 name = "doc-converter-core"
 version.workspace = true
 edition.workspace = true
+description = "OOXML primitives: ZIP package access, streaming XML, and relationships"
 license.workspace = true
-repository.workspace = true
+# workspace-URL не совпадает с фактическим remote (meerrec/wasm-converter)
+repository = "https://github.com/meerrec/wasm-converter"
 
 [dependencies]
 zip        = { workspace = true }

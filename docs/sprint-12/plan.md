@@ -77,7 +77,7 @@
 | S2.1 changesets | Инициализация `.changeset/`, конфиг для `packages/*`, первый changelog | `pnpm changeset status` работает |
 | S2.2 release workflow | `.github/workflows/release.yml`: сборка `pnpm build:wasm` → сборка пакетов → `pnpm publish` из `pkg/`; гейт `cargo publish --dry-run --workspace` | workflow валиден; dry-run зелёный |
 | S2.3 Демо | `pages.yml` собирает и отдаёт обе страницы (`/#/xlsx`, `/#/docx`); проверка на `bytes`-транспорте (COOP/COEP на Pages нет) | демо открывается, e2e-дым |
-| S2.4 crates.io | Чек-лист публикации: порядок core → render → xlsx → docx → pdf → wasm, зависимости версий, лицензии | чек-лист |
+| S2.4 crates.io ✅ | Чек-лист публикации: порядок core → render → xlsx → docx → pdf → wasm, зависимости версий, лицензии | чек-лист; метаданные шести крейтов приведены к требованиям crates.io (description/license/repository) |
 
 ### Фаза 3 — документация (дни 5–8, параллельно Фазе 2)
 

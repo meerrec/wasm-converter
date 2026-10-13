@@ -2,7 +2,9 @@
 name = "doc-converter-wasm"
 version = "0.2.0"
 edition = "2021"
+description = "wasm-bindgen entry point for the doc-converter viewer"
 license = "Apache-2.0"
+repository = "https://github.com/meerrec/wasm-converter"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
