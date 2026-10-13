@@ -1,0 +1,9 @@
+# Артефакты LOWA (спайк 13): сборка ZetaOffice ~50 МБ сжатых байтов, кладётся в репозиторий
+# через Git LFS, чтобы не раздувать историю. Харнесс раздаёт их как есть (`-text`: байты
+# бинарные и сжатые, любая нормализация переводов строк их испортит).
+# После клона нужен `git lfs pull` (см. docs/sprint-13/harness.md).
+experiments/lowa-spike/public/lowa/*.wasm filter=lfs diff=lfs merge=lfs -text
+experiments/lowa-spike/public/lowa/*.data filter=lfs diff=lfs merge=lfs -text
+experiments/lowa-spike/public/lowa/*.data.js.metadata filter=lfs diff=lfs merge=lfs -text
+experiments/lowa-spike/public/lowa/soffice.js filter=lfs diff=lfs merge=lfs -text
+experiments/lowa-spike/public/lowa/zeta.js filter=lfs diff=lfs merge=lfs -text

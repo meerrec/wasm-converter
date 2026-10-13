@@ -49,3 +49,11 @@ experiments/lowa-spike/**/soffice.js
 experiments/lowa-spike/**/soffice.data
 experiments/lowa-spike/**/soffice.*.map
 experiments/lowa-spike/vendor/
+
+# ...кроме зеркала харнесса: оно в репозитории, через Git LFS (.gitattributes).
+# Negation идёт после правил выше (позднее правило побеждает), а родительские каталоги
+# не исключены, иначе `!` на файл внутри недействителен. `zeta.js` и
+# `soffice.data.js.metadata` не исключены ни одним правилом — negation им не нужен.
+!experiments/lowa-spike/public/lowa/soffice.js
+!experiments/lowa-spike/public/lowa/soffice.data
+!experiments/lowa-spike/public/lowa/soffice.wasm
