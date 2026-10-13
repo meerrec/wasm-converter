@@ -15,12 +15,14 @@
 // Код возврата 1 — если модуль не поднялся или не сошлась проверка odt/txt; попытка pdf
 // неудачей не считается: у сборки нет движка раскладки, и оба известных исхода — «нет pdf».
 
+import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const TOOLS_DIR = dirname(fileURLToPath(import.meta.url));
 const SPIKE_DIR = resolve(TOOLS_DIR, '..');
+const VIEWER_DIR = resolve(SPIKE_DIR, '..', '..', 'examples', 'viewer');
 const FIXTURE = resolve(SPIKE_DIR, '..', '..', 'test-fixtures', 'docx', 'styles', 'doc_defaults.docx');
 const OUT_DIR = process.env.X2T_OUT ?? '/tmp/x2t-preview-check';
 const CONVERT_TIMEOUT_MS = Number(process.env.X2T_TIMEOUT ?? 120_000);
@@ -40,6 +42,19 @@ async function loadDependency(name) {
         `(pnpm -C experiments/x2t-spike install): ${error.message}`,
     );
   }
+}
+
+/**
+ * Playwright берётся из `examples/viewer`: браузеры живут в общем кэше под сборки 1.63, а копия
+ * харнесса (1.64) просит сборку, которой в кэше нет. Два экземпляра Playwright в одном процессе
+ * не уживаются, поэтому копию выбираем до первого require.
+ */
+async function loadChromium() {
+  const viewerEntry = join(VIEWER_DIR, 'package.json');
+  if (existsSync(viewerEntry)) {
+    return createRequire(viewerEntry)('@playwright/test').chromium;
+  }
+  return (await loadDependency('@playwright/test')).chromium;
 }
 
 /** Порт из vite.config.ts — тот же, что у `pnpm dev`; иначе скрипт не нашёл бы готовый сервер. */
@@ -81,6 +96,10 @@ async function ensureServer() {
     server: { port, strictPort: false },
   });
   await server.listen();
+  // На холодном dev-сервере первый запрос `?worker_file` изредка уходит мимо трансформации,
+  // и воркер приезжает сырым TypeScript. Явный прогрев кладёт результат в граф модулей —
+  // дальше браузер получает уже собранный воркер.
+  await server.transformRequest('/src/worker.ts?worker_file&type=module');
   return { url: server.resolvedUrls?.local?.[0] ?? candidate, server, reused: false };
 }
 
@@ -185,23 +204,27 @@ async function main() {
   const fixtureBytes = statSync(FIXTURE).size;
   console.log(`фикстура: ${FIXTURE} — ${formatBytes(fixtureBytes)}`);
 
-  const { chromium } = await loadDependency('@playwright/test');
-  const { url, server, reused } = await ensureServer();
-  console.log(`страница: ${url} — сервер ${reused ? 'поднят заранее' : 'поднял скрипт'}`);
-
-  const result = { startedAt: new Date().toISOString(), url, fixtureBytes, outDir: OUT_DIR };
+  const result = { startedAt: new Date().toISOString(), fixtureBytes, outDir: OUT_DIR };
   const consoleLines = [];
-  const browser = await chromium.launch();
-  const page = await browser.newPage();
-  page.on('console', (message) => consoleLines.push(`${message.type()}: ${message.text()}`));
-  page.on('pageerror', (error) => consoleLines.push(`pageerror: ${error.message}`));
-  page.on('requestfailed', (request) =>
-    consoleLines.push(`requestfailed: ${request.url()} — ${request.failure()?.errorText ?? ''}`),
-  );
+  let server = null;
+  let browser = null;
 
   try {
+    const chromium = await loadChromium();
+    const ensured = await ensureServer();
+    server = ensured.server;
+    result.url = ensured.url;
+    console.log(`страница: ${result.url} — сервер ${ensured.reused ? 'поднят заранее' : 'поднял скрипт'}`);
+    browser = await chromium.launch();
+    const page = await browser.newPage();
+    page.on('console', (message) => consoleLines.push(`${message.type()}: ${message.text()}`));
+    page.on('pageerror', (error) => consoleLines.push(`pageerror: ${error.message}`));
+    page.on('requestfailed', (request) =>
+      consoleLines.push(`requestfailed: ${request.url()} — ${request.failure()?.errorText ?? ''}`),
+    );
+
     const bootStarted = Date.now();
-    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.goto(result.url, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(
       // Терминальная ошибка — тоже повод выйти из ожидания: иначе таймаут молчит о причине.
       () => ['ready', 'error'].includes(window.x2tHarness?.status()?.phase),
@@ -318,7 +341,7 @@ async function main() {
     for (const line of result.console) {
       console.log(`  ${line}`);
     }
-    await browser.close();
+    await browser?.close();
     await server?.close();
   }
 
