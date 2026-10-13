@@ -61,4 +61,4 @@ experiments/lowa-spike/vendor/
 # x2t-спайк (Спринт 13): релизные артефакты — в репозитории, через Git LFS
 # (.gitattributes). `*.wasm` из правила выше покрывает сырой модуль; `x2t.js`,
 # `x2t.js.br` и `x2t.wasm.br` ни одним правилом не исключены, negation им не нужен.
-!vendor/x2t/x2t.wasm
+!packages/x2t/vendor/x2t.wasm
