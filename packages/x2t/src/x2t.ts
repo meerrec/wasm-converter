@@ -268,11 +268,19 @@ async function fetchWasm(wasmUrl: string): Promise<ArrayBuffer> {
  * скрипт приезжает через `fetch` и косвенный `eval` — и только косвенный: `new Function`
  * сделал бы `var Module` из скрипта локальной переменной, и выложенные на неё `FS`/`ccall`
  * остались бы внутри функции.
+ *
+ * Проверять `importScripts` на существование недостаточно: в модульном воркере свойство
+ * есть, но вызов бросает `TypeError: Module scripts don't support importScripts()`.
+ * Поэтому ветка выбирается попыткой — вызов синхронный и до загрузки скрипта не доходит.
  */
 async function loadGlueScript(scriptUrl: string, scope: X2tGlobalScope): Promise<void> {
   if (typeof scope.importScripts === 'function') {
-    scope.importScripts(scriptUrl);
-    return;
+    try {
+      scope.importScripts(scriptUrl);
+      return;
+    } catch {
+      // Модульный воркер — грузим ниже, через fetch.
+    }
   }
 
   const response = await fetch(scriptUrl);
