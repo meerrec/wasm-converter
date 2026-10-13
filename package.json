@@ -19,7 +19,9 @@
     "gen:docx-fixtures": "npx tsx scripts/generate_docx_fixtures.ts",
     "gen:docx-fixtures:large": "npx tsx scripts/generate_docx_fixtures.ts --large",
     "diff:mammoth": "npx tsx scripts/diff-mammoth.ts --update-oracle",
-    "size-limit": "size-limit"
+    "size-limit": "size-limit",
+    "changeset": "changeset",
+    "release:version": "changeset version"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.9",
