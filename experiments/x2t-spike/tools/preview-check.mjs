@@ -314,6 +314,10 @@ async function convert(page, target) {
   await selectFixture(page, FIXTURE);
 
   const startedAt = Date.now();
+  // Модуль поднимается внутри первой конвертации, и её ожидание обязано вместить подъём: у него
+  // свой, куда более щедрый бюджет — это 38 МБ с локального сервера.
+  const module = (await statusOf(page))?.module ?? null;
+  const timeout = module === 'ready' ? CONVERT_TIMEOUT_MS : CONVERT_TIMEOUT_MS + BOOT_TIMEOUT_MS;
   if (target === 'pdf') {
     await page.click('#pdfCheck');
   } else {
@@ -325,7 +329,7 @@ async function convert(page, target) {
   await page.waitForFunction(
     () => ['done', 'error'].includes(window.x2tHarness?.status()?.phase),
     undefined,
-    { timeout: CONVERT_TIMEOUT_MS, polling: 200 },
+    { timeout, polling: 200 },
   );
   const status = await statusOf(page);
   const base64 = await page.evaluate(() => window.x2tHarness?.readResultBase64() ?? null);
