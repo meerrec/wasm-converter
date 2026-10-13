@@ -29,5 +29,6 @@
 | 0021 | Два транспорта кадра: SAB и ArrayBuffer | [`0021-frame-transports.md`](0021-frame-transports.md) |
 | 0022 | Свой PDF-бэкенд вместо форка printpdf | [`0022-own-pdf-backend.md`](0022-own-pdf-backend.md) |
 | 0023 | LibreOffice-WASM как «точный» бэкенд — no-go | [`0023-libreoffice-wasm-exact-backend.md`](0023-libreoffice-wasm-exact-backend.md) |
+| 0024 | x2t (ONLYOFFICE) как рисующий бэкенд — no-go | [`0024-x2t-rendering-backend.md`](0024-x2t-rendering-backend.md) |
 
 Сводка принятых решений по спринтам — `ROADMAP.md` §11.
