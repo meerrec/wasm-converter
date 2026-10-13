@@ -615,6 +615,8 @@ fn empty_paragraph_line(line_breaker: &mut LineBreaker, x: f32) -> Line {
             HalfPoint::new(DEFAULT_HALF_POINTS),
             None,
         ),
+        // Множителя `w:line` здесь нет — отбрасывать на разрыве нечего.
+        line_rule_excess: 0.0,
         color: None,
         // Текста в строке нет: рисовать нечего — рисовать будет запасное лицо.
         font_family: None,

@@ -27,7 +27,7 @@ use crate::model::{
 
 use super::cascade::{resolve_paragraph_styled, resolve_run_styled, ResolvedParagraph, StyleCache};
 use super::engine::{LayoutOptions, LayoutState};
-use super::line_break::{LineBreaker, MetricSpan};
+use super::line_break::{LineBreaker, LineRule, MetricSpan};
 
 /// Строка абзаца после раскладки.
 #[derive(Debug, Clone)]
@@ -40,6 +40,12 @@ pub struct Line {
     pub width: f32,
     /// Высота строки.
     pub height: f32,
+    /// Надбавка `w:line` (множитель) над базовым интерлиньяжем.
+    ///
+    /// `Exact`/`AtLeast` сюда не попадают — их высота не «надбавка»: на разрыве
+    /// страницы в таблице отбрасывается только множитель, как и хвостовой
+    /// `w:after` (см. `MeasuredBlock::line_rule_excess` в `layout/tables.rs`).
+    pub line_rule_excess: f32,
     /// Цвет текста; `None` — цвет по умолчанию.
     pub color: Option<u32>,
     /// Имя гарнитуры, которым строка измерена и будет нарисована.
@@ -353,6 +359,12 @@ pub(crate) fn layout_paragraph_styled(
             x: x + align_shift(jc, line_band, line.width),
             width: line.width,
             height: line_breaker.line_height_for(font_id, size, resolved.ppr.spacing.line),
+            line_rule_excess: line_rule_excess(
+                line_breaker,
+                font_id,
+                size,
+                resolved.ppr.spacing.line,
+            ),
             color: style.color,
             font_family: style.draw_family.clone(),
             size: style.size,
@@ -372,6 +384,12 @@ pub(crate) fn layout_paragraph_styled(
             x: origin + ind.first_line_px + align_shift(jc, first_line_band, 0.0),
             width: 0.0,
             height: line_breaker.line_height_for(
+                font_id,
+                resolved.rpr.size,
+                resolved.ppr.spacing.line,
+            ),
+            line_rule_excess: line_rule_excess(
+                line_breaker,
                 font_id,
                 resolved.rpr.size,
                 resolved.ppr.spacing.line,
@@ -459,6 +477,24 @@ fn align_shift(jc: Option<&Justification>, band: f32, width: f32) -> f32 {
     match jc {
         Some(Justification::Center) => (band - width) / 2.0,
         Some(Justification::Right | Justification::End) => band - width,
+        _ => 0.0,
+    }
+}
+
+/// Надбавка `w:line` над базовым интерлиньяжем: только множитель `Auto` больше
+/// единицы. `Exact`/`AtLeast` — не надбавка, а явная высота: на разрыве
+/// страницы в таблице она не отбрасывается (см. `MeasuredBlock::line_rule_excess`
+/// в `layout/tables.rs`).
+fn line_rule_excess(
+    breaker: &mut LineBreaker,
+    font_id: FontId,
+    size: HalfPoint,
+    rule: LineRule,
+) -> f32 {
+    match rule {
+        LineRule::Auto(multiplier) if multiplier > 1.0 => {
+            breaker.line_height(font_id, size) * (multiplier - 1.0)
+        }
         _ => 0.0,
     }
 }

@@ -66,6 +66,18 @@ fn twips_to_px(twips: Twips) -> f32 {
     twips.value() as f32 / 15.0
 }
 
+/// Округлить высоту вниз до целого twip (1 twip = 1/15 px).
+///
+/// `Word` и `LibreOffice` кладут высоты строк таблицы по сетке twips, а наши
+/// высоты — `f32` из шрифтовых метрик, и дробная часть твипа накапливается от
+/// строки к строке: по 40 строкам фикстуры `tables/long_table_header_repeat.docx`
+/// остаток (~0,05 pt на строку) сдвигал нижние строки на ~1,5 pt против эталона
+/// и валил постраничный SSIM. Эталон отбрасывает дробную часть, поэтому пол, а
+/// не округление; запас `1e-3` твипа защищает от шума `f32` на целой границе.
+fn quantize_twips(px: f32) -> f32 {
+    (px * 15.0 + 1e-3).floor() / 15.0
+}
+
 /// Минимальная высота строки таблицы в пикселях.
 ///
 /// Применяется к готовой высоте строки, а не к `w:trHeight`: там `0.0` означает
@@ -523,9 +535,12 @@ pub fn layout_table_fragments(
                     // Высота части: обычно — весь остаток полосы; у строки с
                     // отброшенным хвостовым интервалом — по её содержимому
                     // (плюс верхняя граница ряда у неразрезанной части), иначе
-                    // низ строки повис бы на краю полосы без опоры.
+                    // низ строки повис бы на краю полосы без опоры. Высота по
+                    // содержимому — целым twip, как и высоты целых строк
+                    // ([`quantize_twips`]): иначе низ страницы разъезжался бы с
+                    // эталоном на дробную часть.
                     let height = if dropped {
-                        used + if partial { 0.0 } else { measure.border_top }
+                        quantize_twips(used + if partial { 0.0 } else { measure.border_top })
                     } else {
                         avail
                     };
@@ -767,22 +782,25 @@ fn exhausted(measure: &MeasuredRow<'_>, parts: &[Range<usize>]) -> bool {
 /// Высота остатка строки, начиная с блоков `start`.
 ///
 /// Продолжение строки мерится как отдельная строка: верхнее поле ячейки уже
-/// осталось на прошлой странице, а нижнее — её.
+/// осталось на прошлой странице, а нижнее — её. Итог — целым twip, как высоты
+/// целых строк ([`quantize_twips`]).
 fn row_rest_height(measure: &MeasuredRow<'_>, start: &[usize]) -> f32 {
-    measure
-        .cells
-        .iter()
-        .enumerate()
-        .map(|(index, cell)| {
-            let from = start.get(index).copied().unwrap_or(0);
-            cell.blocks
-                .iter()
-                .skip(from)
-                .map(MeasuredBlock::height)
-                .sum::<f32>()
-        })
-        .fold(MIN_ROW_HEIGHT, f32::max)
-        + measure.margin_bottom
+    quantize_twips(
+        measure
+            .cells
+            .iter()
+            .enumerate()
+            .map(|(index, cell)| {
+                let from = start.get(index).copied().unwrap_or(0);
+                cell.blocks
+                    .iter()
+                    .skip(from)
+                    .map(MeasuredBlock::height)
+                    .sum::<f32>()
+            })
+            .fold(MIN_ROW_HEIGHT, f32::max)
+            + measure.margin_bottom,
+    )
 }
 
 /// Блоки, помещающиеся в `avail`: по одной границе на ячейку.
@@ -822,14 +840,21 @@ fn fit_blocks(
                 used += block.height();
                 end += 1;
             } else {
-                // Последний блок может поместиться без хвостового интервала:
-                // на разрыве страницы он отбрасывается, а не переносится.
-                if end + 1 == cell.blocks.len()
-                    && used + block.height() - block.trailing_space_after() <= avail + EPS
-                {
-                    used += block.height() - block.trailing_space_after();
-                    end += 1;
-                    dropped = true;
+                // Последний блок может поместиться сжатым: на разрыве страницы
+                // хвостовой `w:after` и надбавка `w:line` над базовым
+                // интерлиньяжем отбрасываются, а не переносят строку. Эталон
+                // держит разрезанный ряд высотой база + граница (278 twip =
+                // база 268 + граница 10 в `tables/long_table_header_repeat.docx`,
+                // а не 300), и так же сжимает ряд всегда, а не «если влезет».
+                if end + 1 == cell.blocks.len() {
+                    let compressed = used + block.height()
+                        - block.trailing_space_after()
+                        - block.line_rule_excess();
+                    if compressed <= avail + EPS {
+                        used = compressed;
+                        end += 1;
+                        dropped = true;
+                    }
                 }
                 break;
             }
@@ -871,7 +896,9 @@ fn force_blocks(
         }
         parts.push(from..end);
     }
-    any.then_some((parts, height))
+    // Высота принудительной части — целым twip, как у остальных частей
+    // ([`quantize_twips`]).
+    any.then_some((parts, quantize_twips(height)))
 }
 
 /// Измеренная строка таблицы: высота и содержимое ячеек без координат.
@@ -948,6 +975,19 @@ impl MeasuredBlock<'_> {
             Self::Nested { .. } => 0.0,
         }
     }
+
+    /// Надбавка `w:line` (множитель) над базовым интерлиньяжем последней строки.
+    ///
+    /// На разрыве страницы отбрасывается вместе с хвостовым интервалом: эталон
+    /// держит разрезанный ряд фикстуры `tables/long_table_header_repeat.docx`
+    /// высотой 278 twip (база 268 + граница 10), а не 300 (база с множителем
+    /// 289 + граница). У вложенной таблицы отбрасывать нечего.
+    fn line_rule_excess(&self) -> f32 {
+        match self {
+            Self::Line(line) => line.line_rule_excess,
+            Self::Nested { .. } => 0.0,
+        }
+    }
 }
 
 /// Строка текста абзаца ячейки: всё, что нужно, чтобы положить её без каскада.
@@ -964,6 +1004,9 @@ struct CellLine {
     width: f32,
     /// Высота строки.
     height: f32,
+    /// Надбавка `w:line` (множитель) над базовым интерлиньяжем: на разрыве
+    /// страницы отбрасывается (см. [`MeasuredBlock::line_rule_excess`]).
+    line_rule_excess: f32,
     /// Интервал перед абзацем (`w:spacing w:before`) — только у первой строки.
     space_before: f32,
     /// Интервал после абзаца (`w:spacing w:after`) — только у последней строки.
@@ -1055,7 +1098,7 @@ fn measure_rows<'a>(
             None => content_height,
         };
         measured.push(MeasuredRow {
-            height: height.max(MIN_ROW_HEIGHT),
+            height: quantize_twips(height.max(MIN_ROW_HEIGHT)),
             margin_top,
             margin_bottom,
             border_top,
@@ -1127,6 +1170,7 @@ fn measure_cell<'a>(
                         x: line.x,
                         width: line.width,
                         height: line.height,
+                        line_rule_excess: line.line_rule_excess,
                         space_before: if number == 0 {
                             layout.space_before
                         } else {
@@ -2589,11 +2633,11 @@ mod tests {
 
     /// Горизонтальная граница входит в высоту строки, как у `LibreOffice`:
     /// строка из текста 11 pt с `w:after` 8 pt, `w:line=259` и границей
-    /// `single sz=4` — 22.99 pt (у эталона 22.95; разница 0.04 pt — остаток
-    /// интерлиньяжа), а без границы строка на её толщину (0.5 pt) ниже. Числа
-    /// сняты с эталона на фикстуре `tables/long_table.docx` (`soffice`: шаг
-    /// строки 22.95 pt, первая страница расходилась с нами ровно на толщину
-    /// границы).
+    /// `single sz=4` — ровно 22.95 pt у эталона и у нас: высота кладётся
+    /// целым twip ([`quantize_twips`]), а без границы строка на её толщину
+    /// (0.5 pt) ниже. Числа сняты с эталона на фикстуре
+    /// `tables/long_table.docx` (`soffice`: шаг строки 22.95 pt, первая
+    /// страница расходилась с нами ровно на толщину границы).
     #[test]
     fn the_horizontal_border_adds_to_the_row_height() {
         /// Высота единственной строки таблицы с границами `borders`.
@@ -2604,9 +2648,9 @@ mod tests {
             layout(&table, &styles(Vec::new())).rows[0].height
         }
 
-        // Высота строки текста 11 pt с множителем 259/240 — 19.321018 px.
-        let line = 11.0 * PX_PER_POINT * 2500.0 / 2048.0 * 259.0 / 240.0;
-
+        // Высота строки текста 11 pt с множителем 259/240, интервалом после
+        // 160 twip и границей — 459.9 twip; целым twip — 459 (22.95 pt, как у
+        // эталона).
         let plain = row_height(TableBorders::default());
         let bordered = row_height(all_single(4));
         assert!(
@@ -2614,9 +2658,8 @@ mod tests {
             "граница `sz=4` не добавила 0.5 pt к высоте: {bordered} против {plain}"
         );
         assert!(
-            (bordered - (line + twips_to_px(Twips::new(160)) + twips_to_px(Twips::new(10)))).abs()
-                < 0.05,
-            "строка с границей — 22.99 pt, против 22.95 у эталона: {bordered}"
+            (bordered - twips_to_px(Twips::new(459))).abs() < EPS,
+            "строка с границей — 22.95 pt целым twip, как у эталона: {bordered}"
         );
 
         let thick = row_height(all_single(20));
@@ -2628,7 +2671,8 @@ mod tests {
 
     /// Хвостовой интервал строки, упёршейся в низ полосы, отбрасывается, а не
     /// переносит строку: Word так режет таблицы, и эталон держит на первой
-    /// странице фикстуры `tables/long_table.docx` 32 строки, а не 31.
+    /// странице фикстуры `tables/long_table.docx` 32 строки, а не 31. Надбавка
+    /// `w:line` над базовым интерлиньяжем отбрасывается вместе с ним.
     #[test]
     fn the_trailing_after_is_dropped_when_the_row_ends_the_page() {
         // Таблица 2×1 с границами: высота строки 30.65 px, из них строка
@@ -2638,7 +2682,10 @@ mod tests {
         table.rows[0].cells[0].items = vec![fixture_paragraph(10)];
         table.rows[1].cells[0].items = vec![fixture_paragraph(20)];
 
-        let line = 11.0 * PX_PER_POINT * 2500.0 / 2048.0 * 259.0 / 240.0;
+        // Высота строки текста 11 pt: база 2500/2048 em, с множителем 259/240 —
+        // `line`; отбрасываемое на разрыве — интервал после и надбавка множителя.
+        let base = 11.0 * PX_PER_POINT * 2500.0 / 2048.0;
+        let line = base * 259.0 / 240.0;
         let after = twips_to_px(Twips::new(160));
         let border = twips_to_px(Twips::new(10));
         let row = line + after + border;
@@ -2662,8 +2709,51 @@ mod tests {
         );
         assert_eq!(fragments[0].rows.len(), 2, "обе строки — на одной странице");
         assert!(
-            (fragments[0].rows[1].height - (line + border)).abs() < EPS,
-            "строка сжата до текста и границы: {}",
+            (fragments[0].rows[1].height - quantize_twips(base + border)).abs() < EPS,
+            "строка сжата до базового интерлиньяжа и границы целым twip: {}",
+            fragments[0].rows[1].height
+        );
+    }
+
+    /// Надбавка `w:line` отбрасывается на разрыве вместе с хвостовым
+    /// интервалом: эталон держит разрезанный ряд фикстуры
+    /// `tables/long_table_header_repeat.docx` высотой 278 twip (база
+    /// 268 + граница 10), а не 300 (база с множителем 289 + граница).
+    #[test]
+    fn the_line_rule_excess_is_dropped_with_the_trailing_after() {
+        let mut table = table(2, 1, None, TableLook::default());
+        table.borders = all_single(4);
+        table.rows[0].cells[0].items = vec![fixture_paragraph(10)];
+        table.rows[1].cells[0].items = vec![fixture_paragraph(20)];
+
+        let base = 11.0 * PX_PER_POINT * 2500.0 / 2048.0;
+        let line = base * 259.0 / 240.0;
+        let excess = line - base;
+        let after = twips_to_px(Twips::new(160));
+        let border = twips_to_px(Twips::new(10));
+        let row = line + after + border;
+        // Полоса: полная строка + базовая строка второй с границей и половиной
+        // надбавки — без интервала после вторая строка не влезает (не хватает
+        // четверти надбавки), с отброшенной надбавкой влезает.
+        let band = PageBand {
+            top: 0.0,
+            height: row + base + border + excess / 2.0,
+        };
+
+        let mut fonts = FontRegistry::new(64);
+        let frame = compute_table_frame(&table, 0.0, 600.0);
+        let fragments =
+            layout_table_fragments(&table, &frame, band, band, &mut fonts, &styles(Vec::new()));
+
+        assert_eq!(
+            fragments.len(),
+            1,
+            "вторая строка остаётся на странице — надбавка `w:line` отброшена"
+        );
+        assert_eq!(fragments[0].rows.len(), 2, "обе строки — на одной странице");
+        assert!(
+            (fragments[0].rows[1].height - quantize_twips(base + border)).abs() < EPS,
+            "строка сжата до базового интерлиньяжа и границы целым twip: {}",
             fragments[0].rows[1].height
         );
     }
