@@ -126,14 +126,14 @@ S1.4 → S3.1 (README пишется после фиксации non-goal)
 
 ## 7. DoD спринта
 
-- [ ] ROADMAP §12: каждый чекбокс имеет статус (сделано / отклонение / non-goal) со ссылкой.
-- [ ] `docs/sprint-12/{oracle,budgets,report}.md` существуют; числа свежие (после ADR-0022).
-- [ ] `long_table` и `long_table_header_repeat`: SSIM ≥ 0,95 или задокументированный диагноз.
-- [ ] changesets и release workflow в дереве; `cargo publish --dry-run` зелёный.
-- [ ] Демо на GitHub Pages открывается по обоим путям (`/#/xlsx`, `/#/docx`).
-- [ ] README переписан; cookbook 40+; migration guides ×2.
-- [ ] Аудиты чистые; e2e трёх браузеров зелёные.
-- [ ] v1.0.0 опубликован: npm (`core`, wasm-биндинги, `cli`) + crates.io (6 крейтов).
+- [x] ROADMAP §12: каждый чекбокс имеет статус (сделано / отклонение / non-goal) со ссылкой.
+- [x] `docs/sprint-12/{oracle,budgets,report}.md` существуют; числа свежие (после ADR-0022).
+- [x] `long_table` и `long_table_header_repeat`: SSIM ≥ 0,95 или задокументированный диагноз (0,8921 / 0,8938 — диагноз в `docs/sprint-12/docx-tables.md`).
+- [x] changesets и release workflow в дереве; `cargo publish --dry-run` зелёный.
+- [x] Демо на GitHub Pages открывается по обоим путям (`/#/xlsx`, `/#/docx`).
+- [x] README переписан; cookbook 40+ (46); migration guides ×2.
+- [x] Аудиты чистые; e2e трёх браузеров зелёные (80 passed).
+- [ ] v1.0.0 опубликован: npm (`core`, wasm-биндинги, `cli`) + crates.io (6 крейтов). — шаг S4.3, за пользователем
 
 ## 8. Артефакты
 
