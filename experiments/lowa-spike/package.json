@@ -1,0 +1,14 @@
+{
+  "name": "lowa-spike-harness",
+  "private": true,
+  "type": "module",
+  "description": "Харнесс спайка sprint-13: LOWA (LibreOffice WASM) отдаёт PDF из DOCX/XLSX",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^5.4.21"
+  }
+}
