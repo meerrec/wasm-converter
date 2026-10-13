@@ -408,8 +408,7 @@ async function collectEvidence(page, run, stage) {
   } catch (e) {
     run.capture = { error: String(e).slice(0, 300) };
   }
-  const st = await artifactState(page, new Map()).catch(() => null);
-  run.artifactStateAtFailure = st;
+  // объём по сети на момент отказа доберёт summarizeNetwork в finally
 }
 
 function summarizeNetwork(run, sizeByUrl) {
