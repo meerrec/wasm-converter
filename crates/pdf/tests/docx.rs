@@ -168,7 +168,7 @@ fn parse_bfchar(cmap: &str) -> HashMap<u16, char> {
 /// Прогон текста в потоке содержимого: имя ресурса шрифта и строка.
 fn text_runs(pdf: &Pdf, page: lopdf::ObjectId) -> Vec<(String, String)> {
     let cmaps = page_cmaps(pdf, page);
-    let content = pdf.get_page_content(page).expect("поток содержимого");
+    let content = pdf.get_page_content(page);
     let text = String::from_utf8_lossy(&content);
 
     // Операторы `Tf`/`Tj` идут в потоке по порядку; в hex-строке ни `T`, ни

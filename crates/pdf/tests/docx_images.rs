@@ -72,7 +72,7 @@ fn page_ops(bytes: &[u8], index: usize) -> Content {
         .values()
         .nth(index)
         .unwrap_or_else(|| panic!("страницы {index} нет"));
-    let content = pdf.get_page_content(id).expect("поток содержимого");
+    let content = pdf.get_page_content(id);
     Content::decode(&content).expect("операции разбираются")
 }
 
@@ -120,7 +120,7 @@ fn document_images(doc: &Pdf) -> (BTreeMap<Vec<u8>, &Stream>, usize) {
                 images.insert(name.clone(), stream);
             }
         }
-        let bytes = doc.get_page_content(page_id).expect("поток содержимого");
+        let bytes = doc.get_page_content(page_id);
         let content = Content::decode(&bytes).expect("операции разбираются");
         draws += content
             .operations

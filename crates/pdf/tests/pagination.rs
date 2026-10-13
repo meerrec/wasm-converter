@@ -109,7 +109,7 @@ fn drawing_hash(bytes: &[u8]) -> u64 {
         hash = fnv1a(format!("page {number}").as_bytes(), hash);
         let page = doc.get_dictionary(page_id).expect("словарь страницы");
         hash = fnv1a(format!("{page:?}").as_bytes(), hash);
-        let content = doc.get_page_content(page_id).expect("поток содержимого");
+        let content = doc.get_page_content(page_id);
         hash = fnv1a(&mask_random_font_names(&content), hash);
     }
     hash
@@ -204,7 +204,7 @@ fn all_cells_survive_column_split() {
     let mut drawn = 0;
     let mut ranges: Vec<(f32, f32)> = Vec::new();
     for (number, page_id) in pages {
-        let content = doc.get_page_content(page_id).expect("поток содержимого");
+        let content = doc.get_page_content(page_id);
         let on_page = text_sections(&content);
         assert!(on_page > 0, "страница {number} пуста");
         drawn += on_page;
@@ -274,15 +274,21 @@ fn page_counts_are_pinned() {
 /// вендоренного бэкенда. Это раскладка сериализации, а не отрисовки:
 /// побайтового совпадения с форком ADR-0022 не обещает, сами потоки операций
 /// совпадают (см. `pdf::content`).
+///
+/// С апгрейдом lopdf до 0.45 эталоны снова пересчитаны: с 0.42
+/// `get_page_content` добавляет `\n` после каждого потока содержимого
+/// (чейнджлог: «insert newline between concatenated content streams»),
+/// поэтому хеш вырос на один байт на страницу. Сам экспортируемый файл не
+/// изменился — сверено побайтово против сборки с lopdf 0.35.
 const DRAWING: &[(&str, u64)] = &[
-    ("scale-ten-pages.xlsx", 0x21c1_e394_ee55_a5f1),
-    ("edge-many-rows.xlsx", 0xd69c_b79f_8589_54bf),
-    ("content-dense.xlsx", 0xe693_7825_b016_6ca2),
-    ("size-20x100x1.xlsx", 0xf2f1_3047_a6da_47d2),
-    ("values-strings.xlsx", 0x8bcf_7777_de1e_6970),
-    ("layout-column-widths.xlsx", 0xff2a_ff3c_b9d4_be98),
-    ("edge-merged-styled.xlsx", 0x681f_0895_a76e_26af),
-    ("content-empty-sheet.xlsx", 0x3b95_a806_69ca_ba55),
+    ("scale-ten-pages.xlsx", 0xaf17_a30b_3166_e6ab),
+    ("edge-many-rows.xlsx", 0x27fb_c0c3_edfd_973f),
+    ("content-dense.xlsx", 0xb50f_ba62_3e35_ed1a),
+    ("size-20x100x1.xlsx", 0xaa1c_e1c0_84e8_1408),
+    ("values-strings.xlsx", 0xaff1_7aae_6dad_3a4e),
+    ("layout-column-widths.xlsx", 0x6ace_462f_c47f_d216),
+    ("edge-merged-styled.xlsx", 0x5ae2_3b4b_802b_aa5f),
+    ("content-empty-sheet.xlsx", 0x0a06_e1e5_c37a_af6d),
 ];
 
 #[test]
@@ -408,7 +414,7 @@ fn push_decoded(
 /// Текст страницы: обход операций записи (`Tf` выбирает шрифт, `Tj`/`TJ` пишут).
 fn page_text(doc: &lopdf::Document, page_id: ObjectId) -> String {
     let cmaps = page_cmaps(doc, page_id);
-    let content = doc.get_page_content(page_id).expect("поток содержимого");
+    let content = doc.get_page_content(page_id);
     let content = lopdf::content::Content::decode(&content).expect("операции разбираются");
     let mut text = String::new();
     let mut font: Option<&[u8]> = None;
@@ -529,7 +535,7 @@ fn first_columns_repeat_on_every_page() {
     // На каждой странице — все 30 ячеек повторяемого столбца плюс её полоса.
     let expected = [300, 300, 300, 90];
     for ((number, page_id), expected) in pages.iter().zip(expected) {
-        let content = doc.get_page_content(*page_id).expect("поток содержимого");
+        let content = doc.get_page_content(*page_id);
         assert_eq!(
             text_sections(&content),
             expected,
@@ -542,7 +548,7 @@ fn first_columns_repeat_on_every_page() {
 fn sections_per_page(doc: &lopdf::Document) -> Vec<usize> {
     doc.get_pages()
         .values()
-        .map(|page_id| text_sections(&doc.get_page_content(*page_id).expect("поток содержимого")))
+        .map(|page_id| text_sections(&doc.get_page_content(*page_id)))
         .collect()
 }
 

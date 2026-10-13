@@ -79,7 +79,7 @@ fn page_ops(bytes: &[u8]) -> Content {
         .values()
         .next()
         .expect("в PDF есть страница");
-    let content = pdf.get_page_content(id).expect("поток содержимого");
+    let content = pdf.get_page_content(id);
     Content::decode(&content).expect("операции разбираются")
 }
 

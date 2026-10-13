@@ -377,7 +377,7 @@ fn page_operations(doc: &Document, number: u32) -> Vec<Operation> {
         .get_pages()
         .get(&number)
         .unwrap_or_else(|| panic!("страницы {number} нет"));
-    let bytes = doc.get_page_content(page).expect("поток содержимого");
+    let bytes = doc.get_page_content(page);
     Content::decode(&bytes)
         .expect("операции разбираются")
         .operations
@@ -407,7 +407,7 @@ fn page_text(doc: &Document, number: u32) -> String {
         .get(&number)
         .unwrap_or_else(|| panic!("страницы {number} нет"));
     let cmaps = page_cmaps(doc, page);
-    let content = doc.get_page_content(page).expect("поток содержимого");
+    let content = doc.get_page_content(page);
     let content = String::from_utf8_lossy(&content).into_owned();
     let mut events: Vec<(usize, &str)> = Vec::new();
     events.extend(content.match_indices("Tf"));

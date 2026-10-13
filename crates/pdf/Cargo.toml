@@ -11,12 +11,14 @@ doc-converter-render = { workspace = true }
 doc-converter-docx   = { workspace = true }
 doc-converter-xlsx   = { workspace = true }
 serde                = { workspace = true }
-# Модель значений lopdf 0.35 (`Object`, `Dictionary`, `Stream`) — опора своего
-# PDF-бэкенда (ADR-0022). default-фичи сняты (`chrono_time`, `rayon` прод-пути
-# не нужны), а `nom_parser` включён отдельно: в 0.35 модуль `parser` собирается
-# безусловно и без него крейт не компилируется, хотя чужой ввод мы не разбираем
-# (поэтому RUSTSEC-2026-0187 остаётся в ignore `deny.toml`).
-lopdf                = { version = "0.35", default-features = false, features = ["nom_parser"] }
+# Модель значений lopdf (`Object`, `Dictionary`, `Stream`) — опора своего
+# PDF-бэкенда (ADR-0022). default-фичи сняты (`chrono-clock`, `rayon` прод-пути
+# не нужны), парсер с 0.36 собирается безусловно (фичи `nom_parser` больше
+# нет), хотя чужой ввод мы не разбираем. RUSTSEC-2026-0187 закрыт в 0.42,
+# поэтому ignore из deny.toml снят. `wasm_js` нужен нерандому `getrandom`
+# (зависимость lopdf) для сборки `pdf-wasm` под wasm32-unknown-unknown; на
+# нативных таргетах фича инертна.
+lopdf                = { version = "0.45", default-features = false, features = ["wasm_js"] }
 # Декодирование медиачастей PNG/JPEG своего бэкенда (ADR-0022): фичи
 # `png`/`jpeg` задаёт workspace-зависимость. Прочие форматы не включаем —
 # декодеры это вес wasm, а вставки редки.

@@ -39,7 +39,7 @@ fn export(name: &str, sheet: usize) -> Vec<u8> {
 fn all_ops(doc: &Document) -> Vec<Operation> {
     let mut ops = Vec::new();
     for &page_id in doc.get_pages().values() {
-        let bytes = doc.get_page_content(page_id).expect("поток содержимого");
+        let bytes = doc.get_page_content(page_id);
         let content = Content::decode(&bytes).expect("операции разбираются");
         ops.extend(content.operations);
     }

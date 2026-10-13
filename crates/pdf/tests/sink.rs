@@ -80,7 +80,7 @@ fn page_contents(bytes: &[u8]) -> Vec<Vec<u8>> {
     doc.get_pages()
         .values()
         .map(|id| {
-            let content = doc.get_page_content(*id).expect("поток содержимого");
+            let content = doc.get_page_content(*id);
             mask_random_font_names(&content)
         })
         .collect()

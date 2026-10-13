@@ -124,7 +124,7 @@ fn page_text(doc: &Document, number: u32) -> String {
         .get(&number)
         .unwrap_or_else(|| panic!("страницы {number} нет"));
     let cmaps = page_cmaps(doc, page);
-    let content = doc.get_page_content(page).expect("поток содержимого");
+    let content = doc.get_page_content(page);
     let content = String::from_utf8_lossy(&content).into_owned();
     // Операторы `Tf`/`Tj` идут в потоке по порядку; в hex-строке ни `T`, ни
     // `j` встретиться не могут (это не hex-цифры), поэтому слияние позиций

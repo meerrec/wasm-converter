@@ -49,7 +49,7 @@ fn decoded_text(bytes: &[u8]) -> String {
     let doc = lopdf::Document::load_mem(bytes).expect("PDF разбирается lopdf");
     let cmap = tounicode_map(&doc);
     let page = *doc.get_pages().values().next().expect("страница есть");
-    let content = doc.get_page_content(page).expect("поток содержимого");
+    let content = doc.get_page_content(page);
     decode_content(&content, &cmap)
 }
 
@@ -158,7 +158,7 @@ fn page_cmaps(doc: &lopdf::Document, page: lopdf::ObjectId) -> HashMap<String, H
 /// Прогон текста в потоке содержимого: имя ресурса шрифта и строка.
 fn text_runs(doc: &lopdf::Document, page: lopdf::ObjectId) -> Vec<(String, String)> {
     let cmaps = page_cmaps(doc, page);
-    let content = doc.get_page_content(page).expect("поток содержимого");
+    let content = doc.get_page_content(page);
     let text = String::from_utf8_lossy(&content);
 
     // Операторы `Tf`/`Tj` идут в потоке по порядку; в hex-строке ни `T`, ни
@@ -302,7 +302,7 @@ fn sheet_becomes_single_page_pdf() {
     );
 
     let page = *doc.get_pages().values().next().expect("страница есть");
-    let content = doc.get_page_content(page).expect("поток содержимого");
+    let content = doc.get_page_content(page);
     let content = String::from_utf8_lossy(&content);
     assert!(content.contains("BT"), "в потоке нет текстовых секций");
     assert!(
@@ -412,7 +412,7 @@ fn long_sheet_is_split_into_pages() {
     // Текст первой и последней страниц не пуст: содержимое не потерялось при
     // разбивке.
     for (index, page) in doc.get_pages().into_iter() {
-        let content = doc.get_page_content(page).expect("поток содержимого");
+        let content = doc.get_page_content(page);
         let content = String::from_utf8_lossy(&content);
         assert!(
             content.contains("Tj"),

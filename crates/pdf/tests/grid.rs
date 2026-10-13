@@ -67,7 +67,7 @@ fn all_ops(bytes: &[u8]) -> Vec<Operation> {
     let doc = lopdf::Document::load_mem(bytes).expect("PDF разбирается lopdf");
     let mut ops = Vec::new();
     for &page_id in doc.get_pages().values() {
-        let bytes = doc.get_page_content(page_id).expect("поток содержимого");
+        let bytes = doc.get_page_content(page_id);
         let content = Content::decode(&bytes).expect("операции разбираются");
         ops.extend(content.operations);
     }

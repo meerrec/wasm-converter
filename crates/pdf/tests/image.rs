@@ -154,7 +154,7 @@ fn resources(doc: &Document, page_id: ObjectId) -> &Dictionary {
 /// Операции единственной страницы документа.
 fn page_ops(doc: &Document) -> Content {
     let page_id = *doc.get_pages().values().next().expect("страница есть");
-    let bytes = doc.get_page_content(page_id).expect("поток содержимого");
+    let bytes = doc.get_page_content(page_id);
     Content::decode(&bytes).expect("операции разбираются")
 }
 
@@ -228,7 +228,7 @@ fn document_images(doc: &Document) -> (BTreeMap<Vec<u8>, &lopdf::Stream>, usize)
     }
     let mut draws = 0;
     for &page_id in doc.get_pages().values() {
-        let bytes = doc.get_page_content(page_id).expect("поток содержимого");
+        let bytes = doc.get_page_content(page_id);
         let content = Content::decode(&bytes).expect("операции разбираются");
         draws += content
             .operations
