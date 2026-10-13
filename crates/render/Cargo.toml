@@ -1,6 +1,6 @@
 [package]
 name = "doc-converter-render"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2021"
 description = "DisplayList, OffscreenCanvas painter, geometry, and text metrics for OOXML viewers"
 license = "Apache-2.0"

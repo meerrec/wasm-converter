@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "insta",
@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-docx"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "doc-converter-core",
@@ -496,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-docx-wasm"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "doc-converter-docx",
  "doc-converter-render",
@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-pdf"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "doc-converter-core",
@@ -526,7 +526,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-pdf-wasm"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "doc-converter-docx",
  "doc-converter-pdf",
@@ -540,7 +540,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-render"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "bytemuck",
  "criterion",
@@ -554,7 +554,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-wasm"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "doc-converter-render",
  "doc-converter-xlsx",
@@ -568,7 +568,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-xlsx"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "criterion",

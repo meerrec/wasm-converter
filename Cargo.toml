@@ -16,7 +16,7 @@ members = [
 exclude = ["crates/fuzz"]
 
 [workspace.package]
-version      = "0.1.0"
+version      = "1.0.0"
 edition      = "2021"
 license      = "Apache-2.0"
 repository   = "https://github.com/meerrec/wasm-converter"
@@ -24,11 +24,11 @@ rust-version = "1.82"
 
 [workspace.dependencies]
 # ── internal ────────────────────────────────────────────────
-doc-converter-core   = { path = "crates/core",   version = "0.1.0" }
-doc-converter-render = { path = "crates/render", version = "0.2.0" }
-doc-converter-docx   = { path = "crates/docx",   version = "0.1.0" }
-doc-converter-xlsx   = { path = "crates/xlsx",   version = "0.1.0" }
-doc-converter-pdf    = { path = "crates/pdf",    version = "0.1.0" }
+doc-converter-core   = { path = "crates/core",   version = "1.0.0" }
+doc-converter-render = { path = "crates/render", version = "1.0.0" }
+doc-converter-docx   = { path = "crates/docx",   version = "1.0.0" }
+doc-converter-xlsx   = { path = "crates/xlsx",   version = "1.0.0" }
+doc-converter-pdf    = { path = "crates/pdf",    version = "1.0.0" }
 
 # ── external ────────────────────────────────────────────────
 wasm-bindgen         = "0.2"
