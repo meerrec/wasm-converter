@@ -29,6 +29,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Полная история: PR-режим гейта гоняет `changeset status --since=origin/main`,
+          # а на мелком клоне (дефолт fetch-depth: 1) merge-base с базой не находится —
+          # обе стороны истории обрезаны. Дозагрузка origin/main в шаге гейта не спасает:
+          # в мелком репозитории она приезжает такой же мелкой. Как в джобе publish.
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -58,7 +64,8 @@ jobs:
       # npm-пакеты изменились, а релизного changeset нет — та же семантика,
       # что у бота changesets. BaseBranch (main) диффуется через bare-имя,
       # но в PR-чекауте оно не резолвится (git merge-base не делает DWIM на
-      # refs/remotes/origin/*), поэтому базу подтягиваем явно.
+      # refs/remotes/origin/*), поэтому базу подтягиваем явно; полноту истории
+      # для merge-base даёт fetch-depth: 0 в checkout выше.
       - name: changeset status
         run: |
           set -euo pipefail
