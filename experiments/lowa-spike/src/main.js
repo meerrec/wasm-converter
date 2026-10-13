@@ -131,15 +131,15 @@ function onOfficeMessage(event) {
 }
 
 /** Собирает Module ровно в том виде, в каком его ждёт soffice.js (runtime-contract §1). */
-function makeModule(base) {
+function makeModule(base, zetaJs) {
   const canvas = document.getElementById('qtcanvas');
   const module = {
     canvas,
-    uno_scripts: [
-      new URL('zeta.js', base).href,
-      new URL('/office-thread.js', location.href).href,
-    ],
-    locateFile: (path, prefix) => (prefix ?? base.href) + path,
+    // zeta.js всегда с зеркала: на CDN ZetaOffice его нет, демо везёт его у себя.
+    uno_scripts: [zetaJs, new URL('/office-thread.js', location.href).href],
+    // prefix приходит пустой строкой (XHR за soffice.data.js.metadata зовёт locateFile(name, "")),
+    // поэтому именно `||`, а не `??`: иначе путь станет относительным и уедет в 404.
+    locateFile: (path, prefix) => (prefix || base.href) + path,
   };
   // Emscripten берёт отсюда скрипт для pthread-воркеров; Blob нужен, чтобы воркеры
   // догружали soffice.js с того же URL, что и страница.
@@ -171,10 +171,12 @@ export function boot() {
       throw new Error('нет cross-origin isolation: страница отдана без COOP/COEP');
     }
     const params = new URLSearchParams(location.search);
+    // ?base= меняет только источник soffice.* (например, на сам CDN), zeta.js остаётся с зеркала.
     const base = new URL(params.get('base') ?? MIRROR_BASE, location.href);
+    const zetaJs = new URL('zeta.js', new URL(MIRROR_BASE, location.href)).href;
     log(`загрузка LOWA с ${base.href}`);
     setPhase('booting');
-    const module = makeModule(base);
+    const module = makeModule(base, zetaJs);
     // soffice.js читает Module из глобальной области — выставляем до вставки скрипта.
     window.Module = module;
     await loadScript(new URL('soffice.js', base).href);

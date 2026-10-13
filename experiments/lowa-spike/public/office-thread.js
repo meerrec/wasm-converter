@@ -98,10 +98,60 @@
     return member(context);
   }
 
+  /** Приводит объект к XNameAccess: у прокси zeta.js методы всех интерфейсов уже на месте. */
+  function asNameAccess(object) {
+    if (object && typeof object.getElementNames === 'function') {
+      return object;
+    }
+    var raw = css.container.XNameAccess;
+    if (raw && typeof raw.query === 'function') {
+      return raw.query(object);
+    }
+    throw new Error('объект не похож на XNameAccess');
+  }
+
+  /** Пробует разные дороги к FilterFactory и записывает, какая сработала. */
+  function locateFilterFactory(diag) {
+    var routes = [
+      ['css.document.FilterFactory', function () {
+        return filterFactory();
+      }],
+      ['context.getByName(/singletons/...)', function () {
+        return context.getByName('/singletons/com.sun.star.document.FilterFactory');
+      }],
+      ['serviceManager.createInstanceWithContext', function () {
+        return context
+          .getServiceManager()
+          .createInstanceWithContext('com.sun.star.document.FilterFactory', context);
+      }],
+    ];
+    for (var i = 0; i < routes.length; ++i) {
+      var name = routes[i][0];
+      try {
+        var found = routes[i][1]();
+        var kind = found === null || found === undefined ? String(found) : typeof found;
+        var keys = found ? Object.keys(found).slice(0, 25) : [];
+        var ok = found && typeof found.getElementNames === 'function';
+        diag[name] = { type: kind, hasGetElementNames: !!ok, keys: keys };
+        if (ok) {
+          diag.winner = name;
+          return found;
+        }
+      } catch (e) {
+        diag[name] = { error: unoError(e).message };
+      }
+    }
+    return null;
+  }
+
   /** Перечисляет фильтры и, для pdf-подобных, вытаскивает их свойства из FilterFactory. */
   function probe() {
-    var factory = filterFactory();
-    var names = toArray(css.container.XNameAccess.query(factory).getElementNames()).map(String);
+    var diag = { moduleDocumentKeys: Object.keys(css.document).slice(0, 30) };
+    var factory = locateFilterFactory(diag);
+    if (factory === null) {
+      return { count: 0, names: [], detailed: {}, errors: [], diag: diag };
+    }
+    var names = toArray(asNameAccess(factory).getElementNames()).map(String);
     var detailed = {};
     var errors = [];
     names.forEach(function (name) {
@@ -114,7 +164,7 @@
         errors.push({ name: name, error: unoError(e) });
       }
     });
-    return { count: names.length, names: names, detailed: detailed, errors: errors };
+    return { count: names.length, names: names, detailed: detailed, errors: errors, diag: diag };
   }
 
   /** Закрывает модель предыдущей конвертации: офис иначе держит документ открытым. */
