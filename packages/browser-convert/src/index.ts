@@ -12,3 +12,5 @@ export type { ConvertOptions, ConvertResult, X2TConverterOptions } from './conve
 export { documentMimeType } from './mime.js';
 export { saveFileToDisk } from './save.js';
 export type { SaveFileOptions } from './save.js';
+export { preprocessXlsxLineBreaks, preprocessPptx, preprocessDocxRuby, unwrapRubyXml } from './preprocess.js';
+export { extractDocxMediaUrls } from './media.js';
