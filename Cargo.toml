@@ -19,7 +19,7 @@ exclude = ["crates/fuzz"]
 version      = "0.1.0"
 edition      = "2021"
 license      = "Apache-2.0"
-repository   = "https://github.com/doc-converter/doc-converter"
+repository   = "https://github.com/meerrec/wasm-converter"
 rust-version = "1.82"
 
 [workspace.dependencies]
