@@ -1,0 +1,20 @@
+{
+  // Типы оболочки просмотрщика. Эмитит JS не tsc, а Vite (vite.config.ts):
+  // браузер не разрешает голый спецификатор `@doc-converter/eurooffice`, а tsc
+  // не бандлит, поэтому здесь только проверка типов.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src", "vite.config.ts"]
+}

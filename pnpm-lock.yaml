@@ -45,6 +45,19 @@ importers:
         specifier: ^0.18.5
         version: 0.18.5
 
+  examples/eurooffice-viewer:
+    dependencies:
+      '@doc-converter/eurooffice':
+        specifier: workspace:*
+        version: link:../../packages/eurooffice
+    devDependencies:
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vite:
+        specifier: ^5.4.10
+        version: 5.4.21(@types/node@26.6.4)
+
   examples/viewer:
     dependencies:
       '@doc-converter/browser-convert':
