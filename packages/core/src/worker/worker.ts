@@ -2,6 +2,7 @@
 import init, {
   alloc_sab,
   drop_bitmap,
+  font_bytes,
   init_painter,
   paint_display_list_bytes,
   paint_display_list_sab,
@@ -31,6 +32,7 @@ import type {
 } from '../protocol.js';
 import { exportPng } from '../render/export_png.js';
 import { frameTarget, toViewport, type FrameTarget, type OpenFormat } from './frame_args.js';
+import { registerPaintFonts } from './fonts.js';
 import { startFrameLoop, type BuildOutcome } from './frame_loop';
 import { FramePool, pickTransport } from './transport.js';
 
@@ -271,7 +273,7 @@ function buildBytes(target: FrameTarget): BuildStatsJs | null {
   const out = buffers.beginBuild();
   const stats = (
     target.kind === 'docx'
-      ? docxWasm?.docx_build_display_list_into(out, target.page, target.viewport)
+      ? docxWasm?.docx_build_display_list_into(out, target.viewport, target.gap)
       : xlsx_build_display_list_into(out, target.sheet, target.viewport, target.options)
   ) as BuildStatsJs | undefined;
   if (!stats) {
@@ -289,7 +291,7 @@ function buildSab(target: FrameTarget): BuildStatsJs | null {
   if (!shared) return null;
   const stats = (
     target.kind === 'docx'
-      ? docxWasm?.docx_build_display_list_sab(shared, slotCapacity, target.page, target.viewport)
+      ? docxWasm?.docx_build_display_list_sab(shared, slotCapacity, target.viewport, target.gap)
       : xlsx_build_display_list_sab(
           shared,
           slotCapacity,
@@ -342,6 +344,11 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       }
       try {
         await init(msg.wasmUrl);
+        // Сабсеты Carlito — до первого кадра: Chromium запоминает промах по
+        // строке `ctx.font` на всю сессию, и нарисованное подставленным лицом
+        // осталось бы таким же и после регистрации. Иначе предпросмотр
+        // разойдётся с PDF, куда встроены те же сабсеты.
+        await registerPaintFonts({ font_bytes });
         ctx = msg.canvas.getContext('2d', {
           alpha: true,
           desynchronized: true,

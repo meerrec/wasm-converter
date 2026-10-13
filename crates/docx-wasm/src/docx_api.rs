@@ -169,18 +169,19 @@ pub fn docx_image_bytes(id: u32) -> Result<js_sys::Uint8Array, JsValue> {
     })
 }
 
-/// Собрать кадр страницы и отдать его байты транспорту вызывающего.
+/// Собрать кадр стопки страниц и отдать его байты транспорту вызывающего.
 ///
-/// Номера страниц приходят из интерфейса, поэтому страница за пределами
-/// документа даёт пустой кадр, а не ошибку: так решено в
-/// [`doc_converter_docx::render::build`]. Сборка и сериализация у обоих путей
-/// (SAB и без него) общие — разница только в том, куда байты деваются.
+/// Кадр несёт страницы вокруг окна, а не одну текущую: прокрутка отсчитывается
+/// от верха стопки, страницы стоят друг под другом через `gap` (см.
+/// [`doc_converter_docx::render::build_stack`]). Пустой документ даёт пустой
+/// кадр, а не ошибку. Сборка и сериализация у обоих путей (SAB и без него)
+/// общие — разница только в том, куда байты деваются.
 ///
 /// # Errors
 /// Если документ не открыт, окно описано неверно или запись не удалась.
 fn with_frame_bytes(
-    page: usize,
     viewport: Viewport,
+    gap: f32,
     write: impl FnOnce(&[u8]) -> Result<bool, JsValue>,
 ) -> Result<BuildStats, JsValue> {
     let started = js_sys::Date::now();
@@ -190,7 +191,7 @@ fn with_frame_bytes(
 
         FRAME.with(|frame| {
             let mut frame = frame.borrow_mut();
-            doc_converter_docx::render::build(&open.layout, page, viewport, &mut frame);
+            doc_converter_docx::render::build_stack(&open.layout, viewport, gap, &mut frame);
             let cmds = u32::try_from(frame.len()).unwrap_or(u32::MAX);
 
             SCRATCH.with(|scratch| {
@@ -208,26 +209,29 @@ fn with_frame_bytes(
     })
 }
 
-/// Собрать кадр страницы и вернуть его байты.
+/// Собрать кадр стопки страниц и вернуть его байты.
 ///
 /// Годится тому, кто рисует кадр в другом модуле wasm: кадр самодостаточен.
 /// Просмотрщик ходит через [`docx_build_display_list_into`] — там буфер
 /// вызывающего переиспользуется, а тут кадр каждый раз новый массив.
 ///
+/// `viewport.y` — прокрутка от верха стопки страниц, `gap` — зазор между
+/// страницами в пикселях раскладки.
+///
 /// # Errors
 /// Если документ не открыт или окно описано неверно.
 #[wasm_bindgen]
-pub fn docx_build_display_list(page: usize, viewport: JsValue) -> Result<Vec<u8>, JsValue> {
+pub fn docx_build_display_list(viewport: JsValue, gap: f32) -> Result<Vec<u8>, JsValue> {
     let viewport = viewport_of(viewport)?;
     let mut out = Vec::new();
-    with_frame_bytes(page, viewport, |bytes| {
+    with_frame_bytes(viewport, gap, |bytes| {
         out.extend_from_slice(bytes);
         Ok(true)
     })?;
     Ok(out)
 }
 
-/// Собрать кадр страницы сразу в слот ring'а.
+/// Собрать кадр стопки страниц сразу в слот ring'а.
 ///
 /// Возвращает `written: false`, если свободного слота не было: кадр теряется,
 /// но следующий за ним рисуется — так и задумано, догонять прокрутку
@@ -240,18 +244,18 @@ pub fn docx_build_display_list(page: usize, viewport: JsValue) -> Result<Vec<u8>
 pub fn docx_build_display_list_sab(
     sab: js_sys::SharedArrayBuffer,
     slot_capacity: u32,
-    page: usize,
     viewport: JsValue,
+    gap: f32,
 ) -> Result<JsValue, JsValue> {
     let viewport = viewport_of(viewport)?;
-    let stats = with_frame_bytes(page, viewport, |bytes| {
+    let stats = with_frame_bytes(viewport, gap, |bytes| {
         let mut ring = SabRing::from_sab(sab, slot_capacity as usize)?;
         ring.try_write(bytes)
     })?;
     serde_wasm_bindgen::to_value(&stats).map_err(to_js)
 }
 
-/// Собрать кадр страницы в буфер вызывающего — путь без `SharedArrayBuffer`.
+/// Собрать кадр стопки страниц в буфер вызывающего — путь без `SharedArrayBuffer`.
 ///
 /// Байты пишутся в готовый массив: воркер держит два и заполняет то один, то
 /// другой, поэтому на кадр нет ни аллокации под сам кадр, ни копии из памяти
@@ -264,11 +268,11 @@ pub fn docx_build_display_list_sab(
 #[wasm_bindgen]
 pub fn docx_build_display_list_into(
     out: &js_sys::Uint8Array,
-    page: usize,
     viewport: JsValue,
+    gap: f32,
 ) -> Result<JsValue, JsValue> {
     let viewport = viewport_of(viewport)?;
-    let stats = with_frame_bytes(page, viewport, |bytes| {
+    let stats = with_frame_bytes(viewport, gap, |bytes| {
         let length = bytes.len() as u32;
         if length > out.length() {
             return Ok(false);
@@ -323,6 +327,9 @@ pub(crate) fn to_js(error: impl std::fmt::Display) -> JsValue {
 }
 
 /// Окно — то, что приходит из воркера.
+///
+/// У DOCX `scrollY` отсчитывается от верха стопки страниц, а не от верха
+/// текущей: страницы стоят друг под другом, и кадр несёт те из них, что видны.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ViewportJs {

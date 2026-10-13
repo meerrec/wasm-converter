@@ -1,15 +1,19 @@
 //! Сборка кадра страницы DOCX в [`DisplayList`].
 //!
-//! [`build`] переводит готовую раскладку ([`PageLayout`]) в команды рисования —
-//! тот же путь, который проходит лист XLSX (`xlsx::paint::build`): кадр
-//! собирается в пикселях canvas, painter читает его из ring'а и про DOCX не
-//! знает ничего.
+//! [`build_stack`] переводит готовую раскладку ([`PageLayout`]) в команды
+//! рисования — тот же путь, который проходит лист XLSX (`xlsx::paint::build`):
+//! кадр собирается в пикселях canvas, painter читает его из ring'а и про DOCX
+//! не знает ничего. Кадр несёт стопку страниц вокруг окна: страницы стоят друг
+//! под другом, и на стыке двух из них холст не пустует. [`build`] — тот же
+//! кадр, но для одной страницы; им ходят тесты.
 //!
 //! Соглашение о координатах взято у xlsx. Раскладка живёт в пикселях от левого
 //! верхнего угла страницы, команды — в физических пикселях canvas, поэтому
 //! каждую точку переводит [`Viewport::layout_to_screen`], а размеры (кегль,
 //! толщина линий) умножаются на `viewport.scale`, в который уже входят и зум,
 //! и DPR.
+
+use std::ops::RangeInclusive;
 
 use doc_converter_render::display_list::{
     Color, DisplayList, DrawCommand, StringRef, TextAlign, TextBaseline,
@@ -41,10 +45,27 @@ const PLACEHOLDER_STROKE: Color = Color::rgba(0x80, 0x80, 0x80, 0xFF);
 /// Толщина обводки плейсхолдера в пикселях раскладки.
 const PLACEHOLDER_STROKE_W: f32 = 1.0;
 
+/// Сколько страниц кадр стопки несёт максимум.
+///
+/// Страх от вырожденных случаев (очень высокое окно, мелкие страницы): кадр
+/// уезжает в слот ring'а фиксированной ёмкости, и стопка целиком в него не
+/// влезет. Обычно в окно попадает одна-две страницы, так что предел виден
+/// только здесь.
+const MAX_STACK_PAGES: usize = 8;
+
+/// Сколько соседних страниц рисуется за границей окна.
+///
+/// Сосед сверху и снизу — предвыборка: при прокрутке он уже в кадре, и на
+/// стыке страниц не мелькает пустота.
+const STACK_PREFETCH: usize = 1;
+
 /// Собрать страницу `page` в `DisplayList`.
 ///
 /// `page` — индекс страницы с нуля; номера приходят из UI, поэтому отсутствующая
 /// страница даёт пустой кадр ([`DrawCommand::Clear`]), а не панику.
+///
+/// `viewport.y` здесь отсчитывается от верха САМОЙ страницы: окно от верха
+/// стопки принимает [`build_stack`].
 ///
 /// Координаты `layout` — пиксели от левого верхнего угла страницы, координаты
 /// команд — физические пиксели canvas (см. модульный комментарий).
@@ -54,12 +75,9 @@ pub fn build(layout: &PageLayout, page: usize, viewport: Viewport, out: &mut Dis
     out.clear();
     out.push(DrawCommand::Clear);
 
-    // Индекс нужен дважды: страница берётся из `pages`, колонтитул — из
-    // `chrome` по тому же номеру.
-    let page_index = page;
-    let Some(page) = layout.pages.get(page_index) else {
+    if layout.pages.get(page).is_none() {
         return;
-    };
+    }
 
     let font = out.intern(LAYOUT_FONT_FAMILY);
 
@@ -71,6 +89,81 @@ pub fn build(layout: &PageLayout, page: usize, viewport: Viewport, out: &mut Dis
         w: viewport.w,
         h: viewport.h,
     });
+
+    draw_page(layout, page, 0.0, &viewport, font, out);
+
+    out.push(DrawCommand::PopClip);
+}
+
+/// Собрать кадр стопки страниц: всё, что видно в окне `viewport`.
+///
+/// `viewport.y` — прокрутка от ВЕРХА СТОПКИ в пикселях раскладки; страница `i`
+/// стоит в стопке на `sum(h_j + gap)` по `j < i`, поэтому её содержимое и
+/// белый прямоугольник сдвигаются на этот верх. `viewport.x`, `w`, `h` и
+/// `scale` — общие для всех страниц, как у [`build`].
+///
+/// Кадр несёт страницы, пересекающие окно, и по [`STACK_PREFETCH`] соседей
+/// сверху и снизу; больше [`MAX_STACK_PAGES`] страниц не берётся. Пустой
+/// документ даёт пустой кадр, окно за пределами стопки — ближайшие страницы:
+/// за клипом их не видно, а паниковать из-за прокрутки не за что.
+///
+/// Координаты `layout` — пиксели от левого верхнего угла страницы, координаты
+/// команд — физические пиксели canvas (см. модульный комментарий).
+pub fn build_stack(layout: &PageLayout, viewport: Viewport, gap: f32, out: &mut DisplayList) {
+    out.clear();
+    out.push(DrawCommand::Clear);
+
+    if layout.pages.is_empty() {
+        return;
+    }
+
+    // Отрицательный зазор — это наложение страниц: рисуем их встык. `f32::max`
+    // отбрасывает и NaN, так что зазором из JS раскладку не сломать.
+    let gap = gap.max(0.0);
+
+    let font = out.intern(LAYOUT_FONT_FAMILY);
+
+    // Клип один на окно, а не на страницу: страницы рисуются в общем списке
+    // команд, и всё, что вылезло за canvas, срезается.
+    out.push(DrawCommand::PushClip {
+        x: 0.0,
+        y: 0.0,
+        w: viewport.w,
+        h: viewport.h,
+    });
+
+    let range = stack_range(layout, &viewport, gap);
+    let mut top = stack_top(layout, *range.start(), gap);
+    for index in range {
+        draw_page(layout, index, top, &viewport, font, out);
+        top += layout.pages[index].height + gap;
+    }
+
+    out.push(DrawCommand::PopClip);
+}
+
+/// Нарисовать содержимое страницы `index` так, будто `top` — её верх в стопке.
+///
+/// Раскладка страницы считается от её собственного левого верхнего угла,
+/// поэтому окно для неё сдвигается на `top`: [`Viewport::y`] — прокрутка от
+/// верха стопки.
+fn draw_page(
+    layout: &PageLayout,
+    index: usize,
+    top: f32,
+    viewport: &Viewport,
+    font: StringRef,
+    out: &mut DisplayList,
+) {
+    // Индекс нужен дважды: страница берётся из `pages`, колонтитул — из
+    // `chrome` по тому же номеру.
+    let Some(page) = layout.pages.get(index) else {
+        return;
+    };
+    let viewport = Viewport {
+        y: viewport.y - top,
+        ..*viewport
+    };
 
     let (page_x, page_y) = to_screen(&viewport, 0.0, 0.0);
     fill_rect(
@@ -87,12 +180,60 @@ pub fn build(layout: &PageLayout, page: usize, viewport: Viewport, out: &mut Dis
     // Колонтитулы рисуются после тела: они лежат в полях страницы и с телом
     // не пересекаются, но если колонтитул перерос поле, поверх текста должен
     // остаться он — так же поступает Word, раздвигая полосу набора.
-    if let Some(chrome) = layout.chrome.get(page_index) {
+    if let Some(chrome) = layout.chrome.get(index) {
         draw_items(&chrome.header, &viewport, font, out);
         draw_items(&chrome.footer, &viewport, font, out);
     }
+}
 
-    out.push(DrawCommand::PopClip);
+/// Верх страницы `index` в стопке: высоты предыдущих страниц и зазоры между
+/// ними.
+fn stack_top(layout: &PageLayout, index: usize, gap: f32) -> f32 {
+    layout.pages[..index]
+        .iter()
+        .map(|page| page.height + gap)
+        .sum()
+}
+
+/// Диапазон страниц кадра: пересекающие окно плюс предвыборка по краям, не
+/// больше [`MAX_STACK_PAGES`] страниц.
+fn stack_range(layout: &PageLayout, viewport: &Viewport, gap: f32) -> RangeInclusive<usize> {
+    let pages = &layout.pages;
+    let window_bottom = viewport.y + viewport.h / viewport.scale;
+
+    // Первая страница, чей низ не выше верха окна, и последняя, чей верх не
+    // ниже его низа. В зазоре между страницами окно не пересекает ни одну —
+    // тогда `first` и `last` расходятся на единицу, и кадр задают соседи.
+    let (mut first, mut last) = (None, None);
+    let mut top = 0.0;
+    for (index, page) in pages.iter().enumerate() {
+        if first.is_none() && top + page.height > viewport.y {
+            first = Some(index);
+        }
+        if top < window_bottom {
+            last = Some(index);
+        }
+        top += page.height + gap;
+    }
+    // Окно выше стопки — ближайшая страница первая, ниже — последняя.
+    let first = first.unwrap_or(pages.len() - 1);
+    let last = last.unwrap_or(0);
+
+    let mut start = first.saturating_sub(STACK_PREFETCH);
+    let mut end = (last + STACK_PREFETCH).min(pages.len() - 1);
+
+    // Страниц больше предела: лишние отбрасываются с краёв, дальние от окна
+    // первыми. Вычитания saturating: у окна, накрывшего больше страниц, чем
+    // влезает, конец диапазона уезжает ниже `last`.
+    while end - start + 1 > MAX_STACK_PAGES {
+        if first.saturating_sub(start) > end.saturating_sub(last) {
+            start += 1;
+        } else {
+            end -= 1;
+        }
+    }
+
+    start..=end
 }
 
 /// Нарисовать элементы в порядке раскладки.
@@ -279,6 +420,89 @@ mod tests {
     fn frame(layout: &PageLayout, page: usize) -> DisplayList {
         let mut out = DisplayList::new();
         build(layout, page, viewport(), &mut out);
+        out
+    }
+
+    /// Зазор между страницами стопки, пиксели раскладки.
+    const GAP: f32 = 16.0;
+
+    /// Окно стопки: геометрия как у [`viewport`], но прокрутка `y` — от верха
+    /// стопки, а не от верха страницы.
+    fn stack_viewport(y: f32) -> Viewport {
+        let base = viewport();
+        Viewport::new(0.0, y, base.w, base.h, base.scale)
+    }
+
+    /// Собрать кадр стопки.
+    fn stack_frame(layout: &PageLayout, y: f32) -> DisplayList {
+        let mut out = DisplayList::new();
+        build_stack(layout, stack_viewport(y), GAP, &mut out);
+        out
+    }
+
+    /// Верх каждой страницы в стопке — то же правило, что у [`build_stack`].
+    fn page_tops(layout: &PageLayout, gap: f32) -> Vec<f32> {
+        let mut tops = Vec::with_capacity(layout.pages.len());
+        let mut top = 0.0;
+        for page in &layout.pages {
+            tops.push(top);
+            top += page.height + gap;
+        }
+        tops
+    }
+
+    /// Верх белых прямоугольников страниц в порядке рисования.
+    fn page_backgrounds(dl: &DisplayList) -> Vec<f32> {
+        drawn_rects(dl)
+            .into_iter()
+            .filter(|(_, _, _, _, fill)| *fill == Color::WHITE)
+            .map(|(_, y, _, _, _)| y)
+            .collect()
+    }
+
+    /// Прямоугольник элемента-абзаца.
+    fn paragraph_rect(item: &LayoutItem) -> Rect {
+        match item {
+            LayoutItem::Paragraph { rect, .. } => *rect,
+            _ => unreachable!("вызывается только для абзаца"),
+        }
+    }
+
+    /// Самый нижний абзац страницы.
+    fn lowest_paragraph(page: &Page) -> &LayoutItem {
+        page_paragraphs(page)
+            .into_iter()
+            .max_by(|a, b| paragraph_rect(a).y.total_cmp(&paragraph_rect(b).y))
+            .expect("на странице есть абзацы")
+    }
+
+    /// Самый верхний абзац страницы.
+    fn highest_paragraph(page: &Page) -> &LayoutItem {
+        page_paragraphs(page)
+            .into_iter()
+            .min_by(|a, b| paragraph_rect(a).y.total_cmp(&paragraph_rect(b).y))
+            .expect("на странице есть абзацы")
+    }
+
+    /// Все абзацы страницы: в [`Page::items`] они лежат не только на верхнем
+    /// уровне — текст таблицы живёт в её ячейках.
+    fn page_paragraphs(page: &Page) -> Vec<&LayoutItem> {
+        fn collect<'a>(items: &'a [LayoutItem], out: &mut Vec<&'a LayoutItem>) {
+            for item in items {
+                match item {
+                    LayoutItem::Paragraph { .. } => out.push(item),
+                    LayoutItem::Table { cells, .. } => {
+                        for cell in cells {
+                            collect(&cell.content, out);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let mut out = Vec::new();
+        collect(&page.items, &mut out);
         out
     }
 
@@ -604,6 +828,133 @@ mod tests {
         assert!(
             !second.contains(&first[0]),
             "строки первой страницы на второй не рисуются"
+        );
+    }
+
+    /// Кадр стопки несёт обе страницы, между которыми стоит окно: на стыке
+    /// страниц холст не пустует, каждая страница — со своим сдвигом.
+    #[test]
+    fn a_stack_frame_draws_the_pages_around_the_window() {
+        let layout = fixture_layout("tables/table_100_pages.docx");
+        assert!(layout.pages.len() >= 4, "фикстура многостраничная");
+        let tops = page_tops(&layout, GAP);
+        let scale = viewport().scale;
+
+        // Окно ставим на строки у стыка — последнюю на второй странице и первую
+        // на третьей: та же полоса, что видна при скролле через границу.
+        let above = tops[1] + paragraph_rect(lowest_paragraph(&layout.pages[1])).y;
+        let below = tops[2] + paragraph_rect(highest_paragraph(&layout.pages[2])).y;
+        let seam = above + (below - above) / 2.0;
+        let window_y = seam - viewport().h / (2.0 * scale);
+        let dl = stack_frame(&layout, window_y);
+
+        // Фон каждой страницы на своём месте: вторая страница накрывает верх
+        // окна, третья начинается за зазором. Предвыборка несёт соседей с обеих
+        // сторон.
+        let backgrounds = page_backgrounds(&dl);
+        assert_eq!(
+            backgrounds.len(),
+            4,
+            "страница сверху, две у окна, страница снизу"
+        );
+        for (index, top) in tops.iter().take(4).enumerate() {
+            assert_px(
+                backgrounds[index],
+                (top - window_y) * scale,
+                &format!("верх страницы {} на экране", index + 1),
+            );
+        }
+        // Стык виден: низ второй страницы в окне, третья начинается за зазором.
+        let seam = backgrounds[1] + layout.pages[1].height * scale;
+        assert!(
+            (0.0..=viewport().h).contains(&seam),
+            "граница страниц не в окне: {seam} px"
+        );
+        assert_px(backgrounds[2], seam + GAP * scale, "зазор между страницами");
+
+        // Строки обеих страниц у стыка нарисованы — каждая со сдвигом на верх
+        // своей страницы в стопке, и сдвиг ставит её в окно.
+        let texts = drawn_texts(&dl);
+        let seam_rows = [
+            (1, lowest_paragraph(&layout.pages[1])),
+            (2, highest_paragraph(&layout.pages[2])),
+        ];
+        for (index, item) in seam_rows {
+            let y = (paragraph_rect(item).y - (window_y - tops[index])) * scale;
+            assert!(
+                (0.0..=viewport().h).contains(&y),
+                "строка {:?} страницы {} не попала в окно: y = {y}",
+                paragraph_text(item),
+                index + 1
+            );
+            assert!(
+                texts
+                    .iter()
+                    .any(|t| t.text == paragraph_text(item) && (t.y - y).abs() < 0.01),
+                "строка {:?} страницы {} не нарисована со сдвигом",
+                paragraph_text(item),
+                index + 1
+            );
+        }
+    }
+
+    /// Страница далеко за окном в кадр не попадает: он несёт окно и по странице
+    /// предвыборки по краям, а не всю стопку.
+    #[test]
+    fn a_page_far_from_the_window_is_not_drawn() {
+        let layout = fixture_layout("tables/table_100_pages.docx");
+        assert!(layout.pages.len() >= 4, "фикстура многостраничная");
+        let tops = page_tops(&layout, GAP);
+        let scale = viewport().scale;
+
+        // Окно в начале первой страницы: видна она одна, вторая — предвыборка.
+        let window_y = tops[0] + 10.0;
+        let dl = stack_frame(&layout, window_y);
+
+        let backgrounds = page_backgrounds(&dl);
+        assert_eq!(backgrounds.len(), 2, "окно и одна страница предвыборки");
+        assert_px(backgrounds[0], (tops[0] - window_y) * scale, "верх первой");
+        assert_px(backgrounds[1], (tops[1] - window_y) * scale, "верх второй");
+
+        // Четвёртая страница далеко за окном: её строк в кадре нет.
+        let far = page_paragraphs(&layout.pages[3])[0];
+        let far_y = (paragraph_rect(far).y - (window_y - tops[3])) * scale;
+        assert!(
+            drawn_texts(&dl).iter().all(|t| (t.y - far_y).abs() > 0.01),
+            "строка четвёртой страницы нарисована в кадре"
+        );
+    }
+
+    /// Окно накрыло больше страниц, чем влезает в кадр: лишние отбрасываются с
+    /// краёв, а страницы у верха окна остаются — кадр не ломается.
+    #[test]
+    fn a_stack_frame_is_capped_at_max_pages() {
+        let layout = fixture_layout("tables/table_100_pages.docx");
+        assert!(layout.pages.len() > MAX_STACK_PAGES + 2, "фикстура длинная");
+        let tops = page_tops(&layout, GAP);
+        let scale = viewport().scale;
+
+        // Окно на десять страниц — больше предела кадра.
+        let window_y = tops[2];
+        let window_h = 10.0 * (layout.pages[0].height + GAP) * scale;
+        let mut out = DisplayList::new();
+        build_stack(
+            &layout,
+            Viewport::new(0.0, window_y, 800.0, window_h, 2.0),
+            GAP,
+            &mut out,
+        );
+
+        let backgrounds = page_backgrounds(&out);
+        assert_eq!(
+            backgrounds.len(),
+            MAX_STACK_PAGES,
+            "кадр ограничен пределом"
+        );
+        assert_px(
+            backgrounds[0],
+            0.0,
+            "страница у верха окна осталась в кадре",
         );
     }
 

@@ -25,7 +25,7 @@ export interface DocxViewerHandle {
   readonly pages: PageInfo[];
   /** Сколько страниц в документе. */
   readonly pageCount: number;
-  /** Номер видимой страницы — той, для которой собирается кадр. */
+  /** Номер видимой страницы — той, что занимает верх области прокрутки. */
   readonly pageIndex: number;
   /** Зум: 1 — сто процентов. */
   readonly zoom: number;
@@ -86,7 +86,10 @@ export interface DocxViewerOptions {
   transport?: 'auto' | FrameTransport;
   /** Начальный зум. */
   zoom?: number;
-  /** Зазор между страницами в пикселях раскладки. */
+  /**
+   * Зазор между страницами в пикселях раскладки. Он же уходит в кадр: по нему
+   * Rust ставит страницы стопкой, и стопка в кадре обязана совпасть с распоркой.
+   */
   pageGap?: number;
 }
 
@@ -106,13 +109,15 @@ const SCROLL_EPSILON_PX = 1;
  * и холст, приклеенный к видимой части трансформом, — холст остаётся на месте,
  * пока под ним едет распорка, и браузер не перерисовывает его при скролле.
  *
- * В кадр уходит одна страница: та, что занимает верх видимой области.
+ * В кадр уходит стопка страниц: те, что пересекают окно, плюс по одной соседней
+ * сверху и снизу, — поэтому на стыке двух страниц холст не пустует. Зазор между
+ * страницами в кадре и в распорке — один и тот же (`pageGap`): разойдись они,
+ * кадр поехал бы относительно прокрутки.
  *
- * Ограничение первого слайса: `docx_build_display_list_sab` собирает одну
- * страницу, поэтому на стыке двух страниц нижняя часть холста остаётся пустой,
- * пока следующая страница не станет текущей. Показать несколько страниц в одном
- * кадре — отдельная работа: команды надо собирать в общий `DisplayList` со
- * сдвигом на высоту предыдущих страниц.
+ * Стопка у́же области прокрутки — она стоит по центру: слева и справа от неё
+ * одинаковые поля, а ширина распорки — стопка плюс оба поля. Прокрутка от этого
+ * остаётся симметричной, и центрированное положение — это `scrollLeft = 0`.
+ * По вертикали центрирования нет: стопка длиннее окна и прокручивается.
  */
 export async function createDocxViewer(
   host: HTMLElement,
@@ -153,6 +158,8 @@ export async function createDocxViewer(
   let stackHeight = 0;
   let pageIndex = 0;
   let zoom = options.zoom ?? 1;
+  /** Поле слева от стопки на экране: им она центрируется по горизонтали. */
+  let padLeft = 0;
   let dpr = computeDpr(scroller.clientWidth, scroller.clientHeight, devicePixelRatio);
   let destroyed = false;
   let frameScheduled = false;
@@ -267,10 +274,29 @@ export async function createDocxViewer(
     stackHeight = pages.length === 0 ? 0 : y - pageGap;
   }
 
-  /** Размер стопки на экране: зум растягивает раскладку. */
+  /**
+   * Размер стопки на экране: зум растягивает раскладку, поля центрируют её.
+   *
+   * Поле считается по ширине области прокрутки, а не холста: разметка
+   * прокручивается, и ориентироваться ей есть на что только здесь. Стопка шире
+   * области — поля нет вовсе, прокрутка идёт по самой стопке; уже — распорка
+   * получает стопку плюс оба поля, так что прокручивать нечего (`scrollLeft`
+   * остаётся нулём), а стопка стоит посередине.
+   */
   function applyStackSize(): void {
-    spacer.style.width = `${stackWidth * zoom}px`;
+    padLeft = Math.max(0, (scroller.clientWidth - stackWidth * zoom) / 2);
+    spacer.style.width = `${stackWidth * zoom + 2 * padLeft}px`;
     spacer.style.height = `${stackHeight * zoom}px`;
+  }
+
+  /**
+   * Приклеить холст к видимой части области: холст лежит в начале распорки, и
+   * прокрутка сдвигает его ровно настолько, чтобы он остался на месте экрана.
+   * Поля распорки в этот сдвиг не входят — холст показывает то же окно, что
+   * видно, а где оно в раскладке, говорит `viewport().x`.
+   */
+  function placeCanvas(): void {
+    canvas.style.transform = `translate(${scroller.scrollLeft}px, ${scroller.scrollTop}px)`;
   }
 
   function resizeCanvas(): void {
@@ -316,13 +342,15 @@ export async function createDocxViewer(
    * Окно в единицах рендера: `x`/`y` — пиксели раскладки, `w`/`h` — физические
    * пиксели canvas, `scale` — зум, умноженный на DPR (как у XLSX).
    *
-   * `y` отсчитывается от верха текущей страницы, а не от верха стопки: кадр
-   * собирается для одной страницы и её начало — нуль раскладки в Rust.
+   * `y` отсчитывается от верха стопки, а не от верха текущей страницы: кадр
+   * собирается для всей видимой стопки, и её начало — нуль раскладки в Rust.
+   * `x` — тоже от начала раскладки, поэтому поле слева, которого при
+   * центрировании на холст не видно, уводит его в минус.
    */
   function viewport(): Viewport {
     return {
-      x: scroller.scrollLeft / zoom,
-      y: scroller.scrollTop / zoom - pageTop(pageIndex),
+      x: (scroller.scrollLeft - padLeft) / zoom,
+      y: scroller.scrollTop / zoom,
       w: scroller.clientWidth * dpr,
       h: scroller.clientHeight * dpr,
       scale: zoom * dpr,
@@ -342,7 +370,7 @@ export async function createDocxViewer(
     pageIndex = pageAt(scroller.scrollTop);
     worker.postMessage({
       type: 'render',
-      req: { page: pageIndex, viewport: viewport(), config: frameConfig() },
+      req: { gap: pageGap, viewport: viewport(), config: frameConfig() },
     } satisfies InMsg);
   }
 
@@ -356,13 +384,17 @@ export async function createDocxViewer(
   }
 
   const onScroll = () => {
-    canvas.style.transform = `translate(${scroller.scrollLeft}px, ${scroller.scrollTop}px)`;
+    placeCanvas();
     schedule();
   };
   scroller.addEventListener('scroll', onScroll, { passive: true });
 
   const observer = new ResizeObserver(() => {
     resizeCanvas();
+    // Ширина области прокрутки — она же база поля слева: после изменения
+    // размера стопку надо переставить, даже если прокрутка не сдвинулась.
+    applyStackSize();
+    placeCanvas();
     schedule();
   });
   observer.observe(scroller);
@@ -422,7 +454,9 @@ export async function createDocxViewer(
     },
 
     scrollTo(x: number, y: number): void {
-      scroller.scrollLeft = x * zoom;
+      // Точка раскладки встаёт в левый верхний угол видимой области, а её
+      // левый край отстоит от начала раскладки на поле; вертикально поля нет.
+      scroller.scrollLeft = padLeft + x * zoom;
       scroller.scrollTop = y * zoom;
       onScroll();
     },

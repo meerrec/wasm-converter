@@ -29,6 +29,10 @@ const PAGE_H: f64 = 16838.0 / 15.0;
 /// Ёмкость слота ring'а: кадр страницы много меньше мебибайта.
 const SLOT_CAPACITY: u32 = 1 << 20;
 
+/// Зазор между страницами стопки в пикселях раскладки: кадр несёт страницы
+/// вокруг окна, и зазор приходит из интерфейса.
+const GAP: f32 = 16.0;
+
 /// Окно в том же виде, в каком его шлёт воркер.
 fn viewport() -> JsValue {
     let object = js_sys::Object::new();
@@ -106,7 +110,7 @@ fn build_without_sab_returns_the_frame_bytes() {
     doc_converter_docx_wasm::docx_api::docx_open(ONE_PARAGRAPH.to_vec())
         .expect("фикстура открывается");
 
-    let bytes = doc_converter_docx_wasm::docx_api::docx_build_display_list(0, viewport())
+    let bytes = doc_converter_docx_wasm::docx_api::docx_build_display_list(viewport(), GAP)
         .expect("кадр собирается");
     assert!(bytes.len() > doc_converter_render::display_list::HEADER_SIZE);
     assert_eq!(
@@ -133,8 +137,8 @@ fn builds_a_frame_into_the_sab_slot() {
     let stats = doc_converter_docx_wasm::docx_api::docx_build_display_list_sab(
         sab.clone(),
         SLOT_CAPACITY,
-        0,
         viewport(),
+        GAP,
     )
     .expect("кадр собирается");
 
@@ -166,7 +170,7 @@ fn build_after_close_is_an_error() {
         .expect("фикстура открывается");
     doc_converter_docx_wasm::docx_api::docx_close();
 
-    let error = doc_converter_docx_wasm::docx_api::docx_build_display_list(0, viewport())
+    let error = doc_converter_docx_wasm::docx_api::docx_build_display_list(viewport(), GAP)
         .expect_err("после закрытия кадр не собирается");
     let message = error.as_string().unwrap_or_default();
     assert!(message.contains("no document"), "сообщение: {message}");

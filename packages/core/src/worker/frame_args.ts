@@ -43,26 +43,27 @@ export const toOptions = (config: RenderConfig): XlsxRenderOptions => ({
 /**
  * Что рисовать в следующем кадре.
  *
- * Ветки различаются не только номером листа или страницы, но и набором
- * аргументов былл-функции: у DOCX настроек показа нет — кадр страницы от них
- * не зависит.
+ * Ветки различаются не только номером листа или зазором стопки, но и набором
+ * аргументов былл-функции: у DOCX настроек показа нет — кадр стопки страниц от
+ * них не зависит.
  */
 export type FrameTarget =
   | { kind: 'xlsx'; sheet: number; viewport: RustViewport; options: XlsxRenderOptions }
-  | { kind: 'docx'; page: number; viewport: RustViewport };
+  | { kind: 'docx'; gap: number; viewport: RustViewport };
 
 /**
  * Разобрать запрос кадра под формат открытого документа.
  *
  * @throws Error, если документ не открыт или в запросе нет поля его формата:
- * кадр лучше пропустить, чем нарисовать чужой лист или первую страницу.
+ * кадр лучше пропустить, чем нарисовать чужой лист или стопку, съехавшую
+ * относительно прокрутки.
  */
 export function frameTarget(format: OpenFormat, req: RenderRequest): FrameTarget {
   if (format === null) throw new Error('render: no document is open');
   const viewport = toViewport(req.viewport);
   if (format === 'docx') {
-    if (req.page === undefined) throw new Error('render: docx frame has no page number');
-    return { kind: 'docx', page: req.page, viewport };
+    if (req.gap === undefined) throw new Error('render: docx frame has no page gap');
+    return { kind: 'docx', gap: req.gap, viewport };
   }
   return { kind: 'xlsx', sheet: req.sheet ?? 0, viewport, options: toOptions(req.config) };
 }
