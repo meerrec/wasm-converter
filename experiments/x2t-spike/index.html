@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <title>x2t harness — конвертация форматов</title>
+    <!-- Пустая иконка: иначе браузер просит /favicon.ico и шумит 404 в консоли. -->
+    <link rel="icon" href="data:," />
+    <style>
+      body { font: 14px/1.45 system-ui, sans-serif; margin: 1.5rem; max-width: 60rem; }
+      h1 { font-size: 1.2rem; }
+      .status { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 0.25rem; font-weight: 600; }
+      .status-booting, .status-converting { background: #ffe9a8; }
+      .status-ready, .status-done { background: #c8f0c0; }
+      .status-error { background: #ffc2c2; }
+      pre { background: #f4f4f4; border: 1px solid #ddd; padding: 0.6rem; overflow: auto; margin: 0.4rem 0; }
+      #metrics { max-height: 12rem; }
+      #preview { max-height: 22rem; }
+      #log { max-height: 14rem; }
+      button { padding: 0.2rem 0.6rem; }
+      .hint { color: #444; }
+    </style>
+  </head>
+  <body>
+    <h1>Харнесс спайка x2t (ONLYOFFICE → WASM)</h1>
+    <p class="hint">
+      Конвертация форматов односторонним вызовом конвертера. PDF здесь нет: движок раскладки
+      вырезан из сборки, поэтому <code>docx → pdf</code> не работает — подробности в
+      <code>vendor/x2t/README.md</code>.
+    </p>
+    <p>
+      Состояние: <span id="status" class="status status-booting">подъём модуля</span>
+    </p>
+    <p>
+      Файл:
+      <input
+        type="file"
+        id="file"
+        accept=".docx .doc .xlsx .xls .pptx .odt .ods .odp .rtf .txt .csv"
+      />
+      в формат
+      <select id="format">
+        <option value="odt">odt</option>
+        <option value="docx">docx</option>
+        <option value="rtf">rtf</option>
+        <option value="txt">txt</option>
+        <option value="html">html</option>
+        <option value="xlsx">xlsx</option>
+        <option value="ods">ods</option>
+        <option value="csv">csv</option>
+        <option value="pptx">pptx</option>
+        <option value="odp">odp</option>
+      </select>
+      <button id="convert" type="button" disabled>Конвертировать</button>
+      <button id="pdfCheck" type="button" disabled>Проверить PDF (ожидается отказ)</button>
+    </p>
+    <p><a id="download" hidden>Скачать результат</a></p>
+    <pre id="metrics"></pre>
+    <pre id="preview"><span class="hint">Предпросмотр появится здесь.</span></pre>
+    <pre id="log"></pre>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
