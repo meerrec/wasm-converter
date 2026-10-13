@@ -42,3 +42,10 @@ oracle-out-docx/
 # TypeDoc API docs (сгенерированное: `pnpm docs:api`; .gitkeep держит каталог)
 docs/api/*
 !docs/api/.gitkeep
+
+# LOWA-спайк (Спринт 13): артефакты чужих сборок — десятки МБ, лежат локально
+# (`*.wasm` уже покрыт выше; `soffice.js`/`soffice.data` — нет)
+experiments/lowa-spike/**/soffice.js
+experiments/lowa-spike/**/soffice.data
+experiments/lowa-spike/**/soffice.*.map
+experiments/lowa-spike/vendor/
