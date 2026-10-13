@@ -120,16 +120,15 @@ fn drawing_hash(bytes: &[u8]) -> u64 {
 /// Числа сняты с вывода: 600 строк отчёта — 13 страниц A4, 5000 строк — 105.
 /// Узкие листы делит только высота (`content-empty-sheet` — одна страница).
 ///
-/// Широкие листы печатаются целиком: умолчание разрешения масштаба — уместить
-/// по ширине (`resolve_page_scale`, уровень 5), поэтому полос столбцов у них
-/// больше нет, а страницы даёт деление по высоте: `content-dense` (100 строк по
-/// 20 столбцов) ужимается вдвое и делится на 2 страницы, `size-20x100x1`
-/// (20 строк по 100 столбцов) — одна страница.
+/// Широкие листы печатаются в 100 % и делятся полосами столбцов, как у LO и
+/// Excel: `content-dense` (100 строк по 20 столбцов) — 2 полосы столбцов × 3
+/// полосы строк = 6 страниц, `size-20x100x1` (20 строк по 100 столбцов) —
+/// десять полос столбцов.
 const PAGE_COUNTS: &[(&str, usize)] = &[
     ("scale-ten-pages.xlsx", 13),
     ("edge-many-rows.xlsx", 105),
-    ("content-dense.xlsx", 2),
-    ("size-20x100x1.xlsx", 1),
+    ("content-dense.xlsx", 6),
+    ("size-20x100x1.xlsx", 10),
     ("content-empty-sheet.xlsx", 1),
 ];
 
@@ -176,9 +175,8 @@ fn cursor_x_range(content: &[u8]) -> (f32, f32) {
 /// сумма нарисованных ячеек равна ячейкам листа. До разбивки ячейки правее
 /// области содержимого молча отбрасывались (`painter.rs:208-211`).
 ///
-/// Явный `fit_to_height` нужен, чтобы ширина осталась естественной: умолчание
-/// умещает лист в одну страницу по ширине (`resolve_page_scale`, уровень 5), и
-/// полос столбцов при нём не бывает вовсе.
+/// Явный `fit_to_height` закрепляет высоту листа на одной странице; ширина
+/// остаётся естественной (100 %), и полосы столбцов делят лист по десять.
 #[test]
 fn all_cells_survive_column_split() {
     const FIXTURE: &str = "size-30x30x2.xlsx";
@@ -256,10 +254,10 @@ fn page_counts_are_pinned() {
 /// уезжала вниз на высоту своего прямоугольника. Эталон был снят с багованной
 /// отрисовки — потому баг и не ловился.
 ///
-/// Умолчание «уместить по ширине» (`resolve_page_scale`, уровень 5) пересчитало
-/// широкие листы ещё раз: у `content-dense`, `size-20x100x1` и
-/// `layout-column-widths` теперь одна полоса столбцов, а масштаб ужат под
-/// ширину страницы.
+/// Умолчание «уместить по ширине» убрано (эталон — печать LO/Excel в 100 %,
+/// деление полосами столбцов): `content-dense`, `size-20x100x1` и
+/// `layout-column-widths` снова делятся полосами столбцов, их эталоны
+/// пересчитаны.
 ///
 /// Объявленные ширины столбцов (`xlsx::layout::width_to_px`) считаются по
 /// метрике цифры шрифта, как в `LibreOffice`, а не по формовым 7 px Excel:
@@ -283,10 +281,10 @@ fn page_counts_are_pinned() {
 const DRAWING: &[(&str, u64)] = &[
     ("scale-ten-pages.xlsx", 0xaf17_a30b_3166_e6ab),
     ("edge-many-rows.xlsx", 0x27fb_c0c3_edfd_973f),
-    ("content-dense.xlsx", 0xb50f_ba62_3e35_ed1a),
-    ("size-20x100x1.xlsx", 0xaa1c_e1c0_84e8_1408),
+    ("content-dense.xlsx", 0x5ea8_4e0e_3a7a_0add),
+    ("size-20x100x1.xlsx", 0x4509_1691_ad0d_d99c),
     ("values-strings.xlsx", 0xaff1_7aae_6dad_3a4e),
-    ("layout-column-widths.xlsx", 0x6ace_462f_c47f_d216),
+    ("layout-column-widths.xlsx", 0xbb58_15bf_3418_053c),
     ("edge-merged-styled.xlsx", 0x5ae2_3b4b_802b_aa5f),
     ("content-empty-sheet.xlsx", 0x0a06_e1e5_c37a_af6d),
 ];
@@ -512,8 +510,8 @@ fn repeat_header_rows_on_every_page() {
 
 /// A3: первые столбцы повторяются на каждой полосе столбцов.
 ///
-/// `fit_to_height` — чтобы ширина осталась естественной: умолчание уместило бы
-/// лист в одну страницу по ширине, и полос для повтора не стало бы.
+/// `fit_to_height` — чтобы ширина осталась естественной (100 %): полосы
+/// столбцов и есть место повтора первых столбцов.
 #[test]
 fn first_columns_repeat_on_every_page() {
     const FIXTURE: &str = "size-30x30x2.xlsx";
@@ -671,28 +669,30 @@ fn fit_pages(bytes: &[u8]) -> usize {
         .len()
 }
 
-/// Умолчание — уместить по ширине: широкий лист печатается одной полосой
-/// столбцов, хотя без границ (контроль с естественной шириной) их две.
+/// Без настроек широкий лист печатается в 100 % и делится полосами столбцов,
+/// как печатают `LibreOffice` и Excel: умолчание «уместить по ширине» (`f16ea7b`)
+/// убрано, и `fitToWidth`/`fitToHeight` без `fitToPage` лист не сжимают.
 #[test]
-fn wide_sheet_fits_width_by_default() {
+fn wide_sheet_prints_at_full_scale_by_default() {
     let book = fit_workbook(12, 3, PrintSettings::default());
-    let natural = fit_export(
+    let default = fit_export(&book, PageConfig::default());
+    assert_eq!(
+        fit_pages(&default),
+        2,
+        "12 столбцов по 64 px — две полосы по десять при 100 %"
+    );
+    // Явное «уместить по ширине» по-прежнему ужимает лист в одну полосу.
+    let fitted = fit_export(
         &book,
         PageConfig {
-            fit_to_height: Some(1),
+            fit_to_width: Some(1),
             ..PageConfig::default()
         },
     );
     assert_eq!(
-        fit_pages(&natural),
-        2,
-        "контроль: 12 столбцов по 64 px не влезают в 680 px одной полосы"
-    );
-    let default = fit_export(&book, PageConfig::default());
-    assert_eq!(
-        fit_pages(&default),
+        fit_pages(&fitted),
         1,
-        "широкий лист не уместился по ширине"
+        "явный fit_to_width не ужал лист в одну полосу"
     );
 }
 
@@ -733,12 +733,16 @@ fn sheet_fit_to_page_drives_pagination() {
     );
 }
 
-/// `fitToWidth = 2` листа — две страницы по ширине там, где умолчание
-/// («уместить в одну») ужимает лист до одной: настройка листа сильнее.
+/// `fitToWidth = 2` листа — две страницы по ширине там, где без настроек
+/// полос столбцов три (100 %): настройка листа сильнее умолчания.
+///
+/// 24 столбца × 64 px = 1536 px, две страницы — ужатие до 0,8858 — та же
+/// арифметика, что у `sheet_fit_to_page_drives_pagination` (12 столбцов на
+/// одну страницу): полоса выходит ровно 768 px — двенадцать столбцов.
 #[test]
 fn sheet_fit_to_width_counts_pages_wide() {
     let book = fit_workbook(
-        20,
+        24,
         3,
         PrintSettings {
             fit_to_page: true,
@@ -750,13 +754,13 @@ fn sheet_fit_to_width_counts_pages_wide() {
     assert_eq!(
         fit_pages(&fit_export(&book, PageConfig::default())),
         2,
-        "две страницы по ширине: 20 столбцов — две полосы по десять"
+        "две страницы по ширине: 24 столбца — две полосы по двенадцать"
     );
-    let plain = fit_workbook(20, 3, PrintSettings::default());
+    let plain = fit_workbook(24, 3, PrintSettings::default());
     assert_eq!(
         fit_pages(&fit_export(&plain, PageConfig::default())),
-        1,
-        "умолчание уместило бы те же 20 столбцов в одну страницу"
+        3,
+        "без настроек те же 24 столбца — три полосы (10 + 10 + 4) при 100 %"
     );
 }
 
@@ -784,8 +788,8 @@ fn explicit_fit_beats_sheet_fit() {
     );
 }
 
-/// Умолчание только ужимает: лист, помещающийся по ширине, печатается в
-/// 100 % — отрисовка та же, что с естественной шириной.
+/// Лист, помещающийся по ширине, печатается в 100 % — отрисовка та же, что
+/// с естественной шириной.
 #[test]
 fn narrow_sheet_keeps_full_scale() {
     let book = fit_workbook(6, 3, PrintSettings::default());
@@ -906,9 +910,8 @@ fn text_count(doc: &lopdf::Document, page_id: ObjectId, needle: &str) -> usize {
 fn merged_cell_survives_column_bands() {
     const TEXT: &str = "СКВОЗНОЙЗАГОЛОВОК";
     // 30 столбцов по 64 px — три полосы по десять; A1:M1 (0..13) накрывает
-    // первую и вторую и не достаёт до третьей. `fit_to_height` оставляет ширину
-    // естественной: умолчание уместило бы лист в одну страницу по ширине, и
-    // полос не стало бы.
+    // первую и вторую и не достаёт до третьей. `fit_to_height` оставляет
+    // ширину естественной (100 %): полосы делят лист по десять.
     let book = merge_workbook(2, 30, (0, 0, 0, 12), TEXT);
     let bytes = fit_export(
         &book,

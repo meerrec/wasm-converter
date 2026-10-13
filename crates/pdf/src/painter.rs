@@ -809,10 +809,14 @@ fn fit_pages(pages: u32) -> Option<u32> {
 ///    масштаб и «уместить» в Excel взаимоисключающие;
 /// 3. `fitToPage` листа — его `fitToWidth`/`fitToHeight` (`0` — «сколько
 ///    потребуется», то есть границы нет);
-/// 4. `scale` листа, если это не дефолтные 100%;
-/// 5. умолчание — уместить по ширине: широкая таблица печатается одной
-///    страницей по ширине, а не полосами столбцов; по высоте — сколько
-///    потребуется.
+/// 4. `scale` листа, если это не дефолтные 100%.
+///
+/// Если ничего не задано, функция не меняет конфиг: лист печатается в 100 %
+/// и делится полосами столбцов и строк. Так печатают и `LibreOffice`, и Excel,
+/// и пагинация сверяется с ними (оракул): подставлять «уместить по ширине»
+/// за пользователя нельзя — `fitToWidth`/`fitToHeight` без `fitToPage`
+/// обе стороны игнорируют, а лист, который эталон режет полосами, у нас
+/// сжимался бы в одну страницу (регрессия `f16ea7b`).
 ///
 /// Уровень 2 нужен ради явных вызывающих: интерфейс зовёт `exportPdf({})` и
 /// полей не присылает вовсе, а CLI передаёт `--scale` явно.
@@ -837,9 +841,7 @@ fn resolve_page_scale(page: &mut PageConfig, sheet: &Sheet) {
         #[allow(clippy::cast_precision_loss)]
         let scale = print.scale as f32 / 100.0;
         page.scale = scale;
-        return;
     }
-    page.fit_to_width = Some(1);
 }
 
 /// Подготовить лист к записи: раскладка, геометрия, срезы, диаграммы.
@@ -882,8 +884,8 @@ fn prepare_sheet<'a>(
     };
     // Масштаб — из настроек листа или умолчания, до `print_scale`: без этой
     // подстановки лист, который Excel печатает ужатым по ширине (`fitToPage`),
-    // режется на страницы-полосы, а широкая таблица без настроек — и вовсе на
-    // произведение полос столбцов и строк.
+    // режется на страницы-полосы. Без настроек лист печатается в 100 % и
+    // делится полосами столбцов, как у LO/Excel.
     resolve_page_scale(&mut page_cfg, sheet);
     // `fit_to_width` пересчитывает масштаб до сборки геометрии: от него зависят
     // и полосы, и координаты ячеек.
@@ -1236,6 +1238,7 @@ fn write_pages<W: Write>(
 mod tests {
     use super::*;
     use crate::options::PageConfig;
+    use doc_converter_xlsx::{PrintSettings, SheetContent, SheetState, WorksheetMeta};
 
     /// Срез страницы без полос и повторов: важны только сдвиги.
     fn plain_slice() -> PageSlice {
@@ -1392,5 +1395,113 @@ mod tests {
 
         let shifted = page_rect(RectPx::new(100.0, 200.0, 30.0, 10.0), &slice);
         assert_eq!(shifted, RectPx::new(85.0, 205.0, 30.0, 10.0));
+    }
+
+    /// Лист с заданными настройками печати; ячейки `resolve_page_scale` не
+    /// читает, поэтому они не нужны.
+    fn sheet_with(print: PrintSettings) -> Sheet {
+        Sheet::new(
+            WorksheetMeta {
+                name: "Лист1".into(),
+                part: "xl/worksheets/sheet1.xml".into(),
+                state: SheetState::Visible,
+            },
+            SheetContent {
+                print,
+                ..SheetContent::default()
+            },
+        )
+    }
+
+    /// Без явных настроек `resolve_page_scale` не меняет конфиг: лист остаётся
+    /// в 100 % без границ «уместить», и пагинация делит его полосами столбцов
+    /// и строк, как печатают `LibreOffice` и Excel.
+    #[test]
+    fn nothing_set_keeps_full_scale() {
+        let mut page = PageConfig::default();
+        resolve_page_scale(&mut page, &sheet_with(PrintSettings::default()));
+        assert_eq!(page.scale.to_bits(), 1.0_f32.to_bits());
+        assert_eq!(page.fit_to_width, None);
+        assert_eq!(page.fit_to_height, None);
+    }
+
+    /// `fitToWidth`/`fitToHeight` без `<pageSetUpPr fitToPage>` игнорируются,
+    /// как у LO и Excel: подстановка «уместить по ширине» — регрессия `f16ea7b`.
+    #[test]
+    fn fit_attrs_without_fit_to_page_are_ignored() {
+        let print = PrintSettings {
+            fit_to_page: false,
+            fit_to_width: 1,
+            fit_to_height: 1,
+            ..PrintSettings::default()
+        };
+        let mut page = PageConfig::default();
+        resolve_page_scale(&mut page, &sheet_with(print));
+        assert_eq!(page.scale.to_bits(), 1.0_f32.to_bits());
+        assert_eq!(page.fit_to_width, None);
+        assert_eq!(page.fit_to_height, None);
+    }
+
+    /// `fitToPage` листа применяется: границы «уместить» из `fitToWidth`/
+    /// `fitToHeight`, `0` — «сколько потребуется», то есть границы нет.
+    #[test]
+    fn sheet_fit_to_page_applies() {
+        let print = PrintSettings {
+            fit_to_page: true,
+            fit_to_width: 2,
+            fit_to_height: 0,
+            ..PrintSettings::default()
+        };
+        let mut page = PageConfig::default();
+        resolve_page_scale(&mut page, &sheet_with(print));
+        assert_eq!(page.fit_to_width, Some(2));
+        assert_eq!(page.fit_to_height, None);
+    }
+
+    /// `scale` листа применяется при отсутствии `fitToPage` (уровень 4).
+    #[test]
+    fn sheet_scale_applies_without_fit_to_page() {
+        let print = PrintSettings {
+            scale: 50,
+            ..PrintSettings::default()
+        };
+        let mut page = PageConfig::default();
+        resolve_page_scale(&mut page, &sheet_with(print));
+        assert_eq!(page.scale.to_bits(), 0.5_f32.to_bits());
+    }
+
+    /// Явный `fit_to_width` вызывающего сильнее листового `fitToPage`
+    /// (уровень 1 сильнее уровня 3).
+    #[test]
+    fn caller_fit_beats_sheet_fit_to_page() {
+        let print = PrintSettings {
+            fit_to_page: true,
+            fit_to_width: 1,
+            fit_to_height: 0,
+            ..PrintSettings::default()
+        };
+        let mut page = PageConfig {
+            fit_to_width: Some(3),
+            ..PageConfig::default()
+        };
+        resolve_page_scale(&mut page, &sheet_with(print));
+        assert_eq!(page.fit_to_width, Some(3));
+        assert_eq!(page.fit_to_height, None);
+    }
+
+    /// Явный масштаб вызывающего сильнее листового `scale` (уровень 2 сильнее
+    /// уровня 4).
+    #[test]
+    fn caller_scale_beats_sheet_scale() {
+        let print = PrintSettings {
+            scale: 50,
+            ..PrintSettings::default()
+        };
+        let mut page = PageConfig {
+            scale: 0.25,
+            ..PageConfig::default()
+        };
+        resolve_page_scale(&mut page, &sheet_with(print));
+        assert_eq!(page.scale.to_bits(), 0.25_f32.to_bits());
     }
 }
