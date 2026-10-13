@@ -11,9 +11,15 @@ export default [
   { path: 'packages/core/dist/worker.js', limit: '550 KB', gzip: true },
   { path: 'packages/core/dist/index.js',  limit: '200 KB', gzip: true },
   {
+    // Бюджет поднят 300 → 480 КБ в Спринте 12: коммит b43a2de вшил четыре
+    // поднабора Carlito (~177 КБ gzip), чтобы превью рисовало той же
+    // гарнитурой, что и PDF (иначе браузер подставляет Helvetica, ширина
+    // строки уходит на ~14 %, превью расходится с экспортом). Вынос шрифтов
+    // в ленивый ассет — задел после v1.0; строка по-прежнему стережёт
+    // возврат кода в основной бандл.
     name: 'wasm (viewer)',
     path: 'packages/wasm/pkg/*.wasm',
-    limit: '300 KB',
+    limit: '480 KB',
     gzip: true,
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },
