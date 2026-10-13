@@ -91,27 +91,33 @@ async function psSnapshot() {
   });
 }
 
-function rssOf(procs, baseline) {
-  const fresh = procs.filter((p) => !baseline.has(p.pid));
-  const empty = { rendererMb: 0, rendererCount: 0, renderers: [], others: [], fresh: 0 };
-  if (!fresh.length) return empty;
-  // Главный процесс браузера — новый процесс без --type=; рендереры — его потомки.
-  const mainPids = new Set(fresh.filter((p) => !/--type=/.test(p.args)).map((p) => p.pid));
-  if (!mainPids.size) return { ...empty, fresh: fresh.length };
-  const byPid = new Map(fresh.map((p) => [p.pid, p]));
-  const isMine = (p) => {
-    let cur = byPid.get(p.ppid);
-    for (let d = 0; cur && d < 4; d++) {
-      if (mainPids.has(cur.pid)) return true;
-      cur = byPid.get(cur.ppid);
-    }
-    return false;
-  };
+function rssOf(procs, key) {
+  if (!procs) return null;
+  // Основной дискриминатор — свой --user-data-dir: его несут и helper-процессы
+  // (проверено), поэтому чужие браузеры, запущенные параллельно, не подмешиваются.
+  // Дифф по pid — запасной путь, если командную строку снять не удалось.
+  let mine;
+  if (key.udd) {
+    mine = procs.filter((p) => p.args.includes(`--user-data-dir=${key.udd}`));
+  } else {
+    const fresh = procs.filter((p) => !key.baseline.has(p.pid));
+    const mainPids = new Set(fresh.filter((p) => !/--type=/.test(p.args)).map((p) => p.pid));
+    if (!mainPids.size) return { rendererMb: 0, rendererCount: 0, renderers: [], others: [], fresh: fresh.length };
+    const byPid = new Map(fresh.map((p) => [p.pid, p]));
+    const isDescendant = (p) => {
+      let cur = byPid.get(p.ppid);
+      for (let d = 0; cur && d < 4; d++) {
+        if (mainPids.has(cur.pid)) return true;
+        cur = byPid.get(cur.ppid);
+      }
+      return false;
+    };
+    mine = fresh.filter(isDescendant);
+  }
   const renderers = [];
   const others = [];
   let rendererMb = 0;
-  for (const p of fresh) {
-    if (!isMine(p)) continue;
+  for (const p of mine) {
     const type = (p.args.match(/--type=([\w-]+)/) || [, 'browser'])[1];
     if (type === 'renderer') {
       rendererMb += p.rssMb;
@@ -123,13 +129,14 @@ function rssOf(procs, baseline) {
   return {
     rendererMb: Number(rendererMb.toFixed(1)),
     rendererCount: renderers.length,
+    largestMb: renderers.length ? Number(Math.max(...renderers.map((r) => r.rssMb)).toFixed(1)) : 0,
     renderers,
     others,
-    fresh: fresh.length,
+    fresh: mine.length,
   };
 }
 
-function startRssSampler(baseline) {
+function startRssSampler(key) {
   const state = {
     segments: [],
     current: { label: 'launch', peakMb: 0, renderers: null },
@@ -150,18 +157,15 @@ function startRssSampler(baseline) {
   };
   (async () => {
     while (!state.stop) {
-      const snap = await psSnapshot();
-      if (snap) {
-        const r = rssOf(snap, baseline);
+      const r = rssOf(await psSnapshot(), key);
+      if (r) {
         state.samples++;
         state.current.samples++;
         state.lastDetail = r;
         if (r.rendererMb > state.current.peakMb) {
           state.current.peakMb = r.rendererMb;
           state.current.renderers = r.renderers;
-          state.current.largestMb = r.renderers.length
-            ? Math.max(...r.renderers.map((x) => x.rssMb))
-            : 0;
+          state.current.largestMb = r.largestMb;
           state.current.rendererCount = r.rendererCount;
           state.current.others = r.others;
           state.current.peakAt = new Date().toISOString();
@@ -297,8 +301,22 @@ async function coldRun(runIndex, { doConvert }) {
     args: BIG_CACHE ? ['--disk-cache-size=2000000000'] : [],
   });
   const version = browser.version();
-  const rss = startRssSampler(baseline);
   const context = await browser.newContext();
+
+  // Свой --user-data-dir снимаем сразу: по нему потом точно опознаются процессы
+  // этого браузера (его несут и helper'ы). Без него параллельно запущенные
+  // браузеры других слайсов подмешивались бы в пик RSS.
+  let udd = null;
+  try {
+    const probe = await context.newPage();
+    await probe.goto('chrome://version', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    const cl = await probe.evaluate(() => document.getElementById('command_line')?.textContent ?? '');
+    udd = (cl.match(/--user-data-dir=(\S+)/) || [])[1] ?? null;
+    await probe.close();
+  } catch {
+    udd = null;
+  }
+  const rss = startRssSampler({ udd, baseline });
   const page = await context.newPage();
 
   const browserConsole = [];
@@ -649,6 +667,7 @@ async function coldRun(runIndex, { doConvert }) {
 
   // --- Диагностика окружения: командная строка браузера (нужна, чтобы
   //     объяснить, почему тёплый старт не берёт артефакты из кэша) ---
+  run.udd = udd;
   if (runIndex === 1) {
     try {
       const vp = await context.newPage();
