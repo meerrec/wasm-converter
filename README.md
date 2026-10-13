@@ -137,9 +137,10 @@ doc-converter batch ./in --out ./out --format pdf --workers 8 --scale 0.9
 
 ## Браузеры
 
-Chrome 90+, Firefox 96+, Safari 16.4+ ([ROADMAP.md](ROADMAP.md) §1).
-Доступность `OffscreenCanvas` проверяется экспортом `supportsOffscreen()`.
-Работа без COOP/COEP — штатный путь, см. ниже.
+Chrome 90+, Firefox 105+, Safari 16.4+ — по доступности `OffscreenCanvas`
+(проверяется экспортом `supportsOffscreen()`; просмотрщик требует его —
+main-thread fallback в v1 не реализован). Работа без COOP/COEP — штатный
+путь, см. ниже.
 
 ## Встраивание: COOP/COEP и SharedArrayBuffer
 
