@@ -1,0 +1,349 @@
+name: Release
+
+# Релизная механика (план спринта 12, слайс S2.2). Два режима:
+#
+# 1. `dry-run` — на push в main и на PR проверяет, что проект по-прежнему
+#    умеет выпускаться: changesets дают валидный план, wasm-модули и
+#    npm-пакеты собираются, все шесть крейтов пакуются и проходят
+#    `cargo publish --dry-run`. Это гейт DoD «cargo publish --dry-run зелёный».
+#
+# 2. `publish` — по тегу v* (или вручную из main) реально публикует
+#    npm-пакеты и крейты и режет GitHub Release. Тег ставится на main
+#    (trunk-based): с другой ветки джоба молча пропускается.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  dry-run:
+    name: Release dry-run
+    # На теге джобу не гоняем: тег — событие публикации, его ведёт джоба publish.
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') == false)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          # wasm32-таргет нужен `cargo publish --dry-run --target` для
+          # doc-converter-wasm: крейт целиком под
+          # `#![cfg(target_arch = "wasm32")]`, на нативном таргете его
+          # верификация собрала бы пустышку.
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-release-dry-run
+
+      - run: cargo install wasm-pack --locked
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
+
+      # Гейт changesets. Статус печатает план релиза и падает, если
+      # npm-пакеты изменились, а релизного changeset нет — та же семантика,
+      # что у бота changesets. BaseBranch (main) диффуется через bare-имя,
+      # но в PR-чекауте оно не резолвится (git merge-base не делает DWIM на
+      # refs/remotes/origin/*), поэтому базу подтягиваем явно.
+      - name: changeset status
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            # На main дифф с main пуст — шаг работает как показ накопленного
+            # плана: что именно уедет в npm при следующем теге.
+            pnpm changeset status
+          else
+            # На PR — гейт: пакеты менялись, а changeset не добавлен → красный.
+            pnpm changeset status --since=origin/main
+          fi
+
+      # pkg/ трёх wasm-модулей генерируется здесь, из чистого дерева:
+      # локальные pkg/ в git не живут, поэтому публикация обязана уметь
+      # их собрать сама (риск S2.2 из плана спринта).
+      - run: pnpm build:wasm
+
+      # Сборка публикуемых пакетов: dist/ у core и cli, wasm-биндинги уже
+      # в pkg/ из шага выше. Фильтр — только packages/*: приватный пример
+      # для релиза не нужен.
+      - run: pnpm turbo run build --filter='./packages/*'
+
+      # Упаковка без верификации сборкой. Здесь проверяем то, что недоступно
+      # остальному CI: полноту файлов .crate, версионированные зависимости,
+      # метаданные манифеста. Сборку кода проверяет ci.yml, а сборку именно
+      # упакованного крейта — `publish --dry-run` ниже.
+      - name: cargo package (шесть крейтов, по зависимостям)
+        run: |
+          set -euo pipefail
+          # Порядок — строго по графу зависимостей (план спринта 12, S2.4):
+          # core → render → xlsx → docx → pdf → wasm. Он же — порядок
+          # публикации: в опубликованном манифесте path-деп становится
+          # реестровым, и предыдущий уровень обязан существовать на crates.io.
+          crates=(doc-converter-core doc-converter-render doc-converter-xlsx doc-converter-docx doc-converter-pdf doc-converter-wasm)
+          for crate in "${crates[@]}"; do
+            log=$(mktemp)
+            if cargo package -p "$crate" --no-verify 2>&1 | tee "$log"; then
+              echo "OK: $crate — упакован"
+              continue
+            fi
+            # До первого релиза (v1.0.0) cargo при упаковке резолвит
+            # path-зависимости из crates.io, где крейтов ещё нет. Это не
+            # ошибка пакета, а «курица-яйцо» первого релиза (порядок держит
+            # джоба publish). Строгой до публикации остаётся проверка списка
+            # файлов; после первого релиза grep не срабатывает, шаг строг.
+            if grep -qE "no matching package named .doc-converter-(core|render|xlsx|docx|pdf|wasm)." "$log"; then
+              echo "::warning::$crate: зависимость ещё не на crates.io — ожидаемо до первого релиза; строгая проверка: cargo package --list"
+              cargo package -p "$crate" --list
+              continue
+            fi
+            cat "$log"
+            echo "::error::$crate: упаковка упала"
+            exit 1
+          done
+
+      # Полная симуляция публикации: упаковка + верификация сборкой
+      # опубликованного манифеста. До первого релиза крейты с внутренними
+      # зависимостями закономерно падают на «no matching package …» (деп ещё
+      # не на crates.io) — это не регрессия упаковки, а порядок первого
+      # релиза, его держит джоба publish; после первого релиза все шесть
+      # имён на crates.io есть, grep перестаёт срабатывать, и шаг становится
+      # строгим для любых ошибок.
+      - name: cargo publish --dry-run (шесть крейтов, по зависимостям)
+        run: |
+          set -euo pipefail
+          crates=(doc-converter-core doc-converter-render doc-converter-xlsx doc-converter-docx doc-converter-pdf doc-converter-wasm)
+          for crate in "${crates[@]}"; do
+            if [ "$crate" = "doc-converter-wasm" ]; then
+              target_flag="--target wasm32-unknown-unknown"
+            else
+              target_flag=""
+            fi
+            log=$(mktemp)
+            if cargo publish -p "$crate" --dry-run $target_flag 2>&1 | tee "$log"; then
+              echo "OK: $crate — publish --dry-run зелёный"
+              continue
+            fi
+            # Только известная пре-релизная ситуация: имя внутреннего крейта
+            # ещё не существует на crates.io. Всё остальное — настоящая ошибка.
+            if grep -qE "no matching package named .doc-converter-(core|render|xlsx|docx|pdf|wasm)." "$log"; then
+              echo "::warning::$crate: зависимость ещё не на crates.io — ожидаемо до первого релиза (v1.0.0); верификация сборкой пропущена, упаковка проверена шагом cargo package"
+              continue
+            fi
+            cat "$log"
+            echo "::error::$crate: publish --dry-run упал"
+            exit 1
+          done
+
+  publish:
+    name: Publish to npm and crates.io
+    # Публикация — только из тега v* или вручную из main (trunk-based).
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # создание GitHub Release (softprops/action-gh-release)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Полная история: запасной путь заметок релиза — git log между тегами.
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-release
+
+      - run: cargo install wasm-pack --locked
+
+      - uses: pnpm/action-setup@v4
+
+      # registry-url + NODE_AUTH_TOKEN: setup-node кладёт токен в ~/.npmrc
+      # (в лог он не попадает), откуда его читает `pnpm publish`. Токен в
+      # файле workflow не появляется — секрет только через env.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
+
+      # Версии npm-пакетов: если в .changeset есть нерелизнутые changesets —
+      # применяем их (versions + CHANGELOG.md). Если их нет, версии уже
+      # подняты релизным коммитом тега — берём из package.json как есть.
+      # README.md в .changeset не changeset — релизными считаются остальные .md.
+      - name: changeset version
+        run: |
+          set -euo pipefail
+          pending=$(find .changeset -maxdepth 1 -name '*.md' ! -name 'README.md' | wc -l | tr -d ' ')
+          if [ "$pending" -eq 0 ]; then
+            echo "Нерелизнутых changesets нет — версии npm-пакетов берём из package.json тега"
+            exit 0
+          fi
+          echo "Применяю накопленные changesets (${pending}): versions + CHANGELOG.md"
+          pnpm changeset version
+
+      # Публикация из тега обязана совпадать с версией пакетов: расхождение
+      # значит, что тег поставлен до (или мимо) `changeset version`, и npm
+      # уехал бы не с той версией. Вручную (workflow_dispatch) тега нет —
+      # версии и так из package.json, проверять нечего.
+      - name: check tag matches package version
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            exit 0
+          fi
+          version=$(node -p "require('./packages/core/package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::тег $GITHUB_REF_NAME не совпадает с версией npm-пакетов $version"
+            exit 1
+          fi
+
+      - run: pnpm build:wasm
+
+      - run: pnpm turbo run build --filter='./packages/*'
+
+      - name: npm publish (по зависимостям)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          publish_pkg() {
+            local pkg=$1
+            local version published
+            version=$(node -p "require('./packages/$pkg/package.json').version")
+            # Уже опубликованную версию пропускаем: повторный запуск после
+            # частичного сбоя не должен падать на дубле (версию npm
+            # не перезаписать).
+            published=$(npm view "@doc-converter/$pkg" version --registry=https://registry.npmjs.org/ 2>/dev/null || true)
+            if [ "$published" = "$version" ]; then
+              echo "@doc-converter/$pkg@$version уже в npm — пропускаем"
+              return
+            fi
+            # --no-git-checks: после `changeset version` дерево грязное
+            # (версии, CHANGELOG, удалённые changesets) — публикации не мешает.
+            # workspace:* pnpm при упаковке заменяет на конкретные версии.
+            pnpm --dir "packages/$pkg" publish --no-git-checks --registry=https://registry.npmjs.org/ --access public
+          }
+          # Порядок — по зависимостям: сначала wasm-биндинги (их импортируют
+          # core и cli), затем core, затем cli.
+          publish_pkg wasm
+          publish_pkg wasm-docx
+          publish_pkg wasm-pdf
+          publish_pkg core
+          publish_pkg cli
+
+      - name: crates.io publish (по зависимостям)
+        env:
+          # Стандартная переменная cargo для токена реестра; --token не
+          # передаём — секрет только через env.
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          publish_crate() {
+            local crate=$1
+            local target_flag=${2:-}
+            local version published
+            version=$(cargo metadata --no-deps --format-version 1 | jq -r ".packages[] | select(.name == \"$crate\") | .version")
+            # crates.io API требует User-Agent. Версию, которая уже на
+            # crates.io, пропускаем: повторный запуск после частичного сбоя
+            # не должен падать на дубле (версию не перезаписать, не удалить).
+            published=$(curl -fsS -A "doc-converter-release (github actions)" "https://crates.io/api/v1/crates/$crate" | jq -r '.crate.max_version // empty' || true)
+            if [ "$published" = "$version" ]; then
+              echo "$crate@$version уже на crates.io — пропускаем"
+              return
+            fi
+            cargo publish -p "$crate" $target_flag
+          }
+          # Порядок — строго по графу зависимостей (план спринта 12, S2.4):
+          # в опубликованном манифесте path-деп становится реестровым,
+          # предыдущий уровень обязан существовать на crates.io.
+          publish_crate doc-converter-core
+          publish_crate doc-converter-render
+          publish_crate doc-converter-xlsx
+          publish_crate doc-converter-docx
+          publish_crate doc-converter-pdf
+          # wasm-крейт собирается только под wasm32: верификацию упаковки
+          # гоняем на его родном таргете, иначе cargo собрал бы пустышку.
+          publish_crate doc-converter-wasm --target wasm32-unknown-unknown
+
+      # Заметки релиза: верхние секции CHANGELOG.md пяти пакетов (их пишет
+      # `changeset version` — в этой джобе или в релизном коммите тега).
+      # Секции сверяются с публикуемой версией; расхождение или отсутствие
+      # CHANGELOG — признак, что версии подняты мимо changesets, тогда
+      # заметки берём из git log между тегами.
+      - name: release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./packages/core/package.json').version")
+
+          notes_ok=1
+          for pkg in core wasm wasm-docx wasm-pdf cli; do
+            f="packages/$pkg/CHANGELOG.md"
+            if [ ! -f "$f" ]; then
+              notes_ok=0
+              continue
+            fi
+            top=$(awk '/^## / { print substr($0, 4); exit }' "$f")
+            [ "$top" = "$version" ] || notes_ok=0
+          done
+
+          : > release-notes.md
+          if [ "$notes_ok" = "1" ]; then
+            for pkg in core wasm wasm-docx wasm-pdf cli; do
+              {
+                echo "## @doc-converter/$pkg"
+                awk '/^## / { if (started) exit; started = 1; next } started { print }' "packages/$pkg/CHANGELOG.md"
+              } >> release-notes.md
+            done
+          else
+            echo "::warning::CHANGELOG.md пакетов отсутствуют или не совпадают с версией $version — заметки собираю из git log"
+            prev=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+            if [ -n "$prev" ]; then
+              git log --pretty=format:'- %s' "$prev..HEAD" > release-notes.md
+            else
+              git log --pretty=format:'- %s' > release-notes.md
+            fi
+          fi
+          cat release-notes.md
+
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Релиз режем ПОСЛЕ публикаций: если публикация упадёт, в GitHub не
+      # останется ссылки на несуществующие пакеты. softprops/action-gh-release
+      # взят вместо actions/create-release — тот помечен как устаревший и не
+      # поддерживается; у softprops есть body_path для собранных заметок.
+      # По dispatch тег ещё не существует — action создаст его на HEAD.
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.notes.outputs.tag }}
+          name: ${{ steps.notes.outputs.tag }}
+          body_path: release-notes.md
