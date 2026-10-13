@@ -20,14 +20,16 @@ Self-host статического сайта Euro-Office — это редак�
 | `@kreijstal/eurooffice-sdkjs-common` | 44,7 МиБ | 123,2 МиБ | 422 |
 | `@kreijstal/eurooffice-web-apps-1` | 25,1 МиБ | 86,1 МиБ | 1034 |
 | `@kreijstal/eurooffice-web-apps-2` | 16,7 МиБ | 84,4 МиБ | 1025 |
-| `@kreijstal/eurooffice-fonts-1` | — | — | — |
-| `@kreijstal/eurooffice-fonts-2` | — | — | — |
+| `@kreijstal/eurooffice-fonts-1` | — (не в npm) | — | — |
+| `@kreijstal/eurooffice-fonts-2` | — (не в npm) | — | — |
 
 **Порядок overlay** (в `scripts/assemble.mjs` — массив `PARTS`): подчинённые части
 первыми, главный пакет последним, файлы поверх:
 
 1. `eurooffice-fonts-1`, `eurooffice-fonts-2` — **в npm не опубликованы** (HTTP 404
    на реестре, проверено 14.10.2026), `assemble` говорит об этом и продолжает;
+   их роль (движковый каталог `fonts/`) выполняет шаг зеркалирования — см.
+   «Каталог шрифтов» ниже;
 2. `eurooffice-sdkjs-common` → `sdkjs/common/**` (включая `sdkjs/common/wasm/x2t/`);
 3. `eurooffice-web-apps-1` → `web-apps/apps/{common,api,pdfeditor,presentationeditor,visioeditor}`, часть `sdkjs/common/Images`;
 4. `eurooffice-web-apps-2` → `web-apps/apps/{common,documenteditor,spreadsheeteditor}`;
@@ -37,15 +39,31 @@ Self-host статического сайта Euro-Office — это редак�
 они побайтово одинаковы (сплит разрезал дерево, но не менял содержимое); с главным
 пакетом пересекаются только `README.md` / `SHA256SUMS` / `LICENSES/*` / `build/*` — их
 перекрывает главный, и это единственное место, где порядок что-то решает. Собранный
-`site/`: **2588 файлов, ~388 МиБ** (`web-apps` 1836, `assets` 90, `sdkjs/common` 396).
-Кэш тарболов — **~108 МиБ** в `.cache/`; повторный `assemble` их не перекачивает.
+`site/`: **2796 файлов, ~566 МиБ** (`web-apps` 1836, `assets` 90, `sdkjs/common` 396,
+`fonts` 203 файла / ~184 МиБ). Кэш — **~292 МиБ** в `.cache/` (тарболы частей +
+зеркало шрифтов); повторный `assemble` их не перекачивает.
+
+### Каталог шрифтов (`site/fonts/`)
+
+Табличный редактор запрашивает у сайта движковый каталог `/fonts/<индекс>`
+(203 файла, суммарно ~184 МБ) по одному файлу за раз, и без него не рисует.
+npm-части `eurooffice-fonts-1`/`-2`, которые должны нести каталог, **не
+опубликованы**, поэтому `assemble` зеркалирует его из репозитория
+[ranuts/document](https://github.com/ranuts/document) (`public/fonts/` — те же
+файлы, что на живом сайте): берёт список у GitHub API (без токена, с ретраями),
+скачивает `download_url` в `.cache/fonts/` (конкурентность 8, по 2–3 ретрая на
+файл; файл из кэша берётся, если он есть и ненулевой) и копирует в
+`site/fonts/`; файлы каталога, которых нет в списке, удаляются, чтобы
+пересборка не копила мусор. Сеть не роняет сборку: при стойкой неудаче —
+громкое предупреждение «шрифты не скачаны — табличный редактор не будет
+рисовать» и выход 0 (поломку поймает браузерная приёмка).
+
+Файлы каталога **XOR-обфусцированы намеренно** (ключ есть в `assets/document-*.js`
+и `sdkjs/slide/sdk-all*.js` собранного сайта) — де-XOR выполняет код приложения
+в браузере, поэтому файлы зеркалируются как есть, без де-обфускации.
 
 Чего в сборке нет и почему:
 
-- **`site/fonts/` (движковый каталог шрифтов)** — его несли неопубликованные
-  `fonts-1`/`fonts-2`. Обвязка редактора терпит отсутствие: каталог она тянет запросами
-  `${base}fonts/<index>` и на неуспешный ответ просто пропускает запись (`if (!r.ok) return`),
-  так что латинские документы открываются; CJK-шрифты из каталога не подтянутся.
 - **`x2t.wasm.br`** — части публикуют только несжатый `x2t.wasm` (35,8 МиБ), а редактор
   ходит за `.br`-именем. `assemble` делает brotli-копию сам (zlib из Node, качество 11:
   6,8 МиБ, ~50 с, при повторном запуске пропускается), и `serve.mjs` отдаёт её с
@@ -87,7 +105,7 @@ Self-host статического сайта Euro-Office — это редак�
 ```bash
 pnpm install                      # свой node_modules и lockfile (каталог вне pnpm-workspace)
 pnpm run build                    # tsc → dist/main.js + dist/style.css
-node scripts/assemble.mjs         # ~110 МиБ загрузок в .cache/ + ~390 МиБ в site/; идемпотентен
+node scripts/assemble.mjs         # ~292 МиБ в .cache/ (части + шрифты) + ~566 МиБ в site/; идемпотентен
 node scripts/serve.mjs            # http://127.0.0.1:5271/viewer.html (редактор — /editor)
 node tools/viewer-check.mjs       # приёмка Playwright: docx и xlsx → document:opened + canvas
 ```
@@ -123,11 +141,16 @@ URL (`/editor` → `editor.html`), `.br`-файлы с `Content-Encoding: br`, �
   кодированием → 404;
 - сборка TS-оболочки: `pnpm run build` → `dist/main.js` + `dist/style.css`, tsc в strict-режиме;
 - состав `site/`: `editor.html`, `assets/editor-*.js`, `sdkjs/word/sdk-all.js`,
-  `ran-fonts/` со шрифтами, x2t со вдвое большим `sdk-all.js` — все на месте.
+  `ran-fonts/` со шрифтами, x2t со вдвое большим `sdk-all.js` — все на месте;
+- зеркало шрифтов: в `site/fonts/` 203 файла (~184 МиБ), как в списке GitHub API;
+  повторный `assemble` берёт файлы из `.cache/fonts/` без загрузок; лишние файлы
+  каталога удаляются; `/fonts/062` → `200 application/octet-stream` (у файлов нет
+  расширения — так их отдаёт и MIME-карта `serve.mjs`).
 
 Не проверено здесь: браузерный прогон. Сторонний wasm в окружении субагента не
-запускается, `viewer-check.mjs` запускает координатор. Ожидаемые точки отказа — каталог
-`site/fonts/` (отсутствует) и сеть: редактору нужны первые ~35 МиБ JS/WASM с localhost.
+запускается, `viewer-check.mjs` запускает координатор. Ожидаемая точка отказа —
+сеть: редактору нужны первые ~35 МиБ JS/WASM с localhost; каталог шрифтов на
+месте, и spreadsheeteditor должен рисовать таблицы.
 
 ## Ограничения
 

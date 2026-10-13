@@ -3,7 +3,10 @@
 // Что делает: берёт у реестра npm метаданные каждой части (версия пинится
 // константой), скачивает тарболы в .cache/ (повторные запуски берут их оттуда),
 // распаковывает в site/ overlay'ем — подчинённые части первыми, главный пакет
-// последним, — копирует наш просмотрщик (viewer.html и собранную TS-оболочку
+// последним, — зеркалирует каталог движковых шрифтов fonts/ из репозитория
+// ranuts/document (npm-части eurooffice-fonts-1/-2 не опубликованы; сеть не
+// должна ронять сборку — при стойкой неудаче громкое предупреждение и
+// продолжение), копирует наш просмотрщик (viewer.html и собранную TS-оболочку
 // dist/, см. pnpm run build) и готовит brotli-копию x2t.wasm.br (в частях
 // лежит только несжатый x2t.wasm, а сайт ходит за .br), после чего проверяет
 // обязательные пути собранного сайта.
@@ -27,6 +30,11 @@ const CACHE_DIR = join(SPIKE_DIR, '.cache');
 const VERSION = '9.3.5-rc.1.build.1';
 const SCOPE = '@kreijstal';
 const REGISTRY = 'https://registry.npmjs.org';
+
+/** API каталога шрифтов: зеркало public/fonts/ из ranuts/document (см. mirrorFonts). */
+const FONTS_API = 'https://api.github.com/repos/ranuts/document/contents/public/fonts';
+/** Конкурентность скачивания файлов каталога шрифтов. */
+const FONTS_PARALLELISM = 8;
 
 /**
  * Порядок overlay: первыми ложатся подчинённые части, последним — главный
@@ -154,11 +162,189 @@ async function ensureX2tBrotli() {
   );
 }
 
+/** МБ для прогресса каталога шрифтов. */
+function formatMiB(bytes) {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+}
+
+function sleep(ms) {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+/**
+ * Список файлов каталога шрифтов из GitHub API (без токена — публичный репозиторий).
+ * Три попытки с паузой: rate-limit/сбой сети — штатные случаи. При стойкой
+ * неудаче бросает — вызывающий печатает громкое предупреждение и продолжает.
+ */
+async function fetchFontsListing() {
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(FONTS_API);
+      if (!response.ok) {
+        throw new Error(`GitHub API: HTTP ${response.status}`);
+      }
+      const entries = await response.json();
+      if (!Array.isArray(entries)) {
+        throw new Error('GitHub API: ожидался список файлов, пришло что-то другое');
+      }
+      const files = [];
+      for (const entry of entries) {
+        if (entry?.type !== 'file') continue;
+        const name = entry.name;
+        const url = entry.download_url;
+        // Имя обязано быть плоским и безопасным (в каталоге — числа «050»…«281»).
+        if (typeof name !== 'string' || !/^[\w.-]+$/.test(name) || typeof url !== 'string') continue;
+        files.push({ name, url, size: Number(entry.size) || 0 });
+      }
+      return files;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        console.warn(`  список шрифтов: попытка ${attempt}/3 не удалась — ${error.message}; пауза и ещё раз…`);
+        await sleep(3000);
+      }
+    }
+  }
+  throw lastError;
+}
+
+/** Один файл каталога в кэш: три попытки, .tmp переименовывается только после успеха. */
+async function downloadFontFile(file, cachePath) {
+  const tmp = `${cachePath}.tmp`;
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(file.url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const out = createWriteStream(tmp);
+      for await (const chunk of Readable.fromWeb(response.body)) {
+        if (!out.write(chunk)) await once(out, 'drain');
+      }
+      await new Promise((resolveEnd, rejectEnd) => out.end((error) => (error ? rejectEnd(error) : resolveEnd())));
+      renameSync(tmp, cachePath);
+      return;
+    } catch (error) {
+      lastError = error;
+      rmSync(tmp, { force: true });
+      if (attempt < 3) await sleep(500 * attempt);
+    }
+  }
+  throw lastError;
+}
+
+/** Ограниченный пул воркеров поверх массива. */
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(items[index]);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
+/** Громкое предупреждение: шрифты не собраны, но сборка продолжается (exit 0). */
+function loudFontsWarning(reason) {
+  console.warn('\n!!! ШРИФТЫ НЕ СКАЧАНЫ — ТАБЛИЧНЫЙ РЕДАКТОР НЕ БУДЕТ РИСОВАТЬ !!!');
+  console.warn(`причина: ${reason}`);
+  console.warn('сборка продолжается; поломку поймает браузерная приёмка (подробности в README)\n');
+}
+
+/**
+ * Каталог движковых шрифтов (site/fonts/): редактор запрашивает /fonts/<индекс>
+ * по одному файлу, и табличный редактор без него не рисует. npm-части
+ * eurooffice-fonts-1/-2, которые должны нести каталог, в реестре не
+ * опубликованы (404), поэтому каталог зеркалируем из репозитория
+ * ranuts/document (public/fonts/ — те же файлы, что на живом сайте). Файлы
+ * намеренно XOR-обфусцированы: де-XOR делает код приложения в браузере, так
+ * что копируем их как есть, без обработки.
+ *
+ * Сеть не роняет сборку: при стойкой неудаче API или скачивания — громкое
+ * предупреждение и продолжение. Кэш .cache/fonts/ делает перезапуск быстрым:
+ * файл берётся оттуда, если он есть и ненулевой.
+ */
+async function mirrorFonts() {
+  const cacheFonts = join(CACHE_DIR, 'fonts');
+  const siteFonts = join(SITE_DIR, 'fonts');
+  mkdirSync(cacheFonts, { recursive: true });
+  mkdirSync(siteFonts, { recursive: true });
+
+  let listing;
+  try {
+    listing = await fetchFontsListing();
+  } catch (error) {
+    loudFontsWarning(`каталог не получен с GitHub API: ${error.message}`);
+    return;
+  }
+  if (listing.length === 0) {
+    loudFontsWarning('GitHub API вернул пустой каталог public/fonts');
+    return;
+  }
+
+  const apiBytes = listing.reduce((sum, file) => sum + file.size, 0);
+  console.log(`\nкаталог шрифтов: зеркало public/fonts/ из ranuts/document — ${listing.length} файлов, ${formatMiB(apiBytes)} по API-списку`);
+  const started = Date.now();
+  let done = 0;
+  let bytesDone = 0;
+  let cached = 0;
+  let downloaded = 0;
+  let failed = 0;
+
+  await mapWithConcurrency(listing, FONTS_PARALLELISM, async (file) => {
+    try {
+      const cachePath = join(cacheFonts, file.name);
+      const exists = existsSync(cachePath) && statSync(cachePath).size > 0;
+      if (!exists) {
+        await downloadFontFile(file, cachePath);
+        downloaded += 1;
+      } else {
+        cached += 1;
+      }
+      copyFileSync(cachePath, join(siteFonts, file.name));
+      done += 1;
+      bytesDone += statSync(cachePath).size;
+      process.stdout.write(`\r  шрифты: ${done}/${listing.length}, ${formatMiB(bytesDone)}   `);
+    } catch (error) {
+      failed += 1;
+      console.warn(`\n  шрифт ${file.name} не скачался: ${error.message}`);
+    }
+  });
+
+  // Чистка: файлы site/fonts/, которых нет в списке каталога, — мусор прежних
+  // сборок. Список получен — удаляем и их, и каталоги (в каталоге только файлы).
+  const keep = new Set(listing.map((file) => file.name));
+  for (const entry of readdirSync(siteFonts, { withFileTypes: true })) {
+    if (!keep.has(entry.name)) {
+      rmSync(join(siteFonts, entry.name), { recursive: true, force: true });
+    }
+  }
+
+  const onDisk = readdirSync(siteFonts).length;
+  if (onDisk === 0) {
+    loudFontsWarning('после зеркалирования в site/fonts/ ноль файлов');
+  } else if (onDisk < listing.length) {
+    console.warn(
+      `предупреждение: в site/fonts/ ${onDisk} файлов из ${listing.length} — часть шрифтов не скачалась, табличный редактор может недорисовывать`,
+    );
+  }
+  process.stdout.write(
+    `\r  шрифты: готово — ${done}/${listing.length} файлов, ${formatMiB(bytesDone)} за ${((Date.now() - started) / 1000).toFixed(0)} с` +
+      ` (скачано ${downloaded}, из кэша ${cached}${failed > 0 ? `, не удалось ${failed}` : ''}); site/fonts/: ${onDisk} файл(ов)\n`,
+  );
+}
+
 /**
  * Обязательные пути собранного сайта. Возвращает список проблем; пустой список —
- * сайт цел. Каталог fonts/ (движковый каталог шрифтов, ~267 записей) проверяется
- * отдельно: его несут неопубликованные части eurooffice-fonts-1/-2, и его
- * отсутствие — предупреждение, а не отказ (редактор запросы к /fonts/* переносит).
+ * сайт цел. Каталог fonts/ (движковый каталог шрифтов) здесь не проверяется: его
+ * наполняет шаг зеркалирования, и его отсутствие — предупреждение, а не отказ
+ * сборки (редактор запросы к /fonts/* переносит).
  */
 function checkSite() {
   const problems = [];
@@ -230,6 +416,8 @@ async function main() {
   copyFileSync(viewerSource, join(SITE_DIR, 'viewer.html'));
   console.log(`\nнаш просмотрщик: viewer.html → site/viewer.html`);
 
+  await mirrorFonts();
+
   const distSource = join(SPIKE_DIR, 'dist');
   if (!existsSync(join(distSource, 'main.js')) || !existsSync(join(distSource, 'style.css'))) {
     throw new Error(`dist/ не собран (нет dist/main.js или dist/style.css) — запустите pnpm run build`);
@@ -245,11 +433,8 @@ async function main() {
   if (skipped.length > 0) {
     console.log(
       `пропущены неопубликованные части: ${skipped.join(', ')} — ` +
-        `без eurooffice-fonts-1/-2 нет каталога site/fonts/ (движковые шрифты); подробности в README`,
+        `каталог site/fonts/ вместо них зеркалируется из ranuts/document (шаг выше); подробности в README`,
     );
-  }
-  if (!existsSync(join(SITE_DIR, 'fonts'))) {
-    console.log('предупреждение: site/fonts/ (движковый каталог шрифтов) отсутствует — редактор подтянет только встроенные шрифты');
   }
   if (problems.length > 0) {
     throw new Error(`собранный сайт неполон:\n  - ${problems.join('\n  - ')}`);
