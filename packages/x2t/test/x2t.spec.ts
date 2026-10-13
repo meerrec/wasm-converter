@@ -316,6 +316,72 @@ describe('loadX2t', () => {
     delete (globalThis as { __x2tSpikeStub?: unknown }).__x2tSpikeStub;
   });
 
+  it('на главном потоке исполняет glue инъекцией <script> с выставленным currentScript', async () => {
+    const stub = createStub();
+    (globalThis as { __x2tSpikeStub?: unknown }).__x2tSpikeStub = stub.module;
+
+    // Glue-пробник web-ветки x2t.js: падает, если currentScript потерян (косвенный eval)
+    // или элемент не отдаёт ожидаемый атрибут.
+    const GLUE_WITH_PROBE = `
+      if (document.currentScript === null || document.currentScript.getAttribute('data-probe') === null) {
+        throw new Error('currentScript lost');
+      }
+      Module.FS = globalThis.__x2tSpikeStub.FS;
+      Module.ccall = globalThis.__x2tSpikeStub.ccall;
+      Module.onRuntimeInitialized();
+    `;
+    stubNetwork({ script: GLUE_WITH_PROBE });
+
+    // Заглушка document эмулирует механику браузера: appendChild исполняет textContent
+    // синхронно с временно выставленным currentScript на элемент, после — сбрасывает в null.
+    let executed = false;
+    const element = {
+      textContent: '',
+      getAttribute: () => 'seen',
+    };
+    const documentStub = {
+      currentScript: null as typeof element | null,
+      head: {
+        appendChild: (el: typeof element) => {
+          executed = true;
+          documentStub.currentScript = el;
+          (0, eval)(el.textContent);
+          documentStub.currentScript = null;
+        },
+      },
+      createElement: () => element,
+    };
+    vi.stubGlobal('document', documentStub);
+
+    const module = await loadX2t({ scriptUrl: '/x2t/x2t.js' });
+
+    expect(executed).toBe(true);
+    expect(documentStub.currentScript).toBeNull();
+    expect(module.ccall).toBe(stub.module.ccall);
+    delete (globalThis as { __x2tSpikeStub?: unknown }).__x2tSpikeStub;
+  });
+
+  it('без document оставляет путь косвенного eval: var из glue попадает в globalThis', async () => {
+    const stub = createStub();
+    (globalThis as { __x2tSpikeStub?: unknown }).__x2tSpikeStub = stub.module;
+
+    // `var __x2tEvalPath` в косвенном eval оседает на globalThis; `new Function` оставил бы
+    // его локальным. Это ровно та механика, из-за которой воркерный путь — только eval.
+    const EVAL_GLUE = `
+      var __x2tEvalPath = 'via-eval';
+      Module.FS = globalThis.__x2tSpikeStub.FS;
+      Module.ccall = globalThis.__x2tSpikeStub.ccall;
+      Module.onRuntimeInitialized();
+    `;
+    stubNetwork({ script: EVAL_GLUE });
+
+    await loadX2t({ scriptUrl: '/x2t/x2t.js' });
+
+    expect((globalThis as { __x2tEvalPath?: unknown }).__x2tEvalPath).toBe('via-eval');
+    delete (globalThis as { __x2tEvalPath?: unknown }).__x2tEvalPath;
+    delete (globalThis as { __x2tSpikeStub?: unknown }).__x2tSpikeStub;
+  });
+
   it('отвергает второй экземпляр в той же области', async () => {
     (globalThis as { Module?: unknown }).Module = {};
     await expect(loadX2t({ scriptUrl: '/x2t/x2t.js' })).rejects.toThrow(/already loaded/);

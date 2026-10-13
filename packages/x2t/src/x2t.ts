@@ -73,10 +73,19 @@ const ILLEGAL_IN_NAME = /[/\\?<>:*|"\u0000-\u001f\u0080-\u009f]/g;
 /** stderr конкретного вызова. На самом модуле его держать нельзя: `Module` — чужой объект. */
 const STDERR_BY_MODULE = new WeakMap<X2tModule, string[]>();
 
-/** Глобальная область: `x2t.js` объявляет в ней `var Module`. Больше обвязка глобал не трогает. */
+/**
+ * Глобальная область: `x2t.js` объявляет в ней `var Module`. Больше обвязка глобал не трогает.
+ *
+ * `document` есть только на главном потоке — по нему `loadGlueScript` выбирает ветку
+ * инъекции `<script>` вместо косвенного `eval` (см. комментарий там).
+ */
 interface X2tGlobalScope {
   Module?: X2tModuleConfig;
   importScripts?: (url: string) => void;
+  document?: {
+    head: HTMLElement | null;
+    createElement(tag: string): HTMLScriptElement;
+  };
 }
 
 /** Объект `Module` в процессе загрузки: конфиг плюс то, что рантайм выкладывает позже. */
@@ -272,6 +281,10 @@ async function fetchWasm(wasmUrl: string): Promise<ArrayBuffer> {
  * Проверять `importScripts` на существование недостаточно: в модульном воркере свойство
  * есть, но вызов бросает `TypeError: Module scripts don't support importScripts()`.
  * Поэтому ветка выбирается попыткой — вызов синхронный и до загрузки скрипта не доходит.
+ *
+ * На главном потоке после `fetch` код исполняется не `eval`, а инъекцией `<script>` в
+ * `document.head`: glue читает с `document.currentScript` атрибуты, а при косвенном
+ * `eval` он всегда `null`.
  */
 async function loadGlueScript(scriptUrl: string, scope: X2tGlobalScope): Promise<void> {
   if (typeof scope.importScripts === 'function') {
@@ -288,6 +301,19 @@ async function loadGlueScript(scriptUrl: string, scope: X2tGlobalScope): Promise
     throw new X2tError(`failed to fetch x2t glue script: HTTP ${response.status} ${response.statusText}`);
   }
   const code = await response.text();
+
+  // Главный поток: косвенный eval оставляет document.currentScript === null, а glue x2t.js
+  // на web-ветке читает с него атрибуты без гарда на null (поймано в настоящем Chromium:
+  // «Cannot read properties of null (reading 'getAttribute')»). Инъекция <script> исполняет код
+  // синхронно и выставляет currentScript на элемент — как при обычном подключении скрипта.
+  // Воркерная ветка не меняется: там document нет, и работает eval.
+  if (typeof scope.document === 'object' && scope.document !== null && scope.document.head !== null) {
+    const element = scope.document.createElement('script');
+    element.textContent = code;
+    scope.document.head.appendChild(element);
+    return;
+  }
+
   (0, eval)(code);
 }
 
