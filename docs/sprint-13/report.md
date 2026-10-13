@@ -50,6 +50,49 @@ H4** — это **no-go**: гипотезы про носитель, без ни
 `git diff main...HEAD -- crates packages` пуст; вся работа лежит в `docs/` и
 `experiments/`, который вне pnpm- и cargo-workspace.
 
+## Пакет `@doc-converter/browser-convert`: конвертерная обвязка поверх x2t
+
+После no-go по рисованию (ADR-0024) работа x2t продолжилась конвертерной
+обвязкой: `packages/browser-convert` (`@doc-converter/browser-convert`) —
+браузерный конвертер OOXML поверх `@doc-converter/x2t` (x2t.wasm из состава
+ONLYOFFICE), аналог `@ranuts/converter` (пакет не опубликован; обвязка собрана
+по его README и разбору исходников `ranuts/document` на GitHub). Четыре
+коммита в ветке `sprint/13-lowa-spike` — `64d0684`, `c2b4887`, `3f0c6c4`,
+`c36ea0b`; 72 vitest-теста зелёные. В отличие от спайка LOWA это **новый**
+пакет в `packages/`, а не правка существующего прод-кода: добавка, не
+изменение.
+
+**API и воркер.** `X2TConverter` (init/convert), `extractDocxMediaUrls`,
+`preprocessXlsxLineBreaks`, `preprocessPptx`, `preprocessDocxRuby`
+(+`unwrapRubyXml`), `saveFileToDisk`, `documentMimeType`; готовый вход воркера —
+точка `@doc-converter/browser-convert/worker`: ленивый подъём x2t, байты уходят
+через transfer, отказ подъёма не кэшируется. Пакет zero-dep: zip-механика на
+Web Streams (`DecompressionStream`/`CompressionStream`), размеры и CRC — только
+из central directory, своя CRC32.
+
+**Препроцессоры повторяют проверенные фиксы `@ranuts/converter`:** XLSX —
+снятие двойного экранирования `&amp;#10;` → `&#10;` в `xl/*.xml`; PPTX — срез
+`showMasterPhAnim` в notesSlides/notesMasters и инжект недостающих
+`docProps/app.xml` и `core.xml` с отношениями; ruby — разворот `<w:ruby>` в
+базовый текст (иначе x2t роняет ruby вместе с базой).
+
+**Матрица поддержки измерена, а не обещана.** Внутрисемейные `docx↔odt/rtf/txt`
+и `xlsx↔ods/csv` — код 0; кросс-семейные — 88; рендер-цели pdf/html/png/jpg —
+80 (движка раскладки в wasm нет). Пакет код возврата **не фильтрует** — код
+доезжает до вызывающего, матрица честно описана в
+`packages/browser-convert/README.md`.
+
+**Проверка сборки 9.3.5.** 14.10.2026 в харнессе (`experiments/x2t-spike/`)
+прогнана сборка `@kreijstal/eurooffice` (edit.chaxus.com, wasm **42,1 МБ**, тот
+же рецепт, что у cryptpad): docx→odt — код 0, docx→txt — код 0, docx→pdf —
+код 80. Вердикт ADR-0024 не меняется; у `@ranuts/converter` pdf работает
+только через canvas-поток из их редактора (`m_nFormatFrom=8196`), которого у
+нас нет. Оговорки на реальных документах из прогонов харнесса: битый
+`word/footer8.xml` в выходе конвертации и «memory access out of bounds».
+
+Ссылки: `packages/browser-convert/README.md`,
+`docs/adr/0024-x2t-rendering-backend.md`, `experiments/x2t-spike/README.md`.
+
 ## Вердикты по гипотезам
 
 | # | Метрика | Порог «да» / «нет» | Измерено | Вердикт | Источник |
