@@ -7,3 +7,13 @@ experiments/lowa-spike/public/lowa/*.data filter=lfs diff=lfs merge=lfs -text
 experiments/lowa-spike/public/lowa/*.data.js.metadata filter=lfs diff=lfs merge=lfs -text
 experiments/lowa-spike/public/lowa/soffice.js filter=lfs diff=lfs merge=lfs -text
 experiments/lowa-spike/public/lowa/zeta.js filter=lfs diff=lfs merge=lfs -text
+
+# Артефакты x2t (спайк 13): релизная сборка конвертера ONLYOFFICE в WASM, ~46 МБ
+# (38 МБ сырого wasm и его brotli-копия), кладётся в репозиторий через Git LFS,
+# чтобы не раздувать историю. Харнесс раздаёт их как есть (`-text`: байты бинарные
+# и сжатые, любая нормализация переводов строк их испортит).
+# После клона нужен `git lfs pull` (см. README рядом с артефактами).
+experiments/x2t-spike/public/x2t/*.wasm filter=lfs diff=lfs merge=lfs -text
+experiments/x2t-spike/public/x2t/*.wasm.br filter=lfs diff=lfs merge=lfs -text
+experiments/x2t-spike/public/x2t/*.js filter=lfs diff=lfs merge=lfs -text
+experiments/x2t-spike/public/x2t/*.js.br filter=lfs diff=lfs merge=lfs -text
