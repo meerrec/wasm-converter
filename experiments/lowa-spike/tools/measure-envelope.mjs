@@ -45,6 +45,7 @@ const argOf = (name, dflt) => {
 };
 const OUT_DIR = argOf('--out', '/tmp/lowa-measure');
 const RUNS = Number(argOf('--runs', '2'));
+const BLOCK = ['*soffice*'];
 mkdirSync(OUT_DIR, { recursive: true });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -87,10 +88,13 @@ async function psSnapshot() {
 }
 
 function rssOf(procs, baseline) {
-  const mine = procs.filter((p) => !baseline.has(p.pid) && /--type=/.test(p.args));
-  if (!mine.length) return { rendererMb: 0, rendererCount: 0, renderers: [], others: [] };
-  const mainPids = new Set(mine.filter((p) => !/--type=/.test(p.args)).map((p) => p.pid));
-  const byPid = new Map(mine.map((p) => [p.pid, p]));
+  const fresh = procs.filter((p) => !baseline.has(p.pid));
+  const empty = { rendererMb: 0, rendererCount: 0, renderers: [], others: [], fresh: 0 };
+  if (!fresh.length) return empty;
+  // Главный процесс браузера — новый процесс без --type=; рендереры — его потомки.
+  const mainPids = new Set(fresh.filter((p) => !/--type=/.test(p.args)).map((p) => p.pid));
+  if (!mainPids.size) return { ...empty, fresh: fresh.length };
+  const byPid = new Map(fresh.map((p) => [p.pid, p]));
   const isMine = (p) => {
     let cur = byPid.get(p.ppid);
     for (let d = 0; cur && d < 4; d++) {
@@ -102,7 +106,7 @@ function rssOf(procs, baseline) {
   const renderers = [];
   const others = [];
   let rendererMb = 0;
-  for (const p of mine) {
+  for (const p of fresh) {
     if (!isMine(p)) continue;
     const type = (p.args.match(/--type=([\w-]+)/) || [, 'browser'])[1];
     if (type === 'renderer') {
@@ -117,6 +121,7 @@ function rssOf(procs, baseline) {
     rendererCount: renderers.length,
     renderers,
     others,
+    fresh: fresh.length,
   };
 }
 
@@ -279,19 +284,24 @@ async function coldRun(runIndex, { doConvert }) {
   const cdp = await context.newCDPSession(page);
   const reqUrl = new Map();
   const reqInfo = new Map();
-  const reqHeaders = new Map();
   let phase = `cold${runIndex}`;
   const finished = [];
   const dataReceived = new Map();
   const servedFromCache = new Set();
+  const reqLog = [];
 
   cdp.on('Network.requestWillBeSent', (e) => {
     reqUrl.set(e.requestId, e.request.url);
-    reqHeaders.set(e.requestId, {
-      headers: e.request.headers,
+    const h = e.request.headers ?? {};
+    const key = (n) => Object.keys(h).find((k) => k.toLowerCase() === n);
+    reqLog.push({
+      phase,
+      url: e.request.url,
       type: e.type,
-      hasRange: Object.keys(e.request.headers ?? {}).some((h) => h.toLowerCase() === 'range'),
-      range: e.request.headers?.Range ?? e.request.headers?.range ?? null,
+      headers: h,
+      requestCacheControl: h[key('cache-control')] ?? null,
+      pragma: h[key('pragma')] ?? null,
+      range: h[key('range')] ?? null,
     });
   });
   cdp.on('Network.responseReceived', (e) => {
@@ -333,9 +343,34 @@ async function coldRun(runIndex, { doConvert }) {
   };
   const snapshotPoint = (v) => ({ ...v, rss: rss.lastDetail });
 
-  // --- P0: старт навигации ---
+  // --- P0: базовая линия. Та же страница демо, но загрузка артефактов LOWA
+  //     запрещена CDP, поэтому измеряется оболочка без модуля. Иначе «до старта»
+  //     не поймать: measureUserAgentSpecificMemory() сам по себе не мгновенный,
+  //     и на живом документе он попадает уже после начала загрузки.
+  const basePage = await context.newPage();
+  try {
+    const baseCdp = await context.newCDPSession(basePage);
+    await baseCdp.send('Network.enable');
+    await baseCdp.send('Network.setBlockedURLs', { urls: BLOCK });
+    await basePage.goto(DEMO, { waitUntil: 'domcontentloaded', timeout: 60_000 }).catch(() => {});
+    run.points.p0 = snapshotPoint(
+      await measureMemory(basePage, `P0 оболочка демо без модуля (заблокировано: ${BLOCK.join(',')})`),
+    );
+    run.p0Ready = await basePage
+      .evaluate(() => {
+        const i = document.getElementById('input');
+        return { inputExists: !!i, inputDisabled: i?.disabled ?? null };
+      })
+      .catch((e) => ({ error: String(e).slice(0, 200) }));
+  } catch (e) {
+    run.points.p0 = { label: 'P0', error: String(e).slice(0, 300) };
+  } finally {
+    await basePage.close().catch(() => {});
+  }
+
+  // --- Основная навигация: холодный старт ---
+  phase = `cold${runIndex}`;
   await page.goto(DEMO, { waitUntil: 'commit', timeout: 120_000 });
-  run.points.p0 = snapshotPoint(await measureMemory(page, 'P0 до старта модуля'));
 
   // --- P1: готовность ---
   const tReadyWall = Date.now();
@@ -430,6 +465,17 @@ async function coldRun(runIndex, { doConvert }) {
     totalEncodedMiB: mib(h1Total),
     allRequestsEncodedMiB: mib(coldFinished.reduce((s, f) => s + Math.max(0, f.len), 0)),
     auxiliary: [...auxByUrl.entries()].map(([url, encodedBytes]) => ({ url, encodedBytes })),
+    requestHeaders: reqLog
+      .filter((r) => ARTIFACT.test(r.url))
+      .map((r) => ({
+        phase: r.phase,
+        url: r.url.split('/').pop(),
+        requestCacheControl: r.requestCacheControl,
+        pragma: r.pragma,
+        range: r.range,
+        headers: r.headers,
+      })),
+    servedFromCacheRequests: servedFromCache.size,
   };
 
   // --- H2: разбор времени ---
@@ -548,6 +594,21 @@ async function coldRun(runIndex, { doConvert }) {
   if (doConvert && !run.pdfOk) {
     run.screenshot = join(OUT_DIR, `failure-cold${runIndex}.png`);
     await page.screenshot({ path: run.screenshot }).catch(() => {});
+  }
+
+  // --- Диагностика окружения: командная строка браузера (нужна, чтобы
+  //     объяснить, почему тёплый старт не берёт артефакты из кэша) ---
+  if (runIndex === 1) {
+    try {
+      const vp = await context.newPage();
+      await vp.goto('chrome://version', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      run.browserCommandLine = await vp.evaluate(() =>
+        document.getElementById('command_line')?.textContent ?? null,
+      );
+      await vp.close();
+    } catch (e) {
+      run.browserCommandLine = `не снято: ${String(e).slice(0, 200)}`;
+    }
   }
 
   await browser.close();
