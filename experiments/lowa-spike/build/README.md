@@ -30,14 +30,15 @@
 ## Запуск
 
 ```bash
-# на VM, от пользователя с правами на $HOME
+# на VM, от обычного пользователя (не root — см. таблицу отказов), с правами на $HOME
 git clone --depth 1 --branch sprint/13-lowa-spike <репозиторий> doc-converter   # или scp одного файла
-bash doc-converter/experiments/lowa-spike/build/build-lowa.sh 2>&1 | tee /tmp/lowa-run.txt
+bash doc-converter/experiments/lowa-spike/build/build-lowa.sh
 ```
 
 Скрипт сам скачает emsdk и исходники, соберёт и сложит артефакты. Ничего в
 репозитории не создаётся: рабочая область — `$BUILD_ROOT` (по умолчанию
-`$HOME/lowa-build`), туда же пишется лог прогона.
+`$HOME/lowa-build`), туда же пишется лог прогона (дополнительный `| tee` не
+нужен: скрипт пишет свой лог с самого начала и печатает его путь в конце).
 
 Все параметры задаются переменными окружения перед командой:
 
