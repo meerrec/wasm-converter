@@ -31,12 +31,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps   # CI валит битые intra-doc-ссылки
 cargo deny check && cargo audit
 cargo llvm-cov -p doc-converter-docx --fail-under-lines 85   # гейты CI: docx ≥ 85 %, core ≥ 80 % строк
-wasm-pack test --headless --chrome --release crates/wasm     # так же crates/docx-wasm и crates/pdf-wasm; нужен chromedriver в PATH
+wasm-pack test --headless --chrome --release crates/wasm     # так же crates/docx-wasm и crates/pdf-wasm; chromedriver лучше в PATH: без него wasm-pack качает «самый свежий», который может разойтись с браузером
 ```
 
 - `crates/wasm`, `crates/docx-wasm`, `crates/pdf-wasm` целиком под `#![cfg(target_arch = "wasm32")]`: нативный clippy/test их не видит, доккомментарии проверяет только wasm32-нога CI (`cargo doc --target wasm32-unknown-unknown -p …`).
-- criterion-бенчи живут в крейтах (`crates/render/benches/render.rs`, `crates/pdf/benches/pdf.rs`, `crates/xlsx/benches/{open,conditional,hit_test}.rs`, `crates/docx/benches/{open,pagination}.rs`): `cargo bench -p doc-converter-<крейт>`. Baseline'ов нет — «до/после» берётся из локального прогона.
-- `crates/fuzz` — отдельный workspace (исключён из корневого, свой nightly). Фаззинг: `cargo fuzz run docx_document` (цели `core_zip`, `core_xml_reader`, `core_rels`, `xlsx_worksheet`, `docx_{document,numbering,rels,styles}`).
+- criterion-бенчи живут в крейтах (`crates/render/benches/render.rs`, `crates/pdf/benches/pdf.rs`, `crates/xlsx/benches/{open,conditional,hit_test}.rs`, `crates/docx/benches/{open,pagination}.rs`): `cargo bench -p doc-converter-<крейт>`. Baseline'ов нет — «до/после» берётся из локального прогона. CI компилирует все бенчи (`cargo bench --workspace --no-run`) — бенчи обязаны собираться.
+- `crates/fuzz` — отдельный workspace (исключён из корневого, свой nightly). Фаззинг: `cargo fuzz run docx_document` (цели `core_{zip,xml_reader,rels}`, `xlsx_worksheet`, `docx_{document,numbering,package,rels,styles}`).
 
 ### Сборка WASM
 
@@ -64,7 +64,7 @@ pnpm gen:fixtures                      # XLSX-фикстуры + эталон ex
 pnpm gen:docx-fixtures                 # DOCX-фикстуры; :large (≥ 10 МиБ) — в target/fixtures/docx-large
 pnpm diff:mammoth                      # differential DOCX против mammoth (oracle-out-docx/ в .gitignore)
 pnpm bench:js                          # vs mammoth/exceljs/xlsx, отчёт — docs/bench-js.md
-pnpm -F @doc-converter/example-viewer test   # весь Playwright: 3 браузера + проект DPR2
+pnpm -F @doc-converter/example-viewer test   # весь Playwright: 3 браузера + проект chromium-dpr2 (deviceScaleFactor=2, только dpr.spec.ts)
 ```
 
 - Порядок не косметический: без `pnpm build:wasm` typecheck падает на отсутствующих `pkg/*.d.ts`; в CI `pkg/` трёх модулей приезжает артефактами джобы `wasm`.
@@ -178,6 +178,6 @@ pnpm -F @doc-converter/example-viewer test   # весь Playwright: 3 брауз
 ## CI и зависимости
 
 - Тулчейн закреплён: `rust-toolchain.toml` — 1.98.0 (совпадает с CI), workspace объявляет MSRV `rust-version = "1.82"`; `.cargo/config.toml` включает `incompatible-rust-versions = "fallback"`, чтобы резолвинг не вылезал за MSRV.
-- `deny.toml` разрешает только Apache-2.0/MIT/BSD/ISC/Unicode-3.0/Zlib. PDF-бэкенд собственный (ADR-0022); сторонние библиотеки в нём — только `lopdf` (модель объектов), `subsetter`, `skrifa`, `image` — все из allow-списка. Новая зависимость вне allowlist — ADR и вопрос пользователю.
+- `deny.toml` разрешает только Apache-2.0/MIT/BSD-2-Clause/BSD-3-Clause/ISC/Unicode-3.0/Zlib; `openssl` забанен, `wildcards = "deny"`. PDF-бэкенд собственный (ADR-0022); сторонние библиотеки в нём — только `lopdf` (модель объектов), `subsetter`, `skrifa`, `image` — все из allow-списка. Новая зависимость вне allowlist — ADR и вопрос пользователю.
 - Версии держатся не случайно: `quick-xml = 0.41` и `lru = 0.18` закрывают RUSTSEC-адвизори; `ttf-parser` намеренно не взят (unmaintained) — метрики на `skrifa` (ADR-0002). Понижение или замена — только с разбором advisories.
-- Гейты CI: fmt, clippy `-D warnings`, `cargo doc` `-D warnings`, тесты workspace; браузерные `wasm-pack test` трёх модулей; JS на Node 20 и 22 + `pnpm size-limit` (только Node 20, бюджеты `.size-limit.mjs`); бюджеты памяти PDF/DOCX — жёстко, времени — мягко; покрытие; `cargo deny` + `cargo audit` + `pnpm audit`. Оракул LibreOffice и fuzz — отдельные workflow (по расписанию и по путям, с nightly).
+- Гейты CI: fmt, clippy `-D warnings`, `cargo doc` `-D warnings`, тесты workspace; браузерные `wasm-pack test` трёх модулей; JS на Node 20 и 22 + `pnpm size-limit` (только Node 20, бюджеты `.size-limit.mjs`); бюджеты памяти PDF/DOCX — жёстко, времени — мягко; покрытие; `cargo deny` + `cargo audit` — жёстко, `pnpm audit` — информационно (`|| true` в CI). Оракул LibreOffice и fuzz — отдельные workflow (по расписанию и по путям, с nightly).

@@ -16,7 +16,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo bench -p doc-converter-render    # criterion, benches/render.rs
 cargo deny check                       # deny.toml: лицензии, баны, advisories
-wasm-pack test --headless --chrome crates/wasm   # wasm-bindgen-test (run_in_browser; нужен chromedriver)
+wasm-pack test --headless --chrome crates/wasm   # wasm-bindgen-test (run_in_browser; chromedriver лучше в PATH: иначе wasm-pack качает «самый свежий», который может разойтись с браузером)
 ```
 
 `crates/wasm`, `crates/pdf-wasm` и `crates/docx-wasm` целиком под `#![cfg(target_arch = "wasm32")]`, поэтому на нативном таргете они пусты — `cargo clippy --workspace --all-targets` и `cargo test --workspace` не требуют выбора таргета.
@@ -152,4 +152,4 @@ SAB требует COOP/COEP (`Cross-Origin-Opener-Policy: same-origin`, `Cross-
 
 ## CI и зависимости
 
-Тулчейн закреплён: `rust-toolchain.toml` — 1.98.0 (совпадает с CI), при этом workspace объявляет MSRV `rust-version = "1.82"`. `.cargo/config.toml` включает `incompatible-rust-versions = "fallback"`, чтобы резолвинг зависимостей не вылезал за MSRV. `deny.toml` разрешает только Apache-2.0/MIT/BSD/ISC/Unicode-3.0/Zlib. PDF-бэкенд собственный (ADR-0022): `lopdf` (модель объектов), `subsetter`, `skrifa`, `image` — всё из allow-списка.
+Тулчейн закреплён: `rust-toolchain.toml` — 1.98.0 (совпадает с CI), при этом workspace объявляет MSRV `rust-version = "1.82"`. `.cargo/config.toml` включает `incompatible-rust-versions = "fallback"`, чтобы резолвинг зависимостей не вылезал за MSRV. `deny.toml` разрешает только Apache-2.0/MIT/BSD-2-Clause/BSD-3-Clause/ISC/Unicode-3.0/Zlib (`openssl` забанен). PDF-бэкенд собственный (ADR-0022): `lopdf` (модель объектов), `subsetter`, `skrifa`, `image` — всё из allow-списка.
