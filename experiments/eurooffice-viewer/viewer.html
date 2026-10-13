@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Просмотрщик (Euro-Office)</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f4f4f2;
+        --panel: #ffffff;
+        --text: #1c1917;
+        --muted: #57534e;
+        --border: #e0dedb;
+        --accent: #0f766e;
+        --error: #b91c1c;
+        --error-bg: #fef2f2;
+        --error-border: #fecaca;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1b1a19;
+          --panel: #262523;
+          --text: #e8e6e3;
+          --muted: #a8a29e;
+          --border: #3f3c39;
+          --accent: #5eead4;
+          --error: #fca5a5;
+          --error-bg: #3a1515;
+          --error-border: #7f1d1d;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.45 system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px 20px;
+        padding: 12px 16px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+      }
+      .title {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .subtitle {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-left: auto;
+      }
+      .dropzone {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border: 1px dashed var(--border);
+        border-radius: 8px;
+        transition:
+          border-color 0.15s,
+          background-color 0.15s;
+      }
+      .dropzone[data-drag='true'] {
+        border-color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 8%, transparent);
+      }
+      .dropzone .hint {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      input[type='file'] {
+        max-width: 260px;
+        font: inherit;
+        color: inherit;
+      }
+      #viewer-status {
+        padding: 6px 16px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        font-size: 13px;
+        color: var(--muted);
+        min-height: 30px;
+      }
+      #viewer-status[data-state='opened'] {
+        color: var(--accent);
+      }
+      #viewer-status[data-state='error'] {
+        color: var(--error);
+        background: var(--error-bg);
+        border-bottom-color: var(--error-border);
+      }
+      .frame-wrap {
+        flex: 1;
+        min-height: 0;
+        padding: 10px;
+      }
+      #viewer-frame {
+        width: 100%;
+        height: 100%;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1 class="title">Просмотрщик (Euro-Office)</h1>
+        <div class="subtitle">точный движок ONLYOFFICE/Euro-Office, режим только просмотра (read-only)</div>
+      </div>
+      <div class="controls">
+        <div class="dropzone" id="viewer-dropzone">
+          <input
+            type="file"
+            id="viewer-file"
+            accept=".docx,.doc,.odt,.rtf,.txt,.xlsx,.xls,.ods,.csv,.pptx,.ppt,.odp,.pdf"
+          />
+          <span class="hint">или перетащите файл сюда</span>
+        </div>
+      </div>
+    </header>
+    <div id="viewer-status" data-state="loading">запускаю редактор…</div>
+    <div class="frame-wrap">
+      <iframe id="viewer-frame" src="/editor.html?embed=1" title="Euro-Office viewer"></iframe>
+    </div>
+
+    <script>
+      // Просмотрщик поверх embed-API редактора (docs/embed-api.md):
+      // iframe отдаёт document:ready, команды шлём ему postMessage'ем.
+      // Файл читает родитель и отдаёт байтами (document:open-buffer) —
+      // так не нужен CORS ни на файл, ни на расширение; readonly: true
+      // выключает редактирование, сохранение в этом режиме отвечает ошибкой.
+      (() => {
+        'use strict';
+
+        const EDITOR_ORIGIN = window.location.origin;
+        const frame = document.getElementById('viewer-frame');
+        const fileInput = document.getElementById('viewer-file');
+        const dropzone = document.getElementById('viewer-dropzone');
+        const statusEl = document.getElementById('viewer-status');
+
+        let ready = false;
+        let pendingFile = null;
+        let lastFileName = '';
+        let commandSerial = 0;
+
+        const ERROR_HINTS = {
+          '-82': 'не удалось сконвертировать: файл повреждён, зашифрован или вариант формата не поддержан',
+          '-85': 'содержимое не совпадает с расширением файла',
+        };
+
+        // Тестовый хук приёмки (tools/viewer-check.mjs): счётчик открытий снимает
+        // гонку «документ ещё не начал открываться, а data-state уже opened от
+        // предыдущего файла». Странице этот объект больше ни для чего не нужен.
+        const harness = { state: 'loading', openedCount: 0, lastFileName: '', lastError: null };
+        window.euroofficeViewer = harness;
+
+        function setStatus(state, text) {
+          statusEl.dataset.state = state;
+          statusEl.textContent = text;
+          harness.state = state;
+        }
+
+        function formatSize(bytes) {
+          if (bytes < 1024) return `${bytes} Б`;
+          if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КиБ`;
+          return `${(bytes / (1024 * 1024)).toFixed(1)} МиБ`;
+        }
+
+        /** Команда редактору: id уникален, ответы ловит слушатель ниже. */
+        function sendCommand(type, payload) {
+          const id = `viewer-${Date.now().toString(36)}-${(++commandSerial).toString(36)}`;
+          frame.contentWindow.postMessage({ id, type, payload: payload ?? {} }, EDITOR_ORIGIN);
+          return id;
+        }
+
+        function explainError(payload) {
+          const code = payload && payload.code !== undefined ? String(payload.code) : '';
+          const hint = code in ERROR_HINTS ? ` (код ${code}: ${ERROR_HINTS[code]})` : code === '' ? '' : ` (код ${code})`;
+          return `ошибка: ${(payload && payload.message) || 'неизвестная'}${hint}`;
+        }
+
+        async function openFile(file) {
+          lastFileName = file.name;
+          try {
+            const buffer = await file.arrayBuffer();
+            setStatus('opening', `открываю «${file.name}» (${formatSize(buffer.byteLength)})…`);
+            sendCommand('document:open-buffer', { fileName: file.name, buffer, readonly: true });
+          } catch (error) {
+            setStatus('error', `не удалось прочитать файл: ${error.message}`);
+          }
+        }
+
+        function handlePicked(file) {
+          if (ready) {
+            openFile(file);
+          } else {
+            pendingFile = file;
+            setStatus('loading', `редактор ещё поднимается — «${file.name}» откроется сразу после готовности`);
+          }
+        }
+
+        fileInput.addEventListener('change', () => {
+          const file = fileInput.files && fileInput.files[0];
+          fileInput.value = ''; // повторный выбор того же файла снова шлёт change
+          if (file) handlePicked(file);
+        });
+
+        dropzone.addEventListener('dragover', (event) => {
+          event.preventDefault();
+          dropzone.dataset.drag = 'true';
+        });
+        dropzone.addEventListener('dragleave', () => {
+          dropzone.dataset.drag = 'false';
+        });
+        dropzone.addEventListener('drop', (event) => {
+          event.preventDefault();
+          dropzone.dataset.drag = 'false';
+          const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+          if (file) handlePicked(file);
+        });
+        // Брошенный мимо зоны файл не должен открываться браузером как страница.
+        window.addEventListener('dragover', (event) => event.preventDefault());
+        window.addEventListener('drop', (event) => event.preventDefault());
+
+        window.addEventListener('message', (event) => {
+          if (event.origin !== EDITOR_ORIGIN) return;
+          if (frame.contentWindow && event.source !== frame.contentWindow) return;
+          const data = event.data || {};
+          const type = data.type;
+          const payload = data.payload || {};
+          if (typeof type !== 'string' || !type.startsWith('document:')) return;
+
+          switch (type) {
+            case 'document:ready':
+              ready = true;
+              setStatus('ready', 'редактор готов — выберите документ');
+              if (pendingFile !== null) {
+                const file = pendingFile;
+                pendingFile = null;
+                openFile(file);
+              }
+              break;
+            case 'document:opened':
+              harness.openedCount += 1;
+              harness.lastFileName = payload.fileName || lastFileName;
+              setStatus('opened', `документ открыт: ${harness.lastFileName} (только просмотр)`);
+              break;
+            case 'document:error':
+              harness.lastError = explainError(payload);
+              setStatus('error', harness.lastError);
+              break;
+            default:
+              // Прочие события (saved, state, dirty-changed, readonly-changed)
+              // в режиме просмотра не нужны — просто не теряем их молча.
+              console.debug('событие редактора:', type, payload);
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>
