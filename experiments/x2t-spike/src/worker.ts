@@ -11,6 +11,9 @@
  *
  * Пакет подключён относительным путём, а не по имени `@doc-converter/x2t`: харнесс лежит вне
  * pnpm-workspace, и имя пакета в нём не резолвится.
+ *
+ * Модуль поднимается по первому запросу конвертации (`ensureBoot`), а не при создании воркера:
+ * страницу открывают и ради просмотра готового `.docx`, которому x2t не нужен.
  */
 import type { X2tModule } from '../../../packages/x2t/src/index.js';
 import { PROTOCOL, type MainToWorker, type WorkerToMain } from './protocol.js';
@@ -27,6 +30,7 @@ const WASM_URL = '/x2t.wasm';
 
 let wrapperPromise: Promise<Wrapper> | null = null;
 let x2t: X2tModule | null = null;
+let bootPromise: Promise<X2tModule> | null = null;
 
 function getWrapper(): Promise<Wrapper> {
   wrapperPromise ??= import('../../../packages/x2t/src/index.js');
@@ -41,19 +45,39 @@ function describe(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
-async function boot(): Promise<void> {
+async function boot(): Promise<X2tModule> {
   const startedAt = performance.now();
-  try {
-    const { loadX2t } = await getWrapper();
-    x2t = await loadX2t({
-      scriptUrl: SCRIPT_URL,
-      wasmUrl: WASM_URL,
-      onPrint: (line: string) => post({ protocol: PROTOCOL, kind: 'log', line }),
-    });
-    post({ protocol: PROTOCOL, kind: 'ready', bootMs: performance.now() - startedAt });
-  } catch (error) {
-    post({ protocol: PROTOCOL, kind: 'error', message: describe(error) });
-  }
+  post({ protocol: PROTOCOL, kind: 'log', line: 'поднимаю модуль x2t…' });
+  const { loadX2t } = await getWrapper();
+  const module = await loadX2t({
+    scriptUrl: SCRIPT_URL,
+    wasmUrl: WASM_URL,
+    onPrint: (line: string) => post({ protocol: PROTOCOL, kind: 'log', line }),
+  });
+  post({ protocol: PROTOCOL, kind: 'ready', bootMs: performance.now() - startedAt });
+  return module;
+}
+
+/**
+ * Подъём модуля по первому требованию: 38 МБ были бы ценой входа на страницу даже тогда, когда
+ * её открыли ради просмотра готового `.docx` — а он идёт своим вьюером (`src/viewer.ts`) и в x2t
+ * не заходит. Неудача не кэшируется: следующая конвертация попробует поднять модуль снова, иначе
+ * один сетевой сбой навсегда ломал бы конвертацию (тот же расчёт, что у ленивого DOCX-модуля в
+ * `packages/core/src/worker/worker.ts`).
+ */
+function ensureBoot(): Promise<X2tModule> {
+  if (x2t !== null) return Promise.resolve(x2t);
+  bootPromise ??= boot().then(
+    (module) => {
+      x2t = module;
+      return module;
+    },
+    (error: unknown) => {
+      bootPromise = null;
+      throw error;
+    },
+  );
+  return bootPromise;
 }
 
 /** Расширение файла без точки, в нижнем регистре — по нему конвертер выбирает входной формат. */
@@ -63,10 +87,6 @@ function extensionOf(fileName: string): string {
 }
 
 async function onConvert(request: MainToWorker): Promise<void> {
-  if (x2t === null) {
-    post({ protocol: PROTOCOL, kind: 'error', message: 'x2t module is not loaded yet' });
-    return;
-  }
   const from = extensionOf(request.fileName);
   if (from === '') {
     post({ protocol: PROTOCOL, kind: 'error', message: `file has no extension: ${request.fileName}` });
@@ -77,8 +97,9 @@ async function onConvert(request: MainToWorker): Promise<void> {
   const outputName = `${stem}.${request.to}`;
   const startedAt = performance.now();
   try {
+    const module = await ensureBoot();
     const { convert } = await getWrapper();
-    const result = await convert(x2t, new Uint8Array(request.bytes), {
+    const result = await convert(module, new Uint8Array(request.bytes), {
       from,
       to: request.to,
       fileName: request.fileName,
@@ -124,5 +145,3 @@ self.addEventListener('message', (event: MessageEvent<MainToWorker>) => {
   }
   void onConvert(message);
 });
-
-void boot();

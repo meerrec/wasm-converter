@@ -1,4 +1,26 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
+
+/**
+ * Просмотр документа идёт нашим вьюером из `@doc-converter/core`, а харнесс лежит вне
+ * pnpm-workspace: по имени пакет не резолвится (та же причина, что у `packages/x2t` в
+ * src/worker.ts). Страница поэтому импортирует ядро относительным путём, а здесь остаётся
+ * то, что разрешить иначе нечем: сборка `@doc-converter/wasm` — её тянет воркер ядра
+ * (`dist/worker.js`), и это единственный голый импорт в нём.
+ */
+const wasmEntry = fileURLToPath(
+  new URL('../../packages/wasm/pkg/doc_converter_wasm.js', import.meta.url),
+);
+
+/**
+ * Cross-origin isolation — условие пути через SharedArrayBuffer: с этими заголовками воркер
+ * ядра возит кадры через SAB, без них — буферами (fallback в ядре есть, но заголовки
+ * честнее: так харнесс проверяет тот же путь, что и пример-просмотрщик).
+ */
+const isolationHeaders = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+};
 
 /**
  * publicDir — каталог артефактов внутри пакета, целиком: страница отдаёт `/x2t.js` и
@@ -10,7 +32,11 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   root: import.meta.dirname,
   publicDir: '../../packages/x2t/vendor',
-  server: { port: 5191, strictPort: true },
+  resolve: {
+    alias: { '@doc-converter/wasm': wasmEntry },
+  },
+  server: { port: 5191, strictPort: true, headers: isolationHeaders },
+  preview: { headers: isolationHeaders },
   build: { target: 'es2022' },
   worker: {
     // Формат воркера должен совпадать у dev и сборки: в dev Vite отдаёт воркеры без сборки
