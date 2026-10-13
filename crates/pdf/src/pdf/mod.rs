@@ -5,4 +5,5 @@
 //! постраничной записи (следующие слайсы). Публичный API крейта не меняется.
 
 pub(crate) mod fonts;
+pub(crate) mod session;
 pub(crate) mod writer;
