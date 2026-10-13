@@ -36,7 +36,7 @@ wasm-pack test --headless --chrome --release crates/wasm     # так же crate
 
 - `crates/wasm`, `crates/docx-wasm`, `crates/pdf-wasm` целиком под `#![cfg(target_arch = "wasm32")]`: нативный clippy/test их не видит, доккомментарии проверяет только wasm32-нога CI (`cargo doc --target wasm32-unknown-unknown -p …`).
 - criterion-бенчи живут в крейтах (`crates/render/benches/render.rs`, `crates/pdf/benches/pdf.rs`, `crates/xlsx/benches/{open,conditional,hit_test}.rs`, `crates/docx/benches/{open,pagination}.rs`): `cargo bench -p doc-converter-<крейт>`. Baseline'ов нет — «до/после» берётся из локального прогона.
-- `vendor/printpdf` и `crates/fuzz` — отдельные workspace'ы (исключены из корневого; у fuzz свой nightly). Тесты форка printpdf: `(cd vendor/printpdf && cargo test --no-default-features)`. Фаззинг — из `crates/fuzz`: `cargo fuzz run docx_document` (цели `core_zip`, `core_xml_reader`, `core_rels`, `xlsx_worksheet`, `docx_{document,numbering,rels,styles}`). Расширять форк — только по ADR-0010.
+- `crates/fuzz` — отдельный workspace (исключён из корневого, свой nightly). Фаззинг: `cargo fuzz run docx_document` (цели `core_zip`, `core_xml_reader`, `core_rels`, `xlsx_worksheet`, `docx_{document,numbering,rels,styles}`).
 
 ### Сборка WASM
 
@@ -89,7 +89,7 @@ pnpm -F @doc-converter/example-viewer test   # весь Playwright: 3 брауз
 | `crates/render` | painter (OffscreenCanvas, только wasm32), `DisplayList`, SAB-кольцо, `geometry`, `text_measure`, `font` (метрики через `skrifa`); общая граница `xlsx`/`docx` (ADR-0003) |
 | `crates/xlsx` | разбор книги целиком (`open()`), раскладка листа в пикселях, сборка кадра (`paint::build`) |
 | `crates/docx` | разбор (`open()`/`parse_docx`), пагинация, сборка кадра (`render::build` / `build_stack`) |
-| `crates/pdf` | экспорт в PDF на printpdf: лист/книга XLSX (`export_xlsx_sheet`/`export_xlsx_book`), документ DOCX (`export_docx`) |
+| `crates/pdf` | экспорт в PDF собственным бэкендом (`src/pdf/`, ADR-0022): лист/книга XLSX (`export_xlsx_sheet`/`export_xlsx_book`), документ DOCX (`export_docx`) |
 | `crates/wasm` | основной wasm-модуль просмотрщика: painter, SAB-аллокатор, XLSX-просмотрщик |
 | `crates/pdf-wasm` | ленивый модуль PDF-экспорта: `export_pdf`, `export_pdf_book`, `export_docx_pdf` |
 | `crates/docx-wasm` | ленивый модуль просмотра DOCX: экспорты `docx_*`, грузится воркером при открытии `.docx` |
@@ -178,6 +178,6 @@ pnpm -F @doc-converter/example-viewer test   # весь Playwright: 3 брауз
 ## CI и зависимости
 
 - Тулчейн закреплён: `rust-toolchain.toml` — 1.98.0 (совпадает с CI), workspace объявляет MSRV `rust-version = "1.82"`; `.cargo/config.toml` включает `incompatible-rust-versions = "fallback"`, чтобы резолвинг не вылезал за MSRV.
-- `deny.toml` разрешает только Apache-2.0/MIT/BSD/ISC/Unicode-3.0/Zlib; поэтому printpdf подключён с `default-features = false` (фича `html` тянет MPL-2.0 и resvg). Новая зависимость вне allowlist — ADR и вопрос пользователю.
+- `deny.toml` разрешает только Apache-2.0/MIT/BSD/ISC/Unicode-3.0/Zlib. PDF-бэкенд собственный (ADR-0022); сторонние библиотеки в нём — только `lopdf` (модель объектов), `subsetter`, `skrifa`, `image` — все из allow-списка. Новая зависимость вне allowlist — ADR и вопрос пользователю.
 - Версии держатся не случайно: `quick-xml = 0.41` и `lru = 0.18` закрывают RUSTSEC-адвизори; `ttf-parser` намеренно не взят (unmaintained) — метрики на `skrifa` (ADR-0002). Понижение или замена — только с разбором advisories.
-- Гейты CI: fmt, clippy `-D warnings`, `cargo doc` `-D warnings`, тесты workspace (+ отдельно тесты форка printpdf); браузерные `wasm-pack test` трёх модулей; JS на Node 20 и 22 + `pnpm size-limit` (только Node 20, бюджеты `.size-limit.mjs`); бюджеты памяти PDF/DOCX — жёстко, времени — мягко; покрытие; `cargo deny` + `cargo audit` + `pnpm audit`. Оракул LibreOffice и fuzz — отдельные workflow (по расписанию и по путям, с nightly).
+- Гейты CI: fmt, clippy `-D warnings`, `cargo doc` `-D warnings`, тесты workspace; браузерные `wasm-pack test` трёх модулей; JS на Node 20 и 22 + `pnpm size-limit` (только Node 20, бюджеты `.size-limit.mjs`); бюджеты памяти PDF/DOCX — жёстко, времени — мягко; покрытие; `cargo deny` + `cargo audit` + `pnpm audit`. Оракул LibreOffice и fuzz — отдельные workflow (по расписанию и по путям, с nightly).

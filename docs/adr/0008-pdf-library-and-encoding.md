@@ -1,6 +1,9 @@
 # ADR 0008: PDF-библиотека и кодирование текста — `printpdf`
 
 **Статус:** принято 06.10.2026; реализуется в Спринте 6 (базовый PDF-экспорт XLSX).
+**Обновлён ADR-0022 (13.10.2026):** `printpdf` удалён — запись PDF, подрезка
+шрифтов и кодирование текста выполняет собственный бэкенд
+(`crates/pdf/src/pdf/`), решения этого ADR по кодированию текста сохранены.
 **Контекст:** [`Cargo.toml`](../../Cargo.toml), [`crates/pdf/Cargo.toml`](../../crates/pdf/Cargo.toml),
 [`crates/pdf/src/painter.rs`](../../crates/pdf/src/painter.rs),
 [`crates/pdf/src/fonts.rs`](../../crates/pdf/src/fonts.rs),
