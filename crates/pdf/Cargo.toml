@@ -17,6 +17,10 @@ serde                = { workspace = true }
 # (gif, webp, bmp, tiff) не включаем: декодеры — вес wasm, а вставки редки
 # (решение задачи D3, см. docs/sprint-7/plan.md).
 printpdf             = { workspace = true, features = ["png", "jpeg"] }
+# Модель значений lopdf 0.35 (`Object`, `Dictionary`, `Stream`) — опора своего
+# PDF-бэкенда (ADR-0022); без default-фич: `chrono_time`, `nom_parser` и
+# `rayon` прод-пути не нужны, `nom_parser` приезжает из dev-зависимости в тестах.
+lopdf                = { version = "0.35", default-features = false }
 # ttf-parser объявлен в стеке ROADMAP §4, но в коде не используется, а с
 # 2026 года помечен unmaintained (RUSTSEC-2026-0192). Вернуть его или взять
 # рекомендованный `skrifa` — решение Фазы 4, когда метрики глифов понадобятся

@@ -20,6 +20,7 @@ mod options;
 pub mod overlay;
 mod pagination;
 mod painter;
+mod pdf;
 mod styles;
 mod text;
 
