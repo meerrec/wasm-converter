@@ -259,13 +259,19 @@ fn page_counts_are_pinned() {
 /// широкие листы ещё раз: у `content-dense`, `size-20x100x1` и
 /// `layout-column-widths` теперь одна полоса столбцов, а масштаб ужат под
 /// ширину страницы.
+///
+/// Объявленные ширины столбцов (`xlsx::layout::width_to_px`) считаются по
+/// метрике цифры шрифта, как в `LibreOffice`, а не по формовым 7 px Excel:
+/// `scale-ten-pages` (столбец в 40 символов) и `layout-column-widths`
+/// (объявленные ширины) отрисованы заново. У остальных фикстур столбцы
+/// умолчания — их ширина не изменилась.
 const DRAWING: &[(&str, u64)] = &[
-    ("scale-ten-pages.xlsx", 0x3bf0_903d_d1d3_8661),
+    ("scale-ten-pages.xlsx", 0x566a_9ad4_701f_437f),
     ("edge-many-rows.xlsx", 0xc3e5_d8ee_f8a4_8594),
     ("content-dense.xlsx", 0x25c9_aa94_f10e_ae39),
     ("size-20x100x1.xlsx", 0x023e_4388_37ac_0e3e),
     ("values-strings.xlsx", 0x4d43_ca4c_6296_2b61),
-    ("layout-column-widths.xlsx", 0xeccf_06e1_ec97_c654),
+    ("layout-column-widths.xlsx", 0x39fa_017e_1c8d_91a9),
     ("edge-merged-styled.xlsx", 0x6463_5275_1058_4c2d),
     ("content-empty-sheet.xlsx", 0x615d_6ab3_aa58_b40f),
 ];
@@ -273,11 +279,10 @@ const DRAWING: &[(&str, u64)] = &[
 #[test]
 fn golden_drawing_is_unchanged() {
     for &(name, expected) in DRAWING {
-        let bytes = export(name);
+        let actual = drawing_hash(&export(name));
         assert_eq!(
-            drawing_hash(&bytes),
-            expected,
-            "{name}: отрисовка разошлась с эталоном"
+            actual, expected,
+            "{name}: отрисовка разошлась с эталоном (факт {actual:#018x})"
         );
     }
 }

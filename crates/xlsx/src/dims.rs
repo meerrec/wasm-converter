@@ -198,6 +198,13 @@ pub struct SheetFormat {
     pub default_row_height: f32,
     /// Ширина столбца по умолчанию, «символы» Excel.
     pub default_col_width: f32,
+    /// `defaultColWidth` объявлен файлом, а не взят умолчанием схемы.
+    ///
+    /// Отличать объявленное от умолчания обязательно: ширину объявленного
+    /// столбца `LibreOffice` считает по метрике шрифта (8,43 символа → 62,4 px),
+    /// а необъявленную оставляет своим умолчанием (64,2 px). Разница в 1,8 px
+    /// на столбец копится по всей ширине листа.
+    pub default_col_width_declared: bool,
     /// Базовая ширина столбца, «символы»: ширина символа `0`.
     pub base_col_width: f32,
     /// Высота по умолчанию задана пользователем (`customHeight`).
@@ -211,6 +218,7 @@ impl Default for SheetFormat {
         Self {
             default_row_height: DEFAULT_ROW_HEIGHT,
             default_col_width: DEFAULT_COL_WIDTH,
+            default_col_width_declared: false,
             base_col_width: DEFAULT_BASE_COL_WIDTH,
             custom_height: false,
             zero_height: false,
@@ -332,6 +340,7 @@ pub(crate) fn read_format(attrs: &[Attr<'_>]) -> SheetFormat {
     }
     if let Some(value) = read_f32(attrs, "defaultColWidth") {
         format.default_col_width = value;
+        format.default_col_width_declared = true;
     }
     if let Some(value) = read_f32(attrs, "baseColWidth") {
         format.base_col_width = value;
