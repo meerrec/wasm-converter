@@ -27,7 +27,7 @@ const TOOLS_DIR = dirname(fileURLToPath(import.meta.url));
 const SPIKE_DIR = resolve(TOOLS_DIR, '..');
 const VIEWER_DIR = resolve(SPIKE_DIR, '..', '..', 'examples', 'viewer');
 const FIXTURE = resolve(SPIKE_DIR, '..', '..', 'test-fixtures', 'docx', 'styles', 'doc_defaults.docx');
-/** Чужой формат: им проверяется, что выбор файла не поднимает x2t и целится в docx. */
+/** Чужой формат: им проверяется, что выбор файла не поднимает x2t и целится в формат своего семейства. */
 const FOREIGN_FIXTURE = resolve(
   SPIKE_DIR,
   '..',
@@ -291,17 +291,20 @@ async function checkViewer(page, fixture) {
 }
 
 /**
- * Чужой формат в выборе файла. Вьюер разбирает только `.docx`, поэтому такой файл показывается
- * после конвертации — и проверка тут в том, чего страница **не** делает: выбора файла мало для
- * подъёма x2t (38 МБ), он остаётся холодным до нажатия «Конвертировать», а целевой формат
- * подставляется сам. Сама конвертация — уже прогон с x2t, он ниже.
+ * Чужой формат в выборе файла. Вьюер разбирает только `.docx`, а цель из чужого семейства
+ * (таблица в `docx`) в x2t заведомо отказывает (код 88), поэтому страница целится в формат
+ * своего семейства и просмотр не обещает. Проверка тут в том, чего страница **не** делает:
+ * выбора файла мало для подъёма x2t (38 МБ), он остаётся холодным до нажатия «Конвертировать»,
+ * а целевой формат подставляется сам. Сама конвертация — уже прогон с x2t, он ниже.
  */
 async function checkForeignFile(page, fixture) {
   await selectFixture(page, fixture);
   const status = await statusOf(page);
   const target = await page.evaluate(() => document.querySelector('#format')?.value ?? null);
-  const hint = (status?.log ?? []).some((line) => line.includes('покажется в просмотре после конвертации'));
-  const ok = status?.module === 'cold' && target === 'docx' && hint;
+  const hint = (status?.log ?? []).some((line) =>
+    line.includes('просмотр в этом вьюере доступен только документному семейству'),
+  );
+  const ok = status?.module === 'cold' && target === 'ods' && hint;
   return { ok, module: status?.module ?? null, target, hint };
 }
 

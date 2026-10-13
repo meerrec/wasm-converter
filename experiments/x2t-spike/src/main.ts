@@ -14,6 +14,12 @@ type ModuleState = 'cold' | 'booting' | 'ready' | 'error';
 const ZIP_TARGETS = new Set(['docx', 'odt', 'xlsx', 'ods', 'pptx', 'odp']);
 /** Форматы-тексты: их выход показываем текстом. */
 const TEXT_TARGETS = new Set(['txt', 'csv', 'html']);
+/**
+ * Файлы недокументных семейств: кросс-семейная цель (таблица в `docx`) в x2t заведомо
+ * отказывает — файла нет, код 88, поэтому целевой формат — свой для семейства.
+ */
+const SHEET_EXTENSIONS = new Set(['xlsx', 'xls', 'ods', 'csv']);
+const SLIDE_EXTENSIONS = new Set(['pptx', 'ppt', 'odp']);
 /** Сколько записей zip показывать в предпросмотре — остальные только считаем. */
 const PREVIEW_ENTRIES = 20;
 /** Сколько строк лога держать на странице. */
@@ -228,6 +234,20 @@ function extensionOf(fileName: string): string {
   return dot === -1 ? '' : fileName.slice(dot + 1).toLowerCase();
 }
 
+/**
+ * Целевой формат для выбранного файла: таблицы — `ods`, презентации — `pptx`, остальное — `docx`.
+ * Целиться из таблицы в `docx` нельзя: кросс-семейная конвертация в x2t заведомо даёт код 88.
+ */
+function targetFor(extension: string): string {
+  if (SHEET_EXTENSIONS.has(extension)) {
+    return 'ods';
+  }
+  if (SLIDE_EXTENSIONS.has(extension)) {
+    return 'pptx';
+  }
+  return 'docx';
+}
+
 function updateDownload(bytes: Uint8Array<ArrayBuffer>, outputName: string): void {
   if (downloadUrl !== null) {
     URL.revokeObjectURL(downloadUrl);
@@ -325,12 +345,18 @@ fileInput.addEventListener('change', () => {
       void renderDocument(inputBytes, file.name);
       return;
     }
-    // Остальные форматы сначала конвертируются в docx — вьюер их не разбирает. Целевой формат
-    // подставляем сами: иначе выбранный файл пришлось бы показывать после ручной правки select.
-    if (formatSelect.querySelector(`option[value="docx"]`) !== null) {
-      formatSelect.value = 'docx';
+    // Цель подставляем сами: иначе выбранный файл пришлось бы показывать после ручной правки
+    // select. Файл недокументного семейства показывать в просмотре нечем — вьюер разбирает
+    // только `.docx`, а цель из чужого семейства в x2t заведомо отказывает (код 88).
+    const target = targetFor(extension);
+    if (formatSelect.querySelector(`option[value="${target}"]`) !== null) {
+      formatSelect.value = target;
     }
-    appendLog(`${extension} покажется в просмотре после конвертации в docx — нажмите «Конвертировать»`);
+    appendLog(
+      target === 'docx'
+        ? `${extension} покажется в просмотре после конвертации в docx — нажмите «Конвертировать»`
+        : `${extension} конвертируется в ${target}, но просмотр в этом вьюере доступен только документному семейству — нажмите «Конвертировать»`,
+    );
   });
 });
 
