@@ -21,6 +21,12 @@ printpdf             = { workspace = true, features = ["png", "jpeg"] }
 # PDF-бэкенда (ADR-0022); без default-фич: `chrono_time`, `nom_parser` и
 # `rayon` прод-пути не нужны, `nom_parser` приезжает из dev-зависимости в тестах.
 lopdf                = { version = "0.35", default-features = false }
+# Подрезка TTF по использованным символам для встраивания в PDF (ADR-0022);
+# 0.2.6 уже в Lockfile — вторая копия в дерево не заводится.
+subsetter            = "0.2"
+# Метрики глифов для `W`-массива и `FontDescriptor` — тот же `skrifa`, что
+# у `render` (ADR-0002/0005).
+skrifa               = { workspace = true }
 # ttf-parser объявлен в стеке ROADMAP §4, но в коде не используется, а с
 # 2026 года помечен unmaintained (RUSTSEC-2026-0192). Вернуть его или взять
 # рекомендованный `skrifa` — решение Фазы 4, когда метрики глифов понадобятся
