@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Просмотрщик (Euro-Office)</title>
+    <!-- No-flash theme restore — тот же сниппет, что на страницах сайта: тема
+         редактора и наша оболочка живут в одном localStorage (ran-theme). -->
+    <script>
+      try {
+        var theme = localStorage.getItem('ran-theme');
+        if (theme === 'dark' || theme === 'light') {
+          document.documentElement.setAttribute('data-ran-theme', theme);
+        }
+      } catch (error) {
+        /* приватный режим: живём без явной темы */
+      }
+    </script>
+    <link rel="stylesheet" href="./ran-fonts/fonts.css" />
+    <link rel="stylesheet" href="./dist/style.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="brand">
+        <span class="logo">E</span>
+        <span class="wordmark">Euro-Office</span>
+      </div>
+      <div class="doc-name" id="viewer-doc-name" title="">—</div>
+      <div class="toolbar-actions">
+        <button class="open" id="viewer-open" type="button">Открыть документ</button>
+        <span id="viewer-status" data-state="loading">запускаю редактор…</span>
+      </div>
+    </header>
+    <input
+      type="file"
+      id="viewer-file"
+      accept=".docx,.doc,.odt,.rtf,.txt,.xlsx,.xls,.ods,.csv,.pptx,.ppt,.odp,.pdf"
+      hidden
+    />
+    <main class="frame-wrap">
+      <iframe id="viewer-frame" src="/editor.html?embed=1" title="Euro-Office viewer"></iframe>
+      <div class="drop-overlay" id="viewer-drop-overlay">Перетащите документ сюда — он откроется в режиме просмотра</div>
+    </main>
+    <script type="module" src="./dist/main.js"></script>
+  </body>
+</html>
