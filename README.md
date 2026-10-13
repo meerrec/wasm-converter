@@ -1,35 +1,145 @@
 # doc-converter
 
-High-performance OOXML (DOCX/XLSX) viewer & PDF exporter — Rust/WASM + OffscreenCanvas.
+Просмотр и конвертация OOXML (DOCX/XLSX) в браузере и Node.js: Rust/WASM,
+рендер на `OffscreenCanvas` в Web Worker, экспорт в PDF/Markdown/HTML/текст.
+
+## Что это
+
+- **Просмотрщики XLSX и DOCX** в браузере: разбор, раскладка и отрисовка
+  кадра целиком в Web Worker, основной поток получает готовый холст.
+- **Экспорт**: PDF (собственный PDF-бэкенд, [ADR-0022](docs/adr/0022-own-pdf-backend.md)),
+  PNG, Markdown, HTML, текст.
+- **Node-CLI** `@doc-converter/cli`: `convert` и `batch` на тех же
+  wasm-модулях, с пулом воркеров.
+- Монорепозиторий: шесть Rust-крейтов (`core`, `render`, `xlsx`, `docx`,
+  `pdf`, три wasm-модуля) и JS/TS-пакеты (`@doc-converter/core`,
+  `@doc-converter/wasm`, `@doc-converter/wasm-docx`, `@doc-converter/wasm-pdf`,
+  `@doc-converter/cli`).
 
 ## Статус
 
-**Фаза 1 завершена:** workspace, CI, RPC Main↔Worker, крейты-заглушки.
+Спринты 1–11 закрыты (сводка — [ROADMAP.md](ROADMAP.md) §7): разбор и
+раскладка обоих форматов, оба транспорта кадра first-class, просмотрщики,
+экспорт PDF/Markdown/HTML/текста, CLI с батч-конвертацией, оракул против
+LibreOffice, бенчмарки против JS-библиотек. Сейчас идёт **Спринт 12 — релиз
+v1.0.0** ([docs/sprint-12/plan.md](docs/sprint-12/plan.md)): релизная
+механика, публикация в npm и crates.io, документация. Что работает — в
+разделе «Производительность», что осознанно не входит в v1 — в разделе
+«Ограничения v1».
 
 ## Демо
 
-Собранный `examples/viewer` (страницы «Слово» на `/#/docx` и «ДваИксель» на `/#/xlsx`; корень ведёт на `/#/docx`): <https://meerrec.github.io/wasm-converter/>. Публикуется workflow `Pages` при пуше в `main`.
+Собранный `examples/viewer` (страницы «Слово» на `/#/docx` и «ДваИксель» на
+`/#/xlsx`; корень ведёт на `/#/docx`): <https://meerrec.github.io/wasm-converter/>.
+Публикуется workflow `Pages` при пуше в `main`.
 
-При первом заходе страница перезагружается: GitHub Pages не отдаёт заголовки cross-origin isolation (COOP/COEP), их подставляет service worker.
+GitHub Pages не отдаёт заголовки cross-origin isolation (COOP/COEP), поэтому
+демо подставляет их вендоренным `coi-serviceworker.js`; при первом заходе
+страница перезагружается. Если сервис-воркеры недоступны, страница поедет на
+`bytes`-транспорте — это ожидаемо, а не поломка.
 
 ## Быстрый старт
 
-```bash
-# Rust
-cargo test --workspace
+### Установка
 
-# TS (сначала биндинги: их .d.ts нужны typecheck'у пакета core)
-pnpm install
-pnpm build:wasm
-pnpm turbo run typecheck test build
+```bash
+npm install @doc-converter/core @doc-converter/wasm \
+  @doc-converter/wasm-docx @doc-converter/wasm-pdf
+npm install -g @doc-converter/cli
 ```
 
-## Пакеты
+`wasm-docx` и `wasm-pdf` — ленивые модули: воркер грузит их по URL при
+открытии `.docx` и при первом экспорте в PDF соответственно.
 
-| Пакет | Назначение |
-|---|---|
-| `@doc-converter/core` | worker RPC, OffscreenCanvas viewer, protocol |
-| `@doc-converter/wasm` | wasm-bindgen exports (генерируется) |
+### Просмотрщик XLSX
+
+Воркер — отдельный бандл с единственной строкой:
+
+```ts
+// xlsx_worker.ts
+import '@doc-converter/core/worker';
+```
+
+```ts
+import { createXlsxViewer } from '@doc-converter/core';
+import workerUrl from './xlsx_worker.ts?worker&url'; // Vite
+
+const viewer = await createXlsxViewer(host, {
+  workerUrl,
+  pdfWasm: {
+    module: new URL(
+      '@doc-converter/wasm-pdf/pkg/doc_converter_pdf_wasm.js',
+      import.meta.url,
+    ).href,
+  },
+});
+
+const bytes = await file.arrayBuffer();
+await viewer.open(bytes);        // листы книги
+viewer.showSheet(1);
+viewer.setZoom(1.25);
+const pdf = await viewer.exportPdf();
+const png = await viewer.exportPng();
+viewer.destroy();
+```
+
+`createXlsxViewer(host, options)` сам собирает разметку: прокручиваемую
+область и холст внутри переданного элемента. Байты книги передаются воркеру
+переводом владения. Полезные методы: `hitTest`, `hyperlinkAt`, `setView`
+(сетка, заголовки, тёмная тема), `onTick` (метрики кадров).
+
+### Просмотрщик DOCX
+
+```ts
+import { createDocxViewer } from '@doc-converter/core';
+import workerUrl from './docx_worker.ts?worker&url'; // Vite
+
+const viewer = await createDocxViewer(host, {
+  workerUrl,
+  docxWasm: {
+    module: new URL(
+      '@doc-converter/wasm-docx/pkg/doc_converter_docx_wasm.js',
+      import.meta.url,
+    ).href,
+  },
+  pdfWasm: {
+    module: new URL(
+      '@doc-converter/wasm-pdf/pkg/doc_converter_pdf_wasm.js',
+      import.meta.url,
+    ).href,
+  },
+});
+
+await viewer.open(bytes);        // страницы документа
+viewer.showPage(3);
+const md   = await viewer.exportMarkdown();
+const html = await viewer.exportHtml();
+const text = await viewer.exportText();
+const pdf  = await viewer.exportPdf();
+viewer.destroy();
+```
+
+Без `docxWasm` открытие `.docx` вернёт внятную ошибку вместо страниц; без
+`pdfWasm` — ошибку вернёт экспорт в PDF.
+
+### CLI
+
+```bash
+doc-converter convert report.docx -o report.pdf
+doc-converter convert report.docx -o report.md
+doc-converter batch ./in/*.xlsx --out ./pdf --workers 4
+doc-converter batch ./in --out ./out --format pdf --workers 8 --scale 0.9
+```
+
+`convert` принимает один файл (DOCX → pdf/md/html/txt, XLSX → pdf), `batch` —
+файлы, каталоги и glob-ы с прогрессом, рекурсивным обходом и пулом воркеров
+(`node:worker_threads`).
+
+## Браузеры
+
+Chrome 90+, Firefox 96+, Safari 16.4+ ([ROADMAP.md](ROADMAP.md) §1).
+Доступность `OffscreenCanvas` проверяется экспортом `supportsOffscreen()`.
+Работа без COOP/COEP — штатный путь, см. ниже.
 
 ## Встраивание: COOP/COEP и SharedArrayBuffer
 
@@ -62,25 +172,82 @@ Cross-Origin-Embedder-Policy: require-corp
 (пока painter рисует один кадр, сборщик готовит следующий) и сам отбрасывает
 устаревшие кадры при отставании. Что теряется без него: разделяемой памяти
 нет, кадр едет обычным `ArrayBuffer` — двойная буферизация при этом та же, а
-кадр собирает ровно та же функция Rust и рисует тот же painter. Разница —
-в скорости; числа и бюджеты для обоих путей фиксируются отдельно
-(`ROADMAP.md` §9), здесь они не приводятся, пока не измерены.
+кадр собирает ровно та же функция Rust и рисует тот же painter. Разница — в
+скорости. По замерам Спринта 11 ([ROADMAP.md](ROADMAP.md) §9): RPC
+round-trip < 1 мс на SAB против < 3 мс на буферах; сборка кадра без
+деградации (transferables).
 
-Демо на GitHub Pages подставляет заголовки вендоренным
-`coi-serviceworker.js`; если сервис-воркеры недоступны, страница поедет на
-`bytes` — это ожидаемо, а не поломка.
+## Производительность
 
-## Non-goals v1
+Замеры Спринта 12, после миграции PDF-бэкенда
+([docs/sprint-12/budgets.md](docs/sprint-12/budgets.md),
+[docs/sprint-12/oracle.md](docs/sprint-12/oracle.md)); машина — Apple Silicon,
+релизная сборка.
 
-Осознанно вне рамок v1 (каждый пункт закрыт ADR, полный список — `docs/sprint-8/plan.md` §7):
+| Метрика | Факт | Бюджет/цель |
+|---|---|---|
+| Разбор DOCX 50 МБ (`openDocx`, нативно) | 356 мс | < 1,5 с |
+| Пагинация DOCX, 150 страниц | 28,18 мс | < 500 мс на 100 стр. |
+| Экспорт PDF, 500 страниц XLSX | 188,7 мс | < 3 с |
+| Пик памяти PDF-экспорта `scale-500-pages.xlsx` | 28,41 МиБ | ≤ 40 МиБ |
+| Пик памяти разбора `memory_50mib.docx` (57 МБ, 75 картинок) | 155,48 МиБ | ≤ 200 МиБ |
+| `batch` по `test-fixtures/xlsx`, 116 файлов, 4 воркера | 0,20 с | 100 файлов < 30 с |
+| DOCX → HTML против mammoth, медиана | ×5,3 | — |
 
-- Strict OOXML — только Transitional ([ADR-0017](docs/adr/0017-strict-vs-transitional.md)).
-- Writer в DOCX не реализуется ([ADR-0020](docs/adr/0020-parser-writer-boundary.md)); command API, undo/redo, diff/patch — [ADR-0018](docs/adr/0018-editing-boundaries.md).
-- Track changes (`w:ins`/`w:del`) парсятся как `Unknown`; VML (`mc:Fallback`) игнорируется ([ADR-0014](docs/adr/0014-alternate-content.md)).
-- TOC: поле парсится, содержимое не генерируется; OMML, SmartArt, embedded OLE — `Unknown`.
-- Encrypted DOCX, `.docm`, `.doc` — фатальная ошибка ([ADR-0016](docs/adr/0016-docx-error-policy.md)).
-- Резолвинг каскада стилей, layout и pagination — Спринт 9.
+Оракул против LibreOffice (постраничный SSIM):
+
+| Метрика | Факт |
+|---|---|
+| DOCX: число страниц ±1 | 98 из 98 фикстур |
+| DOCX: SSIM первой страницы, mean | 0,9828 |
+| XLSX: 12 фикстур умолчаний, mean | 0,9824 |
+| XLSX: 104 однолистовые книги, mean | 0,9722 |
+
+Размер ассетов (gzip, гейт `pnpm size-limit`):
+
+| Ассет | Факт | Бюджет |
+|---|---|---|
+| `@doc-converter/core` worker.js / index.js | 7,17 / 3,34 КБ | 550 / 200 КБ |
+| `wasm (viewer)` — XLSX-просмотрщик | 464,2 КБ | 480 КБ |
+| `wasm (docx)` — ленивый модуль DOCX | 384,4 КБ | 400 КБ |
+| `wasm (pdf)` — ленивый модуль PDF | 1,01 МБ | 1,05 МБ |
+
+Модуль просмотра DOCX и модуль PDF грузятся по требованию; PDF после ухода с
+printpdf на собственный бэкенд похудел на 31 % gzip. Бюджет основного
+модуля поднят в Спринте 12 из-за вшитых поднаборов Carlito: превью рисует
+той же гарнитурой, что и PDF. Источники остальных чисел — [ROADMAP.md](ROADMAP.md)
+§9 и [docs/bench-js.md](docs/bench-js.md).
+
+## Ограничения v1
+
+- **Редактирование — нет.** Только чтение и конвертация
+  ([ADR-0018](docs/adr/0018-editing-boundaries.md),
+  [ADR-0020](docs/adr/0020-parser-writer-boundary.md)).
+- **Сноски и комментарии** парсятся в модели, но в раскладку не попадают.
+- **Обтекание текстом вокруг плавающих рисунков — нет**: рисунок
+  вынимается из потока.
+- **VML-фолбэки** (`mc:Fallback`) игнорируются — рисуется только `mc:Choice`
+  ([ADR-0014](docs/adr/0014-alternate-content.md)).
+- **PPTX и XLSB** не поддерживаются.
+- **Strict OOXML** не поддерживается — только Transitional
+  ([ADR-0017](docs/adr/0017-strict-vs-transitional.md)).
+- **Макрофайлы `.docm`** не поддерживаются; зашифрованные DOCX и `.doc` —
+  фатальная ошибка ([ADR-0016](docs/adr/0016-docx-error-policy.md)).
 
 ## Лицензия
 
-Apache-2.0
+Apache-2.0 — файл [LICENSE](LICENSE) в корне репозитория.
+
+## Ссылки
+
+- [docs/adr/](docs/adr/) — принятые архитектурные решения.
+- [ROADMAP.md](ROADMAP.md) — план, состояние по спринтам, бюджеты (§9),
+  DoD v1.0 (§12).
+- [docs/cookbook/](docs/cookbook/) — рецепты: просмотр, экспорт, CLI,
+  embed — готовится к релизу (Спринт 12).
+- [docs/migration-from-mammoth.md](docs/migration-from-mammoth.md) и
+  [docs/migration-from-exceljs.md](docs/migration-from-exceljs.md) —
+  миграционные гайды, готовятся к релизу (Спринт 12).
+- [docs/bench-js.md](docs/bench-js.md) — сравнение с mammoth, exceljs,
+  SheetJS.
+- [examples/viewer](examples/viewer) — демо-приложение и e2e-тесты.
