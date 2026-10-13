@@ -65,10 +65,11 @@ const previewBox = element<HTMLElement>('preview');
 const logBox = element<HTMLElement>('log');
 const downloadLink = element<HTMLAnchorElement>('download');
 
-// Классический воркер — вынужденно: x2t.js грузится через importScripts (см. src/worker.ts).
-// Vite отдаёт такой воркер без сборки в dev и как iife-бандл в сборке, поэтому в самом
-// воркере нет статических импортов, а обвязка подтягивается динамическим import().
-const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'classic' });
+// Воркер — модульный, и в dev, и в сборке (`worker.format: 'es'` в vite.config.ts): в dev
+// Vite отдаёт воркеры без сборки, поэтому классический упал бы на первом же ESM-импорте.
+// Модульному воркеру недоступен `importScripts`, и обвязка x2t грузит glue через fetch
+// (см. `loadX2t` в packages/x2t/src/x2t.ts).
+const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
 
 let nextRequestId = 1;
 let inputBytes: Uint8Array | null = null;
