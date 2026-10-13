@@ -29,9 +29,15 @@ v1.0.0** ([docs/sprint-12/plan.md](docs/sprint-12/plan.md)): релизная
 
 ## Демо
 
-Собранный `examples/viewer` (страницы «Слово» на `/#/docx` и «ДваИксель» на
-`/#/xlsx`; корень ведёт на `/#/docx`): <https://meerrec.github.io/wasm-converter/>.
-Публикуется workflow `Pages` при пуше в `main`.
+Собранный `examples/viewer` — страницы «Слово» на `/#/docx`, «ДваИксель» на
+`/#/xlsx` и «Конвертер» на `/#/convert` (корень ведёт на `/#/docx`):
+<https://meerrec.github.io/wasm-converter/>. Публикуется workflow `Pages` при
+пуше в `main`.
+
+Страница «Конвертер» работает на x2t-wasm (конвертер ONLYOFFICE) и переводит
+файлы внутри семейства — docx↔odt/rtf/txt, xlsx↔ods/csv; ~39 МБ артефактов
+грузятся лениво при первой конвертации. Подробности —
+[packages/browser-convert/README.md](packages/browser-convert/README.md).
 
 GitHub Pages не отдаёт заголовки cross-origin isolation (COOP/COEP), поэтому
 демо подставляет их вендоренным `coi-serviceworker.js`; при первом заходе
