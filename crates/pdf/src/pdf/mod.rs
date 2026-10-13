@@ -7,6 +7,7 @@
 
 pub(crate) mod content;
 pub(crate) mod fonts;
+pub(crate) mod image;
 pub(crate) mod ops;
 pub(crate) mod session;
 pub(crate) mod writer;

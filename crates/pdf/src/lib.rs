@@ -48,6 +48,9 @@ pub(crate) enum PdfError {
     /// Шрифт не разобран `printpdf`.
     #[error("invalid font data: {0}")]
     Font(String),
+    /// Картинка не декодирована: неподдержанный mime или битые байты.
+    #[error("invalid image data: {0}")]
+    Image(String),
     /// Приёмник PDF вернул ошибку записи.
     #[error("write failed: {0}")]
     Io(#[from] std::io::Error),

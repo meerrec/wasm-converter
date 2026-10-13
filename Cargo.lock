@@ -596,6 +596,7 @@ dependencies = [
  "doc-converter-docx",
  "doc-converter-render",
  "doc-converter-xlsx",
+ "image",
  "lopdf",
  "printpdf",
  "serde",

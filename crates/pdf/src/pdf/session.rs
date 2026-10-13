@@ -21,6 +21,7 @@ use lopdf::{
 };
 
 use crate::pdf::fonts;
+use crate::pdf::image;
 use crate::pdf::writer::StreamWriter;
 use crate::PdfError;
 
@@ -32,9 +33,10 @@ const PRODUCER: &str = "doc-converter";
 /// каждую страницу, `finish` — хвост и xref.
 pub(crate) struct Session<'w, W: Write> {
     writer: StreamWriter<&'w mut W>,
-    /// Реестр идентификаторов и место сборки объектов шрифтов
-    /// ([`fonts::write_font`]): всё, что сюда попало, немедленно уходит в
-    /// писатель и удаляется, иначе объекты копились бы до `finish`.
+    /// Реестр идентификаторов и место сборки объектов шрифтов и картинок
+    /// ([`fonts::write_font`], [`image::write_image`]): всё, что сюда попало,
+    /// немедленно уходит в писатель и удаляется, иначе объекты копились бы до
+    /// `finish`.
     doc: Document,
     pages_id: ObjectId,
     /// id страниц зарезервированы в `begin`: на последующие страницы уже
@@ -46,17 +48,28 @@ pub(crate) struct Session<'w, W: Write> {
     written: usize,
     /// Имя в ресурсах («F0», «F1», …) → id словаря Type0.
     font_dict: BTreeMap<String, ObjectId>,
+    /// Подготовленные шрифты по имени ресурса — аргумент `content::translate`.
+    prepared: BTreeMap<String, fonts::PreparedFont>,
     /// Словарь `/Font` ушёл в писатель: добавлять шрифты позже нельзя.
     fonts_written: bool,
     font_dict_id: ObjectId,
+    /// Имя в ресурсах («X0», «X1», …) → id картинки.
+    xobject_dict: BTreeMap<String, ObjectId>,
+    /// Имя в ресурсах («GS0», «GS1», …) → id `ExtGState`.
+    extgstate_dict: BTreeMap<String, ObjectId>,
+    /// Словари `/XObject` и `/ExtGState` ушли в писатель: добавлять ресурсы
+    /// позже нельзя.
+    resource_dicts_written: bool,
     xobject_dict_id: ObjectId,
     extgstate_dict_id: ObjectId,
     title: Option<String>,
+    /// Закладки одним уровнем: заголовок → индекс страницы; пишутся в `finish`.
+    outline: Vec<(String, usize)>,
 }
 
 impl<'w, W: Write> Session<'w, W> {
-    /// Начинает файл: заголовок, резервирование id дерева страниц и страниц,
-    /// запись пустых глобальных словарей ресурсов.
+    /// Начинает файл: заголовок и резервирование id дерева страниц, страниц и
+    /// глобальных словарей ресурсов.
     ///
     /// `page_count` — сколько страниц будет записано: id резервируются сразу,
     /// чтобы ссылки на будущие страницы были разрешены до первой страницы;
@@ -80,11 +93,9 @@ impl<'w, W: Write> Session<'w, W> {
         let xobject_dict_id = doc.new_object_id();
         let extgstate_dict_id = doc.new_object_id();
 
-        // XObject и ExtGState пока пусты, но форма ресурсов страницы заморожена:
-        // страницы сошлются на эти словари, и завести их позже уже некуда.
-        let empty = Object::Dictionary(Dictionary::new());
-        writer.write_indirect(xobject_dict_id.0, xobject_dict_id.1, &empty)?;
-        writer.write_indirect(extgstate_dict_id.0, extgstate_dict_id.1, &empty)?;
+        // Словари ресурсов пишутся не здесь, а перед первой страницей
+        // (`flush_resource_dicts`), как и `/Font`: наполнять их разрешено до
+        // первой страницы, поэтому в файл они уходят с содержимым, а не пустыми.
 
         Ok(Self {
             writer,
@@ -93,11 +104,16 @@ impl<'w, W: Write> Session<'w, W> {
             page_ids,
             written: 0,
             font_dict: BTreeMap::new(),
+            prepared: BTreeMap::new(),
             fonts_written: false,
             font_dict_id,
+            xobject_dict: BTreeMap::new(),
+            extgstate_dict: BTreeMap::new(),
+            resource_dicts_written: false,
             xobject_dict_id,
             extgstate_dict_id,
             title: None,
+            outline: Vec::new(),
         })
     }
 
@@ -130,10 +146,74 @@ impl<'w, W: Write> Session<'w, W> {
 
         let name = format!("F{}", self.font_dict.len());
         self.font_dict.insert(name.clone(), type0_id);
+        self.prepared.insert(name.clone(), prepared);
         Ok(name)
     }
 
-    /// Пишет поток содержимого страницы и объект страницы; страница
+    /// Подготовленные шрифты по имени ресурса («F0», …) — для `translate`.
+    #[must_use]
+    pub(crate) fn prepared_fonts(&self) -> &BTreeMap<String, fonts::PreparedFont> {
+        &self.prepared
+    }
+
+    /// Зарегистрировать изображение в глобальном словаре `/XObject`, вернуть
+    /// имя («X0», «X1», …). Вызывать только до первой страницы.
+    ///
+    /// # Errors
+    ///
+    /// [`PdfError::Image`], если изображение добавляется после первой
+    /// страницы: словарь `/XObject` уже записан, и поздняя картинка молча
+    /// выпала бы из файла.
+    pub(crate) fn add_image(&mut self, img: &image::DecodedImage) -> Result<String, PdfError> {
+        if self.written > 0 {
+            return Err(PdfError::Image(String::from(
+                "image added after the first page was written",
+            )));
+        }
+        let xobject_id = image::write_image(img, &mut self.doc);
+        self.flush_objects()?;
+
+        let name = format!("X{}", self.xobject_dict.len());
+        self.xobject_dict.insert(name.clone(), xobject_id);
+        Ok(name)
+    }
+
+    /// Зарегистрировать `ExtGState` (готовый словарь) в глобальном словаре
+    /// `/ExtGState`, вернуть имя («GS0», «GS1», …). Вызывать только до первой
+    /// страницы.
+    ///
+    /// # Errors
+    ///
+    /// Ошибка записи в приёмник; [`PdfError::Io`] с
+    /// [`io::ErrorKind::InvalidInput`], если состояние добавляется после
+    /// первой страницы.
+    pub(crate) fn add_graphics_state(&mut self, dict: Dictionary) -> Result<String, PdfError> {
+        if self.written > 0 {
+            return Err(PdfError::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "graphics state added after the first page was written",
+            )));
+        }
+        let id = self.doc.new_object_id();
+        self.writer
+            .write_indirect(id.0, id.1, &Object::Dictionary(dict))?;
+
+        let name = format!("GS{}", self.extgstate_dict.len());
+        self.extgstate_dict.insert(name.clone(), id);
+        Ok(name)
+    }
+
+    /// Id страницы по индексу — для `/Dest` аннотаций и закладок.
+    ///
+    /// Возвращает `None` вне диапазона `page_count` из [`Session::begin`]:
+    /// id резервируются только на это количество страниц.
+    #[must_use]
+    pub(crate) fn page_ref(&self, index: usize) -> Option<ObjectId> {
+        self.page_ids.get(index).copied()
+    }
+
+    /// Пишет поток содержимого страницы и объект страницы: `MediaBox`,
+    /// ресурсы, аннотации (пустой список — без `/Annots`); страница
     /// освобождается сразу после записи.
     ///
     /// # Errors
@@ -144,6 +224,7 @@ impl<'w, W: Write> Session<'w, W> {
         &mut self,
         content: &[u8],
         media_box: [f32; 4],
+        annots: &[Dictionary],
     ) -> Result<(), PdfError> {
         let Some(&page_id) = self.page_ids.get(self.written) else {
             return Err(PdfError::Io(io::Error::new(
@@ -152,6 +233,7 @@ impl<'w, W: Write> Session<'w, W> {
             )));
         };
         self.flush_fonts()?;
+        self.flush_resource_dicts()?;
 
         // Содержимое разрешено к сжатию — как у `Document::compress()`:
         // писатель сожмёт его только при `compress`, а `/Filter` и `/Length`
@@ -172,20 +254,51 @@ impl<'w, W: Write> Session<'w, W> {
         page.set("MediaBox", media_box_object(media_box));
         page.set("Resources", resources);
         page.set("Contents", Object::Reference(content_id));
-        // `/Annots` появится вместе с аннотациями; пустой массив не пишется.
+        if !annots.is_empty() {
+            page.set(
+                "Annots",
+                Object::Array(annots.iter().cloned().map(Object::Dictionary).collect()),
+            );
+        }
         self.writer
             .write_indirect(page_id.0, page_id.1, &Object::Dictionary(page))?;
         self.written += 1;
         Ok(())
     }
 
-    /// Хвост: дерево страниц, каталог, `/Info`, trailer и xref.
+    /// Закладки `/Outlines` одним уровнем: заголовок → индекс страницы.
+    ///
+    /// Пустой список — без outline. Пишутся в `finish`: каталог ещё не записан,
+    /// и ссылку на `/Outlines` есть куда положить.
+    ///
+    /// # Errors
+    ///
+    /// [`PdfError::Io`] с [`io::ErrorKind::InvalidInput`], если какой-то
+    /// индекс вне диапазона `page_count` из [`Session::begin`].
+    pub(crate) fn set_outline(&mut self, entries: &[(String, usize)]) -> Result<(), PdfError> {
+        for (index, (_, page)) in entries.iter().enumerate() {
+            if *page >= self.page_ids.len() {
+                return Err(PdfError::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "outline entry {index} references page {page}, but page_count is {}",
+                        self.page_ids.len()
+                    ),
+                )));
+            }
+        }
+        self.outline = entries.to_vec();
+        Ok(())
+    }
+
+    /// Хвост: дерево страниц, закладки, каталог, `/Info`, trailer и xref.
     ///
     /// # Errors
     ///
     /// Ошибка записи или flush приёмника.
     pub(crate) fn finish(mut self) -> Result<(), PdfError> {
         self.flush_fonts()?;
+        self.flush_resource_dicts()?;
 
         let mut pages = Dictionary::new();
         pages.set("Type", "Pages");
@@ -202,10 +315,20 @@ impl<'w, W: Write> Session<'w, W> {
         self.writer
             .write_indirect(self.pages_id.0, self.pages_id.1, &Object::Dictionary(pages))?;
 
+        // Закладки — до каталога: каталог ссылается на словарь `/Outlines`.
+        let outlines_id = if self.outline.is_empty() {
+            None
+        } else {
+            Some(self.write_outline()?)
+        };
+
         let catalog_id = self.doc.new_object_id();
         let mut catalog = Dictionary::new();
         catalog.set("Type", "Catalog");
         catalog.set("Pages", Object::Reference(self.pages_id));
+        if let Some(outlines_id) = outlines_id {
+            catalog.set("Outlines", Object::Reference(outlines_id));
+        }
         self.writer
             .write_indirect(catalog_id.0, catalog_id.1, &Object::Dictionary(catalog))?;
 
@@ -259,6 +382,83 @@ impl<'w, W: Write> Session<'w, W> {
         self.fonts_written = true;
         Ok(())
     }
+
+    /// Пишет глобальные словари `/XObject` и `/ExtGState` — перед первой
+    /// страницей (`write_page` зовёт сам) или в `finish` для документа без
+    /// страниц. После записи добавлять ресурсы нельзя: объекты уже в файле.
+    fn flush_resource_dicts(&mut self) -> Result<(), PdfError> {
+        if self.resource_dicts_written {
+            return Ok(());
+        }
+        let mut xobjects = Dictionary::new();
+        for (name, &id) in &self.xobject_dict {
+            xobjects.set(name.as_str(), Object::Reference(id));
+        }
+        self.writer.write_indirect(
+            self.xobject_dict_id.0,
+            self.xobject_dict_id.1,
+            &Object::Dictionary(xobjects),
+        )?;
+
+        let mut extgstate = Dictionary::new();
+        for (name, &id) in &self.extgstate_dict {
+            extgstate.set(name.as_str(), Object::Reference(id));
+        }
+        self.writer.write_indirect(
+            self.extgstate_dict_id.0,
+            self.extgstate_dict_id.1,
+            &Object::Dictionary(extgstate),
+        )?;
+        self.resource_dicts_written = true;
+        Ok(())
+    }
+
+    /// Пишет закладки и их словарь `/Outlines`, возвращает id словаря.
+    ///
+    /// Элементы одного уровня связаны `/Prev`/`/Next`, родитель у всех —
+    /// словарь `/Outlines`; дочерних элементов нет, поэтому `/First`/`/Last`/
+    /// `/Count` несёт только корень (ISO 32000, 12.3.3).
+    fn write_outline(&mut self) -> Result<ObjectId, PdfError> {
+        let outlines_id = self.doc.new_object_id();
+        let item_ids: Vec<ObjectId> = (0..self.outline.len())
+            .map(|_| self.doc.new_object_id())
+            .collect();
+        for (index, ((title, page), &item_id)) in self.outline.iter().zip(&item_ids).enumerate() {
+            // `/Dest` — `[page /XYZ null null null]`: вид задаёт страница,
+            // остальные параметры оставляются как есть.
+            let dest = Object::Array(vec![
+                Object::Reference(self.page_ids[*page]),
+                Object::Name(b"XYZ".to_vec()),
+                Object::Null,
+                Object::Null,
+                Object::Null,
+            ]);
+            let mut item = Dictionary::new();
+            item.set("Title", encode_utf16be(title));
+            item.set("Parent", Object::Reference(outlines_id));
+            item.set("Dest", dest);
+            if let Some(&prev) = index.checked_sub(1).and_then(|i| item_ids.get(i)) {
+                item.set("Prev", Object::Reference(prev));
+            }
+            if let Some(&next) = item_ids.get(index + 1) {
+                item.set("Next", Object::Reference(next));
+            }
+            self.writer
+                .write_indirect(item_id.0, item_id.1, &Object::Dictionary(item))?;
+        }
+
+        let mut outlines = Dictionary::new();
+        outlines.set("Type", "Outlines");
+        outlines.set(
+            "Count",
+            i64::try_from(self.outline.len()).unwrap_or(i64::MAX),
+        );
+        outlines.set("First", Object::Reference(item_ids[0]));
+        outlines.set("Last", Object::Reference(item_ids[item_ids.len() - 1]));
+        self.writer
+            .write_indirect(outlines_id.0, outlines_id.1, &Object::Dictionary(outlines))?;
+        Ok(outlines_id)
+    }
 }
 
 /// `/MediaBox` из `[x0, y0, x1, y1]`: значения пишутся `Real` без округления —
@@ -279,16 +479,19 @@ fn encode_utf16be(text: &str) -> Object {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fmt::Write as _;
     use std::io::Write;
     use std::process::Command;
     use std::time::Instant;
 
-    use lopdf::{Document, Object, ObjectId, Stream};
+    use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 
     use super::{Session, PRODUCER};
+    use crate::pdf::content;
     use crate::pdf::fonts::{self, PreparedFont};
+    use crate::pdf::image::{DecodedImage, PixelFormat};
+    use crate::pdf::ops::{ExtendedGraphicsStateId, Op, XObjectId, XObjectTransform};
     use crate::PdfError;
 
     /// Размер страницы A4 в пунктах.
@@ -415,8 +618,13 @@ mod tests {
                 .unwrap(),
             "F1"
         );
+        assert_eq!(
+            session.prepared_fonts().len(),
+            2,
+            "оба начертания доступны для `translate`"
+        );
         for content in &contents {
-            session.write_page(content, A4).unwrap();
+            session.write_page(content, A4, &[]).unwrap();
         }
         session.finish().unwrap();
 
@@ -614,7 +822,7 @@ mod tests {
             session
                 .add_font(doc_converter_render::font::default_font_bytes(), &used)
                 .unwrap();
-            session.write_page(content.as_bytes(), A4).unwrap();
+            session.write_page(content.as_bytes(), A4, &[]).unwrap();
             session.finish().unwrap();
         }
 
@@ -648,7 +856,7 @@ mod tests {
         session
             .add_font(doc_converter_render::font::default_font_bytes(), &used)
             .unwrap();
-        session.write_page(b"BT ET", A4).unwrap();
+        session.write_page(b"BT ET", A4, &[]).unwrap();
 
         let error = session
             .add_font(doc_converter_render::font::bold_font_bytes(), &used)
@@ -660,8 +868,8 @@ mod tests {
     fn write_page_beyond_page_count_is_an_error() {
         let mut bytes = Vec::new();
         let mut session = Session::begin(&mut bytes, 1, true).unwrap();
-        session.write_page(b"BT ET", A4).unwrap();
-        let error = session.write_page(b"BT ET", A4).unwrap_err();
+        session.write_page(b"BT ET", A4, &[]).unwrap();
+        let error = session.write_page(b"BT ET", A4, &[]).unwrap_err();
         assert!(matches!(error, PdfError::Io(_)), "{error}");
     }
 
@@ -679,8 +887,308 @@ mod tests {
             &mut Session<'static, Vec<u8>>,
             &[u8],
             [f32; 4],
+            &[Dictionary],
         ) -> Result<(), PdfError> = Session::write_page;
         let _ = (finish, write_page);
+    }
+
+    /// Картинка 2x2 для тестов: RGBA — красный, зелёный, синий, белый с
+    /// разной альфой.
+    fn decoded_rgba() -> DecodedImage {
+        DecodedImage {
+            width: 2,
+            height: 2,
+            pixels: vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255],
+            format: PixelFormat::Rgb,
+            alpha: Some(vec![10, 20, 30, 255]),
+        }
+    }
+
+    /// Картинка `/X0` страницы: `Resources` → `XObject` → имя.
+    fn page_xobject<'a>(loaded: &'a Document, page_id: ObjectId, name: &[u8]) -> &'a Stream {
+        let page = loaded.get_dictionary(page_id).unwrap();
+        let resources = page.get(b"Resources").unwrap().as_dict().unwrap();
+        let xobjects = loaded
+            .get_dictionary(resources.get(b"XObject").unwrap().as_reference().unwrap())
+            .unwrap();
+        let id = xobjects.get(name).unwrap().as_reference().unwrap();
+        loaded.get_object(id).unwrap().as_stream().unwrap()
+    }
+
+    /// Сквозной тест картинки: RGBA → сессия → разбор lopdf. Поток картинки
+    /// несёт RGB без альфы, альфа — отдельный поток `/SMask` (`DeviceGray`).
+    #[test]
+    fn image_round_trips_through_session_with_smask() {
+        let decoded = decoded_rgba();
+        let ops = vec![Op::UseXobject {
+            id: XObjectId(String::from("X0")),
+            transform: XObjectTransform::default(),
+        }];
+        let content = content::translate(&ops, &BTreeMap::new()).unwrap();
+
+        let mut bytes = Vec::new();
+        {
+            let mut session = Session::begin(&mut bytes, 1, true).unwrap();
+            assert_eq!(session.add_image(&decoded).unwrap(), "X0");
+            session.write_page(&content, A4, &[]).unwrap();
+            session.finish().unwrap();
+        }
+
+        let loaded = Document::load_mem(&bytes).unwrap();
+        let (_, page_id) = loaded.get_pages().into_iter().next().unwrap();
+        let xobject = page_xobject(&loaded, page_id, b"X0");
+        assert_eq!(
+            xobject.dict.get(b"Type").unwrap().as_name().unwrap(),
+            b"XObject"
+        );
+        assert_eq!(
+            xobject.dict.get(b"Subtype").unwrap().as_name().unwrap(),
+            b"Image"
+        );
+        assert_eq!(xobject.dict.get(b"Width").unwrap().as_i64().unwrap(), 2);
+        assert_eq!(xobject.dict.get(b"Height").unwrap().as_i64().unwrap(), 2);
+        assert_eq!(
+            xobject
+                .dict
+                .get(b"BitsPerComponent")
+                .unwrap()
+                .as_i64()
+                .unwrap(),
+            8
+        );
+        assert_eq!(
+            xobject.dict.get(b"ColorSpace").unwrap().as_name().unwrap(),
+            b"DeviceRGB"
+        );
+        assert_eq!(xobject.get_plain_content().unwrap(), decoded.pixels);
+
+        let smask_id = xobject.dict.get(b"SMask").unwrap().as_reference().unwrap();
+        let smask = loaded.get_object(smask_id).unwrap().as_stream().unwrap();
+        assert_eq!(
+            smask.dict.get(b"Subtype").unwrap().as_name().unwrap(),
+            b"Image"
+        );
+        assert_eq!(
+            smask.dict.get(b"ColorSpace").unwrap().as_name().unwrap(),
+            b"DeviceGray"
+        );
+        assert_eq!(
+            smask
+                .dict
+                .get(b"BitsPerComponent")
+                .unwrap()
+                .as_i64()
+                .unwrap(),
+            8
+        );
+        assert_eq!(smask.get_plain_content().unwrap(), decoded.alpha.unwrap());
+    }
+
+    /// Серая картинка без альфы — `DeviceGray` и без `/SMask`.
+    #[test]
+    fn grayscale_image_has_no_smask() {
+        let decoded = DecodedImage {
+            width: 1,
+            height: 2,
+            pixels: vec![0, 255],
+            format: PixelFormat::Gray,
+            alpha: None,
+        };
+
+        let mut bytes = Vec::new();
+        {
+            let mut session = Session::begin(&mut bytes, 1, true).unwrap();
+            assert_eq!(session.add_image(&decoded).unwrap(), "X0");
+            session.write_page(b"q /X0 Do Q", A4, &[]).unwrap();
+            session.finish().unwrap();
+        }
+
+        let loaded = Document::load_mem(&bytes).unwrap();
+        let (_, page_id) = loaded.get_pages().into_iter().next().unwrap();
+        let xobject = page_xobject(&loaded, page_id, b"X0");
+        assert!(
+            xobject.dict.get(b"SMask").is_err(),
+            "у серой картинки без альфы SMask нет"
+        );
+        assert_eq!(
+            xobject.dict.get(b"ColorSpace").unwrap().as_name().unwrap(),
+            b"DeviceGray"
+        );
+        assert_eq!(xobject.get_plain_content().unwrap(), vec![0, 255]);
+    }
+
+    /// `ExtGState`: `translate` → `q /GS0 gs Q`, сессия кладёт словарь в
+    /// ресурсы страницы.
+    #[test]
+    fn graphics_state_round_trips_through_session() {
+        let mut gs = Dictionary::new();
+        gs.set("CA", 0.5);
+        let ops = vec![
+            Op::SaveGraphicsState,
+            Op::LoadGraphicsState {
+                gs: ExtendedGraphicsStateId(String::from("GS0")),
+            },
+            Op::RestoreGraphicsState,
+        ];
+        let content = content::translate(&ops, &BTreeMap::new()).unwrap();
+        assert_eq!(content, b"q\n/GS0 gs\nQ");
+
+        let mut bytes = Vec::new();
+        {
+            let mut session = Session::begin(&mut bytes, 1, true).unwrap();
+            assert_eq!(session.add_graphics_state(gs).unwrap(), "GS0");
+            session.write_page(&content, A4, &[]).unwrap();
+            session.finish().unwrap();
+        }
+
+        let loaded = Document::load_mem(&bytes).unwrap();
+        let (_, page_id) = loaded.get_pages().into_iter().next().unwrap();
+        let page = loaded.get_dictionary(page_id).unwrap();
+        let resources = page.get(b"Resources").unwrap().as_dict().unwrap();
+        let gstates = loaded
+            .get_dictionary(resources.get(b"ExtGState").unwrap().as_reference().unwrap())
+            .unwrap();
+        let gs_id = gstates.get(b"GS0").unwrap().as_reference().unwrap();
+        let gs = loaded.get_dictionary(gs_id).unwrap();
+        let ca = gs.get(b"CA").unwrap().as_float().unwrap();
+        assert!((ca - 0.5).abs() < f32::EPSILON, "CA = {ca}");
+    }
+
+    /// Закладки одним уровнем: `/Dest` указывают на id своих страниц,
+    /// `/Outlines` связан с каталогом, элементы — `/Prev`/`/Next`.
+    #[test]
+    fn outline_links_titles_to_pages() {
+        let entries = vec![
+            (String::from("Раздел один"), 0),
+            (String::from("Раздел два"), 1),
+        ];
+        let mut bytes = Vec::new();
+        {
+            let mut session = Session::begin(&mut bytes, 3, true).unwrap();
+            session.write_page(b"BT ET", A4, &[]).unwrap();
+            session.write_page(b"BT ET", A4, &[]).unwrap();
+            session.set_outline(&entries).unwrap();
+            session.finish().unwrap();
+        }
+
+        let loaded = Document::load_mem(&bytes).unwrap();
+        let root = loaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let catalog = loaded.get_dictionary(root).unwrap();
+        let outlines_id = catalog.get(b"Outlines").unwrap().as_reference().unwrap();
+        let outlines = loaded.get_dictionary(outlines_id).unwrap();
+        assert_eq!(
+            outlines.get(b"Type").unwrap().as_name().unwrap(),
+            b"Outlines"
+        );
+        assert_eq!(outlines.get(b"Count").unwrap().as_i64().unwrap(), 2);
+        let first_id = outlines.get(b"First").unwrap().as_reference().unwrap();
+        let last_id = outlines.get(b"Last").unwrap().as_reference().unwrap();
+
+        let pages = loaded.get_pages();
+        let items = [
+            loaded.get_dictionary(first_id).unwrap(),
+            loaded.get_dictionary(last_id).unwrap(),
+        ];
+        assert_eq!(
+            items[0].get(b"Next").unwrap().as_reference().unwrap(),
+            last_id
+        );
+        assert!(items[0].get(b"Prev").is_err(), "у первого нет предыдущего");
+        assert!(
+            items[1].get(b"Next").is_err(),
+            "у последнего нет следующего"
+        );
+        assert_eq!(
+            items[1].get(b"Prev").unwrap().as_reference().unwrap(),
+            first_id
+        );
+
+        for (index, item) in items.iter().enumerate() {
+            assert_eq!(
+                item.get(b"Parent").unwrap().as_reference().unwrap(),
+                outlines_id
+            );
+            assert_eq!(
+                decode_utf16be(item.get(b"Title").unwrap()),
+                entries[index].0
+            );
+            let dest = item.get(b"Dest").unwrap().as_array().unwrap();
+            let page_number = u32::try_from(index + 1).unwrap();
+            assert_eq!(dest[0].as_reference().unwrap(), pages[&page_number]);
+            assert_eq!(dest[1].as_name().unwrap(), b"XYZ");
+            for value in &dest[2..] {
+                assert!(matches!(value, Object::Null), "{value:?}");
+            }
+        }
+    }
+
+    /// Без закладок каталог не несёт `/Outlines`.
+    #[test]
+    fn empty_outline_leaves_catalog_without_outlines() {
+        let mut bytes = Vec::new();
+        {
+            let mut session = Session::begin(&mut bytes, 1, true).unwrap();
+            session.set_outline(&[]).unwrap();
+            session.write_page(b"BT ET", A4, &[]).unwrap();
+            session.finish().unwrap();
+        }
+
+        let loaded = Document::load_mem(&bytes).unwrap();
+        let root = loaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let catalog = loaded.get_dictionary(root).unwrap();
+        assert!(catalog.get(b"Outlines").is_err());
+    }
+
+    /// Индекс закладки за пределами `page_count` — ошибка, а не битый `/Dest`.
+    #[test]
+    fn outline_beyond_page_count_is_an_error() {
+        let mut bytes = Vec::new();
+        let mut session = Session::begin(&mut bytes, 1, true).unwrap();
+        let error = session
+            .set_outline(&[(String::from("Раздел"), 1)])
+            .unwrap_err();
+        assert!(matches!(error, PdfError::Io(_)), "{error}");
+    }
+
+    /// `page_ref` отдаёт зарезервированные id страниц и `None` вне диапазона.
+    #[test]
+    fn page_ref_returns_reserved_page_ids() {
+        let mut bytes = Vec::new();
+        let mut session = Session::begin(&mut bytes, 2, true).unwrap();
+        let first = session.page_ref(0).unwrap();
+        let second = session.page_ref(1).unwrap();
+        assert_ne!(first, second);
+        assert!(session.page_ref(2).is_none(), "id не резервировались");
+        session.write_page(b"BT ET", A4, &[]).unwrap();
+        session.write_page(b"BT ET", A4, &[]).unwrap();
+        session.finish().unwrap();
+
+        let loaded = Document::load_mem(&bytes).unwrap();
+        let pages = loaded.get_pages();
+        assert_eq!(pages[&1], first);
+        assert_eq!(pages[&2], second);
+    }
+
+    /// Картинка после первой страницы — ошибка: словарь `/XObject` уже записан.
+    #[test]
+    fn add_image_after_first_page_is_an_error() {
+        let mut bytes = Vec::new();
+        let mut session = Session::begin(&mut bytes, 2, true).unwrap();
+        session.write_page(b"BT ET", A4, &[]).unwrap();
+        let error = session.add_image(&decoded_rgba()).unwrap_err();
+        assert!(matches!(error, PdfError::Image(_)), "{error}");
+    }
+
+    /// `ExtGState` после первой страницы — ошибка, как и картинка.
+    #[test]
+    fn add_graphics_state_after_first_page_is_an_error() {
+        let mut gs = Dictionary::new();
+        gs.set("CA", 0.5);
+        let mut bytes = Vec::new();
+        let mut session = Session::begin(&mut bytes, 2, true).unwrap();
+        session.write_page(b"BT ET", A4, &[]).unwrap();
+        let error = session.add_graphics_state(gs).unwrap_err();
+        assert!(matches!(error, PdfError::Io(_)), "{error}");
     }
 
     /// Тексты страницы спайка: заголовок и три строки.
@@ -722,7 +1230,7 @@ mod tests {
         session.add_font(doc_converter_render::font::bold_font_bytes(), &bold_used)?;
         for (heading, lines) in &texts {
             let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
-            session.write_page(&page_content(heading, &lines, &regular, &bold), A4)?;
+            session.write_page(&page_content(heading, &lines, &regular, &bold), A4, &[])?;
         }
         session.finish()
     }

@@ -733,7 +733,7 @@ mod tests {
                     .unwrap(),
                 "F0"
             );
-            session.write_page(&content, A4).unwrap();
+            session.write_page(&content, A4, &[]).unwrap();
             session.finish().unwrap();
         }
 

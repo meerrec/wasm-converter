@@ -21,6 +21,10 @@ printpdf             = { workspace = true, features = ["png", "jpeg"] }
 # PDF-бэкенда (ADR-0022); без default-фич: `chrono_time`, `nom_parser` и
 # `rayon` прод-пути не нужны, `nom_parser` приезжает из dev-зависимости в тестах.
 lopdf                = { version = "0.35", default-features = false }
+# Декодирование медиачастей PNG/JPEG своего бэкенда (ADR-0022): фичи
+# `png`/`jpeg` задаёт workspace-зависимость. Прочие форматы не включаем —
+# декодеры это вес wasm, а вставки редки (то же решение, что у printpdf выше).
+image                = { workspace = true }
 # Подрезка TTF по использованным символам для встраивания в PDF (ADR-0022);
 # 0.2.6 уже в Lockfile — вторая копия в дерево не заводится.
 subsetter            = "0.2"
