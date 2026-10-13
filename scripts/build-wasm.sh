@@ -10,7 +10,7 @@ if ! command -v wasm-pack >/dev/null 2>&1; then
 fi
 
 # Три модуля: основной (просмотр), ленивый экспорт в PDF и ленивый
-# просмотр DOCX. Второй тянет printpdf, третий — docx-парсер, поэтому
+# просмотр DOCX. Второй тянет экспортёр PDF, третий — docx-парсер, поэтому
 # в первый они не входят: воркер грузит их по клику.
 # --out-dir резолвится относительно каталога крейта, а не CWD, поэтому пути абсолютные.
 wasm-pack build crates/wasm \
@@ -19,10 +19,9 @@ wasm-pack build crates/wasm \
   --out-name doc_converter_wasm \
   --release
 
-# wasm-bindgen собирает #[wasm_bindgen]-элементы из всего графа зависимостей,
-# поэтому wasm-API printpdf закрыт в форке гейтом фичи js-sys
-# (vendor/printpdf/src/wasm/mod.rs) — иначе пять чужих Pdf_*Sync попадали
-# и в pkg этого модуля.
+# wasm-bindgen собирает #[wasm_bindgen]-элементы из всего графа зависимостей;
+# своей PDF-библиотеки больше нет (ADR-0022), посторонних экспортов быть не
+# должно. CI-шаг «check wasm exports» стережёт это в .d.ts модуля.
 wasm-pack build crates/pdf-wasm \
   --target web \
   --out-dir "$ROOT/packages/wasm-pdf/pkg" \

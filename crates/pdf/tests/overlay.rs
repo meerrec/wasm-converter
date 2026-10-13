@@ -398,9 +398,9 @@ fn operand_number(object: &Object) -> f32 {
 
 /// Текст страницы (с единицы), восстановленный картами `ToUnicode` её шрифтов.
 ///
-/// `lopdf::extract_text` на PDF printpdf падает (см. `tests/export.rs`), поэтому
-/// здесь повторяется то, что делает `pdftotext`: hex-строки перед `Tj`
-/// переводятся картой шрифта обратно в символы.
+/// Повторяется то, что делает `pdftotext`: hex-строки перед `Tj` переводятся
+/// картой шрифта обратно в символы. (`lopdf::extract_text` на PDF своего
+/// бэкенда работает, но тест разбирает сам, чтобы видеть карты шрифтов.)
 fn page_text(doc: &Document, number: u32) -> String {
     let page = *doc
         .get_pages()

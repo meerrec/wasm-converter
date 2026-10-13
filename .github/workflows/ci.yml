@@ -57,17 +57,6 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: cargo test --workspace --all-features
 
-      # Форк исключён из workspace (см. `exclude` в корневом Cargo.toml), и
-      # `cargo test --workspace` его тесты не видит — без отдельного шага они
-      # снова сгниют. Дефолтные фичи выключены намеренно: они тянут `html`
-      # через resvg, а тот идёт под MPL-2.0, которую `deny.toml` не разрешает.
-      # Проверяем ровно ту конфигурацию, которую собирает workspace
-      # (`default-features = false`), иначе CI зеленел бы на том, чего мы не поставляем.
-      - name: test (printpdf fork)
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        working-directory: vendor/printpdf
-        run: cargo test --no-default-features
-
       - name: build (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
         run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm --release
@@ -100,9 +89,9 @@ jobs:
 
       # I3: .d.ts не должен объявлять экспорты, которых нет в крейте.
       # wasm-bindgen собирает `#[wasm_bindgen]`-элементы из всего графа
-      # зависимостей; wasm-API printpdf закрыт гейтом в форке
-      # (vendor/printpdf/src/wasm/mod.rs, фича js-sys), поэтому любое
-      # постороннее имя здесь — регрессия. Сверяются оба ленивых модуля.
+      # зависимостей; своей PDF-библиотеки больше нет (ADR-0022), поэтому
+      # посторонних экспортов быть не должно — любое лишнее имя здесь
+      # регрессия. Сверяются оба ленивых модуля.
       - name: check wasm exports
         run: |
           set -euo pipefail
@@ -512,9 +501,9 @@ jobs:
   # прогон двух сюит смешал бы числа — docx-тесты исполняют часть `crates/core`
   # и поднимают его (в замере E1 — с 97,68 % до 98,63 %).
   #
-  # Вне гейта осознанно, а не по недосмотру: `crates/fuzz` и `vendor/printpdf` —
-  # отдельные workspace'ы (nightly + санитайзер и вендоренный форк), не
-  # библиотечный код и в ROADMAP §9 не адресуются; `crates/wasm` целиком под
+  # Вне гейта осознанно, а не по недосмотру: `crates/fuzz` — отдельный
+  # workspace (nightly + санитайзер), не библиотечный код и в ROADMAP §9 не
+  # адресуется; `crates/wasm` целиком под
   # `#![cfg(target_arch = "wasm32")]` — на нативном таргете пуст; у
   # `crates/render`, `xlsx`, `pdf` порога в ROADMAP §9 нет. Доктесты не
   # гоняются: `--doctests` в cargo-llvm-cov помечен unstable.

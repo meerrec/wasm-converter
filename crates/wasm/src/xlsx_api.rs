@@ -432,8 +432,8 @@ pub fn xlsx_open_bytes(bytes: js_sys::Uint8Array) -> Result<JsValue, JsValue> {
     xlsx_open(bytes.to_vec())
 }
 
-// Экспорт в PDF живёт в отдельном модуле (`crates/pdf-wasm`): printpdf тянет
-// за собой svg2pdf/usvg/lopdf и раздувает бандл в разы, а нужен он только по
+// Экспорт в PDF живёт в отдельном модуле (`crates/pdf-wasm`): экспортёр PDF
+// тянет за собой lopdf/skrifa и раздувает бандл в разы, а нужен он только по
 // клику «Экспорт в PDF». Воркер грузит его лениво.
 
 fn now() -> f64 {

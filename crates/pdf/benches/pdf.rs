@@ -3,12 +3,11 @@
 //! размер и мягкий на время живут в `tests/budgets.rs`.
 //!
 //! Разбивка D3 печатается один раз за прогон: `xlsx::open` (разбор книги),
-//! `export_xlsx_sheet` (раскладка, сборка документа и `save` printpdf) и
-//! вариант `compress: false`. Отделить `save` от сборки публичным API нельзя:
-//! он целиком внутри `export`. Сжатие несёт вендоренный форк printpdf
-//! (ADR-0010), поэтому `compress: false` — база сравнения: на `content-dense`
-//! сжатие даёт ≈14,5×. Бенч `size_compressed` (DoD 9) печатает оба числа
-//! и множитель.
+//! `export_xlsx_sheet` (раскладка, сборка документа и запись PDF) и
+//! вариант `compress: false`. Отделить запись от сборки публичным API нельзя:
+//! она целиком внутри `export`. Сжатие несёт свой бэкенд (ADR-0022), поэтому
+//! `compress: false` — база сравнения: на `content-dense` сжатие даёт ≈14,5×.
+//! Бенч `size_compressed` (DoD 9) печатает оба числа и множитель.
 //!
 //!     cargo bench -p doc-converter-pdf
 
@@ -235,7 +234,7 @@ fn phases(_c: &mut Criterion) {
             uncompressed.len() as f64 / compressed.len() as f64,
         );
     }
-    println!("printpdf `save` отдельно от сборки не меряется: он внутри export_xlsx_sheet");
+    println!("запись PDF отдельно от сборки не меряется: она внутри export_xlsx_sheet");
 }
 
 criterion_group!(

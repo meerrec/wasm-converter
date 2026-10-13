@@ -605,7 +605,7 @@ fn bookmarks_reach_the_exported_pdf() {
                 .expect("/First — ссылка"),
         )
         .expect("пункт outline — словарь");
-    // Заголовок — UTF-16BE с BOM: так printpdf кодирует текст закладок,
+    // Заголовок — UTF-16BE с BOM: так бэкенд кодирует текст закладок,
     // кириллица проходит целиком.
     let mut title = vec![0xFE, 0xFF];
     for unit in "Лист1".encode_utf16() {

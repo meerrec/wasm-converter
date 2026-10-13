@@ -102,7 +102,7 @@ fn outline_items(doc: &Document) -> Vec<(String, usize)> {
     items
 }
 
-/// Заголовок закладки: printpdf пишет его в UTF-16BE с BOM.
+/// Заголовок закладки: UTF-16BE с BOM.
 fn decode_title(object: &Object) -> String {
     let bytes = object.as_str().expect("заголовок закладки — строка");
     assert_eq!(&bytes[..2], &[0xFE, 0xFF], "заголовок в UTF-16BE с BOM");
@@ -115,9 +115,9 @@ fn decode_title(object: &Object) -> String {
 
 /// Текст страницы (с единицы), восстановленный картами `ToUnicode` её шрифтов.
 ///
-/// `lopdf::extract_text` на PDF printpdf падает (см. `tests/export.rs`), поэтому
-/// здесь повторяется то, что делает `pdftotext`: hex-строки перед `Tj`
-/// переводятся картой шрифта обратно в символы.
+/// Повторяется то, что делает `pdftotext`: hex-строки перед `Tj` переводятся
+/// картой шрифта обратно в символы. (`lopdf::extract_text` на PDF своего
+/// бэкенда работает, но тест разбирает сам, чтобы видеть карты шрифтов.)
 fn page_text(doc: &Document, number: u32) -> String {
     let page = *doc
         .get_pages()

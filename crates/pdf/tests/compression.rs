@@ -1,10 +1,9 @@
-//! Регресс-тесты сжатия форка printpdf (ADR-0010, эпик G).
+//! Регресс-тесты сжатия PDF (ADR-0022).
 //!
-//! Форк несёт три правки в `vendor/printpdf/src/serialize.rs`: сжатие потока
-//! содержимого страницы, сжатие шрифтового потока и вызов `Document::compress()`
-//! при `optimize`. Откат любой из трёх роняет эти проверки — в этом и смысл
-//! файла. Снаружи сжатие включает `PdfOptions::compress` (в printpdf он же
-//! `PdfSaveOptions::optimize`).
+//! Свой бэкенд при `PdfOptions::compress` сжимает потоки содержимого страниц и
+//! шрифтовые потоки (`lopdf::Stream::compress`, только при экономии): в файл
+//! они уходят с `/FlateDecode`. Откат сжатия на любом из потоков роняет эти
+//! проверки — в этом и смысл файла.
 
 use std::path::{Path, PathBuf};
 
@@ -42,7 +41,7 @@ fn first_page(doc: &Document) -> lopdf::ObjectId {
     *doc.get_pages().values().next().expect("в PDF нет страниц")
 }
 
-/// Поток содержимого первой страницы — в том виде, в каком его записал printpdf.
+/// Поток содержимого первой страницы — как записан в файл (не распакованный).
 fn content_stream(doc: &Document) -> &Stream {
     let page = first_page(doc);
     let contents = doc

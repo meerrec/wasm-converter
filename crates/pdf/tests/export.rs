@@ -42,11 +42,9 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 
 /// Текст первой страницы, восстановленный картой `ToUnicode`.
 ///
-/// `lopdf::extract_text` принимает в CMap только `CIDSystemInfo`, `CMapName` и
-/// `CMapType` (падает на `/CMapVersion` и `/WMode`, которые printpdf пишет
-/// всегда), а `pdftotext` из приёмки спринта лишние ключи игнорирует. Здесь
-/// повторяется то, что делает `pdftotext`: коды из `Tj` переводятся картой
-/// `ToUnicode` обратно в символы.
+/// Повторяет `pdftotext` из приёмки спринта: коды из `Tj` переводятся картой
+/// `ToUnicode` обратно в символы. `lopdf::extract_text` на PDF своего бэкенда
+/// работает, но свой разбор оставлен — он различает шрифты (см. `text_runs`).
 fn decoded_text(bytes: &[u8]) -> String {
     let doc = lopdf::Document::load_mem(bytes).expect("PDF разбирается lopdf");
     let cmap = tounicode_map(&doc);
@@ -223,8 +221,8 @@ fn embedded_fonts(doc: &lopdf::Document, page: lopdf::ObjectId) -> HashMap<Strin
 fn font_program(doc: &lopdf::Document, font: &lopdf::Dictionary) -> Option<Vec<u8>> {
     let descriptor = if let Ok(descendants) = font.get(b"DescendantFonts") {
         let first = descendants.as_array().ok()?.first()?;
-        // printpdf кладёт потомка встроенным словарём, но ссылку тоже надо
-        // уметь разыменовать.
+        // Свой бэкенд кладёт потомка ссылкой; встроенный словарь тоже
+        // разыменуем — тест не должен зависеть от формы записи.
         let descendant = match first {
             lopdf::Object::Reference(id) => doc.get_object(*id).ok()?,
             other => other,
@@ -241,8 +239,8 @@ fn font_program(doc: &lopdf::Document, font: &lopdf::Dictionary) -> Option<Vec<u
     };
     let descriptor = doc.get_object(descriptor).ok()?.as_dict().ok()?;
     let file = descriptor.get(b"FontFile2").ok()?.as_reference().ok()?;
-    // `get_plain_content`, а не `decompressed_content`: подмножество шрифта
-    // printpdf пишет без фильтра.
+    // `get_plain_content`, а не прямое чтение поля: он сам распаковывает
+    // `FlateDecode` (`compress: true`) и отдаёт байты программы в любом случае.
     doc.get_object(file)
         .ok()?
         .as_stream()

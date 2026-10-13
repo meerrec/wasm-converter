@@ -1,6 +1,6 @@
 //! Отдельный wasm-модуль экспорта в PDF: лист XLSX и документ DOCX.
 //!
-//! Тянет `doc-converter-pdf` (→ printpdf), поэтому в основной модуль не
+//! Тянет `doc-converter-pdf` (экспортёр PDF), поэтому в основной модуль не
 //! входит: просмотрщику он нужен только по клику «Экспорт в PDF», и воркер
 //! подгружает его по требованию. Модуль самодостаточен — никакого
 //! `thread_local`: книгу и документ он получает байтами и разбирает сам.
@@ -119,8 +119,7 @@ fn parse_options(options: JsValue) -> Result<PdfOptions, JsValue> {
 /// если задан.
 ///
 /// # Errors
-/// Если байты не OOXML-пакет, листа с таким индексом нет или printpdf не
-/// смог собрать документ.
+/// Если байты не OOXML-пакет, листа с таким индексом нет или PDF не собрался.
 #[wasm_bindgen]
 pub fn export_pdf(bytes: &[u8], sheet: usize, options: JsValue) -> Result<Vec<u8>, JsValue> {
     let options = parse_options(options)?;
@@ -138,8 +137,7 @@ pub fn export_pdf(bytes: &[u8], sheet: usize, options: JsValue) -> Result<Vec<u8
 /// он выбирает один лист, а книга — это все сразу.
 ///
 /// # Errors
-/// Если байты не OOXML-пакет, в книге нет листов или printpdf не смог собрать
-/// документ.
+/// Если байты не OOXML-пакет, в книге нет листов или PDF не собрался.
 #[wasm_bindgen]
 pub fn export_pdf_book(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValue> {
     let options = parse_options(options)?;
@@ -159,7 +157,7 @@ pub fn export_pdf_book(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValu
 ///
 /// # Errors
 /// Если байты не OOXML-пакет, `word/document.xml` не разбирается, раскладка
-/// документа не собралась или printpdf не смог собрать документ.
+/// документа не собралась или PDF не собрался.
 #[wasm_bindgen]
 pub fn export_docx_pdf(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValue> {
     let options = parse_options(options)?;

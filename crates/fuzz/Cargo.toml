@@ -18,7 +18,7 @@ doc-converter-xlsx = { path = "../xlsx" }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Отдельный workspace: nightly и sanitizer не должны попадать в сборку
-# монорепозитория (в корневом Cargo.toml крейт в `exclude`, как vendor/printpdf).
+# монорепозитория (в корневом Cargo.toml крейт в `exclude`).
 [workspace]
 
 [[bin]]

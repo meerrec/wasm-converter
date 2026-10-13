@@ -76,7 +76,7 @@ fn page_ops(bytes: &[u8], index: usize) -> Content {
     Content::decode(&content).expect("операции разбираются")
 }
 
-/// Операнд-число: printpdf пишет координаты как `Real`.
+/// Операнд-число: координаты пишутся как `Real`.
 #[allow(clippy::cast_precision_loss)] // координаты страницы далеки от 2^24
 fn number(object: &Object) -> f32 {
     match object {
@@ -139,7 +139,7 @@ fn document_images(doc: &Pdf) -> (BTreeMap<Vec<u8>, &Stream>, usize) {
 
 /// Имя `XObject`'а и `cm`-матрица каждого `Do` в порядке потока.
 ///
-/// `Op::UseXobject` printpdf пишет как `q` `cm` `Do` `Q`: матрица — это CTM,
+/// `Op::UseXobject` пишется как `q` `cm` `Do` `Q`: матрица — это CTM,
 /// действующая только на картинку. Складывается она из масштаба исходника
 /// (1 px = 1 pt при `dpi = 72`) и переноса в прямоугольник якоря, поэтому
 /// `a`/`d` — стороны рисунка в точках, `e`/`f` — его левый нижний угол.

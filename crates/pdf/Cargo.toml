@@ -11,19 +11,15 @@ doc-converter-render = { workspace = true }
 doc-converter-docx   = { workspace = true }
 doc-converter-xlsx   = { workspace = true }
 serde                = { workspace = true }
-# Фичи `png`/`jpeg` включают декодеры printpdf для медиачастей XLSX:
-# workspace ставит printpdf с `default-features = false`, и без них
-# `RawImage::decode_from_bytes` отказывает и PNG, и JPEG. Прочие форматы
-# (gif, webp, bmp, tiff) не включаем: декодеры — вес wasm, а вставки редки
-# (решение задачи D3, см. docs/sprint-7/plan.md).
-printpdf             = { workspace = true, features = ["png", "jpeg"] }
 # Модель значений lopdf 0.35 (`Object`, `Dictionary`, `Stream`) — опора своего
-# PDF-бэкенда (ADR-0022); без default-фич: `chrono_time`, `nom_parser` и
-# `rayon` прод-пути не нужны, `nom_parser` приезжает из dev-зависимости в тестах.
-lopdf                = { version = "0.35", default-features = false }
+# PDF-бэкенда (ADR-0022). default-фичи сняты (`chrono_time`, `rayon` прод-пути
+# не нужны), а `nom_parser` включён отдельно: в 0.35 модуль `parser` собирается
+# безусловно и без него крейт не компилируется, хотя чужой ввод мы не разбираем
+# (поэтому RUSTSEC-2026-0187 остаётся в ignore `deny.toml`).
+lopdf                = { version = "0.35", default-features = false, features = ["nom_parser"] }
 # Декодирование медиачастей PNG/JPEG своего бэкенда (ADR-0022): фичи
 # `png`/`jpeg` задаёт workspace-зависимость. Прочие форматы не включаем —
-# декодеры это вес wasm, а вставки редки (то же решение, что у printpdf выше).
+# декодеры это вес wasm, а вставки редки.
 image                = { workspace = true }
 # Подрезка TTF по использованным символам для встраивания в PDF (ADR-0022);
 # 0.2.6 уже в Lockfile — вторая копия в дерево не заводится.
@@ -31,17 +27,9 @@ subsetter            = "0.2"
 # Метрики глифов для `W`-массива и `FontDescriptor` — тот же `skrifa`, что
 # у `render` (ADR-0002/0005).
 skrifa               = { workspace = true }
-# ttf-parser объявлен в стеке ROADMAP §4, но в коде не используется, а с
-# 2026 года помечен unmaintained (RUSTSEC-2026-0192). Вернуть его или взять
-# рекомендованный `skrifa` — решение Фазы 4, когда метрики глифов понадобятся
-# на самом деле. См. docs/adr/0002-font-parsing.md.
 thiserror            = { workspace = true }
 
 [dev-dependencies]
-# 0.35 с теми же фичами, что у printpdf 0.8.2 (`nom_parser`, без default):
-# та же версия не заводит в дереве вторую копию lopdf, а `rayon` из её
-# default-фич в тестах не нужен (проверено по Cargo.lock).
-lopdf    = { version = "0.35", default-features = false, features = ["nom_parser"] }
 criterion = { workspace = true }
 
 [[bench]]
