@@ -15,10 +15,11 @@ use doc_converter_docx::layout::{
 };
 use doc_converter_docx::{Border, BorderStyle, Color as DocColor, Document, ShadingPattern};
 use doc_converter_pdf::{PdfExporter, PdfOptions};
-use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
+use doc_converter_render::font::{default_font_bytes, FontRegistry};
 use lopdf::content::{Content, Operation};
 use lopdf::Document as Pdf;
 use lopdf::Object;
+use skrifa::raw::TableProvider;
 
 /// Пикселей раскладки в точке PDF: 96 dpi против 72 dpi.
 const PX_PER_POINT: f32 = 96.0 / 72.0;
@@ -312,6 +313,15 @@ fn fills(ops: &[Operation]) -> Vec<Fill> {
         }
     }
     out
+}
+
+/// Typo-асцент (`sTypoAscender`) шрифта по умолчанию в пикселях: по нему
+/// экспорт ставит базовую линию (`docx::draw_line`), а `FontRegistry::measure`
+/// отдаёт usWin/hhea-асцент — для сверки нужен тот же источник.
+fn typo_ascent(size_px: f32) -> f32 {
+    let font = skrifa::FontRef::new(default_font_bytes()).expect("Carlito разбирается");
+    let upem = f32::from(font.head().expect("head есть").units_per_em());
+    f32::from(font.os2().expect("OS/2 есть").s_typo_ascender()) / upem * size_px
 }
 
 /// Позиции текстового курсора (`Td`) в порядке потока: по одной на строку.
@@ -823,8 +833,8 @@ fn cell_paragraphs<'a>(
 ///
 /// `tables/cell_margins_valign.docx`: в первой строке три ячейки с одинаковой
 /// геометрией и `top`/`center`/`bottom` — базовая линия каждой строки сверяется
-/// с раскладкой (подъём берётся из метрик того же шрифта, каким мерила
-/// раскладка), во второй — ячейки с несимметричными полями `w:tcMar`.
+/// с раскладкой (подъём берётся из typo-асцента шрифта раскладки), во второй —
+/// ячейки с несимметричными полями `w:tcMar`.
 #[test]
 fn v_align_moves_content_down() {
     let name = "tables/cell_margins_valign.docx";
@@ -832,7 +842,6 @@ fn v_align_moves_content_down() {
     let layout = layout(&doc);
     let page = &layout.pages[0];
     let height_pt = page.height / PX_PER_POINT;
-    let mut registry = FontRegistry::new(FONT_CACHE);
 
     let mut paragraphs = Vec::new();
     cell_paragraphs(&page.items, &mut paragraphs);
@@ -853,9 +862,7 @@ fn v_align_moves_content_down() {
             shifted += 1;
         }
         close(*x, rect.x / PX_PER_POINT);
-        let ascent = registry
-            .measure(DEFAULT_FONT_ID, half_points_to_px(size.value()), "")
-            .ascent;
+        let ascent = typo_ascent(half_points_to_px(size.value()));
         close(*y, height_pt - (rect.y + shift + ascent) / PX_PER_POINT);
     }
     assert!(

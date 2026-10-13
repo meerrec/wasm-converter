@@ -27,8 +27,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use doc_converter_docx::layout::{LayoutItem, Page, PageChrome, PageLayout, Rect};
 use doc_converter_docx::{Document, HalfPoint, LayoutOptions};
 use doc_converter_render::display_list::Color;
-use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
+use doc_converter_render::font::{default_font_bytes, FontRegistry, DEFAULT_FONT_ID};
 use lopdf::Dictionary;
+use skrifa::raw::TableProvider;
 
 use crate::fonts::{EmbeddedFonts, Face, FaceSet};
 use crate::layout::PageGeometry;
@@ -411,9 +412,10 @@ struct LineRun<'a> {
 /// Нарисовать строку абзаца.
 ///
 /// PDF ставит текст по базовой линии, а раскладка знает верх строки: подъём
-/// берётся из метрик того же шрифта, каким мерила раскладка (`DEFAULT_FONT_ID`),
-/// — так же считает [`crate::text`] для ячейки XLSX. Выравнивание повторно не
-/// применяется: оно уже учтено в `rect.x` при раскладке.
+/// берётся из typo-асцента (`sTypoAscender`) шрифта, каким мерила раскладка
+/// (`DEFAULT_FONT_ID`), с usWin-фолбэком — так «чернила» ставит `LibreOffice`.
+/// Выравнивание повторно не применяется: оно уже учтено в `rect.x` при
+/// раскладке.
 fn draw_line(
     ops: &mut Vec<Op>,
     page: &PageGeometry,
@@ -427,7 +429,14 @@ fn draw_line(
     let size_px = doc_converter_docx::layout::half_points_to_px(run.size.value());
     let metrics = registry.measure(DEFAULT_FONT_ID, size_px, "");
     let cursor_x_pt = page.px_to_pt(run.rect.x);
-    let baseline_pt = page.px_to_pt(run.rect.y + metrics.ascent);
+    // Базовая линия — по typo-асценту (`sTypoAscender`), как ставит текст
+    // LibreOffice, эталон оракула: usWin/hhea-асцент у Carlito 0,952 em против
+    // typo 0,75 em опускает «чернила» примерно на 2 pt — главный источник
+    // разрыва SSIM (4,6 px @150 dpi на long_table). Шрифту без typo-метрик
+    // (нет OS/2 или нулевое поле) — фолбэк на usWin, как рекомендуют
+    // спецификации.
+    let ascent_px = typo_ascent_px(size_px).unwrap_or(metrics.ascent);
+    let baseline_pt = page.px_to_pt(run.rect.y + ascent_px);
     let font = embedded.id(Face::of(run.bold, run.italic)).clone();
 
     ops.push(Op::SetFillColor {
@@ -451,6 +460,20 @@ fn draw_line(
         font,
     });
     ops.push(Op::EndTextSection);
+}
+
+/// Подъём базовой линии по typo-асценту (`sTypoAscender`) шрифта по умолчанию,
+/// в пикселях; `None` — typo-метрик нет (нет OS/2 или нулевое поле: старые
+/// версии таблицы).
+///
+/// [`FontRegistry::measure`] отдаёт usWin/hhea-асцент (стратегия `FreeType`),
+/// а не typo, — за `sTypoAscender` приходится идти напрямую; значение в
+/// em-долях умножается на `size_px`.
+fn typo_ascent_px(size_px: f32) -> Option<f32> {
+    let font = skrifa::FontRef::new(default_font_bytes()).ok()?;
+    let upem = f32::from(font.head().ok()?.units_per_em());
+    let typo_ascender = font.os2().ok()?.s_typo_ascender();
+    (upem > 0.0 && typo_ascender != 0).then(|| f32::from(typo_ascender) / upem * size_px)
 }
 
 /// Цвет знака: раскладка хранит `w:color` как `RRGGBB`, а [`Color`] ждёт
