@@ -52,7 +52,9 @@ use crate::model::{
 use crate::{Cell, CellVAlign, CellWidth, HeightRule, Row, Table, TableWidth, Twips, VMerge};
 
 use super::cascade::StyleCache;
-use super::engine::{LayoutItem, LayoutOptions, LayoutState, Rect, TableCellLayout, VAlign};
+use super::engine::{
+    LayoutItem, LayoutOptions, LayoutState, Rect, TableCellLayout, VAlign, PX_PER_POINT,
+};
 use super::paragraph::layout_paragraph_styled;
 
 /// Преобразовать twips в пиксели: 1 twip = 1/1440 дюйма, 1 пиксель = 1/96 дюйма.
@@ -516,12 +518,21 @@ pub fn layout_table_fragments(
 
             let cant_split = table.rows.get(row).is_some_and(|row| row.cant_split);
             if !cant_split {
-                if let Some(parts) = fit_blocks(measure, &start, partial, avail) {
+                if let Some((parts, dropped, used)) = fit_blocks(measure, &start, partial, avail) {
                     let done = exhausted(measure, &parts);
+                    // Высота части: обычно — весь остаток полосы; у строки с
+                    // отброшенным хвостовым интервалом — по её содержимому
+                    // (плюс верхняя граница ряда у неразрезанной части), иначе
+                    // низ строки повис бы на краю полосы без опоры.
+                    let height = if dropped {
+                        used + if partial { 0.0 } else { measure.border_top }
+                    } else {
+                        avail
+                    };
                     pieces.push(RowPiece {
                         row,
                         y: cursor,
-                        height: avail,
+                        height,
                         parts,
                         continued_above: partial,
                         continues_below: !done,
@@ -776,6 +787,15 @@ fn row_rest_height(measure: &MeasuredRow<'_>, start: &[usize]) -> f32 {
 
 /// Блоки, помещающиеся в `avail`: по одной границе на ячейку.
 ///
+/// Хвостовой интервал последнего блока (`w:spacing w:after`) на разрыве
+/// страницы отбрасывается, как у абзацев тела ([`super::engine`]): если без
+/// него блок помещается, строка остаётся на странице целиком, а интервал не
+/// переносится. Так эталон держит на первой странице фикстуры
+/// `tables/long_table.docx` 32 строки, а не 31.
+///
+/// Возврат — границы блоков, флаг отброшенного интервала и наибольшая
+/// использованная высота (с полями ряда, без верхней границы).
+///
 /// `None` — ни одна ячейка не отдала ни одного блока: резать нечего, и Word в
 /// этом случае переносит строку целиком.
 fn fit_blocks(
@@ -783,9 +803,11 @@ fn fit_blocks(
     start: &[usize],
     partial: bool,
     avail: f32,
-) -> Option<Vec<Range<usize>>> {
+) -> Option<(Vec<Range<usize>>, bool, f32)> {
     let mut parts = Vec::with_capacity(measure.cells.len());
     let mut any = false;
+    let mut dropped = false;
+    let mut used_max = 0.0_f32;
     for (index, cell) in measure.cells.iter().enumerate() {
         let from = start
             .get(index)
@@ -800,13 +822,23 @@ fn fit_blocks(
                 used += block.height();
                 end += 1;
             } else {
+                // Последний блок может поместиться без хвостового интервала:
+                // на разрыве страницы он отбрасывается, а не переносится.
+                if end + 1 == cell.blocks.len()
+                    && used + block.height() - block.trailing_space_after() <= avail + EPS
+                {
+                    used += block.height() - block.trailing_space_after();
+                    end += 1;
+                    dropped = true;
+                }
                 break;
             }
         }
         any |= end > from;
+        used_max = used_max.max(used);
         parts.push(from..end);
     }
-    any.then_some(parts)
+    any.then_some((parts, dropped, used_max))
 }
 
 /// По одному блоку с каждой ячейки — принудительный разрез строки выше полосы.
@@ -852,12 +884,16 @@ fn force_blocks(
 /// поля самой высокой ячейки), и на этом стоит фикстура
 /// `tables/cell_margins_valign.docx`.
 struct MeasuredRow<'a> {
-    /// Высота строки: `w:trHeight` либо по содержимому, не ниже [`MIN_ROW_HEIGHT`].
+    /// Высота строки: `w:trHeight` либо по содержимому, не ниже [`MIN_ROW_HEIGHT`],
+    /// плюс толщина верхней горизонтальной границы (см. `measure_rows`).
     height: f32,
     /// Верхнее поле ряда — максимум `padding_top` его ячеек.
     margin_top: f32,
     /// Нижнее поле ряда — максимум `padding_bottom` его ячеек.
     margin_bottom: f32,
+    /// Толщина верхней границы ряда: она вдавлена в высоту строки и в полосу
+    /// содержимого, как у `LibreOffice`.
+    border_top: f32,
     /// Содержимое ячеек — по одной записи на ячейку.
     cells: Vec<MeasuredCell<'a>>,
 }
@@ -903,6 +939,15 @@ impl MeasuredBlock<'_> {
             Self::Nested { height, .. } => *height,
         }
     }
+
+    /// Хвостовой интервал блока: `w:after` строки текста; у вложенной таблицы
+    /// его нет — отбрасывать на разрыве страницы нечего.
+    fn trailing_space_after(&self) -> f32 {
+        match self {
+            Self::Line(line) => line.space_after,
+            Self::Nested { .. } => 0.0,
+        }
+    }
 }
 
 /// Строка текста абзаца ячейки: всё, что нужно, чтобы положить её без каскада.
@@ -943,6 +988,11 @@ fn measure_rows<'a>(
     // Кэш каскада — на вызов, как и требует [`StyleCache`]; своей таблицы стилей
     // у ячейки нет, она резолвится той же [`StyleTable`], что и `w:tblStyle`.
     let mut cache = StyleCache::new();
+    // Стиль таблицы нужен и измерению: верхняя граница строки входит в её
+    // высоту, а границы резолвятся с условными форматами стиля.
+    let ctx = StyleContext::new(styles, table);
+    let style = ctx.table_style();
+    let last_col = frame.col_widths.len().saturating_sub(1);
     let mut measured = Vec::with_capacity(table.rows.len());
 
     for (index, row) in table.rows.iter().enumerate() {
@@ -963,9 +1013,37 @@ fn measure_rows<'a>(
             cells.push(measured_cell);
         }
 
+        // Верхняя горизонтальная граница ряда входит в его высоту: эталон
+        // (LibreOffice) держит строку из строки текста 11 pt, `w:after` 8 pt и
+        // границы `single sz=4` высотой ровно 22.95 pt = 14.45 + 8 + 0.5, и
+        // первая строка фикстуры `tables/long_table.docx` расходилась с нами
+        // ровно на эти 0.5 pt на строку. Толщина — максимум верхних границ
+        // ячеек ряда, резолвленных тем же путём, что и при отрисовке
+        // ([`cell_borders`]).
+        let last_row = index + 1 == table.rows.len();
+        let mut border_top = 0.0_f32;
+        let mut col = 0usize;
+        for cell in &row.cells {
+            let span = grid_span(cell);
+            let borders = cell_borders(
+                table,
+                style,
+                index,
+                col,
+                span,
+                last_col,
+                last_row,
+                CellCut::default(),
+            );
+            if let Some(border) = borders.top {
+                border_top = border_top.max(border_thickness(&border));
+            }
+            col += span;
+        }
+
         // Ряд резервирует максимум полей своих ячеек, а не поля самой высокой:
         // ячейка с большими `w:tcMar` поднимает текст соседей (см. [`MeasuredRow`]).
-        let content_height = margin_top + content_height + margin_bottom;
+        let content_height = margin_top + content_height + margin_bottom + border_top;
         let height = match row.height.as_ref().map(|height| height.rule) {
             Some(HeightRule::Exact) => value,
             // `w:hRule` по умолчанию — `auto`, и его `w:val`, если он есть,
@@ -980,6 +1058,7 @@ fn measure_rows<'a>(
             height: height.max(MIN_ROW_HEIGHT),
             margin_top,
             margin_bottom,
+            border_top,
             cells,
         });
     }
@@ -1627,8 +1706,13 @@ fn layout_cell_blocks(
         .collect();
     let content_height: f32 = blocks.iter().map(|block| block.height()).sum();
 
-    // Верхнее поле осталось на прошлой странице вместе с началом строки.
-    let top = if part.start == 0 { row.margin_top } else { 0.0 };
+    // Верхнее поле и верхняя граница остались на прошлой странице вместе с
+    // началом строки: у продолжения (разрезанной строки) их нет.
+    let top = if part.start == 0 {
+        row.margin_top + row.border_top
+    } else {
+        0.0
+    };
     let room = (rect.height - top - row.margin_bottom).max(0.0);
     let shift = match cell.v_align {
         CellVAlign::Center => ((room - content_height) / 2.0).max(0.0),
@@ -1812,6 +1896,16 @@ fn pick(chain: &[Option<&Border>]) -> Option<Border> {
     }
 }
 
+/// Толщина границы в пикселях раскладки: `w:sz` — восьмые доли пункта,
+/// без `w:sz` — 4 (0.5 pt, умолчание Word). Нижнего порога, которым линию
+/// утолщает отрисовка, здесь нет: в высоту строки входит геометрическая
+/// толщина, как у `LibreOffice`.
+fn border_thickness(border: &Border) -> f32 {
+    #[allow(clippy::cast_precision_loss)]
+    let eighth = border.sz.unwrap_or(4) as f32;
+    eighth / 8.0 * PX_PER_POINT
+}
+
 /// Выравнивание содержимого ячейки по вертикали (`w:vAlign`).
 fn vertical_align(cell: &Cell) -> VAlign {
     match cell.v_align {
@@ -1826,7 +1920,8 @@ mod tests {
     use super::*;
     use crate::layout::engine::{layout_document, LayoutOptions};
     use crate::model::raw::{
-        Color, ParagraphSpacing, RawPPr, RawRPr, RawTblPr, ShadingPattern, StyleId,
+        Color, LineSpacing, LineSpacingRule, ParagraphSpacing, RawPPr, RawRPr, RawTblPr,
+        ShadingPattern, StyleId,
     };
     use crate::model::{
         CellMargins, GridCol, Inline, Paragraph, ParagraphStyle, Run, RunContent, TableLayout,
@@ -2462,6 +2557,114 @@ mod tests {
         assert!(
             (trailing - plain - spacing).abs() < EPS,
             "`after` последнего абзаца не растянул строку: {trailing} против {plain}"
+        );
+    }
+
+    /// Абзац ячейки как в фикстуре `tables/long_table.docx`: 11 pt из `w:sz`,
+    /// интервал после 160 twips (8 pt), `w:line=259` как в `docDefaults`.
+    fn fixture_paragraph(id: u64) -> BlockItem {
+        BlockItem::Paragraph(Paragraph {
+            id: NodeId::new(id),
+            ppr: Box::new(RawPPr {
+                spacing: Some(ParagraphSpacing {
+                    after: Some(Twips::new(160)),
+                    line: Some(LineSpacing::new(259)),
+                    line_rule: Some(LineSpacingRule::Auto),
+                    ..ParagraphSpacing::default()
+                }),
+                ..RawPPr::default()
+            }),
+            runs: vec![Inline::Run(Run {
+                id: NodeId::new(id + 1),
+                rpr: Box::new(RawRPr {
+                    sz: Some(HalfPoint::new(22)),
+                    ..RawRPr::default()
+                }),
+                content: vec![RunContent::Text("x".to_owned())],
+                ..Run::default()
+            })],
+            ..Paragraph::default()
+        })
+    }
+
+    /// Горизонтальная граница входит в высоту строки, как у `LibreOffice`:
+    /// строка из текста 11 pt с `w:after` 8 pt, `w:line=259` и границей
+    /// `single sz=4` — 22.99 pt (у эталона 22.95; разница 0.04 pt — остаток
+    /// интерлиньяжа), а без границы строка на её толщину (0.5 pt) ниже. Числа
+    /// сняты с эталона на фикстуре `tables/long_table.docx` (`soffice`: шаг
+    /// строки 22.95 pt, первая страница расходилась с нами ровно на толщину
+    /// границы).
+    #[test]
+    fn the_horizontal_border_adds_to_the_row_height() {
+        /// Высота единственной строки таблицы с границами `borders`.
+        fn row_height(borders: TableBorders) -> f32 {
+            let mut table = table(1, 1, None, TableLook::default());
+            table.borders = borders;
+            table.rows[0].cells[0].items = vec![fixture_paragraph(10)];
+            layout(&table, &styles(Vec::new())).rows[0].height
+        }
+
+        // Высота строки текста 11 pt с множителем 259/240 — 19.321018 px.
+        let line = 11.0 * PX_PER_POINT * 2500.0 / 2048.0 * 259.0 / 240.0;
+
+        let plain = row_height(TableBorders::default());
+        let bordered = row_height(all_single(4));
+        assert!(
+            (bordered - plain - twips_to_px(Twips::new(10))).abs() < EPS,
+            "граница `sz=4` не добавила 0.5 pt к высоте: {bordered} против {plain}"
+        );
+        assert!(
+            (bordered - (line + twips_to_px(Twips::new(160)) + twips_to_px(Twips::new(10)))).abs()
+                < 0.05,
+            "строка с границей — 22.99 pt, против 22.95 у эталона: {bordered}"
+        );
+
+        let thick = row_height(all_single(20));
+        assert!(
+            (thick - bordered - twips_to_px(Twips::new(40))).abs() < EPS,
+            "граница `sz=20` добавляет 2.5 pt: {thick} против {bordered}"
+        );
+    }
+
+    /// Хвостовой интервал строки, упёршейся в низ полосы, отбрасывается, а не
+    /// переносит строку: Word так режет таблицы, и эталон держит на первой
+    /// странице фикстуры `tables/long_table.docx` 32 строки, а не 31.
+    #[test]
+    fn the_trailing_after_is_dropped_when_the_row_ends_the_page() {
+        // Таблица 2×1 с границами: высота строки 30.65 px, из них строка
+        // текста 19.32 px и интервал после 10.67 px.
+        let mut table = table(2, 1, None, TableLook::default());
+        table.borders = all_single(4);
+        table.rows[0].cells[0].items = vec![fixture_paragraph(10)];
+        table.rows[1].cells[0].items = vec![fixture_paragraph(20)];
+
+        let line = 11.0 * PX_PER_POINT * 2500.0 / 2048.0 * 259.0 / 240.0;
+        let after = twips_to_px(Twips::new(160));
+        let border = twips_to_px(Twips::new(10));
+        let row = line + after + border;
+        // Полоса: ровно одна полная строка + строка текста второй (без
+        // интервала после и с верхней границей) — второй строке не хватает
+        // ровно её `after`.
+        let band = PageBand {
+            top: 0.0,
+            height: row + line + border,
+        };
+
+        let mut fonts = FontRegistry::new(64);
+        let frame = compute_table_frame(&table, 0.0, 600.0);
+        let fragments =
+            layout_table_fragments(&table, &frame, band, band, &mut fonts, &styles(Vec::new()));
+
+        assert_eq!(
+            fragments.len(),
+            1,
+            "вторая строка остаётся на странице — интервал после отброшен"
+        );
+        assert_eq!(fragments[0].rows.len(), 2, "обе строки — на одной странице");
+        assert!(
+            (fragments[0].rows[1].height - (line + border)).abs() < EPS,
+            "строка сжата до текста и границы: {}",
+            fragments[0].rows[1].height
         );
     }
 

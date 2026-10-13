@@ -67,6 +67,9 @@ pub struct SpannedLine {
     /// Наибольший кегль среди частей строки: по нему Word считает высоту строки,
     /// а не по кеглю первого прогона.
     pub max_size: HalfPoint,
+    /// Шрифт прогона с [`Self::max_size`]: высоту строки считают его метрикой,
+    /// а не метрикой первого прогона.
+    pub max_size_font: Option<FontId>,
 }
 
 impl<'a> LineBreaker<'a> {
@@ -289,12 +292,14 @@ impl<'a> LineBreaker<'a> {
         lines
     }
 
-    /// Собрать строку: диапазон, измеренную ширину и наибольший кегль.
+    /// Собрать строку: диапазон, измеренную ширину, наибольший кегль и его шрифт.
     fn spanned_line(spans: &[MetricSpan], range: Range<usize>, width: f32) -> SpannedLine {
+        let (max_size, max_size_font) = largest_span(spans, &range);
         SpannedLine {
-            max_size: largest_size(spans, &range),
             range,
             width,
+            max_size,
+            max_size_font,
         }
     }
 
@@ -333,32 +338,38 @@ impl<'a> LineBreaker<'a> {
         }
     }
 
-    /// Вычислить высоту строки на основе размера шрифта.
+    /// Высота строки по метрикам шрифта: внешние границы плюс межстрочный
+    /// зазор — то, чем «одинарный» интерлиньяж считает Word и `LibreOffice`.
     ///
-    /// Использует коэффициент 1.2 для межстрочного интервала по умолчанию.
+    /// Метрики отдаёт [`FontRegistry::measure`] (skrifa): для Carlito это
+    /// 2500/2048 em ≈ 1.22 кегля. Коэффициент 1.2, стоявший здесь раньше,
+    /// систематически занижал строку: на таблицах с сеткой строки разъезжались
+    /// с эталоном на ~0.2 pt на строку (`tables/long_table.docx`).
     #[must_use]
-    pub fn line_height(&self, font_size_half_points: HalfPoint) -> f32 {
+    pub fn line_height(&mut self, font_id: FontId, font_size_half_points: HalfPoint) -> f32 {
         let size_px = half_points_to_px(font_size_half_points.value());
-        size_px * 1.2
+        self.fonts.measure(font_id, size_px, "").line_height
     }
 
     /// Вычислить высоту строки с учётом межстрочного интервала.
     ///
     /// # Arguments
+    /// * `font_id` - шрифт строки
     /// * `font_size_half_points` - размер шрифта
     /// * `line_spacing` - межстрочный интервал в 240-х долях (None = 1.0, Some(240) = 1.0, Some(480) = 2.0)
     #[must_use]
     #[allow(clippy::cast_possible_truncation)]
     pub fn line_height_with_spacing(
-        &self,
+        &mut self,
+        font_id: FontId,
         font_size_half_points: HalfPoint,
         line_spacing: Option<i32>,
     ) -> f32 {
-        let base_height = self.line_height(font_size_half_points);
+        let base_height = self.line_height(font_id, font_size_half_points);
 
         match line_spacing {
             Some(spacing) => {
-                // spacing в полупунктах: 240 = 12pt = 1.0x
+                // spacing в 240-х долях: 240 = 1.0x
                 let spacing_multiplier = f64::from(spacing) / 240.0;
                 base_height * spacing_multiplier.max(1.0) as f32
             }
@@ -371,8 +382,8 @@ impl<'a> LineBreaker<'a> {
     /// Единицы приходят из каскада ([`super::cascade`]): `Auto` — множитель
     /// базового интерлиньяжа, `Exact`/`AtLeast` — пиксели.
     #[must_use]
-    pub fn line_height_for(&self, size: HalfPoint, rule: LineRule) -> f32 {
-        let base_height = self.line_height(size);
+    pub fn line_height_for(&mut self, font_id: FontId, size: HalfPoint, rule: LineRule) -> f32 {
+        let base_height = self.line_height(font_id, size);
 
         match rule {
             LineRule::Single => base_height,
@@ -408,13 +419,14 @@ pub fn half_points_to_px(half_points: i32) -> f32 {
 /// иначе крупное слово провалилось бы в высоту соседей. Диапазон без спанов
 /// (пустая строка) даёт нулевой кегль — высоту ей считать не по чему.
 #[must_use]
-fn largest_size(spans: &[MetricSpan], range: &Range<usize>) -> HalfPoint {
-    spans
+fn largest_span(spans: &[MetricSpan], range: &Range<usize>) -> (HalfPoint, Option<FontId>) {
+    let span = spans
         .iter()
         .filter(|span| span.range.start < range.end && range.start < span.range.end)
-        .map(|span| span.size)
-        .max_by_key(|size| size.value())
-        .unwrap_or(HalfPoint::new(0))
+        .max_by_key(|span| span.size.value());
+    span.map_or((HalfPoint::new(0), None), |span| {
+        (span.size, Some(span.font_id))
+    })
 }
 
 /// Информация о строке после разбивки.
@@ -471,17 +483,40 @@ mod tests {
     #[test]
     fn line_height_follows_the_rule() {
         let mut fonts = FontRegistry::new(64);
-        let breaker = LineBreaker::new(&mut fonts, DEFAULT_FONT_ID);
-        // 12 pt = 16 px раскладки, базовый интерлиньяж — 19.2 px.
+        let mut breaker = LineBreaker::new(&mut fonts, DEFAULT_FONT_ID);
+        // 12 pt = 16 px раскладки; базовый интерлиньяж Carlito — 2500/2048 em
+        // (внешние границы плюс межстрочный зазор из метрик шрифта).
         let size = HalfPoint::new(24);
+        let base = 16.0 * 2500.0 / 2048.0;
 
-        assert_px(breaker.line_height_for(size, LineRule::Single), 19.2);
-        assert_px(breaker.line_height_for(size, LineRule::Auto(2.0)), 38.4);
-        assert_px(breaker.line_height_for(size, LineRule::Auto(1.0)), 19.2);
-        assert_px(breaker.line_height_for(size, LineRule::Exact(24.0)), 24.0);
-        assert_px(breaker.line_height_for(size, LineRule::AtLeast(10.0)), 19.2);
-        assert_px(breaker.line_height_for(size, LineRule::AtLeast(30.0)), 30.0);
-        assert_px(breaker.line_height_for(size, LineRule::Exact(0.0)), 19.2);
+        assert_px(
+            breaker.line_height_for(DEFAULT_FONT_ID, size, LineRule::Single),
+            base,
+        );
+        assert_px(
+            breaker.line_height_for(DEFAULT_FONT_ID, size, LineRule::Auto(2.0)),
+            base * 2.0,
+        );
+        assert_px(
+            breaker.line_height_for(DEFAULT_FONT_ID, size, LineRule::Auto(1.0)),
+            base,
+        );
+        assert_px(
+            breaker.line_height_for(DEFAULT_FONT_ID, size, LineRule::Exact(24.0)),
+            24.0,
+        );
+        assert_px(
+            breaker.line_height_for(DEFAULT_FONT_ID, size, LineRule::AtLeast(10.0)),
+            base,
+        );
+        assert_px(
+            breaker.line_height_for(DEFAULT_FONT_ID, size, LineRule::AtLeast(30.0)),
+            30.0,
+        );
+        assert_px(
+            breaker.line_height_for(DEFAULT_FONT_ID, size, LineRule::Exact(0.0)),
+            base,
+        );
     }
 
     #[test]

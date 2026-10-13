@@ -345,11 +345,14 @@ pub(crate) fn layout_paragraph_styled(
         } else {
             style.size
         };
+        // Шрифт — того же прогона, что задал кегль; без спанов — отрезка,
+        // открывшего строку. Высоту считает метрика именно этого шрифта.
+        let font_id = line.max_size_font.unwrap_or(style.font_id);
         lines.push(Line {
             text: flow.text[line.range].to_owned(),
             x: x + align_shift(jc, line_band, line.width),
             width: line.width,
-            height: line_breaker.line_height_for(size, resolved.ppr.spacing.line),
+            height: line_breaker.line_height_for(font_id, size, resolved.ppr.spacing.line),
             color: style.color,
             font_family: style.draw_family.clone(),
             size: style.size,
@@ -363,11 +366,16 @@ pub(crate) fn layout_paragraph_styled(
     // Высота берётся из каскада: запасной вариант движка знает только 12 pt и
     // разошёлся бы с телом документа, набранным другим кеглем.
     if lines.is_empty() {
+        let font_id = line_breaker.resolve_family(resolved.rpr.font_family.as_deref());
         lines.push(Line {
             text: String::new(),
             x: origin + ind.first_line_px + align_shift(jc, first_line_band, 0.0),
             width: 0.0,
-            height: line_breaker.line_height_for(resolved.rpr.size, resolved.ppr.spacing.line),
+            height: line_breaker.line_height_for(
+                font_id,
+                resolved.rpr.size,
+                resolved.ppr.spacing.line,
+            ),
             color: None,
             // Пустая строка — метка абзаца: её стиль знака берётся из абзаца,
             // откуда пришла и высота, а не из умолчания движка.
@@ -640,7 +648,7 @@ mod tests {
         assert_eq!(layout.lines.len(), 1, "короткий текст — одна строка");
         assert_eq!(layout.lines[0].text, "hello");
         assert_px(layout.lines[0].x, 0.0, "без отступов строка у левого края");
-        assert_px(layout.lines[0].height, 19.2, "12 pt без `w:line`");
+        assert_px(layout.lines[0].height, 19.53125, "12 pt без `w:line`");
         assert_eq!(layout.lines[0].color, None);
     }
 
@@ -656,15 +664,16 @@ mod tests {
 
         let layout = layout(&document, &paragraph("hello", RawPPr::default()), &state());
 
-        // 11 pt = 14.667 px, межстрочный коэффициент 1.2 — 17.6 px.
-        assert_px(layout.lines[0].height, 17.6, "кегль docDefaults");
+        // 11 pt = 14.667 px, метрика Carlito 2500/2048 em — 17.903646 px.
+        assert_px(layout.lines[0].height, 17.903_646, "кегль docDefaults");
     }
 
     #[test]
     fn line_rule_sets_the_height() {
-        // 12 pt даёт базу 19.2 px: множитель 1.5 — 28.8, абсолютные правила — twips.
+        // 12 pt даёт базу 19.53125 px: множитель 1.5 — 29.296875, абсолютные
+        // правила — twips.
         let cases = [
-            (LineSpacing::new(360), LineSpacingRule::Auto, 28.8),
+            (LineSpacing::new(360), LineSpacingRule::Auto, 29.296_875),
             (LineSpacing::new(240), LineSpacingRule::Exact, 16.0),
             (LineSpacing::new(720), LineSpacingRule::AtLeast, 48.0),
         ];
@@ -804,7 +813,7 @@ mod tests {
         assert_px(layout.lines[0].x, 0.0, "строка стоит у левого края полосы");
         assert_px(
             layout.lines[0].height,
-            17.6,
+            17.903_646,
             "высота пустой строки — из каскада, а не из умолчания движка",
         );
     }
@@ -1070,7 +1079,7 @@ mod tests {
         );
         assert_px(
             sized_layout.lines[1].height,
-            half_points_to_px(44) * 1.2,
+            half_points_to_px(44) * 2500.0 / 2048.0,
             "высота строки — по крупному прогону",
         );
     }
@@ -1225,7 +1234,7 @@ mod tests {
         assert_px(hanging.lines[0].x, 147.6, "отступ 1440 с выступом 360");
     }
 
-    /// `basic/paragraph_spacing.docx`: `docDefaults` дают 11 pt (17.6 px) и
+    /// `basic/paragraph_spacing.docx`: `docDefaults` дают 11 pt (17.9 px) и
     /// `w:line="259"` (множитель 259/240); абсолютные правила — в twips.
     #[test]
     fn fixture_spacing_sets_heights_and_gaps() {
@@ -1234,12 +1243,16 @@ mod tests {
         assert_px(plain.space_after, 8.0, "after 120 twips");
         assert_px(
             plain.lines[0].height,
-            17.6 * 259.0 / 240.0,
+            half_points_to_px(22) * 2500.0 / 2048.0 * 259.0 / 240.0,
             "множитель docDefaults",
         );
 
         let auto = layout_fixture("basic/paragraph_spacing.docx", 1);
-        assert_px(auto.lines[0].height, 17.6 * 1.5, "line 360, lineRule auto");
+        assert_px(
+            auto.lines[0].height,
+            half_points_to_px(22) * 2500.0 / 2048.0 * 1.5,
+            "line 360, lineRule auto",
+        );
 
         let exact = layout_fixture("basic/paragraph_spacing.docx", 2);
         assert_px(exact.lines[0].height, 16.0, "line 240, lineRule exact");
@@ -1278,12 +1291,12 @@ mod tests {
     #[test]
     fn fixture_heading_uses_the_style_size() {
         let heading = layout_fixture("formatting/heading_1.docx", 0);
-        let expected = 16.0 * 96.0 / 72.0 * 1.2 * 259.0 / 240.0;
+        let expected = 16.0 * 96.0 / 72.0 * 2500.0 / 2048.0 * 259.0 / 240.0;
 
         assert_px(heading.lines[0].height, expected, "кегль стиля Heading1");
         assert!(
-            heading.lines[0].height > 19.2,
-            "заголовок выше строки прежних 12 pt"
+            heading.lines[0].height > 19.53125,
+            "заголовок выше строки обычных 12 pt"
         );
         assert_eq!(
             heading.lines[0].color,
@@ -1314,7 +1327,7 @@ mod tests {
         );
         assert_px(
             line.height,
-            16.0 * 96.0 / 72.0 * 1.2 * 259.0 / 240.0,
+            16.0 * 96.0 / 72.0 * 2500.0 / 2048.0 * 259.0 / 240.0,
             "высота — по прогону `w:sz 32`, а не по первому",
         );
     }

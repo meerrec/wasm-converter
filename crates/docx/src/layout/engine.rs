@@ -610,7 +610,11 @@ fn empty_paragraph_line(line_breaker: &mut LineBreaker, x: f32) -> Line {
         text: String::new(),
         x,
         width: 0.0,
-        height: line_breaker.line_height_with_spacing(HalfPoint::new(DEFAULT_HALF_POINTS), None),
+        height: line_breaker.line_height_with_spacing(
+            FontId::default(),
+            HalfPoint::new(DEFAULT_HALF_POINTS),
+            None,
+        ),
         color: None,
         // Текста в строке нет: рисовать нечего — рисовать будет запасное лицо.
         font_family: None,
@@ -1786,9 +1790,11 @@ mod tests {
 
     /// Секция без полей заданной высоты: полоса набора — вся страница.
     ///
-    /// Высота [`TWO_LINE_PAGE_TWIPS`] выбрана так, чтобы сумма высот двух строк
-    /// в f32 совпала с нижней границей полосы бит в бит: иначе тест ловил бы
-    /// округление, а не правило «ровно по нижнему краю — помещается».
+    /// Высота [`TWO_LINE_PAGE_TWIPS`] подобрана так, чтобы две строки
+    /// помещались впритык к нижней границе полосы (высота строки — метрика
+    /// шрифта 2500/2048 em, целыми твипами она не выражается, поэтому полоса
+    /// выше суммы строк на полтвипа): тест ловит правило «ровно по нижнему
+    /// краю — помещается», а не запас в целую строку.
     fn section_without_margins(height_twips: i32) -> Section {
         let mut section = section_of(11_906, height_twips, None);
         let margins = Margins {
@@ -1813,8 +1819,10 @@ mod tests {
             .count()
     }
 
-    /// Две строки по 19.2 px: 2 × 19.2 = 38.4 px = 576 twips.
-    const TWO_LINE_PAGE_TWIPS: i32 = 576;
+    /// Две строки по 19.53125 px (12 pt × 2500/2048 em): 2 × 19.53125 =
+    /// 39.0625 px = 585.9 twips; целый ряд выше — 586 twips, в нём строки
+    /// помещаются впритык, третья — уже нет.
+    const TWO_LINE_PAGE_TWIPS: i32 = 586;
 
     /// Блокер S1.1: абзац с текстом обязан попасть на страницу внутри полей.
     // Координаты копируются из полей страницы без арифметики — сравнение точное.
@@ -1875,8 +1883,9 @@ mod tests {
         );
     }
 
-    /// Одна строка 19.2 px: колонка такой высоты вмещает ровно строку.
-    const ONE_LINE_PAGE_TWIPS: i32 = 288;
+    /// Одна строка 19.53125 px: колонка такой высоты вмещает ровно строку
+    /// (19.53125 px = 293 twips с запасом в полтвипа).
+    const ONE_LINE_PAGE_TWIPS: i32 = 293;
 
     /// Промежуток между колонками тестов: 0.5 дюйма, как у Word по умолчанию.
     const COLUMN_GAP_TWIPS: i32 = 720;
@@ -2436,9 +2445,9 @@ mod tests {
     /// только на разрыве, и следующую строку он вытесняет заслуженно.
     #[test]
     fn the_space_after_that_fits_still_pushes_the_next_line() {
-        // Полоса в три строки (3 × 19.2 px = 864 twips): после второй строки
-        // интервал в 8 pt (160 twips) ещё помещается, следующей строке места
-        // уже нет — она уходит на вторую страницу.
+        // Полоса 864 twips = 57.6 px: две строки (2 × 19.53 px) с интервалом
+        // после в 8 pt (160 twips) помещаются, третьей строке места уже нет —
+        // она уходит на вторую страницу.
         let document = document_with(
             vec![
                 BlockItem::Paragraph(paragraph(1, "filler")),
@@ -3651,7 +3660,7 @@ mod tests {
         section
     }
 
-    /// Колонтитул из `lines` однострочных абзацев: строка — 19.2 px.
+    /// Колонтитул из `lines` однострочных абзацев: строка — 19.53 px.
     fn header_of(part: &str, lines: usize) -> HeaderFooter {
         let items = (0..lines)
             .map(|index| {
@@ -3701,7 +3710,7 @@ mod tests {
     /// Высокий колонтитул отодвигает тело: верхнее поле растёт до его низа.
     #[test]
     fn a_tall_header_pushes_the_body_below_it() {
-        // Четыре строки по 19.2 px: 47.27 + 76.8 = 124.07 px — выше поля в 96 px.
+        // Четыре строки по 19.53 px: 47.27 + 78.13 = 125.4 px — выше поля в 96 px.
         let document = with_default_header(document_in_section(section_with_header_gap(), 1), 4);
         let mut fonts = FontRegistry::new(64);
 
@@ -3743,7 +3752,7 @@ mod tests {
     /// Короткий колонтитул ничего не двигает: поле — из `w:pgMar` на всех страницах.
     #[test]
     fn a_short_header_leaves_the_top_margin_alone() {
-        // Одна строка: 47.27 + 19.2 = 66.47 px — помещается в поле в 96 px.
+        // Одна строка: 47.27 + 19.53 = 66.8 px — помещается в поле в 96 px.
         let document = with_default_header(document_in_section(section_with_header_gap(), 150), 1);
         let mut fonts = FontRegistry::new(64);
 
