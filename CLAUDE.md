@@ -1,4 +1,3 @@
-# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -62,7 +61,7 @@ pnpm size-limit                       # бюджеты из .size-limit.mjs
 | `crates/render` | Вся реальная логика рендера: `DisplayList`, `Painter2D`, `SabRing`, `RingState` |
 | `crates/xlsx` | Разбор книги целиком (`open()`), раскладка листа в пикселях и сборка `DisplayList` (`paint::build`) |
 | `crates/docx` | Разбор DOCX целиком (`parse_docx`), раскладка страниц в пикселях и сборка `DisplayList` (`render::build`) |
-| `crates/pdf` | Экспорт в PDF на printpdf: лист/книга XLSX (`export_xlsx_sheet`/`export_xlsx_book`) и документ DOCX (`export_docx`, модуль `src/docx/`); раскладка и метрики общие с canvas-путём |
+| `crates/pdf` | Экспорт в PDF собственным бэкендом (`src/pdf/`, ADR-0022): лист/книга XLSX (`export_xlsx_sheet`/`export_xlsx_book`) и документ DOCX (`export_docx`, модуль `src/docx/`); раскладка и метрики общие с canvas-путём |
 | `crates/wasm` | Основной wasm-модуль просмотрщика: painter, SAB-аллокатор и XLSX-просмотрщик — тонкий слой wasm-bindgen-экспортов над render/xlsx |
 | `crates/docx-wasm` | Ленивый wasm-модуль просмотра DOCX: экспорты `docx_*`, отдельный `packages/wasm-docx/pkg`, грузится воркером при открытии `.docx` |
 
@@ -153,4 +152,4 @@ SAB требует COOP/COEP (`Cross-Origin-Opener-Policy: same-origin`, `Cross-
 
 ## CI и зависимости
 
-Тулчейн закреплён: `rust-toolchain.toml` — 1.98.0 (совпадает с CI), при этом workspace объявляет MSRV `rust-version = "1.82"`. `.cargo/config.toml` включает `incompatible-rust-versions = "fallback"`, чтобы резолвинг зависимостей не вылезал за MSRV. `deny.toml` разрешает только Apache-2.0/MIT/BSD/ISC/Unicode-3.0/Zlib — из-за этого `printpdf` подключён с `default-features = false` (фича `html` тянет MPL-2.0 и resvg).
+Тулчейн закреплён: `rust-toolchain.toml` — 1.98.0 (совпадает с CI), при этом workspace объявляет MSRV `rust-version = "1.82"`. `.cargo/config.toml` включает `incompatible-rust-versions = "fallback"`, чтобы резолвинг зависимостей не вылезал за MSRV. `deny.toml` разрешает только Apache-2.0/MIT/BSD/ISC/Unicode-3.0/Zlib. PDF-бэкенд собственный (ADR-0022): `lopdf` (модель объектов), `subsetter`, `skrifa`, `image` — всё из allow-списка.
