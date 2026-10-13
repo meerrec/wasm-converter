@@ -4,8 +4,8 @@
 сборку, а не рантайм, и всё, что ниже, либо вычитано из кода, либо помечено как непроверенное.
 
 **Источники** (номера строк — по этим копиям). Master: `static/emscripten/{uno,script,environment}.js`
-(кроме них в каталоге только `favicon.ico`), `desktop/source/app/initjsunoscripting.cxx`,
-`static/README.wasm.md`, `configure.ac`, `comphelper/source/misc/threadpool.cxx`,
+(кроме них в каталоге только `favicon.ico`), `desktop/source/app/initjsunoscripting.cxx`
+(далее `cxx:`), `static/README.wasm.md`, `configure.ac`, `comphelper/source/misc/threadpool.cxx`,
 `include/comphelper/threadpool.hxx`, `solenv/gbuild/gbuild.mk`. zetajs main: `docs/start.md`,
 `README.md`, `examples/convertpdf/{zetaHelper.js,office_thread.js,index.html,config.sample.js}`.
 Артефакт сборки (не master, но именно его грузит браузер): `/tmp/lowa-probe/package/wasm/soffice.js`
