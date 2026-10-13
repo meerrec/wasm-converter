@@ -3,7 +3,7 @@
   "changelog": "@changesets/cli/changelog",
   "commit": false,
   "fixed": [],
-  "linked": [],
+  "linked": [["@doc-converter/core", "@doc-converter/wasm", "@doc-converter/wasm-docx", "@doc-converter/wasm-pdf", "@doc-converter/cli"]],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
