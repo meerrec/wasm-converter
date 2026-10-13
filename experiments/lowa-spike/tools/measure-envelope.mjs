@@ -46,6 +46,10 @@ const argOf = (name, dflt) => {
 const OUT_DIR = argOf('--out', '/tmp/lowa-measure');
 const RUNS = Number(argOf('--runs', '2'));
 const BLOCK = ['*soffice*'];
+// --bigcache: развести «кэш не работает вообще» и «кэш есть, но Chromium не
+// кладёт в него 36-МБ запись при бюджете по умолчанию». Это решающая проверка
+// для H3: без неё нельзя отличить свойство сборки от свойства стенда.
+const BIG_CACHE = argv.includes('--bigcache');
 mkdirSync(OUT_DIR, { recursive: true });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -126,15 +130,43 @@ function rssOf(procs, baseline) {
 }
 
 function startRssSampler(baseline) {
-  const state = { peakMb: 0, samples: 0, at: null, lastDetail: null, stop: false };
+  const state = {
+    segments: [],
+    current: { label: 'launch', peakMb: 0, renderers: null },
+    samples: 0,
+    at: null,
+    lastDetail: null,
+    stop: false,
+  };
+  // Пик нужен по фазам: без этого в «пик после конвертации» попадут ещё и
+  // перезагрузки страницы, где живы уже два документа сразу.
+  state.mark = (label) => {
+    state.segments.push({ ...state.current, samples: state.current.samples ?? 0 });
+    state.current = { label, peakMb: 0, renderers: null, samples: 0 };
+  };
+  state.finish = () => {
+    state.segments.push({ ...state.current });
+    state.stop = true;
+  };
   (async () => {
     while (!state.stop) {
       const snap = await psSnapshot();
       if (snap) {
         const r = rssOf(snap, baseline);
         state.samples++;
+        state.current.samples++;
         state.lastDetail = r;
-        if (r.rendererMb > state.peakMb) {
+        if (r.rendererMb > state.current.peakMb) {
+          state.current.peakMb = r.rendererMb;
+          state.current.renderers = r.renderers;
+          state.current.largestMb = r.renderers.length
+            ? Math.max(...r.renderers.map((x) => x.rssMb))
+            : 0;
+          state.current.rendererCount = r.rendererCount;
+          state.current.others = r.others;
+          state.current.peakAt = new Date().toISOString();
+        }
+        if (r.rendererMb > (state.peakMb ?? 0)) {
           state.peakMb = r.rendererMb;
           state.at = new Date().toISOString();
         }
@@ -259,7 +291,11 @@ async function coldRun(runIndex, { doConvert }) {
   const baselineProcs = await psSnapshot();
   const baseline = new Set((baselineProcs ?? []).map((p) => p.pid));
 
-  const browser = await chromium.launch({ channel: 'chromium', headless: true });
+  const browser = await chromium.launch({
+    channel: 'chromium',
+    headless: true,
+    args: BIG_CACHE ? ['--disk-cache-size=2000000000'] : [],
+  });
   const version = browser.version();
   const rss = startRssSampler(baseline);
   const context = await browser.newContext();
@@ -381,6 +417,7 @@ async function coldRun(runIndex, { doConvert }) {
   );
   run.wallGotoToReadyMs = Date.now() - tReadyWall;
   run.points.p1 = snapshotPoint(await measureMemory(page, 'P1 после готовности'));
+  rss.mark('конвертация DOCX→PDF (P1 → PDF)');
 
   // --- P2: конвертация фикстуры ---
   if (doConvert) {
@@ -393,9 +430,11 @@ async function coldRun(runIndex, { doConvert }) {
       })
       .catch((e) => errors.push({ kind: 'waitPdfTimeout', text: String(e).slice(0, 200) }));
     run.points.p2 = snapshotPoint(await measureMemory(page, 'P2 после конвертации'));
+    run.p2Renderers = rss.lastDetail;
     run.pdf = await extractPdf(page);
     run.points.p3 = snapshotPoint(await measureMemory(page, 'P3 после выгрузки PDF'));
   }
+  rss.mark('тёплые перезагрузки');
 
   // --- сырые данные страницы ---
   const pageData = await page.evaluate(() => ({
@@ -558,12 +597,22 @@ async function coldRun(runIndex, { doConvert }) {
       const lastEnd = pd.rt.length ? Math.max(...pd.rt.map((r) => r.responseEnd)) : null;
       const wFinished = finished.slice(markIdx).filter((f) => f.phase === phase);
       const wArtifact = aggByUrl(wFinished.filter((f) => ARTIFACT.test(f.url)));
+      // Все запросы фазы, не только артефакты: по ним видно, что кэш вообще
+      // работает (0 байт = отдано из кэша) и на чём именно он не срабатывает.
+      const wAll = aggByUrl(
+        wFinished.filter((f) => !f.url.startsWith('blob:') && !f.url.startsWith('data:')),
+      );
       run.warm.push({
         iteration: w + 1,
         readyMs: ev2.inputEnabled?.t ?? null,
         wallMs: Date.now() - tW,
         lastArtifactResponseEndMs: lastEnd,
         cpuInitPhaseMs: ev2.inputEnabled && lastEnd != null ? ev2.inputEnabled.t - lastEnd : null,
+        allRequests: [...wAll.entries()].map(([url, encodedBytes]) => ({
+          url,
+          encodedBytes,
+          isArtifact: ARTIFACT.test(url),
+        })),
         artifactEncodedBytes: [...wArtifact.entries()].map(([url, encodedBytes]) => ({
           url: url.split('/').pop(),
           encodedBytes,
@@ -582,13 +631,15 @@ async function coldRun(runIndex, { doConvert }) {
 
   // --- итоги H4 и скриншот неудачи ---
   await sleep(400);
-  rss.stop = true;
+  rss.finish();
   await sleep(400);
   run.rss = {
     peakMb: rss.peakMb,
     samples: rss.samples,
     at: rss.at,
     last: rss.lastDetail,
+    segments: rss.segments,
+    bigCache: BIG_CACHE,
   };
   run.pdfOk = run.pdf ? run.pdf.bytes > 10 * 1024 : null;
   if (doConvert && !run.pdfOk) {
@@ -714,6 +765,10 @@ for (const r of rep) {
     `H4 UA-память: P0=${r.points.p0?.uaMb ?? r.points.p0?.uaError ?? '—'} МБ, P1=${r.points.p1?.uaMb ?? '—'} МБ, P2=${r.points.p2?.uaMb ?? '—'} МБ, P3=${r.points.p3?.uaMb ?? '—'} МБ`,
   );
   p(`   пик RSS рендереров: ${r.rss.peakMb} МБ (${r.rss.samples} сэмплов; в моменте: ${JSON.stringify(r.rss.last?.renderers)})`);
+  for (const s of r.rss.segments ?? [])
+    p(
+      `     фаза «${s.label}»: пик ${s.peakMb} МБ (рендереров ${s.rendererCount}, крупнейший ${s.largestMb} МБ) ${JSON.stringify(s.renderers ?? [])}`,
+    );
   if (r.points.p1?.uaBreakdown)
     p(`   разбор P1: ${r.points.p1.uaBreakdown.map((b) => `${b.mb}МБ[${b.types.join('/')}]`).join(' ')}`);
   if (r.h5)

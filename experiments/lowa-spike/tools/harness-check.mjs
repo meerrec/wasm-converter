@@ -18,6 +18,9 @@ const SPIKE_DIR = '/Users/irek/GitHub/wasm-converter/doc-converter/experiments/l
 const VIEWER_DIR = '/Users/irek/GitHub/wasm-converter/doc-converter/examples/viewer';
 const FIXTURE =
   '/Users/irek/GitHub/wasm-converter/doc-converter/test-fixtures/СУС УТП_v2.0_31.10.25.docx';
+// Вторая половина харнесса — Calc; отдельной приёмки у неё нет, проверяем сам факт PDF.
+const XLSX_FIXTURE =
+  '/Users/irek/GitHub/wasm-converter/doc-converter/test-fixtures/СУС 2.1 Сценарии функционального тестирования_v2.xlsx';
 const NATIVE_REFERENCE = '/tmp/lowa-measure-native/sus-utp-native.pdf';
 const OUT_DIR = process.env.LOWA_OUT ?? '/tmp/lowa-measure';
 const PORT = Number(process.env.LOWA_PORT ?? 5199);
@@ -45,6 +48,65 @@ function pdfPages(file) {
   }
 }
 
+/**
+ * Прогоняет один файл через харнесс: выбор файла в <input type=file>, ожидание конца,
+ * выгрузка PDF из memfs в файл. Возвращает всё, что нужно для отчёта.
+ */
+async function convert(page, fixture, outName) {
+  // Фаза от прошлой конвертации остаётся 'done', поэтому сначала ждём 'converting':
+  // иначе ожидание конца сработает на старом состоянии.
+  await page.waitForFunction(
+    () => document.getElementById('file').disabled === false,
+    undefined,
+    { timeout: 30_000, polling: 100 },
+  );
+  await page.setInputFiles('#file', fixture);
+  await page.waitForFunction(() => window.lowaHarness?.status().phase === 'converting', undefined, {
+    timeout: 60_000,
+    polling: 100,
+  });
+  const started = Date.now();
+  await page.waitForFunction(
+    () => ['done', 'error'].includes(window.lowaHarness?.status().phase),
+    undefined,
+    { timeout: 300_000, polling: 500 },
+  );
+  const status = await page.evaluate(() => window.lowaHarness.status());
+  const out = {
+    file: fixture.split('/').pop(),
+    phase: status.phase,
+    error: status.error,
+    pdfBytes: status.pdfBytes,
+    convertMs: Date.now() - started,
+    log: status.log,
+  };
+  if (status.phase !== 'done') {
+    return out;
+  }
+  const base64 = await page.evaluate(() => window.lowaHarness.readPdfBase64());
+  out.pdfPath = join(OUT_DIR, outName);
+  writeFileSync(out.pdfPath, Buffer.from(base64, 'base64'));
+  out.pages = pdfPages(out.pdfPath);
+  console.log(
+    `${out.file}: ${out.pages} страниц, ${out.pdfBytes} Б за ${(out.convertMs / 1000).toFixed(1)} с`,
+  );
+  return out;
+}
+
+/**
+ * Полный Chromium умеет встроенный просмотрщик PDF — в скриншот попадает сам документ.
+ * Headless shell его не содержит, поэтому снимок там будет с пустым iframe.
+ */
+async function launchBrowser() {
+  try {
+    const browser = await chromium.launch({ channel: 'chromium' });
+    return { browser, channel: 'chromium' };
+  } catch (error) {
+    console.log(`channel:chromium недоступен (${error.message.split('\n')[0]}), беру headless shell`);
+    return { browser: await chromium.launch(), channel: 'headless-shell' };
+  }
+}
+
 async function main() {
   mkdirSync(OUT_DIR, { recursive: true });
   const { createServer } = requireVite();
@@ -55,15 +117,18 @@ async function main() {
   });
   await server.listen();
 
-  const browser = await chromium.launch();
+  const { browser, channel } = await launchBrowser();
   const page = await browser.newPage();
   const consoleLines = [];
   page.on('console', (msg) => consoleLines.push(`${msg.type()}: ${msg.text()}`));
   page.on('pageerror', (error) => consoleLines.push(`pageerror: ${error.message}`));
 
-  const result = { startedAt: new Date().toISOString() };
+  const result = { startedAt: new Date().toISOString(), browserChannel: channel };
+  console.log(`браузер: ${channel}`);
   try {
-    await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded' });
+    // LOWA_BASE=https://cdn.zetaoffice.net/zetaoffice_latest/ — прогон без зеркала, прямо с CDN.
+    const query = process.env.LOWA_BASE ? `?base=${encodeURIComponent(process.env.LOWA_BASE)}` : '';
+    await page.goto(`http://localhost:${PORT}/${query}`, { waitUntil: 'domcontentloaded' });
     result.crossOriginIsolated = await page.evaluate(() => crossOriginIsolated);
     console.log(`crossOriginIsolated: ${result.crossOriginIsolated}`);
     if (!result.crossOriginIsolated) {
@@ -80,47 +145,53 @@ async function main() {
     result.bootMs = Date.now() - bootStart;
     console.log(`офис поднялся за ${(result.bootMs / 1000).toFixed(1)} с`);
 
-    const probe = await page.evaluate(() => window.lowaHarness.probe());
-    result.filters = {
-      count: probe.count,
-      writer_pdf_Export: probe.names.includes('writer_pdf_Export'),
-      calc_pdf_Export: probe.names.includes('calc_pdf_Export'),
-      pdfNames: probe.names.filter((name) => /pdf/i.test(name)),
-      detailed: probe.detailed,
-      errors: probe.errors,
-    };
-    writeFileSync(join(OUT_DIR, 'filters.json'), JSON.stringify(probe, null, 2));
-    console.log(
-      `фильтров всего ${probe.count}; writer_pdf_Export=${result.filters.writer_pdf_Export}, ` +
-        `calc_pdf_Export=${result.filters.calc_pdf_Export}`,
-    );
+    try {
+      const probe = await page.evaluate(() => window.lowaHarness.probe());
+      result.filters = {
+        count: probe.count,
+        writer_pdf_Export: probe.names.includes('writer_pdf_Export'),
+        calc_pdf_Export: probe.names.includes('calc_pdf_Export'),
+        pdfNames: probe.names.filter((name) => /pdf/i.test(name)),
+        detailed: probe.detailed,
+        diag: probe.diag,
+        errors: probe.errors,
+      };
+      writeFileSync(join(OUT_DIR, 'filters.json'), JSON.stringify(probe, null, 2));
+      console.log(
+        `фильтров всего ${probe.count}; writer_pdf_Export=${result.filters.writer_pdf_Export}, ` +
+          `calc_pdf_Export=${result.filters.calc_pdf_Export}`,
+      );
+    } catch (error) {
+      // Перечисление фильтров — отдельная проверка; провал не должен закрывать путь конвертации.
+      result.filters = { error: String(error.message ?? error) };
+      console.log(`перечисление фильтров не удалось: ${result.filters.error}`);
+    }
 
     // Настоящий выбор файла в <input type=file>, а не вызов API напрямую.
-    await page.setInputFiles('#file', FIXTURE);
-    const convertStart = Date.now();
-    await page.waitForFunction(
-      () => ['done', 'error'].includes(window.lowaHarness?.status().phase),
-      undefined,
-      { timeout: 300_000, polling: 500 },
-    );
-    result.convertMs = Date.now() - convertStart;
-    const status = await page.evaluate(() => window.lowaHarness.status());
-    result.phase = status.phase;
-    result.error = status.error;
-    if (status.phase !== 'done') {
-      throw new Error(`конвертация не удалась: ${status.error}`);
-    }
-    result.pdfBytes = status.pdfBytes;
-    result.log = status.log;
-
-    const base64 = await page.evaluate(() => window.lowaHarness.readPdfBase64());
-    const pdfPath = join(OUT_DIR, 'harness.pdf');
-    writeFileSync(pdfPath, Buffer.from(base64, 'base64'));
-    result.pdfPath = pdfPath;
-    result.pages = pdfPages(pdfPath);
+    const docx = await convert(page, FIXTURE, 'harness.pdf');
+    result.convertMs = docx.convertMs;
+    result.phase = docx.phase;
+    result.error = docx.error;
+    result.pdfBytes = docx.pdfBytes;
+    result.pages = docx.pages;
+    result.log = docx.log;
+    result.pdfPath = docx.pdfPath;
     result.nativePages = existsSync(NATIVE_REFERENCE) ? pdfPages(NATIVE_REFERENCE) : null;
+    if (docx.phase !== 'done') {
+      throw new Error(`конвертация не удалась: ${docx.error}`);
+    }
+    // Встроенный просмотрщик PDF рисует первую страницу не сразу после загрузки блоба.
+    await page.waitForTimeout(6000);
     await page.screenshot({ path: join(OUT_DIR, 'harness.png'), fullPage: true });
     result.screenshot = join(OUT_DIR, 'harness.png');
+
+    if (process.env.LOWA_SKIP_XLSX !== '1' && existsSync(XLSX_FIXTURE)) {
+      const xlsx = await convert(page, XLSX_FIXTURE, 'harness-xlsx.pdf');
+      result.xlsx = { ...xlsx, filter: 'calc_pdf_Export' };
+      console.log(
+        `XLSX: ${xlsx.phase}, ${xlsx.pages} страниц, ${xlsx.pdfBytes} Б за ${(xlsx.convertMs / 1000).toFixed(1)} с`,
+      );
+    }
   } catch (error) {
     result.failure = String(error.message ?? error);
     try {
