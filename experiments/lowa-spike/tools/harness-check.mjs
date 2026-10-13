@@ -185,6 +185,11 @@ async function main() {
     await page.screenshot({ path: join(OUT_DIR, 'harness.png'), fullPage: true });
     result.screenshot = join(OUT_DIR, 'harness.png');
 
+    result.downloadLink = await page.evaluate(() => {
+      const link = document.getElementById('download');
+      return { hidden: link.hidden, href: link.href.slice(0, 12), download: link.download };
+    });
+
     if (process.env.LOWA_SKIP_XLSX !== '1' && existsSync(XLSX_FIXTURE)) {
       const xlsx = await convert(page, XLSX_FIXTURE, 'harness-xlsx.pdf');
       result.xlsx = { ...xlsx, filter: 'calc_pdf_Export' };
@@ -192,6 +197,22 @@ async function main() {
         `XLSX: ${xlsx.phase}, ${xlsx.pages} страниц, ${xlsx.pdfBytes} Б за ${(xlsx.convertMs / 1000).toFixed(1)} с`,
       );
     }
+
+    // Отрицательные проверки: у харнесса должен быть ответ, а не тишина.
+    // Мусор вместо docx LibreOffice молча открывает как текст, поэтому путь вне memfs проверяем
+    // отдельно: такого файла нет, loadComponentFromURL обязан бросить UNO-исключение.
+    const brokenFile = join(OUT_DIR, 'broken.docx');
+    writeFileSync(brokenFile, Buffer.from('это не docx, а просто текст\n'));
+    const broken = await convert(page, brokenFile, 'broken.pdf');
+    result.brokenFile = { phase: broken.phase, pages: broken.pages, pdfBytes: broken.pdfBytes };
+    console.log(`мусор под именем .docx: ${broken.phase}, страниц ${broken.pages}`);
+    result.missingFile = await page.evaluate(() =>
+      window.lowaHarness
+        .request({ cmd: 'convert', from: '/tmp/нет-такого.docx', to: '/tmp/x.pdf', filter: 'writer_pdf_Export' }, 60_000)
+        .then(() => ({ ok: true }))
+        .catch((error) => ({ ok: false, message: error.message, unoType: error.unoType })),
+    );
+    console.log(`файл вне memfs: ${JSON.stringify(result.missingFile)}`);
   } catch (error) {
     result.failure = String(error.message ?? error);
     try {

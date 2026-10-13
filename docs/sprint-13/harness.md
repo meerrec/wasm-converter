@@ -67,7 +67,10 @@ node experiments/lowa-spike/tools/harness-check.mjs
 | `calc_pdf_Export` | найден, `DocumentService = com.sun.star.sheet.SpreadsheetDocument` |
 | DOCX → PDF | **161 страница**, 4 791 564 Б, 4.5 с (из них UNO 4.6 с) |
 | Эталон нативного LO | 161 страница (`/tmp/lowa-measure-native/sus-utp-native.pdf`) — совпадает |
-| XLSX → PDF (Calc) | 120 страниц, 301 246 Б, 1.0 с |
+| XLSX → PDF (Calc) | 120 страниц, 301 246 Б, 0.5 с |
+| Ссылка «Скачать PDF» на странице | есть, `blob:`-URL с атрибутом `download` |
+| Ошибка вместо зависания | файл вне memfs → `com.sun.star.lang.IllegalArgumentException: Unsupported URL <file:///tmp/нет-такого.docx>: "type detection failed"`, ответ за доли секунды |
+| Мусор под именем `.docx` | ошибки нет: LO открывает его как текст и отдаёт PDF в 1 страницу |
 
 Результаты: `/tmp/lowa-measure/harness.pdf`, `/tmp/lowa-measure/harness-xlsx.pdf`,
 `/tmp/lowa-measure/harness.png`, машинный протокол — `/tmp/lowa-measure/harness-check.json`,
@@ -119,6 +122,9 @@ context.getServiceManager()
   invalid nullptr parameter` и `QRect(0,0 0x0)`. На конвертацию не влияет, но canvas в разметке
   обязан быть (в `zetaHelper.js:20` он ищется без проверки на null), поэтому в `index.html` он есть,
   скрытый.
+- **LibreOffice всеяден.** Битый файл с расширением `.docx` ошибки не даёт: тип определяется по
+  содержимому, текст открывается как документ Writer, на выходе PDF в одну страницу. Отрицательную
+  проверку протокола поэтому делают не «мусорным файлом», а путём вне memfs.
 
 ## Ограничения харнесса
 
