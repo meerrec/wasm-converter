@@ -1,4 +1,4 @@
-//! PDF-бэкенд диаграмм: примитивы раскладки (ADR-0011) в операции printpdf.
+//! PDF-бэкенд диаграмм: примитивы раскладки (ADR-0011) в операции PDF.
 //!
 //! Геометрию считает [`doc_converter_render::chart::layout`], бэкенд только
 //! переводит её в точки и рисует — в том же порядке, что canvas-бэкенд
@@ -16,12 +16,11 @@ use doc_converter_render::chart::{layout, ChartData, ChartPrim, TextAlign};
 use doc_converter_render::display_list::Color;
 use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
 use doc_converter_render::geometry::Rect;
-use printpdf::{
-    FontId as PdfFontId, Line, LinePoint, Op, PaintMode, Point, Polygon, PolygonRing, Pt, TextItem,
-    WindingOrder,
-};
 
 use crate::layout::{PageGeometry, RectPx};
+use crate::pdf::ops::{
+    FontId, Line, LinePoint, Op, PaintMode, Point, Polygon, PolygonRing, Pt, TextItem, WindingOrder,
+};
 use crate::styles::to_pdf_color;
 
 /// Отношение радиуса контрольной точки Безье к радиусу дуги для четверти
@@ -95,7 +94,7 @@ impl Shift {
 pub fn draw(
     ops: &mut Vec<Op>,
     registry: &mut FontRegistry,
-    pdf_font: &PdfFontId,
+    pdf_font: &FontId,
     page: &PageGeometry,
     rect: RectPx,
     clip: RectPx,
@@ -125,7 +124,7 @@ pub fn draw(
 fn draw_prim(
     ops: &mut Vec<Op>,
     registry: &mut FontRegistry,
-    pdf_font: &PdfFontId,
+    pdf_font: &FontId,
     page: &PageGeometry,
     prim: &ChartPrim,
     shift: Shift,
@@ -234,7 +233,7 @@ fn draw_prim(
     }
 }
 
-/// Пиксели диаграммы (`f64`, ось `y` вниз) в координаты printpdf: тот же
+/// Пиксели диаграммы (`f64`, ось `y` вниз) в координаты PDF: тот же
 /// перевод, что в `text.rs` — начало координат в левом нижнем углу страницы.
 /// Сдвиг [`Shift`] переносит точку из координат листа в координаты страницы.
 fn to_pdf_point(page: &PageGeometry, x: f64, y: f64, shift: Shift) -> Point {
@@ -244,7 +243,7 @@ fn to_pdf_point(page: &PageGeometry, x: f64, y: f64, shift: Shift) -> Point {
     }
 }
 
-/// Точки ломаной или контура в координатах printpdf; все — вершины, а не
+/// Точки ломаной или контура в координатах PDF; все — вершины, а не
 /// управляющие Безье.
 fn line_points(page: &PageGeometry, points: &[(f64, f64)], shift: Shift) -> Vec<LinePoint> {
     points
@@ -266,7 +265,7 @@ fn fill_shape(ops: &mut Vec<Op>, color: Color, polygon: Polygon) {
 }
 
 /// Замкнутый залитый контур: canvas заливает `Polygon` неявным замыканием,
-/// printpdf замыкает путь сам (`h`) перед заливкой.
+/// PDF замыкает путь сам (`h`) перед заливкой.
 fn filled_polygon(points: Vec<LinePoint>) -> Polygon {
     Polygon {
         rings: vec![PolygonRing { points }],
@@ -277,8 +276,8 @@ fn filled_polygon(points: Vec<LinePoint>) -> Polygon {
 
 /// Полигон прямоугольника: якорь диаграммы для клипа и заливка `Rect`.
 ///
-/// Вершины собираются вручную, а не через `Rect::to_polygon`: в вендоренном
-/// printpdf `Rect::gen_points` отсчитывает высоту вниз от `y`
+/// Вершины собираются вручную, а не через `Rect::to_polygon`: у вендоренной
+/// библиотеки `Rect::gen_points` отсчитывал высоту вниз от `y`
 /// (`bottom = y - height`), то есть кладёт прямоугольник на высоту ниже якоря.
 /// `image.rs` по той же причине строит клип по вершинам.
 fn rect_polygon(page: &PageGeometry, rect: RectPx, mode: PaintMode) -> Polygon {
@@ -302,10 +301,10 @@ fn rect_polygon(page: &PageGeometry, rect: RectPx, mode: PaintMode) -> Polygon {
 /// Контур окружности: четыре дуги по 90°, каждая — пара управляющих точек и
 /// конечная.
 ///
-/// Ловушка printpdf: кубическая Безье кодируется ровно двумя подряд идущими
-/// `LinePoint { bezier: true }` плюс конечная точка
-/// (`vendor/printpdf/src/serialize.rs`), одиночная управляющая молча
-/// вырождается в прямую — поэтому дуги кладутся только парами.
+/// Ловушка модели операций (унаследована от вендора и сохранена у своего
+/// бэкенда): кубическая Безье кодируется ровно двумя подряд идущими
+/// `LinePoint { bezier: true }` плюс конечная точка, одиночная управляющая
+/// молча вырождается в прямую — поэтому дуги кладутся только парами.
 fn circle_ring(page: &PageGeometry, cx: f64, cy: f64, r: f64, shift: Shift) -> Vec<LinePoint> {
     let k = r * KAPPA;
     let mut ring = vec![LinePoint {
@@ -437,7 +436,7 @@ fn sector_ring(
     Some(ring)
 }
 
-/// `f64`-геометрия `layout` в `f32`-единицы printpdf: сторона страницы
+/// `f64`-геометрия `layout` в `f32`-единицы PDF: сторона страницы
 /// заведомо много меньше 2^24, где `f32` теряет целые пиксели.
 #[allow(clippy::cast_possible_truncation)]
 fn to_f32(value: f64) -> f32 {
@@ -463,8 +462,8 @@ mod tests {
         PageGeometry::new(&PageConfig::default())
     }
 
-    fn font() -> PdfFontId {
-        PdfFontId("F1".to_owned())
+    fn font() -> FontId {
+        FontId("F1".to_owned())
     }
 
     /// Пиксель раскладки в точки при масштабе 1 — независимо от `PageGeometry`.
@@ -694,8 +693,8 @@ mod tests {
             13,
             "4 дуги: начало + 4 x (2 управляющих + конец)"
         );
-        // Ловушка printpdf: управляющие Безье обязаны идти парами, иначе дуга
-        // молча вырождается в прямую.
+        // Ловушка модели операций (унаследована от вендора): управляющие Безье
+        // обязаны идти парами, иначе дуга молча вырождается в прямую.
         let flags: Vec<bool> = ring.iter().map(|point| point.bezier).collect();
         assert_eq!(
             flags,
@@ -868,8 +867,9 @@ mod tests {
             let flags: Vec<bool> = ring.iter().map(|point| point.bezier).collect();
             assert!(!flags[0], "центр — вершина");
             assert!(!flags[1], "начало дуги — тоже вершина");
-            // Ловушка printpdf: одиночная управляющая молча вырождается в
-            // прямую, поэтому пара управляющих всегда замыкается вершиной.
+            // Ловушка модели операций (унаследована от вендора): одиночная
+            // управляющая молча вырождается в прямую, поэтому пара управляющих
+            // всегда замыкается вершиной.
             let mut index = 2;
             let mut pairs = 0;
             while index < flags.len() {

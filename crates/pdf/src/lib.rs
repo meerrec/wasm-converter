@@ -1,4 +1,7 @@
-//! PDF-экспорт: XLSX-лист в страницы PDF на printpdf.
+//! PDF-экспорт: лист XLSX и документ DOCX в страницы PDF.
+//!
+//! XLSX-путь пишет свой PDF-бэкенд (`pdf`-модуль, ADR-0022), DOCX-путь пока на
+//! printpdf (переезжает следующей волной).
 //!
 //! Раскладка берётся у `doc-converter-xlsx` (`SheetLayout` в пикселях при
 //! 96 dpi), метрики и перенос текста — у `doc-converter-render` (`FontRegistry`,
@@ -45,7 +48,7 @@ pub(crate) enum PdfError {
     /// Раскладка DOCX не дала ни одной страницы: PDF без страниц невалиден.
     #[error("docx layout has no pages")]
     NoPages,
-    /// Шрифт не разобран `printpdf`.
+    /// Шрифт не разобран: битые байты или отказ подрезки.
     #[error("invalid font data: {0}")]
     Font(String),
     /// Картинка не декодирована: неподдержанный mime или битые байты.
@@ -75,7 +78,7 @@ impl PdfExporter {
     ///
     /// # Errors
     /// [`doc_converter_core::Error::Export`], если раскладка не собралась, не
-    /// дала ни одной страницы или printpdf не смог собрать документ.
+    /// дала ни одной страницы или PDF не собрался.
     pub fn export_docx(&mut self, doc: &doc_converter_docx::Document) -> Result<Vec<u8>> {
         docx::export(doc, &self.opts)
             .map_err(|err| doc_converter_core::Error::Export(format!("pdf: {err}")))
@@ -98,7 +101,7 @@ impl PdfExporter {
     ///
     /// # Errors
     /// [`doc_converter_core::Error::Export`], если листа с таким индексом нет
-    /// или printpdf не смог собрать документ.
+    /// или PDF не собрался.
     pub fn export_xlsx_sheet(
         &mut self,
         wb: &doc_converter_xlsx::Workbook,
@@ -112,7 +115,7 @@ impl PdfExporter {
     /// поток.
     ///
     /// Форма — writer ([`Write`]), а не колбэк или чанки: стриминговый
-    /// сериализатор форка (`printpdf::StreamSession`) уже обобщён по `Write`,
+    /// сериализатор (`pdf::session::Session`, ADR-0022) обобщён по `Write`,
     /// приёмнику не нужен seek (xref пишется одной секцией в конце), а колбэк
     /// и чанки выражаются адаптером над `write`, не наоборот.
     ///
@@ -128,7 +131,7 @@ impl PdfExporter {
     ///
     /// # Errors
     /// [`doc_converter_core::Error::Export`], если листа с таким индексом нет,
-    /// printpdf не смог собрать документ или приёмник вернул ошибку записи.
+    /// PDF не собрался или приёмник вернул ошибку записи.
     pub fn export_xlsx_sheet_to<W: Write>(
         &mut self,
         wb: &doc_converter_xlsx::Workbook,
@@ -155,7 +158,7 @@ impl PdfExporter {
     ///
     /// # Errors
     /// [`doc_converter_core::Error::Export`], если в книге нет листов или
-    /// printpdf не смог собрать документ.
+    /// PDF не собрался.
     pub fn export_xlsx_book(&mut self, wb: &doc_converter_xlsx::Workbook) -> Result<Vec<u8>> {
         let mut pdf = Vec::new();
         painter::export_book_to(wb, &[], &self.opts, &mut pdf)
@@ -173,7 +176,7 @@ impl PdfExporter {
     ///
     /// # Errors
     /// [`doc_converter_core::Error::Export`], если в книге нет листов,
-    /// printpdf не смог собрать документ или приёмник вернул ошибку записи.
+    /// PDF не собрался или приёмник вернул ошибку записи.
     pub fn export_xlsx_book_to<W: Write>(
         &mut self,
         wb: &doc_converter_xlsx::Workbook,

@@ -1,4 +1,4 @@
-//! Встраивание шрифтов в PDF.
+//! Начертания шрифтов PDF и их идентификаторы в ресурсах документа.
 //!
 //! Байты берутся из `doc-converter-render` — тот же Carlito, которым canvas
 //! измеряет текст (`render::font`). Один шрифт на экран и на PDF — залог
@@ -8,16 +8,20 @@
 //! каждое подмножество весит около 90 КБ, и возить неиспользованные незачем.
 //! Метрики при этом общие — regular (`DEFAULT_FONT_ID`), как у canvas-пути:
 //! начертание выбирает встраиваемый шрифт записи текста, а не точки переноса.
+//!
+//! Подрезку по использованным символам делает [`crate::pdf::fonts`] (ADR-0022);
+//! здесь живут только набор начертаний и их идентификаторы в ресурсах —
+//! [`EmbeddedFonts`] строит те же имена («F0», «F1», …), что раздаёт сессия,
+//! поэтому зондовый проход painter'а работает ещё до [`crate::pdf::session::Session::begin`].
 
 use doc_converter_render::font::{
     bold_font_bytes, bold_italic_font_bytes, default_font_bytes, italic_font_bytes,
 };
-use printpdf::{FontId as PdfFontId, ParsedFont, PdfDocument, PdfWarnMsg};
 
-use crate::PdfError;
+use crate::pdf::ops::FontId;
 
 /// Начертание шрифта — то, что записано в `styles.xml`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Face {
     Regular,
     Bold,
@@ -47,8 +51,8 @@ impl Face {
         }
     }
 
-    /// Байты подрезанного Carlito этого начертания.
-    fn bytes(self) -> &'static [u8] {
+    /// Байты Carlito этого начертания — аргумент подрезки сессии.
+    pub(crate) fn bytes(self) -> &'static [u8] {
         match self {
             Self::Regular => default_font_bytes(),
             Self::Bold => bold_font_bytes(),
@@ -85,88 +89,77 @@ impl FaceSet {
     }
 }
 
-/// Шрифт, встроенный в документ printpdf.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EmbeddedFont {
-    id: PdfFontId,
-}
-
-impl EmbeddedFont {
-    /// Идентификатор в ресурсах документа: им помечаются текстовые операции.
-    #[must_use]
-    pub const fn id(&self) -> &PdfFontId {
-        &self.id
-    }
-}
-
 /// Шрифты страниц: regular всегда, выделенные начертания — как встретились.
+///
+/// Идентификаторы — наши [`FontId`] в ресурсах документа («F0», «F1», … в
+/// порядке начертаний). Имена строит [`EmbeddedFonts::from_faces`] до начала
+/// сессии: [`crate::pdf::session::Session`] раздаёт имена тем же порядком, и
+/// зондовый проход, идущий раньше [`crate::pdf::session::Session::begin`],
+/// может ссылаться на шрифты, которых ещё нет.
 #[derive(Debug)]
 pub struct EmbeddedFonts {
-    regular: EmbeddedFont,
-    bold: Option<EmbeddedFont>,
-    italic: Option<EmbeddedFont>,
-    bold_italic: Option<EmbeddedFont>,
+    regular: FontId,
+    bold: Option<FontId>,
+    italic: Option<FontId>,
+    bold_italic: Option<FontId>,
 }
 
 impl EmbeddedFonts {
+    /// Идентификаторы начертаний набора — до регистрации в сессии.
+    ///
+    /// Имена «F0», «F1», … раздаются в фиксированном порядке начертаний
+    /// Regular → Bold → Italic → `BoldItalic`; сессия раздаёт имена тем же
+    /// счётчиком, поэтому после `add_font` они совпадут по построению.
+    #[must_use]
+    pub fn from_faces(faces: FaceSet) -> Self {
+        let mut next = 0;
+        let mut take = || {
+            let font = FontId(format!("F{next}"));
+            next += 1;
+            font
+        };
+        let regular = take();
+        let bold = faces.contains(Face::Bold).then(&mut take);
+        let italic = faces.contains(Face::Italic).then(&mut take);
+        let bold_italic = faces.contains(Face::BoldItalic).then(&mut take);
+        Self {
+            regular,
+            bold,
+            italic,
+            bold_italic,
+        }
+    }
+
     /// Шрифт начертания; невстроенное начертание заменяется regular.
     ///
     /// Замена — страховка на случай, если спрашивают начертание, которого в
-    /// наборе не было: пустой записи текста printpdf не примет.
+    /// наборе не было: пустой записи текста PDF не примет.
     #[must_use]
-    pub fn id(&self, face: Face) -> &PdfFontId {
+    pub fn id(&self, face: Face) -> &FontId {
         let embedded = match face {
             Face::Regular => None,
             Face::Bold => self.bold.as_ref(),
             Face::Italic => self.italic.as_ref(),
             Face::BoldItalic => self.bold_italic.as_ref(),
         };
-        embedded.unwrap_or(&self.regular).id()
+        embedded.unwrap_or(&self.regular)
     }
-}
 
-/// Встроить начертания из набора (и всегда — regular).
-///
-/// Разбор TTF и подстановка (subsetting) — на стороне printpdf: он же
-/// собирает `ToUnicode`, без которого кириллицу не извлечь из готового PDF.
-///
-/// # Errors
-/// [`PdfError::Font`], если printpdf не принял байты шрифта.
-pub fn embed(
-    doc: &mut PdfDocument,
-    warnings: &mut Vec<PdfWarnMsg>,
-    faces: FaceSet,
-) -> Result<EmbeddedFonts, PdfError> {
-    Ok(EmbeddedFonts {
-        regular: embed_face(doc, warnings, Face::Regular)?,
-        bold: embed_optional(doc, warnings, faces, Face::Bold)?,
-        italic: embed_optional(doc, warnings, faces, Face::Italic)?,
-        bold_italic: embed_optional(doc, warnings, faces, Face::BoldItalic)?,
-    })
-}
-
-/// Встроить начертание, только если оно есть в наборе.
-fn embed_optional(
-    doc: &mut PdfDocument,
-    warnings: &mut Vec<PdfWarnMsg>,
-    faces: FaceSet,
-    face: Face,
-) -> Result<Option<EmbeddedFont>, PdfError> {
-    if !faces.contains(face) {
-        return Ok(None);
+    /// Начертание по идентификатору; неизвестный — regular.
+    ///
+    /// Идентификаторы отдаёт сам [`EmbeddedFonts::id`], поэтому посторонних
+    /// значений в операциях не бывает: обратное сопоставление нужно зондовому
+    /// проходу, который копит символы по начертаниям.
+    #[must_use]
+    pub fn face(&self, id: &FontId) -> Face {
+        if self.bold.as_ref() == Some(id) {
+            Face::Bold
+        } else if self.italic.as_ref() == Some(id) {
+            Face::Italic
+        } else if self.bold_italic.as_ref() == Some(id) {
+            Face::BoldItalic
+        } else {
+            Face::Regular
+        }
     }
-    embed_face(doc, warnings, face).map(Some)
-}
-
-/// Встроить одно начертание.
-fn embed_face(
-    doc: &mut PdfDocument,
-    warnings: &mut Vec<PdfWarnMsg>,
-    face: Face,
-) -> Result<EmbeddedFont, PdfError> {
-    let parsed = ParsedFont::from_bytes(face.bytes(), 0, warnings)
-        .ok_or_else(|| PdfError::Font(format!("printpdf rejected the {face:?} font")))?;
-    Ok(EmbeddedFont {
-        id: doc.add_font(&parsed),
-    })
 }

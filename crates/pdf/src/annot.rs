@@ -12,17 +12,21 @@
 //! Примечание — текст в `/Contents` и автор в `/T`; страницу ему выбирает
 //! [`comment_placements`], и она одна на примечание.
 //!
-//! Закладки outline собирает [`add_outline`]: пункт верхнего уровня на лист.
-//! У XLSX нет заголовков в смысле DOCX — ни стилей заголовков, ни разделов, —
-//! поэтому лист и есть минимальный осмысленный уровень дерева.
+//! Аннотации не пишутся в content stream: операции [`Op::Annotation`] painter
+//! вынимает из списка и отдаёт [`annotation_to_dict`], который собирает
+//! словарь `/Annots` (печать — своя, по образцу `annotation_to_dict` из
+//! вендоренного форка: та же форма `/Rect`, `/A`, `/Dest` и UTF-16BE с BOM).
+//! Закладки outline собирает сессия ([`crate::pdf::session::Session::set_outline`]),
+//! painter копит для неё пункты из [`SheetSpan`].
 
 use doc_converter_xlsx::layout::SheetLayout;
 use doc_converter_xlsx::{CellRef, Comment, HyperlinkTarget, Range, Sheet};
-use printpdf::{Actions, Annotation, Destination, LinkAnnotation, Op, PdfDocument, TextAnnotation};
+use lopdf::{Dictionary, Object, ObjectId, StringFormat::Literal};
 
 use crate::layout::{PageGeometry, RectPx};
 use crate::pagination::{PageSlice, SheetPage};
 use crate::painter::page_rect;
+use crate::pdf::ops::{Actions, Annotation, Destination, LinkAnnotation, Op, TextAnnotation};
 
 /// Аннотации страницы: ссылки, чьи ячейки попали в срез, и примечания,
 /// которым досталась эта страница.
@@ -87,6 +91,116 @@ pub(crate) fn page_annotations(
         });
     }
     ops
+}
+
+/// Аннотация страницы → словарь PDF: общие ключи плюс нагрузка подтипа.
+///
+/// Своя печать повторяет `annotation_to_dict` из вендоренного форка: `/Type /Annot`,
+/// `/Subtype` по варианту, `/Rect` из углов, у ссылки — `/A` с действием,
+/// `/Border`, `/C` и `/H`; у заметки — `/Contents` и `/T` как UTF-16BE с BOM
+/// (текст произвольный Unicode, и кириллица в `PDFDocEncoding` не помещается,
+/// ISO 32000, 7.9.2.2). `page_ref` разрешает номер страницы `/GoTo` в id
+/// объекта — сессия резервирует их заранее ([`crate::pdf::session::Session::page_ref`]).
+pub(crate) fn annotation_to_dict(
+    annot: &Annotation,
+    page_ref: &dyn Fn(usize) -> Option<ObjectId>,
+) -> Dictionary {
+    match annot {
+        Annotation::Link(link) => {
+            let mut dict = annotation_base("Link", &link.rect);
+            dict.set("A", actions_to_dict(&link.actions, page_ref));
+            dict.set(
+                "Border",
+                Object::Array(
+                    link.border
+                        .to_array()
+                        .into_iter()
+                        .map(Object::Real)
+                        .collect(),
+                ),
+            );
+            dict.set(
+                "C",
+                Object::Array(link.color.to_vec().into_iter().map(Object::Real).collect()),
+            );
+            dict.set("H", link.highlighting.get_id());
+            dict
+        }
+        Annotation::Text(text) => {
+            let mut dict = annotation_base("Text", &text.rect);
+            dict.set("Contents", utf16be(&text.contents));
+            if let Some(title) = &text.title {
+                dict.set("T", utf16be(title));
+            }
+            dict
+        }
+    }
+}
+
+/// Общие ключи любой аннотации: `/Type`, `/Subtype` и `/Rect`.
+fn annotation_base(subtype: &str, rect: &crate::pdf::ops::Rect) -> Dictionary {
+    let ll = rect.lower_left();
+    let ur = rect.upper_right();
+
+    let mut dict = Dictionary::new();
+    dict.set("Type", "Annot");
+    dict.set("Subtype", subtype);
+    dict.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(ll.x.0),
+            Object::Real(ll.y.0),
+            Object::Real(ur.x.0),
+            Object::Real(ur.y.0),
+        ]),
+    );
+    dict
+}
+
+/// Действие аннотации: `/URI` или `/GoTo` с целью `/D`.
+fn actions_to_dict(actions: &Actions, page_ref: &dyn Fn(usize) -> Option<ObjectId>) -> Dictionary {
+    let mut dict = Dictionary::new();
+    dict.set("S", actions.get_action_type_id());
+    match actions {
+        Actions::Goto(destination) => {
+            dict.set("D", destination_to_obj(destination, page_ref));
+        }
+        Actions::Uri(uri) => {
+            dict.set("URI", Object::String(uri.clone().into_bytes(), Literal));
+        }
+    }
+    dict
+}
+
+/// Цель `/GoTo`: `[страница /XYZ left top zoom]`; страница без резервированного
+/// id (за пределами `page_count` сессии) — `null`, как печатал форк.
+fn destination_to_obj(
+    destination: &Destination,
+    page_ref: &dyn Fn(usize) -> Option<ObjectId>,
+) -> Object {
+    match destination {
+        Destination::Xyz {
+            page,
+            left,
+            top,
+            zoom,
+        } => Object::Array(vec![
+            page_ref(page.saturating_sub(1)).map_or(Object::Null, Object::Reference),
+            Object::Name(b"XYZ".to_vec()),
+            left.map_or(Object::Null, Object::Real),
+            top.map_or(Object::Null, Object::Real),
+            zoom.map_or(Object::Null, Object::Real),
+        ]),
+    }
+}
+
+/// Текстовая строка PDF как UTF-16BE с BOM.
+fn utf16be(text: &str) -> Object {
+    let mut bytes = vec![0xFE, 0xFF];
+    for unit in text.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_be_bytes());
+    }
+    Object::String(bytes, lopdf::StringFormat::Hexadecimal)
 }
 
 /// Примечание и страница, на которую попала его ячейка.
@@ -154,37 +268,6 @@ pub(crate) struct SheetSpan<'a> {
     pub name: &'a str,
     /// Сколько страниц занял лист; минимум одна — даже пустой лист даёт страницу.
     pub pages: usize,
-}
-
-/// Добавить закладки outline: по одной на лист, на страницу начала листа.
-///
-/// Дерево одноуровневое. У XLSX нет заголовков в смысле DOCX — ни стилей
-/// заголовков, ни разделов; именованные диапазоны в модель книги не попадают
-/// (`workbook.rs` читает из `definedNames` только печатаемые заголовки), а
-/// пункт на каждую строку листа превратил бы панель закладок в копию листа.
-/// Лист — единственный крупный уровень, который у книги есть; printpdf 0.8.2
-/// к тому же пишет все пункты плоским списком.
-///
-/// Страницы сквозные: лист занимает `pages` страниц, поэтому следующий
-/// начинается после него. В PDF попадает ссылка на страницу-объект, а не
-/// записанный где-то номер: сменится пагинация — следующий экспорт пересчитает
-/// и закладку вместе с ней.
-///
-/// `enabled` — флаг `PdfOptions::bookmarks`: при `false` в документ не
-/// добавляется ничего, и `/Outlines` не появляется — printpdf пишет его,
-/// только когда карта закладок непуста.
-///
-/// Вызывать до записи страниц: `StreamSession::begin` принимает документ по
-/// неизменяемой ссылке и резервирует id страниц заранее.
-pub(crate) fn add_outline(doc: &mut PdfDocument, sheets: &[SheetSpan<'_>], enabled: bool) {
-    if !enabled {
-        return;
-    }
-    let mut page = 1;
-    for sheet in sheets {
-        doc.add_bookmark(sheet.name, page);
-        page += sheet.pages;
-    }
 }
 
 /// Номер страницы PDF (с единицы), на которую ведёт внутренняя ссылка.
@@ -332,225 +415,163 @@ fn union_rect(a: RectPx, b: RectPx) -> RectPx {
 
 #[cfg(test)]
 mod tests {
-    use super::{add_outline, comment_placements, SheetSpan};
+    use super::{annotation_to_dict, comment_placements};
     use crate::layout::PageGeometry;
     use crate::options::{Margins, PageConfig, PageSize};
     use crate::pagination::{paginate, print_scale, SheetPagination};
+    use crate::pdf::ops::{Actions, Annotation, LinkAnnotation, Pt, Rect, TextAnnotation};
     use doc_converter_xlsx::layout::SheetLayout;
     use doc_converter_xlsx::{
         Cell, CellRef, CellValue, Comment, SharedStrings, Sheet, SheetContent, SheetState,
         StyleTable, Theme, Workbook, WorksheetBuilder, WorksheetMeta,
     };
-    use lopdf::{Dictionary, Document, Object, ObjectId};
-    use printpdf::{Mm, PdfDocument, PdfPage, PdfSaveOptions};
-    use std::collections::BTreeMap;
-
-    /// Документ из `count` страниц-заготовок: закладке нужно, куда вести.
-    fn document(count: usize) -> PdfDocument {
-        let mut doc = PdfDocument::new("Тест");
-        doc.with_pages(
-            (0..count)
-                .map(|_| PdfPage::new(Mm(72.0), Mm(72.0), Vec::new()))
-                .collect(),
-        );
-        doc
-    }
-
-    /// Закладки в документе как `(заголовок, страница)` по возрастанию страниц.
-    fn bookmarks(doc: &PdfDocument) -> Vec<(&str, usize)> {
-        let mut found: Vec<_> = doc
-            .bookmarks
-            .map
-            .values()
-            .map(|bookmark| (bookmark.name.as_str(), bookmark.page))
-            .collect();
-        found.sort_by_key(|(_, page)| *page);
-        found
-    }
-
-    /// Сохранить и разобрать: проверки смотрят на готовый PDF, а не на карту
-    /// в памяти.
-    fn saved(doc: &PdfDocument) -> Document {
-        let mut warnings = Vec::new();
-        let bytes = doc.save(&PdfSaveOptions::default(), &mut warnings);
-        Document::load_mem(&bytes).expect("PDF разбирается lopdf")
-    }
-
-    /// Словарь `/Outlines` из каталога; `None` — дерева закладок нет.
-    fn outlines(doc: &Document) -> Option<Dictionary> {
-        let catalog = doc.catalog().expect("каталог документа");
-        let outlines = catalog.get(b"Outlines").ok()?;
-        let (_, outlines) = doc.dereference(outlines).expect("разыменование /Outlines");
-        Some(outlines.as_dict().expect("/Outlines — словарь").clone())
-    }
-
-    /// Пункты outline в порядке обхода `/First` → `/Next`: заголовок и номер
-    /// страницы, на которую ведёт `/Dest`.
-    fn pdf_outline(doc: &Document) -> Vec<(String, u32)> {
-        let pages = doc.get_pages();
-        let Some(root) = outlines(doc) else {
-            return Vec::new();
-        };
-        let mut found = Vec::new();
-        let mut next = reference(&root, b"First");
-        while let Some(id) = next {
-            let item = doc.get_dictionary(id).expect("пункт outline — словарь");
-            found.push((title(item), dest_page(&pages, item)));
-            next = reference(item, b"Next");
-        }
-        found
-    }
-
-    /// Ссылка из словаря, если ключ есть (`/First`, `/Next`).
-    fn reference(dict: &Dictionary, key: &[u8]) -> Option<ObjectId> {
-        dict.get(key).ok()?.as_reference().ok()
-    }
-
-    /// Заголовок пункта: printpdf кодирует его UTF-16BE с BOM, кириллица цела.
-    // `as_chunks` стабилен с Rust 1.88, а MSRV workspace — 1.82, поэтому
-    // предложение clippy здесь не применяется.
-    #[allow(clippy::chunks_exact_to_as_chunks)]
-    fn title(item: &Dictionary) -> String {
-        let bytes = item
-            .get(b"Title")
-            .expect("/Title")
-            .as_str()
-            .expect("строка")
-            .to_vec();
-        let (bom, body) = bytes.split_at_checked(2).expect("BOM в заголовке");
-        assert_eq!(bom, [0xFE, 0xFF].as_slice(), "заголовок не UTF-16BE");
-        let units: Vec<u16> = body
-            .chunks_exact(2)
-            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
-            .collect();
-        String::from_utf16(&units).expect("заголовок — UTF-16")
-    }
-
-    /// Номер страницы, на которую ведёт `/Dest`: первым элементом массива
-    /// стоит ссылка на страницу-объект — номера в PDF не хранятся.
-    fn dest_page(pages: &BTreeMap<u32, ObjectId>, item: &Dictionary) -> u32 {
-        let dest = item
-            .get(b"Dest")
-            .expect("/Dest")
-            .as_array()
-            .expect("/Dest — массив");
-        let object = dest
-            .first()
-            .expect("первый элемент /Dest")
-            .as_reference()
-            .expect("/Dest ссылается на страницу");
-        pages
-            .iter()
-            .find(|(_, id)| **id == object)
-            .map(|(number, _)| *number)
-            .expect("страница цели есть в документе")
-    }
-
-    /// Дерево содержит по закладке на лист, и каждая ведёт на страницу начала
-    /// листа: листы занимают разное число страниц, номера сквозные.
-    #[test]
-    fn one_bookmark_per_sheet_on_sheet_start() {
-        let mut doc = document(6);
-        add_outline(
-            &mut doc,
-            &[
-                SheetSpan {
-                    name: "Лист1",
-                    pages: 1,
-                },
-                SheetSpan {
-                    name: "Отчёт",
-                    pages: 3,
-                },
-                SheetSpan {
-                    name: "Лист3",
-                    pages: 2,
-                },
-            ],
-            true,
-        );
-        assert_eq!(bookmarks(&doc), [("Лист1", 1), ("Отчёт", 2), ("Лист3", 5)]);
-    }
-
-    /// Книга из одного листа — одна закладка на первой странице, сколько бы
-    /// страниц лист ни занял.
-    #[test]
-    fn single_sheet_book_has_one_bookmark_at_first_page() {
-        let mut doc = document(4);
-        add_outline(
-            &mut doc,
-            &[SheetSpan {
-                name: "Лист1",
-                pages: 4,
-            }],
-            true,
-        );
-        assert_eq!(bookmarks(&doc), [("Лист1", 1)]);
-    }
-
-    /// `bookmarks: false` — дерева нет ни в документе, ни в готовом PDF:
-    /// printpdf пишет `/Outlines`, только когда карта закладок непуста.
-    #[test]
-    fn disabled_bookmarks_leave_no_outline() {
-        let mut doc = document(2);
-        add_outline(
-            &mut doc,
-            &[SheetSpan {
-                name: "Лист1",
-                pages: 2,
-            }],
-            false,
-        );
-        assert!(doc.bookmarks.map.is_empty());
-        assert!(
-            outlines(&saved(&doc)).is_none(),
-            "при false /Outlines не пишется"
-        );
-    }
-
-    /// Пустой список листов — не ошибка: закладок просто нет.
-    #[test]
-    fn empty_sheet_list_adds_no_bookmarks() {
-        let mut doc = document(1);
-        add_outline(&mut doc, &[], true);
-        assert!(doc.bookmarks.map.is_empty());
-        assert!(outlines(&saved(&doc)).is_none());
-    }
-
-    /// `DoD`: lopdf видит `/Outlines`, число пунктов совпадает с числом листов,
-    /// заголовки — имена листов, `/Dest` ведёт на страницу-объект.
-    #[test]
-    fn outline_survives_save_and_points_at_pages() {
-        let mut doc = document(3);
-        add_outline(
-            &mut doc,
-            &[
-                SheetSpan {
-                    name: "Лист1",
-                    pages: 2,
-                },
-                SheetSpan {
-                    name: "Лист2",
-                    pages: 1,
-                },
-            ],
-            true,
-        );
-        let pdf = saved(&doc);
-        let root = outlines(&pdf).expect("/Outlines в каталоге");
-        let count = match root.get(b"Count").expect("/Count") {
-            Object::Integer(count) => *count,
-            other => panic!("ожидалось число, получено {other:?}"),
-        };
-        assert_eq!(count, 2, "пунктов не столько, сколько листов");
-        assert_eq!(
-            pdf_outline(&pdf),
-            [("Лист1".to_owned(), 1), ("Лист2".to_owned(), 3)]
-        );
-    }
+    use lopdf::{Dictionary, Object, ObjectId};
 
     /// Часть пакета синтетического листа; нужна только текстам ошибок.
     const PART: &str = "xl/worksheets/sheet1.xml";
+
+    /// Зарезервированный id «первой страницы» — цель `/Dest` в тестах словарей.
+    fn first_page_id() -> ObjectId {
+        (7, 0)
+    }
+
+    /// Словарь ссылки на внешний адрес.
+    fn uri_link() -> Dictionary {
+        annotation_to_dict(
+            &Annotation::Link(LinkAnnotation::new(
+                Rect {
+                    x: Pt(10.0),
+                    y: Pt(20.0),
+                    width: Pt(30.0),
+                    height: Pt(5.0),
+                },
+                Actions::uri(String::from("https://example.com")),
+                None,
+                None,
+                None,
+            )),
+            &|_| Some(first_page_id()),
+        )
+    }
+
+    /// Текст UTF-16BE с BOM из строкового объекта (как в `tests/annot.rs`).
+    #[allow(clippy::chunks_exact_to_as_chunks)] // MSRV 1.82, см. `session.rs`
+    fn decode_utf16be(object: &Object) -> String {
+        let Object::String(bytes, _) = object else {
+            panic!("не строка: {object:?}");
+        };
+        assert_eq!(bytes.get(..2), Some(&[0xFE, 0xFF][..]), "нет BOM");
+        let units: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect();
+        String::from_utf16(&units).expect("корректный UTF-16")
+    }
+
+    /// Ссылка с `/URI` печатается как `/Link` с действием и рамкой по умолчанию.
+    #[test]
+    fn uri_link_becomes_link_annotation_dict() {
+        let dict = uri_link();
+        assert_eq!(dict.get(b"Type").unwrap().as_name().unwrap(), b"Annot");
+        assert_eq!(dict.get(b"Subtype").unwrap().as_name().unwrap(), b"Link");
+        let rect: Vec<f32> = dict
+            .get(b"Rect")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_float().unwrap())
+            .collect();
+        assert_eq!(rect, vec![10.0, 20.0, 40.0, 25.0]);
+
+        let action = dict.get(b"A").unwrap().as_dict().unwrap();
+        assert_eq!(action.get(b"S").unwrap().as_name().unwrap(), b"URI");
+        assert_eq!(
+            action.get(b"URI").unwrap().as_str().unwrap(),
+            b"https://example.com"
+        );
+        // Оформление по умолчанию печатается так же, как печатал форк.
+        let border: Vec<f32> = dict
+            .get(b"Border")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_float().unwrap())
+            .collect();
+        assert_eq!(border, vec![0.0, 0.0, 1.0]);
+        assert_eq!(dict.get(b"H").unwrap().as_name().unwrap(), b"I");
+    }
+
+    /// Внутренняя ссылка разрешается в id зарезервированной страницы.
+    #[test]
+    fn goto_action_resolves_page_through_page_ref() {
+        let link = LinkAnnotation::new(
+            Rect {
+                x: Pt(0.0),
+                y: Pt(0.0),
+                width: Pt(10.0),
+                height: Pt(10.0),
+            },
+            Actions::go_to(crate::pdf::ops::Destination::Xyz {
+                page: 3,
+                left: None,
+                top: None,
+                zoom: None,
+            }),
+            None,
+            None,
+            None,
+        );
+        // Номер страницы с единицы, `page_ref` — с нуля.
+        let dict = annotation_to_dict(&Annotation::Link(link.clone()), &|index| {
+            (index == 2).then_some(first_page_id())
+        });
+        let action = dict.get(b"A").unwrap().as_dict().unwrap();
+        assert_eq!(action.get(b"S").unwrap().as_name().unwrap(), b"GoTo");
+        let dest = action.get(b"D").unwrap().as_array().unwrap();
+        assert_eq!(dest[0].as_reference().unwrap(), first_page_id());
+        assert_eq!(dest[1].as_name().unwrap(), b"XYZ");
+        assert!(dest[2..].iter().all(|value| matches!(value, Object::Null)));
+
+        // Вне диапазона зарезервированных страниц — `null`, как печатал форк.
+        let dict = annotation_to_dict(&Annotation::Link(link), &|_| None);
+        let action = dict.get(b"A").unwrap().as_dict().unwrap();
+        let dest = action.get(b"D").unwrap().as_array().unwrap();
+        assert!(matches!(dest[0], Object::Null), "{:?}", dest[0]);
+    }
+
+    /// Заметка печатается как `/Text` с UTF-16BE-текстом; без автора `/T` нет.
+    #[test]
+    fn text_annotation_encodes_contents_and_title() {
+        let rect = || Rect {
+            x: Pt(0.0),
+            y: Pt(0.0),
+            width: Pt(10.0),
+            height: Pt(10.0),
+        };
+        let annot = Annotation::Text(TextAnnotation {
+            rect: rect(),
+            contents: String::from("проверь формулу"),
+            title: Some(String::from("Иван")),
+        });
+        let dict = annotation_to_dict(&annot, &|_| Some(first_page_id()));
+        assert_eq!(dict.get(b"Subtype").unwrap().as_name().unwrap(), b"Text");
+        assert_eq!(
+            decode_utf16be(dict.get(b"Contents").unwrap()),
+            "проверь формулу"
+        );
+        assert_eq!(decode_utf16be(dict.get(b"T").unwrap()), "Иван");
+        assert!(dict.get(b"A").is_err(), "у заметки нет действия");
+
+        let no_title = Annotation::Text(TextAnnotation {
+            rect: rect(),
+            contents: String::from("заметка"),
+            title: None,
+        });
+        let dict = annotation_to_dict(&no_title, &|_| Some(first_page_id()));
+        assert!(dict.get(b"T").is_err(), "/T взялся неоткуда");
+    }
 
     /// Книга с одним листом: ячейки и примечания — `(строка, столбец, текст)`.
     fn commented_book(cells: &[(u32, u32, &str)], comments: &[(u32, u32, &str)]) -> Workbook {

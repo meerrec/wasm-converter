@@ -17,11 +17,10 @@ use doc_converter_render::display_list::Color;
 use doc_converter_render::font::FontRegistry;
 use printpdf::{LinePoint, Op, PaintMode, Point, Polygon, PolygonRing, Pt, WindingOrder};
 
-use crate::fonts::EmbeddedFonts;
 use crate::layout::PageGeometry;
-use crate::styles::to_pdf_color;
 
 use super::images::Images;
+use super::{to_pdf_color, EmbeddedFonts};
 
 /// Цвет контура плейсхолдера — тот же серый, что у canvas-пути
 /// (`render::PLACEHOLDER_STROKE` в `doc-converter-docx`).

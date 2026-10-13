@@ -30,13 +30,13 @@ use doc_converter_render::display_list::Color;
 use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
 use printpdf::streaming::StreamSession;
 use printpdf::{
-    FontId, Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg, Point, Pt, TextItem,
+    FontId, Mm, Op, ParsedFont, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg, Point, Pt,
+    TextItem,
 };
 
-use crate::fonts::{self, EmbeddedFonts, Face, FaceSet};
+use crate::fonts::{Face, FaceSet};
 use crate::layout::PageGeometry;
 use crate::options::{Margins, PageConfig, PageSize, PdfOptions};
-use crate::styles::to_pdf_color;
 use crate::PdfError;
 
 /// Размер LRU-кэша метрик: тот же, что у XLSX-пути (`painter::FONT_CACHE`).
@@ -49,6 +49,114 @@ const FONT_CACHE: usize = 4096;
 /// сперва в миллиметры; обратно в точки его вернёт сама геометрия
 /// (`PT_PER_MM`), и `Page.width` дойдёт до PDF без второй константы.
 const MM_PER_PX: f32 = 25.4 / 96.0;
+
+// --- Встраивание шрифтов: DOCX-путь пока на printpdf (ADR-0022, слайс 5) ---
+
+/// Шрифт, встроенный в документ printpdf.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EmbeddedFont {
+    id: FontId,
+}
+
+impl EmbeddedFont {
+    /// Идентификатор в ресурсах документа: им помечаются текстовые операции.
+    #[must_use]
+    const fn id(&self) -> &FontId {
+        &self.id
+    }
+}
+
+/// Шрифты страниц DOCX: regular всегда, выделенные начертания — как
+/// встретились. Двойник `crate::fonts::EmbeddedFonts` (своего бэкенда) на
+/// printpdf-`FontId`: DOCX-путь переезжает на свой бэкенд следующей волной, а
+/// до неё общий модуль шрифтов ему не годится.
+#[derive(Debug)]
+struct EmbeddedFonts {
+    regular: EmbeddedFont,
+    bold: Option<EmbeddedFont>,
+    italic: Option<EmbeddedFont>,
+    bold_italic: Option<EmbeddedFont>,
+}
+
+impl EmbeddedFonts {
+    /// Шрифт начертания; невстроенное начертание заменяется regular.
+    ///
+    /// Замена — страховка на случай, если спрашивают начертание, которого в
+    /// наборе не было: пустой записи текста printpdf не примет.
+    #[must_use]
+    fn id(&self, face: Face) -> &FontId {
+        let embedded = match face {
+            Face::Regular => None,
+            Face::Bold => self.bold.as_ref(),
+            Face::Italic => self.italic.as_ref(),
+            Face::BoldItalic => self.bold_italic.as_ref(),
+        };
+        embedded.unwrap_or(&self.regular).id()
+    }
+}
+
+/// Встроить начертания из набора (и всегда — regular).
+///
+/// Разбор TTF и подстановка (subsetting) — на стороне printpdf: он же
+/// собирает `ToUnicode`, без которого кириллицу не извлечь из готового PDF.
+///
+/// # Errors
+/// [`PdfError::Font`], если printpdf не принял байты шрифта.
+fn embed(
+    doc: &mut PdfDocument,
+    warnings: &mut Vec<PdfWarnMsg>,
+    faces: FaceSet,
+) -> Result<EmbeddedFonts, PdfError> {
+    Ok(EmbeddedFonts {
+        regular: embed_face(doc, warnings, Face::Regular)?,
+        bold: embed_optional(doc, warnings, faces, Face::Bold)?,
+        italic: embed_optional(doc, warnings, faces, Face::Italic)?,
+        bold_italic: embed_optional(doc, warnings, faces, Face::BoldItalic)?,
+    })
+}
+
+/// Встроить начертание, только если оно есть в наборе.
+fn embed_optional(
+    doc: &mut PdfDocument,
+    warnings: &mut Vec<PdfWarnMsg>,
+    faces: FaceSet,
+    face: Face,
+) -> Result<Option<EmbeddedFont>, PdfError> {
+    if !faces.contains(face) {
+        return Ok(None);
+    }
+    embed_face(doc, warnings, face).map(Some)
+}
+
+/// Встроить одно начертание.
+fn embed_face(
+    doc: &mut PdfDocument,
+    warnings: &mut Vec<PdfWarnMsg>,
+    face: Face,
+) -> Result<EmbeddedFont, PdfError> {
+    let parsed = ParsedFont::from_bytes(face.bytes(), 0, warnings)
+        .ok_or_else(|| PdfError::Font(format!("printpdf rejected the {face:?} font")))?;
+    Ok(EmbeddedFont {
+        id: doc.add_font(&parsed),
+    })
+}
+
+/// Цвет `DisplayList` (`RRGGBBAA`) в цвет printpdf (нормированный RGB).
+///
+/// Двойник `crate::styles::to_pdf_color` (своего бэкенда): DOCX-путь на
+/// printpdf до следующей волны. Альфа в PDF не переносится — прозрачность
+/// потребовала бы `/ExtGState`, это отдельный срез; непрозрачный цвет от неё
+/// не зависит.
+#[must_use]
+fn to_pdf_color(color: Color) -> printpdf::Color {
+    let [r, g, b, _alpha] = color.0.to_be_bytes();
+    printpdf::Color::Rgb(printpdf::Rgb::new(
+        f32::from(r) / 255.0,
+        f32::from(g) / 255.0,
+        f32::from(b) / 255.0,
+        None,
+    ))
+}
 
 /// Собрать PDF из всех страниц документа.
 ///
@@ -67,7 +175,7 @@ pub(crate) fn export(doc: &Document, options: &PdfOptions) -> Result<Vec<u8>, Pd
     let mut warnings: Vec<PdfWarnMsg> = Vec::new();
     let mut pdf = PdfDocument::new(&title(doc, options));
     apply_metadata(&mut pdf, doc, options);
-    let embedded = fonts::embed(&mut pdf, &mut warnings, collect_faces(&layout))?;
+    let embedded = embed(&mut pdf, &mut warnings, collect_faces(&layout))?;
 
     // `XObject`'ы — ресурсы документа: `StreamSession` переводит по ним
     // `Op::UseXobject` в момент записи страницы, поэтому рисунки обязаны лечь в

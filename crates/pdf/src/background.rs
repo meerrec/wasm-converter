@@ -4,18 +4,18 @@
 //! шкалы и полосы данных условного форматирования — следующие срезы.
 
 use doc_converter_render::display_list::Color;
-use printpdf::{LinePoint, Op, PaintMode, Point, Polygon, PolygonRing, Pt, WindingOrder};
 
 use crate::layout::RectPt;
+use crate::pdf::ops::{LinePoint, Op, PaintMode, Point, Polygon, PolygonRing, Pt, WindingOrder};
 use crate::styles::to_pdf_color;
 
 /// Залить прямоугольник сплошным цветом.
 ///
-/// `page_height_pt` — высота страницы: у printpdf начало координат в левом
+/// `page_height_pt` — высота страницы: у PDF начало координат в левом
 /// нижнем углу, а прямоугольник приходит сверху вниз.
 ///
-/// Вершины собираются вручную, а не через `Rect::to_polygon`: в вендоренном
-/// printpdf `Rect::gen_points` трактует `y` как верхнюю кромку
+/// Вершины собираются вручную, а не через `Rect::to_polygon`: у вендоренной
+/// библиотеки `Rect::gen_points` трактовал `y` как верхнюю кромку
 /// (`bottom = y - height`), а `RectPt::to_pdf` кладёт в `y` нижнюю. Через
 /// `to_polygon` полигон уезжал бы вниз на собственную высоту; тем же приёмом
 /// вершины строят `image.rs` и `chart.rs`.

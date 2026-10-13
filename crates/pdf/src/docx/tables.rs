@@ -16,13 +16,14 @@ use doc_converter_docx::layout::{LayoutItem, Rect, TableCellLayout, VAlign};
 use doc_converter_docx::{Border, BorderStyle, Color as ModelColor, Shading, ShadingPattern};
 use doc_converter_render::display_list::Color;
 use doc_converter_render::font::FontRegistry;
-use printpdf::{Line, LineDashPattern, LinePoint, Op, Point, Pt};
+use printpdf::{
+    Line, LineDashPattern, LinePoint, Op, PaintMode, Point, Polygon, PolygonRing, Pt, WindingOrder,
+};
 
-use crate::fonts::EmbeddedFonts;
 use crate::layout::{PageGeometry, RectPx};
-use crate::styles::to_pdf_color;
 
 use super::images::Images;
+use super::{to_pdf_color, EmbeddedFonts};
 
 /// Толщина границы, у которой не записан `w:sz`: 0.5 pt — умолчание Word для
 /// одиночной линии (`w:sz="4"`).
@@ -130,8 +131,42 @@ fn draw_fill(ops: &mut Vec<Op>, cell: &TableCellLayout, page: &PageGeometry, off
         return;
     };
     let rect = shifted(&cell.rect, offset_y);
-    let pdf = page.rect_to_pt(RectPx::new(rect.x, rect.y, rect.width, rect.height));
-    crate::background::fill_rect(ops, pdf, page.height_pt(), fill);
+    fill_rect(
+        ops,
+        page.rect_to_pt(RectPx::new(rect.x, rect.y, rect.width, rect.height)),
+        page.height_pt(),
+        fill,
+    );
+}
+
+/// Залить прямоугольник сплошным цветом операциями printpdf.
+///
+/// Двойник `crate::background::fill_rect` (своего бэкенда): DOCX-путь на
+/// printpdf до следующей волны. Вершины собираются вручную, а не через
+/// `Rect::to_polygon`: у вендоренного printpdf `Rect::gen_points` трактует
+/// `y` как верхнюю кромку (`bottom = y - height`), а `RectPt::to_pdf` кладёт
+/// в `y` нижнюю — через `to_polygon` полигон уезжал бы вниз на свою высоту.
+fn fill_rect(ops: &mut Vec<Op>, rect: crate::layout::RectPt, page_height_pt: f32, color: Color) {
+    let (left, right) = (rect.x, rect.x + rect.w);
+    let (bottom, top) = (page_height_pt - rect.y - rect.h, page_height_pt - rect.y);
+    let points = [(left, bottom), (right, bottom), (right, top), (left, top)]
+        .into_iter()
+        .map(|(x, y)| LinePoint {
+            p: Point { x: Pt(x), y: Pt(y) },
+            bezier: false,
+        })
+        .collect();
+
+    ops.push(Op::SetFillColor {
+        col: to_pdf_color(color),
+    });
+    ops.push(Op::DrawPolygon {
+        polygon: Polygon {
+            rings: vec![PolygonRing { points }],
+            mode: PaintMode::Fill,
+            winding_order: WindingOrder::NonZero,
+        },
+    });
 }
 
 /// Собрать рёбра ячейки в общую карту: совпавшие по геометрии склеиваются.

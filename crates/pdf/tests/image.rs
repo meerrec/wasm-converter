@@ -1,29 +1,38 @@
-//! Сквозные проверки модуля изображений: `XObject` в собранном PDF, отсечение
-//! по якорю и пропуск битых картинок.
+//! Сквозные проверки изображений: `XObject` в собранном PDF, отсечение по
+//! якорю, растягивание, дедупликация и пропуск битых картинок.
+//!
+//! Книги — синтетические: картинки кладутся в реестр книги
+//! (`Workbook::with_images`) и на лист (`SheetContent::images`), экспорт идёт
+//! публичным API (`PdfExporter`), файл разбирается `lopdf` — как в
+//! `tests/annot.rs`. Дедупликация по байтам проверяется и на склейке якорей
+//! одной части, и на одинаковых копиях под разными именами.
 //!
 //! `pedantic` включён здесь, чтобы линты совпадали с крейтовыми
 //! (`#![deny(clippy::pedantic)]` в `lib.rs`).
 #![deny(clippy::pedantic)]
 
-use doc_converter_pdf::image::{place, place_all, Batch, Placement};
+use std::io::Cursor;
+use std::path::{Path, PathBuf};
+
+use doc_converter_pdf::{PdfExporter, PdfOptions};
+use doc_converter_xlsx::drawing::{ImageAnchor, ImageExtent, ImageMarker, SheetImage};
+use doc_converter_xlsx::{
+    Cell, CellValue, SharedStrings, Sheet, SheetContent, SheetState, StyleTable, Theme, Workbook,
+    WorkbookImage, WorksheetBuilder, WorksheetMeta,
+};
 use lopdf::content::Content;
 use lopdf::{Dictionary, Document, Object, ObjectId};
-use printpdf::{
-    Mm, Op, OutputImageFormat, PdfDocument, PdfPage, PdfSaveOptions, Pt, RawImage, RawImageData,
-    RawImageFormat, Rect,
-};
 use std::collections::BTreeMap;
 
-/// Сторона страницы в точках.
-const PAGE_PT: f32 = 200.0;
+/// Часть пакета синтетического листа; нужна только текстам ошибок.
+const PART: &str = "xl/worksheets/sheet1.xml";
 
 /// PNG заданного размера в красную и синюю клетку.
 ///
-/// Растр нарочно цветной: printpdf при сборке PDF переводит фактически серую
-/// картинку в Grayscale (`auto_optimize`), и проба перестала бы отличать
-/// RGB-поток от серого.
+/// Растр нарочно цветной: декодер переводит фактически серую картинку в
+/// Grayscale, и проба перестала бы отличать RGB-поток от серого.
 fn png(width: usize, height: usize) -> Vec<u8> {
-    let pixels = (0..width * height)
+    let pixels: Vec<u8> = (0..width * height)
         .flat_map(|index| {
             if index % 2 == 0 {
                 [255, 0, 0]
@@ -32,39 +41,92 @@ fn png(width: usize, height: usize) -> Vec<u8> {
             }
         })
         .collect();
-    let raw = RawImage {
-        pixels: RawImageData::U8(pixels),
-        width,
-        height,
-        data_format: RawImageFormat::RGB8,
-        tag: Vec::new(),
-    };
-    raw.encode_to_bytes(&[OutputImageFormat::Png])
-        .expect("PNG кодируется")
-        .0
+    let buffer = image::RgbImage::from_raw(
+        u32::try_from(width).expect("ширина помещается"),
+        u32::try_from(height).expect("высота помещается"),
+        pixels,
+    )
+    .expect("растровые пиксели");
+    let mut bytes = Vec::new();
+    buffer
+        .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+        .expect("PNG кодируется");
+    bytes
 }
 
-fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
-    Rect {
-        x: Pt(x),
-        y: Pt(y),
-        width: Pt(w),
-        height: Pt(h),
+/// Якорь `OneCell` с заданными размерами — как в синтетических книгах
+/// `doc-converter-xlsx`; размеры в пикселях раскладки (96 dpi).
+fn anchor(w: f32, h: f32) -> ImageAnchor {
+    ImageAnchor::OneCell {
+        from: ImageMarker {
+            col: 1,
+            row: 1,
+            col_off: 0.0,
+            row_off: 0.0,
+        },
+        ext: ImageExtent { cx: w, cy: h },
     }
 }
 
-/// PDF без сжатия потоков: содержимое страницы читается lopdf как есть.
-fn save(doc: &PdfDocument) -> Vec<u8> {
-    let options = PdfSaveOptions {
-        optimize: false,
-        ..PdfSaveOptions::default()
-    };
-    doc.save(&options, &mut Vec::new())
+/// Книга с одним листом и картинками `(медиа-имя, байты, размер якоря)`.
+///
+/// Каждая картинка кладётся в реестр книги и на лист: `image_id` сквозной по
+/// реестру, якорь — сдвинутая вправо полоса шириной в половину страницы,
+/// чтобы несколько картинок на листе не накладывались.
+fn book_with_images(images: &[(String, Vec<u8>, f32, f32)]) -> Workbook {
+    let mut builder = WorksheetBuilder::new(PART);
+    builder
+        .push(0, Cell::new(0, 0, CellValue::InlineString("ячейка".into())))
+        .expect("ячейка");
+    let sheets = vec![Sheet::new(
+        WorksheetMeta {
+            name: "Лист".into(),
+            part: PART.into(),
+            state: SheetState::Visible,
+        },
+        SheetContent {
+            cells: builder.finish(),
+            images: images
+                .iter()
+                .enumerate()
+                .map(|(index, (name, _, w, h))| SheetImage {
+                    name: Some(name.clone()),
+                    media: Some(name.clone()),
+                    image_id: Some(u32::try_from(index).expect("индекс помещается")),
+                    edit_as: None,
+                    anchor: anchor(*w, *h),
+                })
+                .collect(),
+            ..SheetContent::default()
+        },
+    )];
+    Workbook::new(
+        sheets,
+        SharedStrings::default(),
+        StyleTable::default(),
+        Theme::default(),
+        false,
+    )
+    .with_images(
+        images
+            .iter()
+            .enumerate()
+            .map(|(index, (name, bytes, _, _))| WorkbookImage {
+                id: u32::try_from(index).expect("индекс помещается"),
+                media: name.clone(),
+                mime: String::from("image/png"),
+                bytes: bytes.clone(),
+            })
+            .collect(),
+    )
 }
 
-/// Страница размером [`PAGE_PT`] с операциями `ops`.
-fn page(ops: Vec<Op>) -> PdfPage {
-    PdfPage::new(Mm::from(Pt(PAGE_PT)), Mm::from(Pt(PAGE_PT)), ops)
+/// Экспортировать лист 0 книги и разобрать результат.
+fn export(book: &Workbook) -> Document {
+    let bytes = PdfExporter::new(PdfOptions::default())
+        .export_xlsx_sheet(book, 0)
+        .unwrap_or_else(|err| panic!("экспорт не удался: {err}"));
+    Document::load_mem(&bytes).expect("PDF разбирается lopdf")
 }
 
 /// Разыменовывает косвенные ссылки lopdf: в PDF почти всё — косвенные объекты.
@@ -96,7 +158,7 @@ fn page_ops(doc: &Document) -> Content {
     Content::decode(&bytes).expect("операции разбираются")
 }
 
-/// Операнд-число: printpdf пишет координаты как `Real`.
+/// Операнд-число: печать кладёт координаты как `Real`.
 #[allow(clippy::cast_precision_loss)] // координаты страницы далеки от 2^24
 fn number(object: &Object) -> f32 {
     match object {
@@ -140,280 +202,11 @@ fn clip_path(content: &Content) -> Vec<(f32, f32)> {
         .collect()
 }
 
-/// Именованный `XObject`-поток страницы и имя, под которым он лежит в ресурсах.
-fn image_xobject(doc: &Document, page_id: ObjectId) -> (Vec<u8>, &lopdf::Stream) {
-    let resources = resources(doc, page_id);
-    let xobjects = deref(doc, resources.get(b"XObject").expect("словарь XObject"))
-        .as_dict()
-        .expect("XObject — словарь");
-    assert_eq!(xobjects.len(), 1, "одна картинка — один XObject");
-    let (name, value) = xobjects.iter().next().expect("запись есть");
-    let stream = deref(doc, value).as_stream().expect("XObject — поток");
-    (name.clone(), stream)
-}
-
-#[test]
-fn png_becomes_image_xobject_with_source_size() {
-    let bytes = png(8, 4);
-    let mut doc = PdfDocument::new("image-test");
-    let ops = place(
-        &mut doc.resources,
-        "image/png",
-        &bytes,
-        &rect(10.0, 20.0, 80.0, 40.0),
-    )
-    .expect("картинка размещается");
-    doc.with_pages(vec![page(ops)]);
-
-    let parsed = Document::load_mem(&save(&doc)).expect("PDF разбирается lopdf");
-    let page_id = *parsed.get_pages().values().next().expect("страница есть");
-    let (name, stream) = image_xobject(&parsed, page_id);
-
-    let dict = &stream.dict;
-    assert_eq!(
-        dict.get(b"Subtype").and_then(Object::as_name).ok(),
-        Some(b"Image" as &[u8]),
-        "XObject должен быть изображением"
-    );
-    assert_eq!(
-        dict.get(b"Width").and_then(Object::as_i64).ok(),
-        Some(8),
-        "ширина исходника в пикселях"
-    );
-    assert_eq!(
-        dict.get(b"Height").and_then(Object::as_i64).ok(),
-        Some(4),
-        "высота исходника в пикселях"
-    );
-    assert_eq!(
-        dict.get(b"ColorSpace").and_then(Object::as_name).ok(),
-        Some(b"DeviceRGB" as &[u8])
-    );
-
-    let content = page_ops(&parsed);
-    let do_op = content
-        .operations
-        .iter()
-        .find(|op| op.operator == "Do")
-        .expect("картинка выводится на страницу");
-    assert_eq!(
-        do_op.operands.first().and_then(|o| o.as_name().ok()),
-        Some(name.as_slice()),
-        "`Do` ссылается на имя из ресурсов"
-    );
-}
-
-#[test]
-fn placement_matrix_and_clip_match_the_anchor() {
-    let bytes = png(8, 4);
-    let mut doc = PdfDocument::new("image-test");
-    let ops = place(
-        &mut doc.resources,
-        "image/png",
-        &bytes,
-        &rect(10.0, 20.0, 80.0, 40.0),
-    )
-    .expect("картинка размещается");
-    doc.with_pages(vec![page(ops)]);
-
-    let parsed = Document::load_mem(&save(&doc)).expect("PDF разбирается lopdf");
-    let content = page_ops(&parsed);
-    let operations = &content.operations;
-
-    let do_index = operations
-        .iter()
-        .position(|op| op.operator == "Do")
-        .expect("`Do` есть");
-    let cm = &operations[do_index - 1];
-    assert_eq!(cm.operator, "cm", "перед `Do` — матрица трансформа");
-    let matrix: Vec<f32> = cm.operands.iter().map(number).collect();
-    assert_eq!(matrix.len(), 6);
-    assert!((matrix[0] - 80.0).abs() < 1e-3, "ширина: {}", matrix[0]);
-    assert!((matrix[3] - 40.0).abs() < 1e-3, "высота: {}", matrix[3]);
-    assert!((matrix[4] - 10.0).abs() < 1e-3, "x: {}", matrix[4]);
-    assert!((matrix[5] - 20.0).abs() < 1e-3, "y: {}", matrix[5]);
-
-    assert!(
-        operations
-            .iter()
-            .position(|op| op.operator == "W")
-            .expect("отсечение есть")
-            < do_index,
-        "отсечение ставится до картинки"
-    );
-    assert_eq!(
-        clip_path(&content),
-        vec![(10.0, 20.0), (90.0, 20.0), (90.0, 60.0), (10.0, 60.0)],
-        "путь отсечения — прямоугольник якоря"
-    );
-}
-
-#[test]
-fn one_media_part_in_five_anchors_gives_one_xobject() {
-    let bytes = png(8, 4);
-    let mut doc = PdfDocument::new("image-dedup");
-    let placements: Vec<Placement<'_>> = (0..5u8)
-        .map(|index| Placement {
-            id: "xl/media/image1.png",
-            mime: "image/png",
-            bytes: &bytes,
-            rect: rect(10.0, 10.0 + f32::from(index) * 30.0, 80.0, 20.0),
-        })
-        .collect();
-    let batch = place_all(&mut doc.resources, &placements);
-    assert!(batch.skipped.is_empty(), "все пять якорей размещаются");
-    doc.with_pages(vec![page(batch.ops)]);
-
-    let parsed = Document::load_mem(&save(&doc)).expect("PDF разбирается lopdf");
-    let page_id = *parsed.get_pages().values().next().expect("страница есть");
-    // `image_xobject` паникует, если в ресурсах не ровно один XObject.
-    let (name, _) = image_xobject(&parsed, page_id);
-    let names = do_names(&page_ops(&parsed));
-    assert_eq!(names.len(), 5, "пять якорей выводят картинку пять раз");
-    assert!(
-        names.iter().all(|do_name| do_name == &name),
-        "все `Do` ссылаются на один и тот же XObject"
-    );
-}
-
-#[test]
-fn image_is_stretched_to_the_anchor_and_clipped() {
-    // Паритет с canvas: `drawImage(bitmap, dx, dy, dw, dh)` заполняет
-    // прямоугольник назначения, не сохраняя пропорции. Исходник 16x4 px (4:1)
-    // растягивается на якорь 40x40 pt (1:1) масштабами 2.5 и 10.
-    let bytes = png(16, 4);
-    let mut doc = PdfDocument::new("image-stretch");
-    let ops = place(
-        &mut doc.resources,
-        "image/png",
-        &bytes,
-        &rect(10.0, 20.0, 40.0, 40.0),
-    )
-    .expect("картинка размещается");
-    doc.with_pages(vec![page(ops)]);
-
-    let parsed = Document::load_mem(&save(&doc)).expect("PDF разбирается lopdf");
-    let content = page_ops(&parsed);
-    let do_index = content
-        .operations
-        .iter()
-        .position(|op| op.operator == "Do")
-        .expect("`Do` есть");
-    let cm = &content.operations[do_index - 1];
-    assert_eq!(cm.operator, "cm", "перед `Do` — матрица трансформа");
-    let matrix: Vec<f32> = cm.operands.iter().map(number).collect();
-    assert_eq!(matrix.len(), 6);
-    // Ширина и высота матрицы равны сторонам якоря: картинка заполняет его
-    // целиком.
-    assert!((matrix[0] - 40.0).abs() < 1e-3, "ширина: {}", matrix[0]);
-    assert!((matrix[3] - 40.0).abs() < 1e-3, "высота: {}", matrix[3]);
-    assert!((matrix[4] - 10.0).abs() < 1e-3, "сдвиг x: {}", matrix[4]);
-    assert!((matrix[5] - 20.0).abs() < 1e-3, "сдвиг y: {}", matrix[5]);
-    // Масштабы по осям независимы: 40/16 = 2.5 и 40/4 = 10 pt/px.
-    let scale_x = matrix[0] / 16.0;
-    let scale_y = matrix[3] / 4.0;
-    assert!(
-        (scale_x - scale_y).abs() > 1.0,
-        "масштабы по осям независимы: {scale_x} и {scale_y}"
-    );
-    let source_aspect = 16.0 / 4.0;
-    let drawn_aspect = matrix[0] / matrix[3];
-    assert!(
-        (drawn_aspect - source_aspect).abs() > 1.0,
-        "пропорции исходника не сохраняются: {drawn_aspect} против {source_aspect}"
-    );
-    assert!(
-        (drawn_aspect - 1.0).abs() < 1e-3,
-        "нарисованное соотношение сторон — соотношение якоря: {drawn_aspect}"
-    );
-    assert_eq!(
-        clip_path(&content),
-        vec![(10.0, 20.0), (50.0, 20.0), (50.0, 60.0), (10.0, 60.0)],
-        "клип по прямоугольнику якоря остаётся"
-    );
-}
-
-#[test]
-fn broken_image_is_skipped_and_the_rest_is_drawn() {
-    let good = png(8, 4);
-    let mut doc = PdfDocument::new("image-test");
-    let batch: Batch = place_all(
-        &mut doc.resources,
-        &[
-            Placement {
-                id: "xl/media/image1.png",
-                mime: "image/png",
-                bytes: &good,
-                rect: rect(10.0, 20.0, 80.0, 40.0),
-            },
-            Placement {
-                id: "xl/media/image2.png",
-                mime: "image/png",
-                bytes: b"broken",
-                rect: rect(10.0, 90.0, 80.0, 40.0),
-            },
-        ],
-    );
-    assert_eq!(batch.skipped.len(), 1, "битая картинка пропущена");
-    assert_eq!(batch.skipped[0].id, "xl/media/image2.png");
-    doc.with_pages(vec![page(batch.ops)]);
-
-    let parsed = Document::load_mem(&save(&doc)).expect("битая картинка не сломала PDF");
-    let page_id = *parsed.get_pages().values().next().expect("страница есть");
-    let (_, stream) = image_xobject(&parsed, page_id);
-    assert_eq!(
-        stream.dict.get(b"Width").and_then(Object::as_i64).ok(),
-        Some(8)
-    );
-    let content = page_ops(&parsed);
-    assert_eq!(
-        content
-            .operations
-            .iter()
-            .filter(|op| op.operator == "Do")
-            .count(),
-        1,
-        "уцелевшая картинка выводится один раз"
-    );
-}
-
-#[test]
-fn no_images_no_xobjects() {
-    let doc = {
-        let mut doc = PdfDocument::new("image-test");
-        doc.with_pages(vec![page(Vec::new())]);
-        doc
-    };
-    let parsed = Document::load_mem(&save(&doc)).expect("PDF разбирается lopdf");
-    let content = page_ops(&parsed);
-    assert!(content.operations.is_empty(), "страница без операций");
-}
-
-// --- сквозные проверки: лист книги → PDF ---
-
-/// Путь к книге в `test-fixtures/xlsx`.
-fn fixture(name: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../test-fixtures/xlsx")
-        .join(name)
-}
-
-/// Экспортировать лист книги настройками по умолчанию.
-fn export_sheet(name: &str, sheet: usize) -> Vec<u8> {
-    let book = doc_converter_xlsx::open(
-        std::fs::read(fixture(name)).unwrap_or_else(|e| panic!("{name}: {e}")),
-    )
-    .unwrap_or_else(|e| panic!("{name} не открылась: {e}"));
-    doc_converter_pdf::PdfExporter::new(doc_converter_pdf::PdfOptions::default())
-        .export_xlsx_sheet(&book, sheet)
-        .unwrap_or_else(|e| panic!("{name} не экспортировалась: {e}"))
-}
-
 /// Имена `Image`-`XObject`'ов документа, их потоки и число `Do`-ссылок.
 ///
-/// `XObject`'ы у printpdf глобальные: словарь один на документ, и страница
-/// ссылается на него целиком. Поэтому имена собираются со всех страниц в
-/// множество, а `Do` считается по ним же.
+/// `XObject`'ы глобальные: словарь один на документ, и страница ссылается на
+/// него целиком. Поэтому имена собираются со всех страниц в множество, а
+/// `Do` считается по ним же.
 fn document_images(doc: &Document) -> (BTreeMap<Vec<u8>, &lopdf::Stream>, usize) {
     let mut images: BTreeMap<Vec<u8>, &lopdf::Stream> = BTreeMap::new();
     for &page_id in doc.get_pages().values() {
@@ -450,6 +243,241 @@ fn document_images(doc: &Document) -> (BTreeMap<Vec<u8>, &lopdf::Stream>, usize)
             .count();
     }
     (images, draws)
+}
+
+/// Лист с картинкой несёт `/Image`-`XObject` с размерами исходника, а страница
+/// ссылается на него `Do`.
+#[test]
+fn png_reaches_pdf_as_image_xobject() {
+    let book = book_with_images(&[(String::from("xl/media/image1.png"), png(8, 4), 80.0, 40.0)]);
+    let doc = export(&book);
+    let (images, draws) = document_images(&doc);
+
+    assert_eq!(images.len(), 1, "одна media-часть — один XObject");
+    let stream = images.values().next().expect("XObject есть");
+    let dict = &stream.dict;
+    assert_eq!(
+        dict.get(b"Width").and_then(Object::as_i64).ok(),
+        Some(8),
+        "ширина исходника в пикселях"
+    );
+    assert_eq!(
+        dict.get(b"Height").and_then(Object::as_i64).ok(),
+        Some(4),
+        "высота исходника в пикселях"
+    );
+    assert_eq!(
+        dict.get(b"ColorSpace").and_then(Object::as_name).ok(),
+        Some(b"DeviceRGB" as &[u8])
+    );
+    assert_eq!(draws, 1, "один якорь — один вывод картинки");
+}
+
+/// Размер страницы в точках из `/MediaBox` первой страницы.
+fn page_size_pt(doc: &Document) -> (f32, f32) {
+    let page_id = *doc.get_pages().values().next().expect("страница есть");
+    let page = doc.get_dictionary(page_id).expect("словарь страницы");
+    let media = page
+        .get(b"MediaBox")
+        .expect("/MediaBox")
+        .as_array()
+        .expect("/MediaBox — массив");
+    let value = |i: usize| media[i].as_float().expect("число");
+    (value(2) - value(0), value(3) - value(1))
+}
+
+/// Картинка растягивается на якорь и отсекается по нему: матрица перед `Do`
+/// несёт стороны якоря в точках, клип — его вершины.
+#[test]
+fn image_is_stretched_to_the_anchor_and_clipped() {
+    // Якорь 40x40 pt при исходнике 16x4 px: пропорции исходника (4:1) не
+    // сохраняются — картинка заполняет якорь (1:1), как `drawImage` canvas-пути.
+    let book = book_with_images(&[(String::from("xl/media/image1.png"), png(16, 4), 40.0, 40.0)]);
+    let doc = export(&book);
+    let (width_pt, height_pt) = page_size_pt(&doc);
+    let content = page_ops(&doc);
+
+    let do_index = content
+        .operations
+        .iter()
+        .position(|op| op.operator == "Do")
+        .expect("`Do` есть");
+    let cm = &content.operations[do_index - 1];
+    assert_eq!(cm.operator, "cm", "перед `Do` — матрица трансформа");
+    let matrix: Vec<f32> = cm.operands.iter().map(number).collect();
+    assert_eq!(matrix.len(), 6);
+    // Якорь 40x40 px раскладки при 96 dpi — это 30x30 pt в PDF (72/96 = 0.75).
+    let side_pt = 40.0 * 72.0 / 96.0;
+    assert!((matrix[0] - side_pt).abs() < 1e-3, "ширина: {}", matrix[0]);
+    assert!((matrix[3] - side_pt).abs() < 1e-3, "высота: {}", matrix[3]);
+    // Перенос и клип лежат внутри страницы: точные координаты задаёт раскладка
+    // (ширина колонки 1 синтетического листа), а не тест.
+    assert!(
+        (0.0..=width_pt).contains(&matrix[4]),
+        "сдвиг x: {}",
+        matrix[4]
+    );
+    assert!(
+        (0.0..=height_pt).contains(&matrix[5]),
+        "сдвиг y: {}",
+        matrix[5]
+    );
+
+    let points = clip_path(&content);
+    assert_eq!(points.len(), 4, "клип — прямоугольник якоря");
+    assert!(
+        points
+            .iter()
+            .all(|(px, py)| (0.0..=width_pt).contains(px) && (0.0..=height_pt).contains(py)),
+        "клип внутри страницы: {points:?}"
+    );
+}
+
+/// Пять якорей одной части — пять `Do` с одним и тем же именем ресурса.
+#[test]
+fn repeated_anchor_draws_the_same_xobject() {
+    let bytes = png(8, 4);
+    let mut builder = WorksheetBuilder::new(PART);
+    builder
+        .push(0, Cell::new(0, 0, CellValue::InlineString("ячейка".into())))
+        .expect("ячейка");
+    let sheet = Sheet::new(
+        WorksheetMeta {
+            name: "Лист".into(),
+            part: PART.into(),
+            state: SheetState::Visible,
+        },
+        SheetContent {
+            cells: builder.finish(),
+            images: (0..5_u8)
+                .map(|index| SheetImage {
+                    name: Some(format!("Picture {index}")),
+                    media: Some(String::from("xl/media/one.png")),
+                    image_id: Some(0),
+                    edit_as: None,
+                    anchor: anchor(80.0, 20.0 + f32::from(index) * 30.0),
+                })
+                .collect(),
+            ..SheetContent::default()
+        },
+    );
+    let book = Workbook::new(
+        vec![sheet],
+        SharedStrings::default(),
+        StyleTable::default(),
+        Theme::default(),
+        false,
+    )
+    .with_images(vec![WorkbookImage {
+        id: 0,
+        media: String::from("xl/media/one.png"),
+        mime: String::from("image/png"),
+        bytes,
+    }]);
+    let doc = export(&book);
+
+    let (images, draws) = document_images(&doc);
+    assert_eq!(images.len(), 1, "одна часть — один XObject");
+    assert_eq!(draws, 5, "пять якорей — пять выводов");
+    let names = do_names(&page_ops(&doc));
+    assert_eq!(names.len(), 5);
+    assert!(
+        names
+            .iter()
+            .all(|name| Some(name.as_slice()) == images.keys().next().map(Vec::as_slice)),
+        "все `Do` ссылаются на один и тот же XObject"
+    );
+}
+
+/// Битые байты не роняют экспорт: картинка пропускается, ячейка остаётся.
+#[test]
+fn broken_image_is_skipped_and_the_rest_is_drawn() {
+    let mut builder = WorksheetBuilder::new(PART);
+    builder
+        .push(0, Cell::new(0, 0, CellValue::InlineString("ячейка".into())))
+        .expect("ячейка");
+    let sheet = Sheet::new(
+        WorksheetMeta {
+            name: "Лист".into(),
+            part: PART.into(),
+            state: SheetState::Visible,
+        },
+        SheetContent {
+            cells: builder.finish(),
+            images: vec![
+                SheetImage {
+                    name: Some(String::from("Picture 1")),
+                    media: Some(String::from("xl/media/good.png")),
+                    image_id: Some(0),
+                    edit_as: None,
+                    anchor: anchor(80.0, 20.0),
+                },
+                SheetImage {
+                    name: Some(String::from("Picture 2")),
+                    media: Some(String::from("xl/media/broken.png")),
+                    image_id: Some(1),
+                    edit_as: None,
+                    anchor: anchor(80.0, 20.0),
+                },
+            ],
+            ..SheetContent::default()
+        },
+    );
+    let book = Workbook::new(
+        vec![sheet],
+        SharedStrings::default(),
+        StyleTable::default(),
+        Theme::default(),
+        false,
+    )
+    .with_images(vec![
+        WorkbookImage {
+            id: 0,
+            media: String::from("xl/media/good.png"),
+            mime: String::from("image/png"),
+            bytes: png(8, 4),
+        },
+        WorkbookImage {
+            id: 1,
+            media: String::from("xl/media/broken.png"),
+            mime: String::from("image/png"),
+            bytes: b"broken".to_vec(),
+        },
+    ]);
+    let doc = export(&book);
+
+    let (images, draws) = document_images(&doc);
+    assert_eq!(images.len(), 1, "битая картинка не завела XObject");
+    assert_eq!(draws, 1, "уцелевшая картинка выводится один раз");
+}
+
+/// Лист без картинок не порождает ни `XObject`'ов, ни `Do`.
+#[test]
+fn sheet_without_images_has_no_xobject() {
+    let book = book_with_images(&[]);
+    let doc = export(&book);
+    let (images, draws) = document_images(&doc);
+
+    assert!(images.is_empty(), "нет картинок — нет XObject'ов");
+    assert_eq!(draws, 0, "нет картинок — нет /Do");
+}
+
+/// Путь к книге в `test-fixtures/xlsx`.
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../test-fixtures/xlsx")
+        .join(name)
+}
+
+/// Экспортировать лист книги настройками по умолчанию.
+fn export_sheet(name: &str, sheet: usize) -> Vec<u8> {
+    let book = doc_converter_xlsx::open(
+        std::fs::read(fixture(name)).unwrap_or_else(|e| panic!("{name}: {e}")),
+    )
+    .unwrap_or_else(|e| panic!("{name} не открылась: {e}"));
+    doc_converter_pdf::PdfExporter::new(doc_converter_pdf::PdfOptions::default())
+        .export_xlsx_sheet(&book, sheet)
+        .unwrap_or_else(|e| panic!("{name} не экспортировалась: {e}"))
 }
 
 /// Лист с картинкой несёт `/Image`-`XObject`, а страница ссылается на него `Do`.
@@ -500,7 +528,7 @@ fn repeated_media_part_gives_one_xobject() {
 
 /// Лист без картинок не порождает ни `XObject`'ов, ни `Do`.
 #[test]
-fn sheet_without_images_has_no_xobject() {
+fn fixture_without_images_has_no_xobject() {
     let bytes = export_sheet("content-mixed-types.xlsx", 0);
     let doc = Document::load_mem(&bytes).expect("PDF разбирается lopdf");
     let (images, draws) = document_images(&doc);

@@ -5,9 +5,9 @@
 //! то, что нужно операциям, которые эмитит продукт, и будущему `annot.rs`;
 //! `serde` не нужен: модель живёт внутри процесса, в файл она попадает через
 //! `content.rs` и словари страницы.
-// Модуль ещё не подключён к продукту — интеграция в следующих волнах
-// (ADR-0022), поэтому dead_code глушится здесь; снять вместе с интеграцией,
-// как в `writer.rs`, `fonts.rs` и `session.rs`.
+// XLSX-путь подключён, но часть операций эмитит только DOCX-путь (на printpdf
+// до следующей волны, ADR-0022), поэтому dead_code глушится здесь; снять
+// вместе с переводом docx-пути.
 #![allow(dead_code)]
 
 use std::fmt;
@@ -739,6 +739,28 @@ pub struct FontId(pub String);
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash)]
 pub struct ExtendedGraphicsStateId(pub String);
 
+/// Расширенное графическое состояние (`/ExtGState`).
+///
+/// printpdf несёт весь набор полей ISO 32000 (8.4.5); продукту нужно только
+/// прозрачность водяного знака (`/CA`/`/ca`), остальные поля остаются по
+/// умолчанию и в словарь не пишутся.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ExtendedGraphicsState {
+    /// `/CA` — непрозрачность обводки в `[0, 1]`.
+    pub current_stroke_alpha: f32,
+    /// `/ca` — непрозрачность заливки в `[0, 1]`.
+    pub current_fill_alpha: f32,
+}
+
+impl Default for ExtendedGraphicsState {
+    fn default() -> Self {
+        Self {
+            current_stroke_alpha: 1.0,
+            current_fill_alpha: 1.0,
+        }
+    }
+}
+
 /// Трансформ, применяемый только к картинке перед отрисовкой.
 #[derive(Debug, Copy, Clone, Default, PartialEq)]
 pub struct XObjectTransform {
@@ -935,6 +957,19 @@ pub enum ColorArray {
 impl Default for ColorArray {
     fn default() -> Self {
         ColorArray::Rgb([0.0, 1.0, 1.0])
+    }
+}
+
+impl ColorArray {
+    /// Компоненты цвета для `/C`; у `Transparent` массив пуст — рамки нет.
+    #[must_use]
+    pub fn to_vec(self) -> Vec<f32> {
+        match self {
+            ColorArray::Transparent => Vec::new(),
+            ColorArray::Gray(gray) => gray.to_vec(),
+            ColorArray::Rgb(rgb) => rgb.to_vec(),
+            ColorArray::Cmyk(cmyk) => cmyk.to_vec(),
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-//! Текст ячейки в операциях printpdf.
+//! Текст ячейки в операциях PDF.
 //!
 //! Перенос — [`break_lines`] из `doc-converter-render`, тот же вызов, что и в
 //! canvas-пути (`xlsx::paint::wrap_layout`), с тем же шрифтом и кеглем в
@@ -16,9 +16,9 @@ use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
 use doc_converter_render::text_measure::{break_lines, measure_text};
 use doc_converter_xlsx::layout::PX_PER_POINT;
 use doc_converter_xlsx::model::VerticalAlign;
-use printpdf::{FontId as PdfFontId, Op, Point, Pt, TextItem};
 
 use crate::layout::{PageGeometry, RectPx};
+use crate::pdf::ops::{FontId, Op, Point, Pt, TextItem};
 use crate::styles::{to_pdf_color, CellStyle};
 
 /// Поля текста внутри ячейки, пиксели раскладки.
@@ -58,7 +58,7 @@ pub fn clip_number(
 pub fn draw_cell_text(
     ops: &mut Vec<Op>,
     fonts: &mut FontRegistry,
-    pdf_font: &PdfFontId,
+    pdf_font: &FontId,
     page: &PageGeometry,
     text: &str,
     style: &CellStyle,

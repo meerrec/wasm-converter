@@ -1,17 +1,16 @@
 //! Картинки листа → изображения-`XObject` на страницах PDF.
 //!
 //! Из реестра книги приходят mime-тип, байты media-части и прямоугольник
-//! якоря в точках; модуль декодирует байты в [`RawImage`], регистрирует его в
-//! [`PdfResources::xobjects`] и отдаёт операции страницы — отсечение по
-//! прямоугольнику и `Op::UseXobject` с матрицей под его размер.
+//! якоря в точках; модуль декодирует байты (`pdf::image::decode`, ADR-0022),
+//! ведёт реестр «байты → имя `XObject`» и отдаёт операции
+//! страницы — отсечение по прямоугольнику и `Op::UseXobject` с матрицей,
+//! растягивающей картинку на якорь.
 //!
-//! Форматы: PNG и JPEG. Их декодирует printpdf, если включены его фичи
-//! `png`/`jpeg` (включены в `Cargo.toml` крейта). Остальные форматы Office
-//! (gif, bmp, webp, tiff, svg) пропускаются с ошибкой
-//! [`DecodeError::UnsupportedFormat`]: каждый декодер — это вес wasm-модуля,
-//! а такие вставки в книгах редки. Пропуск не роняет экспорт листа: [`place`]
-//! возвращает ошибку про одно изображение, а [`place_all`] собирает ошибки
-//! всех в отчёт и отдаёт операции уцелевших.
+//! Форматы: PNG и JPEG. Остальные форматы Office (gif, bmp, webp, tiff, svg)
+//! пропускаются с ошибкой `DecodeError::UnsupportedFormat`: каждый декодер —
+//! это вес wasm-модуля, а такие вставки в книгах редки. Пропуск не роняет
+//! экспорт листа: `place_all` собирает ошибки всех в отчёт и отдаёт
+//! операции уцелевших.
 //!
 //! Картинка растягивается на весь прямоугольник якоря: так же её кладёт
 //! canvas-путь (`drawImage` с явными `dw`/`dh`), и так устроен OOXML без
@@ -21,27 +20,33 @@
 //! парсер начнёт читать `a:srcRect`: тогда вписывание станет обрезкой по
 //! данным файла, а не по несовпадению пропорций.
 //!
-//! Повторно вставленная media-часть не заводит второй `XObject`: имя выводится
-//! из отпечатка байтов, и `register` переиспользует уже собранное
-//! изображение. Это и место, и процессор: книга с одной картинкой в сотне
-//! ячеек декодирует её один раз.
+//! Повторно вставленная media-часть не заводит второй `XObject`: реестр
+//! `Registry` дедуплицирует по байтам, и книга с одной картинкой в сотне
+//! ячеек декодирует её один раз. Имена («X0», «X1», …) раздаёт сессия в
+//! порядке регистрации (`Session::add_image`); painter
+//! кладёт их в реестр, и `place_all` ссылается на них по байтам.
+//!
+//! Путь DOCX (на вендоренной библиотеке до следующей волны) живёт в
+//! `crate::docx::images`: его регистрация в ресурсах вендора отделена от
+//! этого модуля, чтобы тот оставался на своём бэкенде.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::collections::BTreeMap;
 
-use printpdf::{
-    LinePoint, Op, PaintMode, PdfResources, Point, Polygon, PolygonRing, Pt, Px, RawImage, Rect,
-    WindingOrder, XObject, XObjectId, XObjectTransform,
+use crate::pdf::image::DecodedImage;
+use crate::pdf::ops::{
+    LinePoint, Op, PaintMode, Point, Polygon, PolygonRing, Pt, Rect, WindingOrder, XObjectId,
+    XObjectTransform,
 };
 
-/// DPI, при котором первый масштаб из `XObjectTransform::get_ctms` —
-/// тождественный (1 px = 1 pt). Дальше размер картинки на странице задают
-/// только `scale_x`/`scale_y`, то есть растягивание на прямоугольник якоря.
+/// DPI, при котором размер картинки в пикселях совпадает с её размером в
+/// точках (1 px = 1 pt). В матрице [`XObjectTransform`] остаётся только
+/// масштаб на прямоугольник якоря: произведение «размер исходника ×
+/// растягивание» не зависит от пиксельных размеров и сокращается.
 const DPI: f32 = 72.0;
 
 /// Ошибка размещения изображения.
-#[derive(Debug, thiserror::Error)]
-pub enum DecodeError {
+#[derive(Debug, Clone, thiserror::Error)]
+pub(crate) enum DecodeError {
     /// Формат медиачасти не поддержан.
     #[error("unsupported image format {mime}: only PNG and JPEG are supported")]
     UnsupportedFormat {
@@ -49,7 +54,7 @@ pub enum DecodeError {
         mime: String,
     },
     /// Байты не разобрал ни один встроенный декодер: битый файл или формат,
-    /// для которого фичи printpdf не включены.
+    /// для которого фичи не включены.
     #[error("cannot decode image: {0}")]
     Decode(String),
     /// У прямоугольника размещения неположительная сторона.
@@ -62,19 +67,179 @@ pub enum DecodeError {
     },
 }
 
-/// Декодирует байты media-части в [`RawImage`].
+/// Изображение к размещению на странице.
+#[derive(Debug, Clone)]
+pub(crate) struct Placement<'a> {
+    /// Идентификатор media-части (`xl/media/image1.png`) — попадает в отчёт
+    /// о пропуске, чтобы было видно, какую картинку потеряли. Дедупликация
+    /// на него не опирается: ключ — байты, так что разные id с одинаковым
+    /// содержимым дают один `XObject`.
+    pub id: &'a str,
+    /// Mime-тип из `[Content_Types].xml`.
+    pub mime: &'a str,
+    /// Байты media-части.
+    pub bytes: &'a [u8],
+    /// Прямоугольник в точках от левого нижнего угла страницы.
+    pub rect: Rect,
+}
+
+/// Изображение, которое разместить не удалось.
+// Поля читают только тесты: painter берёт из [`Batch`] одни операции, а отчёт
+// о пропусках — предмет unit-тестов модуля.
+#[allow(dead_code)]
+#[derive(Debug)]
+pub(crate) struct Skipped {
+    /// Идентификатор media-части.
+    pub id: String,
+    /// Причина, по которой страница осталась без картинки.
+    pub error: DecodeError,
+}
+
+/// Результат [`place_all`]: операции уцелевших изображений и пропуски.
+#[derive(Debug, Default)]
+pub(crate) struct Batch {
+    /// Операции для страницы, в порядке переданных изображений.
+    pub ops: Vec<Op>,
+    /// Изображения, которые разместить не удалось.
+    pub skipped: Vec<Skipped>,
+}
+
+/// Реестр картинок документа: декодированные изображения и их имена.
 ///
-/// Формат определяется по содержимому (`RawImage::decode_from_bytes` зовёт
-/// `guess_format`) — mime нужен только чтобы отсеять заведомо неподдержанные
-/// `image/*` до разбора байтов и назвать формат в ошибке. Пустой mime и mime
-/// не-картинки не отсеивают: часть могла приехать без `Content_Types`, и
-/// последнее слово всё равно за содержимым.
+/// Декодирование отделено от размещения: `XObject`'ы — глобальные ресурсы,
+/// и все они обязаны лечь в сессию до первой страницы
+/// ([`crate::pdf::session::Session::add_image`]), а операции собираются при
+/// отрисовке каждой страницы ([`place_all`]). Ключ дедупликации — байты
+/// media-части: имя части из [`Placement::id`] приходит от вызывающего и
+/// ничем не подтверждено, а отпечаток байтов честнее и склеивает одинаковые
+/// копии, разложенные по разным частям пакета.
+#[derive(Debug, Default)]
+pub(crate) struct Registry {
+    /// Уникальные декодированные картинки в порядке первой встречи — порядок
+    /// регистрации в сессии.
+    images: Vec<DecodedImage>,
+    /// Индекс в `images` по байтам части.
+    index_by_bytes: BTreeMap<Vec<u8>, usize>,
+    /// Байты, которые декодер не принял, — причина пропуска в [`place_all`].
+    errors: BTreeMap<Vec<u8>, DecodeError>,
+    /// Имя `XObject` по индексу `images`; назначает painter после
+    /// [`crate::pdf::session::Session::add_image`] ([`Registry::assign`]).
+    names: Vec<Option<XObjectId>>,
+}
+
+impl Registry {
+    /// Декодировать новые картинки размещений; известные байты не трогаются.
+    ///
+    /// Битые и неподдержанные запоминаются с причиной: [`place_all`] отметит
+    /// такие размещения в [`Batch::skipped`], не декодируя повторно.
+    pub(crate) fn collect(&mut self, placements: &[Placement<'_>]) {
+        for placement in placements {
+            if self.index_by_bytes.contains_key(placement.bytes)
+                || self.errors.contains_key(placement.bytes)
+            {
+                continue;
+            }
+            match decode(placement.mime, placement.bytes) {
+                Ok(decoded) => {
+                    let index = self.images.len();
+                    self.index_by_bytes.insert(placement.bytes.to_vec(), index);
+                    self.images.push(decoded);
+                    self.names.push(None);
+                }
+                Err(error) => {
+                    self.errors.insert(placement.bytes.to_vec(), error);
+                }
+            }
+        }
+    }
+
+    /// Декодированные картинки в порядке регистрации — аргументы
+    /// [`crate::pdf::session::Session::add_image`].
+    #[must_use]
+    pub(crate) fn decoded(&self) -> &[DecodedImage] {
+        &self.images
+    }
+
+    /// Назначить имя `XObject` картинке с индексом в порядке регистрации.
+    ///
+    /// Имя отдаёт сессия («X0», «X1», …); вызов за пределами числа картинок
+    /// игнорируется — рассинхрон порядка значил бы баг painter'а, а не битый PDF.
+    pub(crate) fn assign(&mut self, index: usize, name: XObjectId) {
+        if let Some(slot) = self.names.get_mut(index) {
+            *slot = Some(name);
+        }
+    }
+
+    /// Имя `XObject` по байтам; `None` — картинка не декодировалась или имя
+    /// ещё не назначено.
+    #[must_use]
+    pub(crate) fn name(&self, bytes: &[u8]) -> Option<&XObjectId> {
+        self.index_by_bytes
+            .get(bytes)
+            .and_then(|&index| self.names.get(index).and_then(Option::as_ref))
+    }
+
+    /// Причина пропуска по байтам, если картинка не декодировалась.
+    #[must_use]
+    pub(crate) fn error(&self, bytes: &[u8]) -> Option<&DecodeError> {
+        self.errors.get(bytes)
+    }
+}
+
+/// Размещает изображения страницы, пропуская битые и неподдержанные.
+///
+/// Порядок операций — порядок `placements`: вызывающий сортирует их в порядке
+/// наложения листа (`Sheet.images`). Ошибка одного изображения не мешает
+/// остальным: причина ложится в [`Batch::skipped`], операции уцелевших — в
+/// [`Batch::ops`], так что одно битое вложение не роняет экспорт листа.
+#[must_use]
+pub(crate) fn place_all(registry: &Registry, placements: &[Placement<'_>]) -> Batch {
+    let mut batch = Batch::default();
+    for placement in placements {
+        match place(registry, placement) {
+            Ok(ops) => batch.ops.extend(ops),
+            Err(error) => batch.skipped.push(Skipped {
+                id: placement.id.to_owned(),
+                error,
+            }),
+        }
+    }
+    batch
+}
+
+/// Операции размещения одного изображения.
+///
+/// # Errors
+///
+/// [`DecodeError::DegenerateRect`], если прямоугольник вырожден (проверяется
+/// до имени: незарегистрированная картинка с нулевой стороной обязана
+/// отчитаться о прямоугольнике, а не о реестре); [`DecodeError::Decode`],
+/// если картинка не декодировалась или имя ей ещё не назначено.
+fn place(registry: &Registry, placement: &Placement<'_>) -> Result<Vec<Op>, DecodeError> {
+    check_rect(&placement.rect)?;
+    if let Some(error) = registry.error(placement.bytes) {
+        return Err(error.clone());
+    }
+    let Some(id) = registry.name(placement.bytes) else {
+        return Err(DecodeError::Decode(String::from(
+            "image was not registered in the document",
+        )));
+    };
+    Ok(placement_ops(id, &placement.rect))
+}
+
+/// Декодирует байты media-части через свой бэкенд ([`crate::pdf::image`]).
+///
+/// Mime нужен только чтобы отсеять заведомо неподдержанные `image/*` до
+/// разбора байтов и назвать формат в ошибке. Пустой mime и mime не-картинки
+/// не отсеивают: часть могла приехать без `Content_Types`, и последнее слово
+/// всё равно за содержимым.
 ///
 /// # Errors
 /// * [`DecodeError::UnsupportedFormat`] — mime начинается с `image/`, но это
 ///   не PNG и не JPEG (в том числе `image/gif` и `image/svg+xml`);
 /// * [`DecodeError::Decode`] — байты не разобрал встроенный декодер.
-pub fn decode(mime: &str, bytes: &[u8]) -> Result<RawImage, DecodeError> {
+fn decode(mime: &str, bytes: &[u8]) -> Result<DecodedImage, DecodeError> {
     let normalized = mime
         .split(';')
         .next()
@@ -86,116 +251,7 @@ pub fn decode(mime: &str, bytes: &[u8]) -> Result<RawImage, DecodeError> {
             mime: mime.to_owned(),
         });
     }
-    RawImage::decode_from_bytes(bytes, &mut Vec::new()).map_err(DecodeError::Decode)
-}
-
-/// Декодирует изображение, кладёт его в `resources` и собирает операции
-/// страницы.
-///
-/// `rect` — прямоугольник в точках с началом координат в левом нижнем углу
-/// страницы: то же, что отдаёт `RectPt::to_pdf`. Картинка растягивается на
-/// него целиком и отсекается по нему же (подробности — `placement_ops`).
-///
-/// Повторный вызов с теми же байтами переиспользует `XObject` первого вызова.
-///
-/// # Errors
-/// Те же, что у [`decode`], плюс [`DecodeError::DegenerateRect`] — проверяется
-/// до декодирования, чтобы не засорять ресурсы `XObject`'ом без операций.
-pub fn place(
-    resources: &mut PdfResources,
-    mime: &str,
-    bytes: &[u8],
-    rect: &Rect,
-) -> Result<Vec<Op>, DecodeError> {
-    check_rect(rect)?;
-    Ok(register(resources, mime, bytes)?.ops(rect))
-}
-
-/// Изображение, уже лежащее в ресурсах документа: имя `XObject` и размеры
-/// исходника в пикселях.
-///
-/// Разделение [`register`] и [`Registered::ops`] нужно, когда прямоугольники
-/// размещения известны не сразу: `XObject`'ы — ресурсы документа, и запись
-/// страниц (`StreamSession`) читает их в момент вывода, поэтому зарегистрировать
-/// все картинки приходится до начала записи, а операции собрать потом. Так
-/// устроен путь DOCX (`crate::docx::images`): медиачасти он регистрирует одним
-/// проходом, а операции собирает при отрисовке страниц.
-#[derive(Debug, Clone)]
-pub struct Registered {
-    /// Имя `XObject` в ресурсах документа.
-    id: XObjectId,
-    /// Ширина исходника в пикселях.
-    width_px: usize,
-    /// Высота исходника в пикселях.
-    height_px: usize,
-}
-
-impl Registered {
-    /// Операции вывода изображения в прямоугольник страницы (точки, начало
-    /// координат — левый нижний угол).
-    ///
-    /// `rect` обязан быть невырожденным: стороны проверяет [`place`] до
-    /// регистрации (`check_rect`), а вызывающий, собирающий операции позже,
-    /// проверяет их сам — иначе нулевая сторона дала бы `NaN` в матрице.
-    #[must_use]
-    pub fn ops(&self, rect: &Rect) -> Vec<Op> {
-        placement_ops(&self.id, self.width_px, self.height_px, rect)
-    }
-}
-
-/// Изображение к размещению на странице.
-#[derive(Debug, Clone)]
-pub struct Placement<'a> {
-    /// Идентификатор media-части (`xl/media/image1.png`) — попадает в отчёт
-    /// о пропуске, чтобы было видно, какую картинку потеряли. Дедупликация
-    /// на него не опирается: ключ — байты (`register`), так что разные id
-    /// с одинаковым содержимым дают один `XObject`.
-    pub id: &'a str,
-    /// Mime-тип из `[Content_Types].xml`.
-    pub mime: &'a str,
-    /// Байты media-части.
-    pub bytes: &'a [u8],
-    /// Прямоугольник в точках от левого нижнего угла страницы.
-    pub rect: Rect,
-}
-
-/// Изображение, которое разместить не удалось.
-#[derive(Debug)]
-pub struct Skipped {
-    /// Идентификатор media-части.
-    pub id: String,
-    /// Причина, по которой страница осталась без картинки.
-    pub error: DecodeError,
-}
-
-/// Результат [`place_all`]: операции уцелевших изображений и пропуски.
-#[derive(Debug, Default)]
-pub struct Batch {
-    /// Операции для страницы, в порядке переданных изображений.
-    pub ops: Vec<Op>,
-    /// Изображения, которые разместить не удалось.
-    pub skipped: Vec<Skipped>,
-}
-
-/// Размещает изображения страницы, пропуская битые и неподдержанные.
-///
-/// Порядок операций — порядок `placements`: вызывающий сортирует их в порядке
-/// наложения листа (`Sheet.images`). Ошибка одного изображения не мешает
-/// остальным: причина ложится в [`Batch::skipped`], операции уцелевших — в
-/// [`Batch::ops`], так что одно битое вложение не роняет экспорт листа.
-#[must_use]
-pub fn place_all(resources: &mut PdfResources, placements: &[Placement<'_>]) -> Batch {
-    let mut batch = Batch::default();
-    for placement in placements {
-        match place(resources, placement.mime, placement.bytes, &placement.rect) {
-            Ok(ops) => batch.ops.extend(ops),
-            Err(error) => batch.skipped.push(Skipped {
-                id: placement.id.to_owned(),
-                error,
-            }),
-        }
-    }
-    batch
+    crate::pdf::image::decode(mime, bytes).map_err(|err| DecodeError::Decode(err.to_string()))
 }
 
 /// PNG и JPEG в написаниях, которые встречаются в книгах Office.
@@ -220,78 +276,22 @@ fn check_rect(rect: &Rect) -> Result<(), DecodeError> {
     })
 }
 
-/// Кладёт изображение в ресурсы или находит уже собранный `XObject`.
-///
-/// Возвращает [`Registered`]: имя `XObject` и размеры исходника в пикселях.
-/// Имя выводится из
-/// содержимого, поэтому одинаковые байты попадают в одну запись ресурсов:
-/// [`RawImage`] переезжает по владению только при первом размещении, повторы
-/// декодирования не требуют. Ключ — именно байты, а не id media-части из
-/// модели: [`place`] никакого id не получает, а строка [`Placement::id`]
-/// приходит от вызывающего и ничем не подтверждена — отпечаток байтов честнее
-/// и вдобавок склеивает одинаковые копии, разложенные по разным частям пакета.
-///
-/// # Errors
-/// [`DecodeError`] от [`decode`] — если такой картинки в ресурсах ещё нет.
-pub fn register(
-    resources: &mut PdfResources,
-    mime: &str,
-    bytes: &[u8],
-) -> Result<Registered, DecodeError> {
-    let id = xobject_id(bytes);
-    if let Some((Px(width), Px(height))) = resources
-        .xobjects
-        .map
-        .get(&id)
-        .and_then(XObject::get_width_height)
-    {
-        return Ok(Registered {
-            id,
-            width_px: width,
-            height_px: height,
-        });
-    }
-    let image = decode(mime, bytes)?;
-    let (width_px, height_px) = (image.width, image.height);
-    resources
-        .xobjects
-        .map
-        .insert(id.clone(), XObject::Image(image));
-    Ok(Registered {
-        id,
-        width_px,
-        height_px,
-    })
-}
-
-/// Имя `XObject` по содержимому media-части — ключ дедупликации.
-///
-/// `DefaultHasher` (SipHash-1-3) — 64 бита: на сотнях картинок книги коллизия
-/// пренебрежимо маловероятна, а имя живёт только внутри одного сеанса сборки
-/// PDF, поэтому межзапусковая стабильность хеша не нужна. Строка имени — из
-/// одних hex-цифр: она становится именем ресурса в `/XObject`, и экранирование
-/// спецсимволов пути media-части тут ни к чему.
-fn xobject_id(bytes: &[u8]) -> XObjectId {
-    let mut hasher = DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    XObjectId(format!("img{:016x}", hasher.finish()))
-}
-
 /// Операции отрисовки зарегистрированного `XObject`: `q`, отсечение, `Do`, `Q`.
 ///
 /// Картинка растягивается на `rect` независимыми масштабами по осям — так же,
 /// как её кладёт canvas-путь; пропорции исходника при этом не сохраняются.
-/// Отсечение по прямоугольнику якоря остаётся: у Image-`XObject` нет ни
-/// `/BBox`, ни `/Rect`, зато клип гарантирует, что пиксели не выйдут за якорь
-/// ни при каких обстоятельствах.
+/// PDF кладёт `Image`-`XObject` в квадрат 1×1, поэтому масштаб — сами стороны
+/// прямоугольника (произведение «размер исходника × растягивание» от
+/// пиксельных размеров не зависит). Отсечение по прямоугольнику якоря
+/// остаётся: у Image-`XObject` нет ни `/BBox`, ни `/Rect`, зато клип
+/// гарантирует, что пиксели не выйдут за якорь ни при каких обстоятельствах.
 ///
 /// `rect` проверен [`check_rect`], поэтому деления на нулевую сторону нет.
-fn placement_ops(id: &XObjectId, width_px: usize, height_px: usize, rect: &Rect) -> Vec<Op> {
+fn placement_ops(id: &XObjectId, rect: &Rect) -> Vec<Op> {
     let transform = XObjectTransform {
         dpi: Some(DPI),
-        // Растягивание точно на якорь: так же картинку кладёт canvas-путь.
-        scale_x: Some(rect.width.0 / px_to_pt(width_px)),
-        scale_y: Some(rect.height.0 / px_to_pt(height_px)),
+        scale_x: Some(rect.width.0),
+        scale_y: Some(rect.height.0),
         translate_x: Some(rect.x),
         translate_y: Some(rect.y),
         rotate: None,
@@ -332,40 +332,25 @@ fn clip_rect(rect: &Rect) -> Polygon {
     }
 }
 
-/// Пиксели изображения в точки при [`DPI`]: 1 px = 1 pt.
-///
-/// Погрешность `f32` (после 2^24 px по стороне) заведомо ниже точности
-/// печати; картинок больше 16 млн пикселей по стороне не бывает.
-#[allow(clippy::cast_precision_loss)]
-fn px_to_pt(px: usize) -> f32 {
-    px as f32
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use printpdf::{OutputImageFormat, RawImageData, RawImageFormat};
+    use std::io::Cursor;
 
-    /// 2x2: красный, зелёный, синий, белый.
-    fn rgb_pixels() -> Vec<u8> {
-        vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255]
-    }
+    use super::{decode, place_all, placement_ops, DecodeError, Registry};
+    use crate::pdf::ops::{Op, PaintMode, Pt, Rect, XObjectId};
 
-    fn raw_image() -> RawImage {
-        RawImage {
-            pixels: RawImageData::U8(rgb_pixels()),
-            width: 2,
-            height: 2,
-            data_format: RawImageFormat::RGB8,
-            tag: Vec::new(),
-        }
-    }
+    /// RGB-пиксели 2x2: красный, зелёный, синий, белый.
+    const RGB: [u8; 12] = [255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
 
-    fn encoded(format: OutputImageFormat) -> Vec<u8> {
-        raw_image()
-            .encode_to_bytes(&[format])
-            .expect("картинка кодируется")
-            .0
+    /// Кодирует RGB-буфер 2x2 в заданный формат — декодер получает байты,
+    /// сгенерированные тем же крейтом `image`.
+    fn encode_rgb(format: image::ImageFormat) -> Vec<u8> {
+        let buffer = image::RgbImage::from_raw(2, 2, RGB.to_vec()).expect("2x2 x 3 байта");
+        let mut bytes = Vec::new();
+        buffer
+            .write_to(&mut Cursor::new(&mut bytes), format)
+            .expect("картинка кодируется");
+        bytes
     }
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -377,34 +362,27 @@ mod tests {
         }
     }
 
-    /// Имя `XObject` из операций размещения (`q`, клип, `Do`, `Q`).
-    fn placed_id(ops: &[Op]) -> XObjectId {
-        match ops.get(2) {
-            Some(Op::UseXobject { id, .. }) => id.clone(),
-            other => panic!("ожидался UseXobject, пришло {other:?}"),
-        }
+    /// Имена `XObject` из операций размещения, по порядку выводов.
+    fn placed_ids(ops: &[Op]) -> Vec<XObjectId> {
+        ops.iter()
+            .filter_map(|op| match op {
+                Op::UseXobject { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
     fn png_is_decoded_pixel_to_pixel() {
-        let image = decode("image/png", &encoded(OutputImageFormat::Png)).expect("PNG разбирается");
-        assert_eq!((image.width, image.height), (2, 2));
-        assert_eq!(image.data_format, RawImageFormat::RGB8);
-        assert_eq!(image.pixels, RawImageData::U8(rgb_pixels()));
-    }
-
-    #[test]
-    fn jpeg_is_decoded_with_its_dimensions() {
-        let image =
-            decode("image/jpeg", &encoded(OutputImageFormat::Jpeg)).expect("JPEG разбирается");
-        assert_eq!((image.width, image.height), (2, 2));
-        // JPEG с потерями: значения пикселей не сверяем, но формата и объёма
-        // данных достаточно, чтобы поймать «декодер вернул пустышку».
-        assert_eq!(image.data_format, RawImageFormat::RGB8);
-        let RawImageData::U8(pixels) = image.pixels else {
-            panic!("ожидались 8-битные пиксели");
-        };
-        assert_eq!(pixels.len(), rgb_pixels().len());
+        let decoded =
+            decode("image/png", &encode_rgb(image::ImageFormat::Png)).expect("PNG разбирается");
+        assert_eq!((decoded.width, decoded.height), (2, 2));
+        assert!(matches!(
+            decoded.format,
+            crate::pdf::image::PixelFormat::Rgb
+        ));
+        assert_eq!(decoded.pixels, RGB);
+        assert!(decoded.alpha.is_none(), "альфы в RGB нет");
     }
 
     #[test]
@@ -426,113 +404,80 @@ mod tests {
     }
 
     #[test]
-    fn mime_parameters_and_case_do_not_break_png() {
-        let bytes = encoded(OutputImageFormat::Png);
-        assert!(decode("IMAGE/PNG; charset=binary", &bytes).is_ok());
-    }
-
-    #[test]
     fn empty_or_foreign_mime_falls_through_to_bytes() {
-        let bytes = encoded(OutputImageFormat::Png);
+        let bytes = encode_rgb(image::ImageFormat::Png);
         assert!(decode("", &bytes).is_ok());
         assert!(decode("application/octet-stream", &bytes).is_ok());
     }
 
-    #[test]
-    fn repeated_bytes_reuse_one_xobject() {
-        let bytes = encoded(OutputImageFormat::Png);
-        let mut resources = PdfResources::default();
-        let first = place(
-            &mut resources,
-            "image/png",
-            &bytes,
-            &rect(0.0, 0.0, 20.0, 10.0),
-        )
-        .expect("первое размещение");
-        let second = place(
-            &mut resources,
-            "image/png",
-            &bytes,
-            &rect(0.0, 40.0, 40.0, 40.0),
-        )
-        .expect("повтор размещается без декодирования");
-        assert_eq!(resources.xobjects.map.len(), 1, "одна запись ресурсов");
-        assert_eq!(placed_id(&first), placed_id(&second), "то же имя `XObject`");
+    /// Реестр с одной зарегистрированной картинкой.
+    fn registry(png: &[u8]) -> (Registry, Vec<u8>) {
+        let mut registry = Registry::default();
+        registry.collect(&[super::Placement {
+            id: "xl/media/image1.png",
+            mime: "image/png",
+            bytes: png,
+            rect: rect(0.0, 0.0, 20.0, 10.0),
+        }]);
+        registry.assign(0, XObjectId(String::from("X0")));
+        (registry, png.to_vec())
     }
 
     #[test]
-    fn different_bytes_get_different_xobjects() {
-        let mut resources = PdfResources::default();
-        let red = encoded(OutputImageFormat::Png);
-        let other = RawImage {
-            pixels: RawImageData::U8(vec![0, 255, 0, 0, 0, 0]),
-            width: 2,
-            height: 1,
-            data_format: RawImageFormat::RGB8,
-            tag: Vec::new(),
-        }
-        .encode_to_bytes(&[OutputImageFormat::Png])
-        .expect("картинка кодируется")
-        .0;
-        let first = place(
-            &mut resources,
-            "image/png",
-            &red,
-            &rect(0.0, 0.0, 20.0, 10.0),
-        )
-        .expect("первая картинка");
-        let second = place(
-            &mut resources,
-            "image/png",
-            &other,
-            &rect(0.0, 40.0, 20.0, 10.0),
-        )
-        .expect("вторая картинка");
-        assert_eq!(resources.xobjects.map.len(), 2);
-        assert_ne!(placed_id(&first), placed_id(&second));
+    fn repeated_bytes_reuse_one_name() {
+        let bytes = encode_rgb(image::ImageFormat::Png);
+        let (registry, bytes) = registry(&bytes);
+        let placements = [
+            super::Placement {
+                id: "xl/media/image1.png",
+                mime: "image/png",
+                bytes: &bytes,
+                rect: rect(0.0, 0.0, 20.0, 10.0),
+            },
+            super::Placement {
+                id: "xl/media/image2.png",
+                mime: "image/png",
+                bytes: &bytes,
+                rect: rect(0.0, 40.0, 40.0, 40.0),
+            },
+        ];
+        let batch = place_all(&registry, &placements);
+        assert!(batch.skipped.is_empty(), "обе картинки размещаются");
+        assert_eq!(registry.decoded().len(), 1, "одна декодированная картинка");
+        let ids = placed_ids(&batch.ops);
+        assert_eq!(ids.len(), 2, "два вывода");
+        assert_eq!(ids[0], ids[1], "то же имя `XObject`");
     }
 
     #[test]
-    fn wide_image_is_stretched_to_the_anchor() {
+    fn different_bytes_get_different_names() {
+        let red = encode_rgb(image::ImageFormat::Png);
+        let other = encode_rgb(image::ImageFormat::Jpeg);
+        let mut registry = Registry::default();
+        registry.collect(&[
+            super::Placement {
+                id: "xl/media/image1.png",
+                mime: "image/png",
+                bytes: &red,
+                rect: rect(0.0, 0.0, 20.0, 10.0),
+            },
+            super::Placement {
+                id: "xl/media/image2.jpeg",
+                mime: "image/jpeg",
+                bytes: &other,
+                rect: rect(0.0, 40.0, 20.0, 10.0),
+            },
+        ]);
+        assert_eq!(registry.decoded().len(), 2);
+        registry.assign(0, XObjectId(String::from("X0")));
+        registry.assign(1, XObjectId(String::from("X1")));
+        assert_ne!(registry.name(&red), registry.name(&other));
+    }
+
+    #[test]
+    fn ops_clip_the_rect_and_stretch_the_image() {
         let id = XObjectId("test".to_owned());
-        // 16x4 px в якорь 40x40 pt: масштабы по осям независимы (2.5 и 10),
-        // пропорции исходника не сохраняются — паритет с canvas-путём.
-        let ops = placement_ops(&id, 16, 4, &rect(10.0, 20.0, 40.0, 40.0));
-        let Some(Op::UseXobject { transform, .. }) = ops.get(2) else {
-            panic!("ожидался XObject");
-        };
-        assert_eq!(
-            transform.scale_x,
-            Some(2.5),
-            "ширина якоря / ширина исходника"
-        );
-        assert_eq!(
-            transform.scale_y,
-            Some(10.0),
-            "высота якоря / высота исходника"
-        );
-        assert_eq!(transform.translate_x, Some(Pt(10.0)));
-        assert_eq!(transform.translate_y, Some(Pt(20.0)));
-    }
-
-    #[test]
-    fn tall_image_is_stretched_to_the_anchor() {
-        let id = XObjectId("test".to_owned());
-        // 4x16 px в якорь 40x40 pt: 10 по x и 2.5 по y.
-        let ops = placement_ops(&id, 4, 16, &rect(10.0, 20.0, 40.0, 40.0));
-        let Some(Op::UseXobject { transform, .. }) = ops.get(2) else {
-            panic!("ожидался XObject");
-        };
-        assert_eq!(transform.scale_x, Some(10.0));
-        assert_eq!(transform.scale_y, Some(2.5));
-        assert_eq!(transform.translate_x, Some(Pt(10.0)));
-        assert_eq!(transform.translate_y, Some(Pt(20.0)));
-    }
-
-    #[test]
-    fn ops_clip_the_rect_and_fit_the_image() {
-        let id = XObjectId("test".to_owned());
-        let ops = placement_ops(&id, 96, 48, &rect(10.0, 20.0, 48.0, 24.0));
+        let ops = placement_ops(&id, &rect(10.0, 20.0, 48.0, 24.0));
         assert_eq!(ops.len(), 4, "q, отсечение, Do, Q");
 
         let Some(Op::DrawPolygon { polygon }) = ops.get(1) else {
@@ -554,65 +499,69 @@ mod tests {
         let Some(Op::UseXobject { transform, .. }) = ops.get(2) else {
             panic!("ожидался XObject");
         };
-        assert_eq!(transform.dpi, Some(DPI));
+        // Квадрат 1×1 картинки растягивается на сам якорь: масштабы — стороны
+        // прямоугольника, перенос — его левый нижний угол.
+        assert_eq!(transform.scale_x, Some(48.0));
+        assert_eq!(transform.scale_y, Some(24.0));
         assert_eq!(transform.translate_x, Some(Pt(10.0)));
         assert_eq!(transform.translate_y, Some(Pt(20.0)));
-        // 96 px при 72 dpi — это 96 pt, поэтому scale_x = 48/96 = 0.5.
-        let scale_x = transform.scale_x.expect("масштаб задан");
-        let scale_y = transform.scale_y.expect("масштаб задан");
-        assert!((scale_x - 0.5).abs() < f32::EPSILON, "scale_x = {scale_x}");
-        assert!((scale_y - 0.5).abs() < f32::EPSILON, "scale_y = {scale_y}");
     }
 
     #[test]
-    fn degenerate_rect_is_rejected_before_decoding() {
-        let mut resources = PdfResources::default();
-        let bytes = encoded(OutputImageFormat::Png);
-        let error = place(
-            &mut resources,
-            "image/png",
-            &bytes,
-            &rect(0.0, 0.0, 0.0, 10.0),
-        )
-        .expect_err("нулевая ширина");
-        assert!(matches!(error, DecodeError::DegenerateRect { .. }));
+    fn degenerate_rect_is_skipped_without_ops() {
+        let bytes = encode_rgb(image::ImageFormat::Png);
+        let (registry, bytes) = registry(&bytes);
+        let batch = place_all(
+            &registry,
+            &[super::Placement {
+                id: "xl/media/image1.png",
+                mime: "image/png",
+                bytes: &bytes,
+                rect: rect(0.0, 0.0, 0.0, 10.0),
+            }],
+        );
+        assert!(batch.ops.is_empty(), "нулевая ширина — операций нет");
+        assert_eq!(batch.skipped.len(), 1);
         assert!(
-            resources.xobjects.map.is_empty(),
-            "ресурсы не должны засоряться XObject'ом без операций"
+            matches!(batch.skipped[0].error, DecodeError::DegenerateRect { .. }),
+            "{:?}",
+            batch.skipped[0].error
         );
     }
 
     #[test]
-    fn empty_placements_give_empty_batch() {
-        let mut resources = PdfResources::default();
-        let batch = place_all(&mut resources, &[]);
-        assert!(batch.ops.is_empty());
-        assert!(batch.skipped.is_empty());
-        assert!(resources.xobjects.map.is_empty());
-    }
-
-    #[test]
     fn broken_image_does_not_break_the_batch() {
-        let mut resources = PdfResources::default();
-        let good = encoded(OutputImageFormat::Png);
+        let good = encode_rgb(image::ImageFormat::Png);
+        let mut registry = Registry::default();
         let placements = [
-            Placement {
+            super::Placement {
                 id: "xl/media/image1.png",
                 mime: "image/png",
                 bytes: &good,
                 rect: rect(10.0, 10.0, 40.0, 20.0),
             },
-            Placement {
+            super::Placement {
                 id: "xl/media/image2.png",
                 mime: "image/png",
                 bytes: b"broken",
                 rect: rect(10.0, 40.0, 40.0, 20.0),
             },
         ];
-        let batch = place_all(&mut resources, &placements);
+        registry.collect(&placements);
+        registry.assign(0, XObjectId(String::from("X0")));
+        let batch = place_all(&registry, &placements);
         assert_eq!(batch.skipped.len(), 1, "битая картинка пропущена");
         assert_eq!(batch.skipped[0].id, "xl/media/image2.png");
         assert_eq!(batch.ops.len(), 4, "операции уцелевшей картинки на месте");
-        assert_eq!(resources.xobjects.map.len(), 1);
+        assert_eq!(registry.decoded().len(), 1);
+    }
+
+    #[test]
+    fn empty_placements_give_empty_batch() {
+        let registry = Registry::default();
+        let batch = place_all(&registry, &[]);
+        assert!(batch.ops.is_empty());
+        assert!(batch.skipped.is_empty());
+        assert!(registry.decoded().is_empty());
     }
 }

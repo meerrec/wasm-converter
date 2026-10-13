@@ -7,9 +7,9 @@
 use doc_converter_render::display_list::Color;
 use doc_converter_xlsx::paint::resolve_color;
 use doc_converter_xlsx::{Border, BorderSide, Theme};
-use printpdf::{Line, LinePoint, Op, Point, Pt};
 
 use crate::layout::RectPt;
+use crate::pdf::ops::{Line, LinePoint, Op, Point, Pt};
 use crate::styles::{border_style, to_pdf_color};
 
 /// Есть ли у рамки хотя бы одна видимая сторона.
@@ -35,7 +35,7 @@ pub fn draw_border(
     let (x0, y0) = (pdf.x.0, pdf.y.0);
     let (x1, y1) = (x0 + pdf.width.0, y0 + pdf.height.0);
 
-    // Стороны в координатах printpdf: начало — левый нижний угол.
+    // Стороны в координатах PDF: начало — левый нижний угол.
     for (side, from, to) in [
         (border.top, (x0, y1), (x1, y1)),
         (border.bottom, (x0, y0), (x1, y0)),

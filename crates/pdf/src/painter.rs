@@ -1,4 +1,4 @@
-//! Сборка страниц PDF: обход ячеек листа и запись операций printpdf.
+//! Сборка страниц PDF: обход ячеек листа и запись операций.
 //!
 //! Порядок слоёв повторяет оба «экранных» пути (Excel и `xlsx::paint`):
 //! сначала заливки, поверх них рамки, поверх всего текст. Поэтому обход листа
@@ -26,11 +26,7 @@ use doc_converter_render::text_measure::measure_text;
 use doc_converter_xlsx::layout::{SheetLayout, PX_PER_POINT};
 use doc_converter_xlsx::paint::{anchor_rect, display_text};
 use doc_converter_xlsx::{CellValue, Orientation, Sheet, Workbook, WorkbookImage};
-use printpdf::streaming::StreamSession;
-use printpdf::{
-    ExtendedGraphicsState, ExtendedGraphicsStateId, FontId, Line, LinePoint, Mm, Op, PdfDocument,
-    PdfPage, PdfResources, PdfSaveOptions, PdfWarnMsg, Point, Pt, TextItem, TextMatrix,
-};
+use lopdf::Dictionary;
 
 use crate::fonts::{EmbeddedFonts, Face};
 use crate::image;
@@ -38,6 +34,13 @@ use crate::layout::{PageGeometry, RectPx};
 use crate::options::{Margins, PageConfig, PageOrientation, PdfOptions};
 use crate::overlay::{self, Align, OverlayMargins, PageContext, Watermark, WatermarkLayer};
 use crate::pagination::{paginate, print_scale, PageSlice, PaintedCell, SheetPage};
+use crate::pdf::content;
+use crate::pdf::fonts::PreparedFont;
+use crate::pdf::ops::{
+    ExtendedGraphicsState, ExtendedGraphicsStateId, FontId, Line, LinePoint, Op, Point, Pt,
+    TextItem, TextMatrix, XObjectId,
+};
+use crate::pdf::session::Session;
 use crate::styles::to_pdf_color;
 use crate::{annot, background, border, chart, fonts, text, PdfError};
 
@@ -64,15 +67,15 @@ const STAMP_FONT_SIZE_PT: f32 = 10.0;
 
 /// Имя `/GS` водяного знака в ресурсах документа.
 ///
-/// Фиксировано, а не случайно: операции знака собирает и зондовый проход, где
-/// `doc.resources` недоступен, — имя должно быть известно обеим сторонам.
+/// Фиксировано, а не случайно: операции знака собирает и зондовый проход,
+/// который идёт до начала сессии, — имя должно быть известно обеим сторонам.
 const WATERMARK_GS: &str = "WatermarkAlpha";
 
 /// Открыть лист книги и собрать PDF всеми его страницами.
 ///
 /// # Errors
 /// [`PdfError::NoSuchSheet`], если индекса нет в книге; [`PdfError::Font`],
-/// если printpdf не принял байты шрифта; [`PdfError::Io`], если приёмник
+/// если байты шрифта не разобрались; [`PdfError::Io`], если приёмник
 /// вернул ошибку записи.
 pub fn export(
     book: &Workbook,
@@ -88,14 +91,14 @@ pub fn export(
 ///
 /// Частный случай [`export_book_to`] с одним листом: запись страниц общая,
 /// поэтому одиночный экспорт и книга не расходятся ни пагинацией, ни
-/// закладками. Страница живёт только до [`StreamSession::write_page`]:
+/// закладками. Страница живёт только до [`Session::write_page`]:
 /// содержимое освобождается сразу после записи, поэтому пик не растёт с числом
 /// страниц. Хвост (закладки, каталог, xref) дописывается в конце — приёмнику
 /// не нужен `seek`.
 ///
 /// # Errors
 /// [`PdfError::NoSuchSheet`], если индекса нет в книге; [`PdfError::Font`],
-/// если printpdf не принял байты шрифта; [`PdfError::Io`], если приёмник
+/// если байты шрифта не разобрались; [`PdfError::Io`], если приёмник
 /// вернул ошибку записи.
 pub fn export_to<W: Write>(
     book: &Workbook,
@@ -108,36 +111,39 @@ pub fn export_to<W: Write>(
 
 /// Добавить в набор символы, которые страницы листа выводят каждым начертанием.
 ///
-/// Зонды нужны потому, что `StreamSession::begin` подрезает шрифты до записи
-/// первой страницы (`prepare_fonts`), а подрезка перенумеровывает глифы:
-/// символ, не попавший в зонды, выведется нулевым глифом — молча. Поэтому
-/// символы собираются до записи, и источник у них один — та же [`draw_page`],
-/// что пойдёт в PDF: проход зондов рисует страницы и выбрасывает операции,
+/// Зонды нужны потому, что сессия подрезает шрифты до записи первой страницы
+/// ([`Session::add_font`]), а подрезка перенумеровывает глифы: символ, не
+/// попавший в зонды, выведется нулевым глифом — молча. Поэтому символы
+/// собираются до записи, и источник у них один — та же [`draw_page`], что
+/// пойдёт в PDF: проход зондов рисует страницы и выбрасывает операции,
 /// оставляя только символы. Вариант «пре-скан текста» стоил бы почти столько
 /// же (перенос и клиппинг чисел всё равно считает `break_lines`), но
 /// разъехался бы с `draw_page` при первой правке клиппинга или переноса;
-/// вариант «полный шрифт» в форке недоступен: `PdfSaveOptions::subset_fonts`
-/// нигде не читается (`grep subset_fonts vendor/printpdf/src` — определение
-/// поля и дефолт), а полный `DejaVuSans` весит ~760 `КиБ` на начертание
-/// против бюджета `content-dense` в 32 `КиБ`.
+/// вариант «полный шрифт» весил бы ~760 `КиБ` на начертание против бюджета
+/// `content-dense` в 32 `КиБ`.
 ///
 /// Замер двойной отрисовки (release, macOS, `scale-500-pages.xlsx` — 480
 /// страниц): проход зондов 35 мс, экспорт целиком 162 мс против 152 мс до
 /// правки (+7 %): вторая отрисовка с прогретым кэшем метрик дешевле, чем та
-/// экономия, которую даёт стриминговая запись против `doc.save`. Полные числа
-/// 50/100/500 — в `docs/sprint-7/streaming-report.md` (B3).
+/// экономия, которую даёт стриминговая запись. Полные числа 50/100/500 — в
+/// `docs/sprint-7/streaming-report.md` (B3).
 ///
 /// Диаграммы зондируются наравне с текстом: их подписи — такие же символы,
 /// которых в ячейках может не быть, и без них подрезка оставила бы у
 /// диаграммы нулевые глифы. Раскладка при этом не считается второй раз — она
 /// приходит готовой ([`chart_layouts`]).
 ///
+/// Ключ накопления — [`Face`], а не [`FontId`]: зонды идут до сессии, и id
+/// шрифтов ещё не существует; обратное сопоставление делает
+/// [`EmbeddedFonts::face`] по id, которые painter сам построил заранее
+/// ([`EmbeddedFonts::from_faces`]).
+///
 /// Набор — параметр, а не результат: книга собирает его со всех своих листов
 /// (шрифты подрезаются один раз на документ), поэтому лист добавляет в общий
 /// набор свои символы, а не заводит собственный.
 #[allow(clippy::too_many_arguments)] // Как у `draw_page`: связывать их структурой — прятать порядок слоёв.
 fn collect_glyphs(
-    glyphs: &mut BTreeMap<FontId, BTreeSet<char>>,
+    glyphs: &mut BTreeMap<Face, BTreeSet<char>>,
     sheet: SheetFrame<'_>,
     pages: &[SheetPage<'_>],
     geometry: &PageGeometry,
@@ -153,8 +159,8 @@ fn collect_glyphs(
         let page_geom = geometry.with_page_top_px(sheet_page.slice.offset_y);
         let mut ops: Vec<Op> = Vec::new();
         // Картинки в зондовый проход не передаются: `Op::UseXobject` символов
-        // не несёт, а `XObject`'ы к этому моменту уже зарегистрированы —
-        // повторное размещение стоило бы декодирования и клипов впустую.
+        // не несёт, а `XObject`'ы к этому моменту уже декодированы —
+        // повторное размещение стоило бы клипов впустую.
         // Колонтитулы и водяной знак рисуются наравне с ячейками: их символы
         // обязаны попасть в подрезку шрифтов.
         draw_page(
@@ -171,7 +177,7 @@ fn collect_glyphs(
         );
         for op in &ops {
             if let Op::WriteText { font, items, .. } = op {
-                let set = glyphs.entry(font.clone()).or_default();
+                let set = glyphs.entry(fonts.face(font)).or_default();
                 for item in items {
                     if let TextItem::Text(text) = item {
                         set.extend(text.chars());
@@ -180,30 +186,6 @@ fn collect_glyphs(
             }
         }
     }
-}
-
-/// Кадры-зонды из собранных символов: по одному на начертание, с одной
-/// текстовой операцией из всех его символов.
-///
-/// Размер страницы-зонда printpdf не читает — берётся с листа-донора, чтобы
-/// зонд не отличался от страниц документа даже габаритами.
-fn probe_pages_from(
-    glyphs: BTreeMap<FontId, BTreeSet<char>>,
-    geometry: &PageGeometry,
-) -> Vec<PdfPage> {
-    glyphs
-        .into_iter()
-        .map(|(font, chars)| {
-            PdfPage::new(
-                Mm::from(Pt(geometry.width_pt())),
-                Mm::from(Pt(geometry.height_pt())),
-                vec![Op::WriteText {
-                    items: vec![TextItem::Text(chars.into_iter().collect())],
-                    font,
-                }],
-            )
-        })
-        .collect()
 }
 
 /// Прямоугольник ячейки в координатах страницы: из координат листа вычитается
@@ -241,35 +223,36 @@ fn chart_layouts(sheet: &Sheet, layout: &SheetLayout) -> Vec<chart::Layout> {
         .collect()
 }
 
-/// Операции картинок листа по страницам: индекс тот же, что у
+/// Размещения картинок листа по страницам: индекс тот же, что у
 /// [`SheetPage`] в [`SheetPagination::pages`](crate::pagination::SheetPagination).
-///
-/// `resources` — ресурсы документа, а не страницы: `XObject`'ы общие для всех
-/// страниц, и `StreamSession` переводит `Op::UseXobject` по
-/// `pdf.resources.xobjects`, поэтому регистрация обязана пройти до начала
-/// записи. Одинаковые байты дают один `XObject` ([`image::place_all`]): одна и
-/// та же media-часть в нескольких якорях — один объект на документ.
 ///
 /// Якорь берётся той же геометрией, что у диаграмм ([`anchor_rect`] и
 /// [`page_rect`]), а видимая часть — пересечение с полосой страницы: так же
 /// нарезает картинку canvas-путь (`xlsx::paint::draw_images`), растягивая её
 /// на видимый прямоугольник. Картинка с повреждённым якорем (неположительная
 /// сторона или сторона за пределами страницы) пропускается.
-fn image_ops(
-    resources: &mut PdfResources,
-    book: &Workbook,
+///
+/// Декодирование и регистрация отделены от размещения: `XObject`'ы — ресурсы
+/// документа, и все они обязаны лечь в сессию до первой страницы
+/// ([`Session::add_image`]), поэтому байты собираются одним проходом
+/// ([`image::Registry::collect`] в [`prepare_book`]), а операции — другим
+/// ([`image_ops`]), когда имена уже назначены. Одинаковые байты дают один
+/// `XObject`: одна и та же media-часть в нескольких якорях — один объект на
+/// документ.
+fn image_placements<'b>(
+    book: &'b Workbook,
     sheet: &Sheet,
     layout: &SheetLayout,
     page: &PageGeometry,
     pages: &[SheetPage<'_>],
-) -> Vec<Vec<Op>> {
+) -> Vec<Vec<image::Placement<'b>>> {
     let registry: BTreeMap<u32, &WorkbookImage> = book
         .images()
         .iter()
         .map(|image| (image.id, image))
         .collect();
     let (_, content_h_px) = page.content_px();
-    let mut pages_ops = Vec::with_capacity(pages.len());
+    let mut pages_placements = Vec::with_capacity(pages.len());
     for sheet_page in pages {
         let band_top = sheet_page.slice.offset_y;
         let band_bottom = band_top + content_h_px;
@@ -298,9 +281,21 @@ fn image_ops(
                 rect: page.rect_to_pt(visible).to_pdf(page.height_pt()),
             });
         }
-        pages_ops.push(image::place_all(resources, &placements).ops);
+        pages_placements.push(placements);
     }
-    pages_ops
+    pages_placements
+}
+
+/// Операции картинок по страницам: [`Op::UseXobject`] с именами из реестра.
+///
+/// Вызывается после того, как painter назначил имена `XObject`'ам
+/// ([`image::Registry::assign`]): до этого [`image::place_all`] отметил бы
+/// каждую картинку пропуском «не зарегистрирована».
+fn image_ops(registry: &image::Registry, placements: &[Vec<image::Placement<'_>>]) -> Vec<Vec<Op>> {
+    placements
+        .iter()
+        .map(|page| image::place_all(registry, page).ops)
+        .collect()
 }
 
 /// Линии печатной сетки: по рёбрам ячеек области печати.
@@ -778,8 +773,11 @@ struct PreparedSheet<'a> {
     page: PageGeometry,
     pagination: crate::pagination::SheetPagination<'a>,
     charts: Vec<chart::Layout>,
-    /// Операции картинок по страницам; пусто до регистрации `XObject`'ов в
-    /// ресурсах документа ([`image_ops`]).
+    /// Размещения картинок по страницам: по ним [`image::Registry::collect`]
+    /// декодирует уникальные части до начала сессии.
+    placements: Vec<Vec<image::Placement<'a>>>,
+    /// Операции картинок по страницам; пусто, пока реестр не получил имена
+    /// `XObject`'ов от сессии ([`image_ops`]).
     images: Vec<Vec<Op>>,
 }
 
@@ -901,6 +899,7 @@ fn prepare_sheet<'a>(
         page,
         pagination,
         charts,
+        placements: Vec::new(),
         images: Vec::new(),
     })
 }
@@ -917,14 +916,14 @@ fn prepare_sheet<'a>(
 /// Индексы проверяются до первой записи: приёмник уже принял бы байты, и
 /// ошибка на середине оставила бы обрезанный PDF.
 ///
-/// Шрифты подрезаются один раз на документ ([`StreamSession::begin`]), поэтому
+/// Шрифты подрезаются один раз на документ ([`Session::add_font`]), поэтому
 /// символы собираются со всех листов в общий набор: символ листа, не попавший в
 /// зонды, вывелся бы нулевым глифом — молча.
 ///
 /// # Errors
 /// [`PdfError::NoSuchSheet`], если какого-то индекса нет в книге;
 /// [`PdfError::NoSheets`], если в книге нет листов; [`PdfError::Font`], если
-/// printpdf не принял байты шрифта; [`PdfError::Io`], если приёмник вернул
+/// байты шрифта не разобрались; [`PdfError::Io`], если приёмник вернул
 /// ошибку записи.
 pub(crate) fn export_book_to<W: Write>(
     book: &Workbook,
@@ -932,30 +931,20 @@ pub(crate) fn export_book_to<W: Write>(
     options: &PdfOptions,
     out: &mut W,
 ) -> Result<(), PdfError> {
-    let (mut doc, prepared, first_page_geometry) = prepare_book(book, sheets, options)?;
-    write_book(
-        &mut doc,
-        &prepared,
-        book,
-        options,
-        &first_page_geometry,
-        out,
-    )
+    let (mut prepared, title, mut registry) = prepare_book(book, sheets, options)?;
+    write_book(&mut prepared, book, options, &mut registry, &title, out)
 }
 
-/// Подготовить листы книги и документ под запись: открыть листы, завести
-/// документ с метаданными и глобальными ресурсами (прозрачность водяного знака,
-/// картинки).
+/// Подготовить листы книги: открыть листы, посчитать заголовок документа и
+/// декодировать картинки в реестр.
 ///
 /// Пустая книга отсекается здесь же: у PDF без страниц нет каталога страниц, и
-/// файл невалиден. Геометрия первой страницы возвращается копией: она нужна
-/// зондам до записи, а `prepared` к тому моменту правится регистрацией
-/// картинок — ссылкой из него её уже не взять.
+/// файл невалиден.
 fn prepare_book<'a>(
     book: &'a Workbook,
     sheets: &[usize],
     options: &PdfOptions,
-) -> Result<(PdfDocument, Vec<PreparedSheet<'a>>, PageGeometry), PdfError> {
+) -> Result<(Vec<PreparedSheet<'a>>, String, image::Registry), PdfError> {
     let selection: Vec<usize> = if sheets.is_empty() {
         (0..book.sheets().len()).collect()
     } else {
@@ -965,7 +954,7 @@ fn prepare_book<'a>(
         .iter()
         .map(|&index| prepare_sheet(book, index, options))
         .collect::<Result<Vec<_>, _>>()?;
-    let first_page_geometry = prepared.first().ok_or(PdfError::NoSheets)?.page;
+    prepared.first().ok_or(PdfError::NoSheets)?;
 
     // Заголовок документа: заданный пользователем, иначе — имя листа, если он
     // один (так же, как в одиночном экспорте). У книги своего имени нет:
@@ -979,89 +968,66 @@ fn prepare_book<'a>(
     } else {
         options.title.clone()
     };
-    let mut doc = PdfDocument::new(&title);
-    doc.metadata.info.author.clone_from(&options.author);
-    doc.metadata.info.subject.clone_from(&options.subject);
-    doc.metadata.info.keywords.clone_from(&options.keywords);
 
-    // Прозрачность колонтитула выражается только extended graphics state:
-    // ресурс обязан лечь в документ до `StreamSession::begin` — глобальный
-    // словарь `/ExtGState` собирается там, а сессия занимает документ
-    // заимствованием и регистрировать после её начала уже некуда.
-    if let Some(watermark) = options.overlay.watermark.as_ref() {
-        if overlay::needs_extgstate(watermark.opacity) && !watermark.text.trim().is_empty() {
-            let alpha = overlay::clamp_opacity(watermark.opacity);
-            doc.resources.extgstates.map.insert(
-                watermark_gs_id(),
-                ExtendedGraphicsState::default()
-                    .with_current_fill_alpha(alpha)
-                    .with_current_stroke_alpha(alpha),
-            );
-        }
-    }
-
-    // Картинки — по той же причине: `Op::UseXobject` переводится по
-    // `pdf.resources.xobjects`, и объекты должны лежать в ресурсах до начала
-    // записи.
+    // Картинки декодируются с дедупликацией по байтам до начала сессии:
+    // `XObject`'ы — глобальные ресурсы, и добавить их после первой страницы
+    // нельзя. Имена им раздаст сессия ([`Session::add_image`]) в порядке
+    // регистрации.
+    let mut registry = image::Registry::default();
     for sheet in &mut prepared {
-        sheet.images = image_ops(
-            &mut doc.resources,
+        sheet.placements = image_placements(
             book,
             sheet.sheet,
             &sheet.layout,
             &sheet.page,
             &sheet.pagination.pages,
         );
+        for page in &sheet.placements {
+            registry.collect(page);
+        }
     }
-    Ok((doc, prepared, first_page_geometry))
+    Ok((prepared, title, registry))
 }
 
-/// Дописать в подготовленный документ закладки и шрифты, собрать зонды глифов и
-/// записать страницы; хвост (каталог, xref) допишет [`StreamSession::finish`] —
-/// приёмнику не нужен `seek`.
+/// Зарегистрировать глобальные ресурсы в сессии, собрать зонды глифов и
+/// записать страницы; хвост (закладки, каталог, xref) допишет
+/// [`Session::finish`] — приёмнику не нужен `seek`.
 ///
-/// Шрифты подрезаются один раз на документ ([`StreamSession::begin`]), поэтому
+/// Шрифты подрезаются один раз на документ ([`Session::add_font`]), поэтому
 /// символы собираются со всех листов в общий набор: символ листа, не попавший в
 /// зонды, вывелся бы нулевым глифом — молча. Нумерация зондов та же, что у
 /// записи: `&P`/`&N` в колонтитулах обязаны совпасть.
+// Регистрация шрифтов, картинок и ExtGState — один проход «до первой страницы»,
+// выносить его в функции значило бы разрывать порядок регистрации.
+#[allow(clippy::too_many_lines)]
 fn write_book<W: Write>(
-    doc: &mut PdfDocument,
-    prepared: &[PreparedSheet<'_>],
+    prepared: &mut [PreparedSheet<'_>],
     book: &Workbook,
     options: &PdfOptions,
-    first_page_geometry: &PageGeometry,
+    registry: &mut image::Registry,
+    title: &str,
     out: &mut W,
 ) -> Result<(), PdfError> {
-    let mut warnings: Vec<PdfWarnMsg> = Vec::new();
-    // Закладка — на лист, и ведёт на его первую страницу. `pages` — длина
-    // листа: по ней `add_outline` отсчитывает начало следующего. Записывается
-    // до страниц: printpdf резервирует их id заранее, и закладка обязана
-    // попасть в тот же документ.
-    let spans: Vec<annot::SheetSpan<'_>> = prepared
-        .iter()
-        .map(|sheet| annot::SheetSpan {
-            name: &sheet.sheet.meta.name,
-            pages: sheet.pagination.pages.len(),
-        })
-        .collect();
-    annot::add_outline(doc, &spans, options.bookmarks);
-
+    // Начертания книги: ими ограничивается набор встраиваемых шрифтов.
     let mut faces = fonts::FaceSet::default();
-    for sheet in prepared {
+    for sheet in prepared.iter() {
         faces.merge(sheet.pagination.faces);
     }
-    let embedded = fonts::embed(doc, &mut warnings, faces)?;
+    // Имена шрифтов («F0», «F1», …) строятся до сессии, но тем же порядком
+    // начертаний, каким их зарегистрирует [`Session::add_font`]: зондовый
+    // проход обязан ссылаться на шрифты, которых ещё нет.
+    let embedded = EmbeddedFonts::from_faces(faces);
 
     let page_count: usize = prepared
         .iter()
         .map(|sheet| sheet.pagination.pages.len())
         .sum();
-    let mut registry = FontRegistry::new(FONT_CACHE);
-    let mut glyphs: BTreeMap<FontId, BTreeSet<char>> = BTreeMap::new();
+    let mut metric_registry = FontRegistry::new(FONT_CACHE);
+    let mut glyphs: BTreeMap<Face, BTreeSet<char>> = BTreeMap::new();
     // Нумерация зондов та же, что у записи: `&P`/`&N` в колонтитулах обязаны
     // совпасть, иначе подрезанный шрифт не покроет символы реальной страницы.
     let mut first_page_no = 1;
-    for sheet in prepared {
+    for sheet in prepared.iter() {
         let (header, footer) = sheet_overlay(options, sheet.sheet);
         collect_glyphs(
             &mut glyphs,
@@ -1074,7 +1040,7 @@ fn write_book<W: Write>(
             &sheet.pagination.pages,
             &sheet.page,
             &embedded,
-            &mut registry,
+            &mut metric_registry,
             &sheet.charts,
             options,
             first_page_no,
@@ -1082,30 +1048,88 @@ fn write_book<W: Write>(
         );
         first_page_no += sheet.pagination.pages.len();
     }
-    let probe = probe_pages_from(glyphs, first_page_geometry);
-    let save = PdfSaveOptions {
-        // `optimize` у printpdf сжимает потоки — это и есть `compress`.
-        optimize: options.compress,
-        ..PdfSaveOptions::default()
-    };
-    let mut session = StreamSession::begin(
-        doc,
-        &probe,
-        BTreeSet::new(),
-        page_count,
-        &save,
-        out,
-        &mut warnings,
-    )?;
+
+    let mut session = Session::begin(out, page_count, options.compress)?;
+    session.set_title(title);
+
+    // Шрифты — в фиксированном порядке начертаний, регуляр всегда: без него
+    // текст с начертанием вне набора вывелся бы нулевым глифом.
+    for face in [Face::Regular, Face::Bold, Face::Italic, Face::BoldItalic] {
+        if face != Face::Regular && !faces.contains(face) {
+            continue;
+        }
+        let used = glyphs.get(&face).cloned().unwrap_or_default();
+        let name = session.add_font(face.bytes(), &used)?;
+        debug_assert_eq!(
+            name,
+            embedded.id(face).0,
+            "сессия раздала имя шрифта не в том порядке, что EmbeddedFonts"
+        );
+    }
+
+    // Прозрачность водяного знака — только через extended graphics state:
+    // ресурс обязан лечь в документ до первой страницы, имя фиксировано
+    // константой, а операции знака (в том числе в зондах) на него ссылаются.
+    if let Some(watermark) = options.overlay.watermark.as_ref() {
+        if overlay::needs_extgstate(watermark.opacity) && !watermark.text.trim().is_empty() {
+            let alpha = overlay::clamp_opacity(watermark.opacity);
+            let state = ExtendedGraphicsState {
+                current_stroke_alpha: alpha,
+                current_fill_alpha: alpha,
+            };
+            let mut dict = Dictionary::new();
+            dict.set("Type", "ExtGState");
+            dict.set("CA", state.current_stroke_alpha);
+            dict.set("ca", state.current_fill_alpha);
+            session.add_graphics_state(WATERMARK_GS, dict)?;
+        }
+    }
+
+    // Картинки — по той же причине: `Op::UseXobject` переводится по именам
+    // `XObject`'ов, и объекты должны лежать в ресурсах до первой страницы.
+    // Имена собираются отдельным проходом: `add_image` занимает сессию, а
+    // `registry.decoded` — реестр, и `assign` требует реестр изменяемым.
+    let names: Vec<String> = registry
+        .decoded()
+        .iter()
+        .map(|decoded| session.add_image(decoded))
+        .collect::<Result<_, _>>()?;
+    for (index, name) in names.into_iter().enumerate() {
+        registry.assign(index, XObjectId(name));
+    }
+    for sheet in prepared.iter_mut() {
+        sheet.images = image_ops(registry, &sheet.placements);
+    }
+
+    // Закладки — на лист, и ведут на его первую страницу. Копятся до `finish`:
+    // сессия пишет `/Outlines` в хвосте, где каталог ещё не записан.
+    if options.bookmarks {
+        let spans: Vec<annot::SheetSpan<'_>> = prepared
+            .iter()
+            .map(|sheet| annot::SheetSpan {
+                name: &sheet.sheet.meta.name,
+                pages: sheet.pagination.pages.len(),
+            })
+            .collect();
+        let mut page = 0;
+        let entries: Vec<(String, usize)> = spans
+            .iter()
+            .map(|span| {
+                let entry = (span.name.to_owned(), page);
+                page += span.pages;
+                entry
+            })
+            .collect();
+        session.set_outline(&entries)?;
+    }
 
     write_pages(
         &mut session,
         prepared,
         book,
         &embedded,
-        &mut registry,
+        &mut metric_registry,
         options,
-        &mut warnings,
     )?;
     session.finish()?;
     Ok(())
@@ -1115,17 +1139,16 @@ fn write_book<W: Write>(
 /// страница за страницей.
 ///
 /// `#[allow]`: семь параметров — это состояние записи (сессия, шрифты, кэш
-/// метрик, предупреждения), книга и настройки; связывать их структурой значило
-/// бы прятать порядок обхода листов.
+/// метрик), книга и настройки; связывать их структурой значило бы прятать
+/// порядок обхода листов.
 #[allow(clippy::too_many_arguments)]
 fn write_pages<W: Write>(
-    session: &mut StreamSession<'_, '_, W>,
+    session: &mut Session<'_, W>,
     prepared: &[PreparedSheet<'_>],
     book: &Workbook,
     fonts: &EmbeddedFonts,
     registry: &mut FontRegistry,
     options: &PdfOptions,
-    warnings: &mut Vec<PdfWarnMsg>,
 ) -> Result<(), PdfError> {
     let page_count: usize = prepared
         .iter()
@@ -1176,12 +1199,34 @@ fn write_pages<W: Write>(
                 &sheet_page.slice,
                 page_index,
             ));
-            let pdf_page = PdfPage::new(
-                Mm::from(Pt(page_geom.width_pt())),
-                Mm::from(Pt(page_geom.height_pt())),
-                ops,
-            );
-            session.write_page(&pdf_page, warnings)?;
+            // Аннотации в content stream не пишутся — они уходят словарями в
+            // `/Annots` страницы; `page_ref` разрешает `/Dest` внутренних
+            // ссылок в id зарезервированных сессией страниц.
+            let annots: Vec<Dictionary> = ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::Annotation { annot } => Some(annot::annotation_to_dict(annot, &|index| {
+                        session.page_ref(index)
+                    })),
+                    _ => None,
+                })
+                .collect();
+            ops.retain(|op| !matches!(op, Op::Annotation { .. }));
+            // Карта шрифтов живёт только до `translate`: `write_page` требует
+            // сессию целиком, и заимствование `prepared_fonts` обязано кончиться.
+            let content = {
+                let fonts_map: BTreeMap<FontId, &PreparedFont> = session
+                    .prepared_fonts()
+                    .iter()
+                    .map(|(name, prepared)| (FontId(name.clone()), prepared))
+                    .collect();
+                content::translate(&ops, &fonts_map)?
+            };
+            session.write_page(
+                &content,
+                [0.0, 0.0, page_geom.width_pt(), page_geom.height_pt()],
+                &annots,
+            )?;
         }
     }
     Ok(())
@@ -1270,7 +1315,7 @@ mod tests {
 
         let y_pt = |px: f32| page.height_pt() - (page.origin_y_pt() + page.px_to_pt(px));
         let x_pt = |px: f32| page.origin_x_pt() + page.px_to_pt(px);
-        // Сравниваются множества координат: у printpdf начало отсчёта внизу,
+        // Сравниваются множества координат: у PDF начало отсчёта внизу,
         // и порядок обхода строк в точках обратен порядку строк листа.
         let mut actual: Vec<f32> = horizontal.iter().map(|(from, _)| from.1).collect();
         let mut expected: Vec<f32> = rows.iter().map(|&row| y_pt(row)).collect();

@@ -11,9 +11,9 @@
 //! заголовков и разбивка по столбцам — Спринт 7.
 
 use doc_converter_xlsx::layout::PX_PER_POINT;
-use printpdf::{Pt, Rect};
 
 use crate::options::{PageConfig, PageOrientation, PageSize};
+use crate::pdf::ops::{Pt, Rect};
 
 /// Точек на миллиметр (72 pt / 25.4 мм).
 const PT_PER_MM: f32 = 72.0 / 25.4;
@@ -190,13 +190,13 @@ pub struct RectPt {
 }
 
 impl RectPt {
-    /// Прямоугольник printpdf: у него начало координат — левый нижний угол.
+    /// Прямоугольник PDF: у него начало координат — левый нижний угол.
     ///
     /// Возвращает `y` **нижней** кромки, как и обещает доккомментарий `Rect`.
-    /// Но `Rect::to_polygon()`/`to_line()` в вендоренной 0.8.2 строят полигон от
-    /// **верхней** кромки (`gen_points`: `bottom = y - height`) — такой полигон
-    /// уезжает вниз на свою высоту. Вершины собирайте вручную, как `border.rs`
-    /// и `chart.rs`; на `to_polygon()` полагаться нельзя.
+    /// Вершины полигонов собирайте вручную, как `border.rs`, `background.rs` и
+    /// `chart.rs`: у вендоренной библиотеки `Rect::to_polygon()`/`to_line()`
+    /// строил полигон от **верхней** кромки (`gen_points`: `bottom = y -
+    /// height`), и такой полигон уезжал вниз на свою высоту.
     #[must_use]
     pub fn to_pdf(self, page_height_pt: f32) -> Rect {
         Rect {

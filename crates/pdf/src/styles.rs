@@ -4,10 +4,10 @@
 //! же типы, что у canvas-пути. Общих оттенков и осей у экрана и PDF не бывает
 //! по построению, а не потому, что их синхронизируют (ADR-0007).
 
+use crate::pdf::ops::Color as PdfColor;
 use doc_converter_xlsx::model::{Cell, Fill, FillPattern, HorizontalAlign, VerticalAlign};
 use doc_converter_xlsx::paint::resolve_color;
 use doc_converter_xlsx::{Border, Workbook};
-use printpdf::Color as PdfColor;
 
 pub use doc_converter_render::display_list::{Color, TextAlign};
 
@@ -148,14 +148,14 @@ fn text_align(align: HorizontalAlign, cell: &Cell) -> TextAlign {
     }
 }
 
-/// Цвет `DisplayList` (`RRGGBBAA`) в цвет printpdf (нормированный RGB).
+/// Цвет `DisplayList` (`RRGGBBAA`) в цвет PDF (нормированный RGB).
 ///
 /// Альфа в PDF не переносится: прозрачность потребовала бы `/ExtGState`, это
 /// отдельный срез. Непрозрачный цвет от неё не зависит.
 #[must_use]
 pub fn to_pdf_color(color: Color) -> PdfColor {
     let [r, g, b, _alpha] = color.0.to_be_bytes();
-    PdfColor::Rgb(printpdf::Rgb::new(
+    PdfColor::Rgb(crate::pdf::ops::Rgb::new(
         f32::from(r) / 255.0,
         f32::from(g) / 255.0,
         f32::from(b) / 255.0,

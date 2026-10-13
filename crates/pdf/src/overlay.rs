@@ -366,7 +366,7 @@ pub fn estimate_text_width(text: &str, font_size_pt: f32) -> f32 {
 /// Матрица `Tm` (`a b c d e f`) для текста, повёрнутого на `angle_deg` против
 /// часовой стрелки и начинающегося в точке `(tx, ty)`.
 ///
-/// Годится и для `printpdf::TextMatrix::Raw`.
+/// Годится и для `crate::pdf::ops::TextMatrix::Raw`.
 #[must_use]
 pub fn rotation_matrix(angle_deg: f32, tx: f32, ty: f32) -> [f32; 6] {
     let (sin, cos) = angle_deg.to_radians().sin_cos();
@@ -377,7 +377,7 @@ pub fn rotation_matrix(angle_deg: f32, tx: f32, ty: f32) -> [f32; 6] {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WatermarkDraw {
     pub text: String,
-    /// Матрица `Tm`; painter подаёт её как `printpdf::TextMatrix::Raw`.
+    /// Матрица `Tm`; painter подаёт её как `TextMatrix::Raw`.
     pub matrix: [f32; 6],
     pub font_size_pt: f32,
     /// Альфа в `[0, 1]`: меньше 1 — рисовать через `ExtendedGraphicsState`.

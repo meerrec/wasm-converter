@@ -7,10 +7,6 @@
 //! бинарная метка заголовка повторяют printpdf (`Document::with_version("1.3")`
 //! и метка lopdf по умолчанию) — продукт не должен сменить формат файла при
 //! переходе на свой бэкенд.
-// Модуль ещё не подключён к продукту — интеграция в следующем слайсе
-// (ADR-0022), поэтому dead_code глушится здесь; снять вместе с интеграцией,
-// как в `writer.rs` и `fonts.rs`.
-#![allow(dead_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
@@ -179,28 +175,36 @@ impl<'w, W: Write> Session<'w, W> {
     }
 
     /// Зарегистрировать `ExtGState` (готовый словарь) в глобальном словаре
-    /// `/ExtGState`, вернуть имя («GS0», «GS1», …). Вызывать только до первой
-    /// страницы.
+    /// `/ExtGState` под именем, которое выбирает вызывающий (например,
+    /// `WatermarkAlpha` у painter'а). Вызывать только до первой страницы.
     ///
     /// # Errors
     ///
     /// Ошибка записи в приёмник; [`PdfError::Io`] с
     /// [`io::ErrorKind::InvalidInput`], если состояние добавляется после
-    /// первой страницы.
-    pub(crate) fn add_graphics_state(&mut self, dict: Dictionary) -> Result<String, PdfError> {
+    /// первой страницы или под именем, которое уже занято.
+    pub(crate) fn add_graphics_state(
+        &mut self,
+        name: &str,
+        dict: Dictionary,
+    ) -> Result<(), PdfError> {
         if self.written > 0 {
             return Err(PdfError::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "graphics state added after the first page was written",
             )));
         }
+        if self.extgstate_dict.contains_key(name) {
+            return Err(PdfError::Io(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("graphics state '{name}' was already added"),
+            )));
+        }
         let id = self.doc.new_object_id();
         self.writer
             .write_indirect(id.0, id.1, &Object::Dictionary(dict))?;
-
-        let name = format!("GS{}", self.extgstate_dict.len());
-        self.extgstate_dict.insert(name.clone(), id);
-        Ok(name)
+        self.extgstate_dict.insert(name.to_owned(), id);
+        Ok(())
     }
 
     /// Id страницы по индексу — для `/Dest` аннотаций и закладок.
@@ -1036,7 +1040,7 @@ mod tests {
         let mut bytes = Vec::new();
         {
             let mut session = Session::begin(&mut bytes, 1, true).unwrap();
-            assert_eq!(session.add_graphics_state(gs).unwrap(), "GS0");
+            session.add_graphics_state("GS0", gs).unwrap();
             session.write_page(&content, A4, &[]).unwrap();
             session.finish().unwrap();
         }
@@ -1187,7 +1191,19 @@ mod tests {
         let mut bytes = Vec::new();
         let mut session = Session::begin(&mut bytes, 2, true).unwrap();
         session.write_page(b"BT ET", A4, &[]).unwrap();
-        let error = session.add_graphics_state(gs).unwrap_err();
+        let error = session.add_graphics_state("GS0", gs).unwrap_err();
+        assert!(matches!(error, PdfError::Io(_)), "{error}");
+    }
+
+    /// Повторное имя `ExtGState` — ошибка: ресурс молча перезаписался бы.
+    #[test]
+    fn duplicate_graphics_state_name_is_an_error() {
+        let mut gs = Dictionary::new();
+        gs.set("CA", 0.5);
+        let mut bytes = Vec::new();
+        let mut session = Session::begin(&mut bytes, 1, true).unwrap();
+        session.add_graphics_state("GS0", gs.clone()).unwrap();
+        let error = session.add_graphics_state("GS0", gs).unwrap_err();
         assert!(matches!(error, PdfError::Io(_)), "{error}");
     }
 

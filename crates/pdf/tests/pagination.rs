@@ -265,15 +265,22 @@ fn page_counts_are_pinned() {
 /// `scale-ten-pages` (столбец в 40 символов) и `layout-column-widths`
 /// (объявленные ширины) отрисованы заново. У остальных фикстур столбцы
 /// умолчания — их ширина не изменилась.
+///
+/// Все эталоны пересчитаны с переходом XLSX-пути на свой бэкенд (ADR-0022):
+/// хеш включает словарь страницы, а он пишется иначе (свои `/MediaBox`,
+/// нет `TrimBox`/`CropBox`), и поток содержимого — имена шрифтов в нём
+/// детерминированные («F0», …), а не 32-значные случайные printpdf. Это
+/// раскладка сериализации, а не отрисовки: побайтового совпадения с форком
+/// ADR-0022 не обещает, сами потоки операций совпадают (см. `pdf::content`).
 const DRAWING: &[(&str, u64)] = &[
-    ("scale-ten-pages.xlsx", 0x566a_9ad4_701f_437f),
-    ("edge-many-rows.xlsx", 0xc3e5_d8ee_f8a4_8594),
-    ("content-dense.xlsx", 0x25c9_aa94_f10e_ae39),
-    ("size-20x100x1.xlsx", 0x023e_4388_37ac_0e3e),
-    ("values-strings.xlsx", 0x4d43_ca4c_6296_2b61),
-    ("layout-column-widths.xlsx", 0x39fa_017e_1c8d_91a9),
-    ("edge-merged-styled.xlsx", 0x6463_5275_1058_4c2d),
-    ("content-empty-sheet.xlsx", 0x615d_6ab3_aa58_b40f),
+    ("scale-ten-pages.xlsx", 0x21c1_e394_ee55_a5f1),
+    ("edge-many-rows.xlsx", 0xd69c_b79f_8589_54bf),
+    ("content-dense.xlsx", 0xe693_7825_b016_6ca2),
+    ("size-20x100x1.xlsx", 0xf2f1_3047_a6da_47d2),
+    ("values-strings.xlsx", 0x8bcf_7777_de1e_6970),
+    ("layout-column-widths.xlsx", 0xff2a_ff3c_b9d4_be98),
+    ("edge-merged-styled.xlsx", 0x681f_0895_a76e_26af),
+    ("content-empty-sheet.xlsx", 0x3b95_a806_69ca_ba55),
 ];
 
 #[test]
