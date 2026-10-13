@@ -15,12 +15,13 @@
 use doc_converter_docx::layout::{FloatElement, FloatKind, Rect};
 use doc_converter_render::display_list::Color;
 use doc_converter_render::font::FontRegistry;
-use printpdf::{LinePoint, Op, PaintMode, Point, Polygon, PolygonRing, Pt, WindingOrder};
 
+use crate::fonts::EmbeddedFonts;
 use crate::layout::PageGeometry;
+use crate::pdf::ops::{LinePoint, Op, PaintMode, Point, Polygon, PolygonRing, Pt, WindingOrder};
+use crate::styles::to_pdf_color;
 
 use super::images::Images;
-use super::{to_pdf_color, EmbeddedFonts};
 
 /// Цвет контура плейсхолдера — тот же серый, что у canvas-пути
 /// (`render::PLACEHOLDER_STROKE` в `doc-converter-docx`).
@@ -78,9 +79,9 @@ fn shifted(rect: Rect, offset_y: f32) -> Rect {
 
 /// Операции контура плейсхолдера по прямоугольнику анкера.
 ///
-/// Начало координат printpdf — левый нижний угол страницы, а `rect` отсчитан
+/// Начало координат PDF — левый нижний угол страницы, а `rect` отсчитан
 /// от левого верхнего, поэтому вертикаль переворачивается. Вершины собираются
-/// вручную, как в [`crate::background::fill_rect`]: printpdf рисует
+/// вручную, как в [`crate::background::fill_rect`]: PDF рисует
 /// `PaintMode::Stroke` по замкнутому пути, и заливки (в canvas-пути она
 /// прозрачная) в PDF не нужно вовсе.
 fn placeholder_ops(rect: Rect, page: &PageGeometry) -> Vec<Op> {

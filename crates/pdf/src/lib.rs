@@ -1,7 +1,6 @@
 //! PDF-экспорт: лист XLSX и документ DOCX в страницы PDF.
 //!
-//! XLSX-путь пишет свой PDF-бэкенд (`pdf`-модуль, ADR-0022), DOCX-путь пока на
-//! printpdf (переезжает следующей волной).
+//! Оба пути (XLSX и DOCX) пишут свой PDF-бэкенд (`pdf`-модуль, ADR-0022).
 //!
 //! Раскладка берётся у `doc-converter-xlsx` (`SheetLayout` в пикселях при
 //! 96 dpi), метрики и перенос текста — у `doc-converter-render` (`FontRegistry`,

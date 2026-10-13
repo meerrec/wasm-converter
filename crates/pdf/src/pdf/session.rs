@@ -1,12 +1,12 @@
 //! Сессия постраничной записи PDF: глобальные объекты — один раз, страница —
 //! сразу в приёмник, xref — одной секцией в конце (ADR-0022, слайс 3).
 //!
-//! Перенос `StreamSession` из `vendor/printpdf/src/streaming.rs` (наш код
-//! форка, ADR-0010) на свой писатель: `lopdf::Document` служит только
-//! реестром идентификаторов, объекты страниц в нём не задерживаются. Версия и
-//! бинарная метка заголовка повторяют printpdf (`Document::with_version("1.3")`
-//! и метка lopdf по умолчанию) — продукт не должен сменить формат файла при
-//! переходе на свой бэкенд.
+//! Перенос `StreamSession` из вендоренного форка (наш код, ADR-0010) на свой
+//! писатель: `lopdf::Document` служит только реестром идентификаторов, объекты
+//! страниц в нём не задерживаются. Версия и бинарная метка заголовка повторяют
+//! вендоренный бэкенд (`Document::with_version("1.3")` и метка lopdf по
+//! умолчанию) — продукт не должен сменить формат файла при переходе на свой
+//! бэкенд.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
@@ -21,8 +21,8 @@ use crate::pdf::image;
 use crate::pdf::writer::StreamWriter;
 use crate::PdfError;
 
-/// Producer документа: продукт представляется сам — printpdf писал пустую
-/// строку, по файлу нельзя было понять, чем он собран.
+/// Producer документа: продукт представляется сам — вендоренный бэкенд писал
+/// пустую строку, по файлу нельзя было понять, чем он собран.
 const PRODUCER: &str = "doc-converter";
 
 /// Сессия постраничной записи: `begin` — глобальные объекты, `write_page` на
@@ -59,6 +59,9 @@ pub(crate) struct Session<'w, W: Write> {
     xobject_dict_id: ObjectId,
     extgstate_dict_id: ObjectId,
     title: Option<String>,
+    /// Поля `/Info` от вызывающего (`Author`, `Subject`, `Keywords`, …) в
+    /// порядке задания; пишутся в `finish`.
+    info: Vec<(String, String)>,
     /// Закладки одним уровнем: заголовок → индекс страницы; пишутся в `finish`.
     outline: Vec<(String, usize)>,
 }
@@ -109,6 +112,7 @@ impl<'w, W: Write> Session<'w, W> {
             xobject_dict_id,
             extgstate_dict_id,
             title: None,
+            info: Vec::new(),
             outline: Vec::new(),
         })
     }
@@ -116,6 +120,17 @@ impl<'w, W: Write> Session<'w, W> {
     /// Заголовок документа в `/Info` (до `finish`).
     pub(crate) fn set_title(&mut self, title: &str) {
         self.title = Some(title.to_owned());
+    }
+
+    /// Поля `/Info` документа (до `finish`): `Author`, `Subject`, `Keywords` и
+    /// другие ключи, которые выбирает вызывающий.
+    ///
+    /// Значения кодируются как UTF-16BE с BOM ([`Session::set_title`] пишет
+    /// `Title` так же): свойства документа бывают кириллическими, а
+    /// `PDFDocEncoding` их не покрывает. Задаются все значения, включая пустые:
+    /// так же печатал поля вендоренный бэкенд.
+    pub(crate) fn set_info(&mut self, entries: &[(String, String)]) {
+        self.info = entries.to_vec();
     }
 
     /// Подрезает шрифт по `used` и добавляет его глобально; возвращает имя в
@@ -339,6 +354,9 @@ impl<'w, W: Write> Session<'w, W> {
         let mut info = Dictionary::new();
         if let Some(title) = self.title.take() {
             info.set("Title", encode_utf16be(&title));
+        }
+        for (key, value) in &self.info {
+            info.set(key.as_str(), encode_utf16be(value));
         }
         info.set(
             "Producer",
@@ -712,7 +730,7 @@ mod tests {
         let sample = build_sample(true);
         assert!(
             sample.bytes.starts_with(b"%PDF-1.3\n%\xBB\xAD\xC0\xDE\n"),
-            "версия и метка заголовка — как у printpdf"
+            "версия и метка заголовка — как у вендоренного бэкенда"
         );
         let loaded = Document::load_mem(&sample.bytes).expect("вывод парсится lopdf");
 
@@ -850,6 +868,36 @@ mod tests {
             file.dict.get(b"Length1").unwrap().as_i64().unwrap(),
             i64::try_from(file.content.len()).unwrap()
         );
+    }
+
+    /// Поля `/Info`, заданные вызывающим, попадают в словарь информации как
+    /// UTF-16BE с BOM — включая пустые значения (паритет с вендоренным
+    /// бэкендом, который печатал и их).
+    #[test]
+    fn info_entries_land_in_the_info_dictionary() {
+        let entries = vec![
+            (String::from("Author"), String::from("Иван Петров")),
+            (String::from("Subject"), String::new()),
+            (String::from("Keywords"), String::from("pdf, отчёт")),
+        ];
+        let mut bytes = Vec::new();
+        {
+            let mut session = Session::begin(&mut bytes, 1, true).unwrap();
+            session.set_info(&entries);
+            session.write_page(b"BT ET", A4, &[]).unwrap();
+            session.finish().unwrap();
+        }
+
+        let loaded = Document::load_mem(&bytes).unwrap();
+        let info_id = loaded.trailer.get(b"Info").unwrap().as_reference().unwrap();
+        let info = loaded.get_dictionary(info_id).unwrap();
+        for (key, value) in &entries {
+            assert_eq!(
+                decode_utf16be(info.get(key.as_bytes()).unwrap()),
+                *value,
+                "поле {key} в `/Info`"
+            );
+        }
     }
 
     #[test]

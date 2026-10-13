@@ -88,21 +88,22 @@ fn number(object: &Object) -> f32 {
 
 /// `Image`-`XObject`'ы документа (имя → поток) и число `Do`-ссылок на них.
 ///
-/// `XObject`'ы у printpdf глобальные: словарь один на документ, а страница
-/// ссылается на него целиком. Имена поэтому собираются со всех страниц, а `Do`
-/// считается по ним же — приём из `tests/image.rs`.
+/// `XObject`'ы глобальные: словарь один на документ, а страница ссылается на
+/// него целиком. Имена поэтому собираются со всех страниц, а `Do` считается
+/// по ним же — приём из `tests/image.rs`.
+///
+/// Свой бэкенд пишет `/Resources` страницы прямым словарём, вендоренный —
+/// ссылкой на косвенный объект; принимаются оба (как `tests/image.rs`).
 fn document_images(doc: &Pdf) -> (BTreeMap<Vec<u8>, &Stream>, usize) {
     let mut images: BTreeMap<Vec<u8>, &Stream> = BTreeMap::new();
     let mut draws = 0;
     for &page_id in doc.get_pages().values() {
-        let page = doc.get_dictionary(page_id).expect("словарь страницы");
-        let Ok(resources) = page.get(b"Resources") else {
-            continue;
+        let (direct, indirect) = doc.get_page_resources(page_id).expect("ресурсы страницы");
+        let resources = match (direct, indirect.first()) {
+            (Some(dict), _) => dict,
+            (None, Some(id)) => doc.get_dictionary(*id).expect("словарь ресурсов"),
+            (None, None) => continue,
         };
-        let resources = doc
-            .get_object(resources.as_reference().expect("ресурсы — ссылка"))
-            .and_then(Object::as_dict)
-            .expect("ресурсы — словарь");
         let Ok(xobjects) = resources.get(b"XObject") else {
             continue;
         };

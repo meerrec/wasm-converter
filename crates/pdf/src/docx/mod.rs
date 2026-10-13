@@ -14,7 +14,7 @@
 //! строку другой значило бы разойтись с её измеренной шириной — так же решает
 //! и canvas-путь (`doc_converter_docx::render`).
 //!
-//! Подчёркивание в PDF пока не рисуется: printpdf линию сам не ставит, а
+//! Подчёркивание в PDF пока не рисуется: бэкенд линию сам не ставит, а
 //! отдельный срез для неё ещё не сделан — ровно как у ячеек XLSX
 //! (`crate::styles::CellStyle::underline`).
 
@@ -28,15 +28,16 @@ use doc_converter_docx::layout::{LayoutItem, Page, PageChrome, PageLayout, Rect}
 use doc_converter_docx::{Document, HalfPoint, LayoutOptions};
 use doc_converter_render::display_list::Color;
 use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
-use printpdf::streaming::StreamSession;
-use printpdf::{
-    FontId, Mm, Op, ParsedFont, PdfDocument, PdfPage, PdfSaveOptions, PdfWarnMsg, Point, Pt,
-    TextItem,
-};
+use lopdf::Dictionary;
 
-use crate::fonts::{Face, FaceSet};
+use crate::fonts::{EmbeddedFonts, Face, FaceSet};
 use crate::layout::PageGeometry;
 use crate::options::{Margins, PageConfig, PageSize, PdfOptions};
+use crate::pdf::content;
+use crate::pdf::fonts::PreparedFont;
+use crate::pdf::ops::{FontId, Op, Point, Pt, TextItem, XObjectId};
+use crate::pdf::session::Session;
+use crate::styles::to_pdf_color;
 use crate::PdfError;
 
 /// Размер LRU-кэша метрик: тот же, что у XLSX-пути (`painter::FONT_CACHE`).
@@ -50,166 +51,71 @@ const FONT_CACHE: usize = 4096;
 /// (`PT_PER_MM`), и `Page.width` дойдёт до PDF без второй константы.
 const MM_PER_PX: f32 = 25.4 / 96.0;
 
-// --- Встраивание шрифтов: DOCX-путь пока на printpdf (ADR-0022, слайс 5) ---
-
-/// Шрифт, встроенный в документ printpdf.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct EmbeddedFont {
-    id: FontId,
-}
-
-impl EmbeddedFont {
-    /// Идентификатор в ресурсах документа: им помечаются текстовые операции.
-    #[must_use]
-    const fn id(&self) -> &FontId {
-        &self.id
-    }
-}
-
-/// Шрифты страниц DOCX: regular всегда, выделенные начертания — как
-/// встретились. Двойник `crate::fonts::EmbeddedFonts` (своего бэкенда) на
-/// printpdf-`FontId`: DOCX-путь переезжает на свой бэкенд следующей волной, а
-/// до неё общий модуль шрифтов ему не годится.
-#[derive(Debug)]
-struct EmbeddedFonts {
-    regular: EmbeddedFont,
-    bold: Option<EmbeddedFont>,
-    italic: Option<EmbeddedFont>,
-    bold_italic: Option<EmbeddedFont>,
-}
-
-impl EmbeddedFonts {
-    /// Шрифт начертания; невстроенное начертание заменяется regular.
-    ///
-    /// Замена — страховка на случай, если спрашивают начертание, которого в
-    /// наборе не было: пустой записи текста printpdf не примет.
-    #[must_use]
-    fn id(&self, face: Face) -> &FontId {
-        let embedded = match face {
-            Face::Regular => None,
-            Face::Bold => self.bold.as_ref(),
-            Face::Italic => self.italic.as_ref(),
-            Face::BoldItalic => self.bold_italic.as_ref(),
-        };
-        embedded.unwrap_or(&self.regular).id()
-    }
-}
-
-/// Встроить начертания из набора (и всегда — regular).
-///
-/// Разбор TTF и подстановка (subsetting) — на стороне printpdf: он же
-/// собирает `ToUnicode`, без которого кириллицу не извлечь из готового PDF.
-///
-/// # Errors
-/// [`PdfError::Font`], если printpdf не принял байты шрифта.
-fn embed(
-    doc: &mut PdfDocument,
-    warnings: &mut Vec<PdfWarnMsg>,
-    faces: FaceSet,
-) -> Result<EmbeddedFonts, PdfError> {
-    Ok(EmbeddedFonts {
-        regular: embed_face(doc, warnings, Face::Regular)?,
-        bold: embed_optional(doc, warnings, faces, Face::Bold)?,
-        italic: embed_optional(doc, warnings, faces, Face::Italic)?,
-        bold_italic: embed_optional(doc, warnings, faces, Face::BoldItalic)?,
-    })
-}
-
-/// Встроить начертание, только если оно есть в наборе.
-fn embed_optional(
-    doc: &mut PdfDocument,
-    warnings: &mut Vec<PdfWarnMsg>,
-    faces: FaceSet,
-    face: Face,
-) -> Result<Option<EmbeddedFont>, PdfError> {
-    if !faces.contains(face) {
-        return Ok(None);
-    }
-    embed_face(doc, warnings, face).map(Some)
-}
-
-/// Встроить одно начертание.
-fn embed_face(
-    doc: &mut PdfDocument,
-    warnings: &mut Vec<PdfWarnMsg>,
-    face: Face,
-) -> Result<EmbeddedFont, PdfError> {
-    let parsed = ParsedFont::from_bytes(face.bytes(), 0, warnings)
-        .ok_or_else(|| PdfError::Font(format!("printpdf rejected the {face:?} font")))?;
-    Ok(EmbeddedFont {
-        id: doc.add_font(&parsed),
-    })
-}
-
-/// Цвет `DisplayList` (`RRGGBBAA`) в цвет printpdf (нормированный RGB).
-///
-/// Двойник `crate::styles::to_pdf_color` (своего бэкенда): DOCX-путь на
-/// printpdf до следующей волны. Альфа в PDF не переносится — прозрачность
-/// потребовала бы `/ExtGState`, это отдельный срез; непрозрачный цвет от неё
-/// не зависит.
-#[must_use]
-fn to_pdf_color(color: Color) -> printpdf::Color {
-    let [r, g, b, _alpha] = color.0.to_be_bytes();
-    printpdf::Color::Rgb(printpdf::Rgb::new(
-        f32::from(r) / 255.0,
-        f32::from(g) / 255.0,
-        f32::from(b) / 255.0,
-        None,
-    ))
-}
-
 /// Собрать PDF из всех страниц документа.
 ///
 /// # Errors
 /// [`PdfError::DocxLayout`], если раскладка не собралась; [`PdfError::NoPages`],
-/// если она не дала ни одной страницы; [`PdfError::Font`], если printpdf не
-/// принял байты шрифта; [`PdfError::Io`], если приёмник вернул ошибку записи.
+/// если она не дала ни одной страницы; [`PdfError::Font`], если байты шрифта не
+/// разобрались; [`PdfError::Image`], если сессия не приняла картинку;
+/// [`PdfError::Io`], если приёмник вернул ошибку записи.
 pub(crate) fn export(doc: &Document, options: &PdfOptions) -> Result<Vec<u8>, PdfError> {
     let mut registry = FontRegistry::new(FONT_CACHE);
     let layout =
         doc_converter_docx::layout::layout_document(doc, &LayoutOptions::default(), &mut registry)
             .map_err(PdfError::DocxLayout)?;
     // PDF без страниц невалиден: у него нет каталога страниц.
-    let first_page = layout.pages.first().ok_or(PdfError::NoPages)?;
+    layout.pages.first().ok_or(PdfError::NoPages)?;
 
-    let mut warnings: Vec<PdfWarnMsg> = Vec::new();
-    let mut pdf = PdfDocument::new(&title(doc, options));
-    apply_metadata(&mut pdf, doc, options);
-    let embedded = embed(&mut pdf, &mut warnings, collect_faces(&layout))?;
+    let faces = collect_faces(&layout);
+    // Имена шрифтов («F0», «F1», …) строятся до сессии, но тем же порядком
+    // начертаний, каким их зарегистрирует [`Session::add_font`]: зондовый
+    // проход обязан ссылаться на шрифты, которых ещё нет.
+    let embedded = EmbeddedFonts::from_faces(faces);
+    let mut images = images::Images::collect(doc);
 
-    // `XObject`'ы — ресурсы документа: `StreamSession` переводит по ним
-    // `Op::UseXobject` в момент записи страницы, поэтому рисунки обязаны лечь в
-    // ресурсы до `begin` — так же, как у листа XLSX (`painter::image_ops`).
-    let images = images::Images::collect(doc, &mut pdf.resources);
-
-    // Шрифты подрезаются до записи первой страницы (`StreamSession::begin`), а
+    // Шрифты подрезаются до записи первой страницы (`Session::add_font`), а
     // подрезка перенумеровывает глифы: символ, не попавший в зонды, вывелся бы
     // нулевым глифом — молча. Поэтому символы собираются первой отрисовкой, той
     // же `draw_page`, что пойдёт в PDF, — так же, как у листа XLSX
     // (`painter::collect_glyphs`).
-    let probe = probe_pages(
-        collect_glyphs(&layout, &embedded, &mut registry, &images),
-        first_page,
-    );
+    let glyphs = collect_glyphs(&layout, &embedded, &mut registry, &images);
 
-    let save = PdfSaveOptions {
-        // `optimize` у printpdf сжимает потоки — это и есть `compress`.
-        optimize: options.compress,
-        ..PdfSaveOptions::default()
-    };
     let mut out = Vec::new();
-    let mut session = StreamSession::begin(
-        &pdf,
-        &probe,
-        BTreeSet::new(),
-        layout.pages.len(),
-        &save,
-        &mut out,
-        &mut warnings,
-    )?;
+    let mut session = Session::begin(&mut out, layout.pages.len(), options.compress)?;
+    session.set_title(&title(doc, options));
+    apply_metadata(&mut session, doc, options);
+
+    // Шрифты — в фиксированном порядке начертаний, регуляр всегда: без него
+    // текст с начертанием вне набора вывелся бы нулевым глифом.
+    for face in [Face::Regular, Face::Bold, Face::Italic, Face::BoldItalic] {
+        if face != Face::Regular && !faces.contains(face) {
+            continue;
+        }
+        let used = glyphs.get(&face).cloned().unwrap_or_default();
+        let name = session.add_font(face.bytes(), &used)?;
+        debug_assert_eq!(
+            name,
+            embedded.id(face).0,
+            "сессия раздала имя шрифта не в том порядке, что EmbeddedFonts"
+        );
+    }
+
+    // Картинки — по той же причине: `Op::UseXobject` переводится по именам
+    // `XObject`'ов, и объекты обязаны лежать в ресурсах до первой страницы.
+    // Имена собираются отдельным проходом: `add_image` занимает сессию, а
+    // `decoded` — реестр, и `assign` требует реестр изменяемым.
+    let names: Vec<String> = images
+        .decoded()
+        .iter()
+        .map(|decoded| session.add_image(decoded))
+        .collect::<Result<_, _>>()?;
+    for (index, name) in names.into_iter().enumerate() {
+        images.assign(index, XObjectId(name));
+    }
+
     for (index, page) in layout.pages.iter().enumerate() {
         let geometry = geometry(page);
-        let ops = draw_page(
+        let mut ops = draw_page(
             page,
             layout.chrome.get(index),
             &geometry,
@@ -217,12 +123,34 @@ pub(crate) fn export(doc: &Document, options: &PdfOptions) -> Result<Vec<u8>, Pd
             &mut registry,
             &images,
         );
-        let pdf_page = PdfPage::new(
-            Mm::from(Pt(geometry.width_pt())),
-            Mm::from(Pt(geometry.height_pt())),
-            ops,
-        );
-        session.write_page(&pdf_page, &mut warnings)?;
+        // Аннотации в content stream не пишутся — они уходят словарями в
+        // `/Annots` страницы; `page_ref` разрешает `/Dest` внутренних ссылок
+        // в id зарезервированных сессией страниц.
+        let annots: Vec<Dictionary> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::Annotation { annot } => Some(crate::annot::annotation_to_dict(annot, &|i| {
+                    session.page_ref(i)
+                })),
+                _ => None,
+            })
+            .collect();
+        ops.retain(|op| !matches!(op, Op::Annotation { .. }));
+        // Карта шрифтов живёт только до `translate`: `write_page` требует
+        // сессию целиком, и заимствование `prepared_fonts` обязано кончиться.
+        let content = {
+            let fonts_map: BTreeMap<FontId, &PreparedFont> = session
+                .prepared_fonts()
+                .iter()
+                .map(|(name, prepared)| (FontId(name.clone()), prepared))
+                .collect();
+            content::translate(&ops, &fonts_map)?
+        };
+        session.write_page(
+            &content,
+            [0.0, 0.0, geometry.width_pt(), geometry.height_pt()],
+            &annots,
+        )?;
     }
     session.finish()?;
     Ok(out)
@@ -236,16 +164,23 @@ fn title(doc: &Document, options: &PdfOptions) -> String {
     doc.metadata.title.clone().unwrap_or_default()
 }
 
-/// Подставить свойства пакета `docProps/core.xml`, если настройки не заданы.
+/// Подставить свойства пакета `docProps/core.xml` в `/Info`, если настройки не
+/// заданы.
 ///
-/// Ключевые слова не переносятся: в модели это одна строка, а в
-/// [`PdfOptions::keywords`] — список, и делить её по запятым значило бы гадать о
-/// формате исходника.
-fn apply_metadata(doc: &mut PdfDocument, source: &Document, options: &PdfOptions) {
-    let info = &mut doc.metadata.info;
-    info.author = pick(&options.author, source.metadata.creator.as_deref());
-    info.subject = pick(&options.subject, source.metadata.subject.as_deref());
-    info.keywords.clone_from(&options.keywords);
+/// Ключевые слова — одна строка через запятую: в модели это список, а
+/// `/Keywords` — строка (так же соединял их вендоренный бэкенд).
+fn apply_metadata(session: &mut Session<'_, Vec<u8>>, source: &Document, options: &PdfOptions) {
+    session.set_info(&[
+        (
+            String::from("Author"),
+            pick(&options.author, source.metadata.creator.as_deref()),
+        ),
+        (
+            String::from("Subject"),
+            pick(&options.subject, source.metadata.subject.as_deref()),
+        ),
+        (String::from("Keywords"), options.keywords.join(",")),
+    ]);
 }
 
 /// Непустая настройка, иначе значение из документа.
@@ -279,28 +214,6 @@ fn geometry(page: &Page) -> PageGeometry {
         ..PageConfig::default()
     };
     PageGeometry::new(&cfg)
-}
-
-/// Страницы-зонды для подрезки шрифтов: по одной на встроенное начертание, с
-/// одной текстовой операцией из всех его символов.
-///
-/// Размер страницы-зонда printpdf не читает, но он берётся с первой страницы
-/// документа — как у листа-донора в `painter::probe_pages_from`.
-fn probe_pages(glyphs: BTreeMap<FontId, BTreeSet<char>>, page: &Page) -> Vec<PdfPage> {
-    let geometry = geometry(page);
-    glyphs
-        .into_iter()
-        .map(|(font, chars)| {
-            PdfPage::new(
-                Mm::from(Pt(geometry.width_pt())),
-                Mm::from(Pt(geometry.height_pt())),
-                vec![Op::WriteText {
-                    items: vec![TextItem::Text(chars.into_iter().collect())],
-                    font,
-                }],
-            )
-        })
-        .collect()
 }
 
 /// Начертания, встретившиеся на страницах: ими подрезаются встроенные шрифты.
@@ -344,14 +257,16 @@ fn collect_faces(layout: &PageLayout) -> FaceSet {
 ///
 /// Источник — те же операции, что уйдут в запись ([`draw_page`]): пре-скан
 /// текста по элементам раскладки разошёлся бы с отрисовкой при первой же правке
-/// (например, когда таблицы начнут рисовать своё содержимое).
+/// (например, когда таблицы начнут рисовать своё содержимое). Ключ накопления —
+/// [`Face`], а не [`FontId`]: зонды идут до сессии, и id шрифтов ещё не
+/// существует; обратное сопоставление делает [`EmbeddedFonts::face`].
 fn collect_glyphs(
     layout: &PageLayout,
     embedded: &EmbeddedFonts,
     registry: &mut FontRegistry,
     images: &images::Images,
-) -> BTreeMap<FontId, BTreeSet<char>> {
-    let mut glyphs: BTreeMap<FontId, BTreeSet<char>> = BTreeMap::new();
+) -> BTreeMap<Face, BTreeSet<char>> {
+    let mut glyphs: BTreeMap<Face, BTreeSet<char>> = BTreeMap::new();
     for (index, page) in layout.pages.iter().enumerate() {
         let geometry = geometry(page);
         for op in draw_page(
@@ -363,7 +278,7 @@ fn collect_glyphs(
             images,
         ) {
             if let Op::WriteText { font, items } = op {
-                let set = glyphs.entry(font.clone()).or_default();
+                let set = glyphs.entry(embedded.face(&font)).or_default();
                 for item in items {
                     if let TextItem::Text(text) = item {
                         set.extend(text.chars());
@@ -538,8 +453,8 @@ fn draw_line(
     ops.push(Op::EndTextSection);
 }
 
-/// Цвет знака: раскладка хранит `w:color` как `RRGGBB`, printpdf ждёт `RRGGBBAA`
-/// в [`Color`] — каналы меняются местами, альфа добавляется непрозрачная.
+/// Цвет знака: раскладка хранит `w:color` как `RRGGBB`, а [`Color`] ждёт
+/// `RRGGBBAA` — каналы меняются местами, альфа добавляется непрозрачная.
 ///
 /// Значение без `w:color` — чёрный: `auto` в OOXML и есть цвет текста по
 /// умолчанию. То же преобразование, что у canvas-пути

@@ -1,6 +1,7 @@
 //! Операции страницы → байты content stream (ADR-0022).
 //!
-//! Транслятор повторяет `translate_operations` из форка printpdf байт в байт:
+//! Транслятор повторяет `translate_operations` из вендоренного форка байт в
+//! байт:
 //! те же операторы, тот же порядок операндов и то же форматирование (числа —
 //! через `{}`, как у `lopdf::writer`; сериализацию выполняет сам lopdf через
 //! `Content::encode`). От совпадения зависит отрисовка при переходе с форка на
@@ -182,7 +183,7 @@ fn path_ops(points: &[LinePoint]) -> Vec<Operation> {
     while i < points.len() {
         let current = &points[i];
         // Кривая Безье: две опорные точки и конечная. Одна опорная точка —
-        // участок вырождается в отрезок (как в форке printpdf).
+        // участок вырождается в отрезок (как в вендоренном форке).
         if current.bezier && i + 2 < points.len() && points[i + 1].bezier {
             let end = &points[i + 2];
             let mut operands = point_operands(current.p);
@@ -455,7 +456,7 @@ mod tests {
     #[test]
     fn single_bezier_handle_falls_back_to_line() {
         // Одной опорной точки мало для кривой: участок становится отрезком,
-        // как в форке printpdf.
+        // как в вендоренном форке.
         let line = Line {
             points: vec![
                 LinePoint {
