@@ -29,6 +29,7 @@ const wasm = vi.hoisted(() => ({
   resize_canvas: vi.fn(),
   register_bitmap: vi.fn(),
   drop_bitmap: vi.fn(() => true),
+  font_bytes: vi.fn(() => new Uint8Array(4)),
   paint_display_list_sab: vi.fn(() => ({ cmds: 1, dropped: false, paintMs: 0 })),
   xlsx_build_display_list_sab: vi.fn(() => ({ written: true, cmds: 1, buildMs: 0 })),
   xlsx_hit_test: vi.fn(() => null),

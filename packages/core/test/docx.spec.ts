@@ -12,6 +12,7 @@ const wasm = vi.hoisted(() => {
     resize_canvas: vi.fn(),
     register_bitmap: vi.fn(),
     drop_bitmap: vi.fn(() => true),
+    font_bytes: vi.fn(() => new Uint8Array(4)),
     paint_display_list_sab: vi.fn(() => ({ cmds: 1, dropped: false, paintMs: 0 })),
     xlsx_build_display_list_sab: vi.fn(
       (_sab: unknown, _slot: number, _sheet: number, _viewport: unknown, _options: unknown) => ({
@@ -82,7 +83,7 @@ const openMsg = (format: 'xlsx' | 'docx'): InMsg => ({
   bytes: new ArrayBuffer(8),
 });
 
-const renderMsg = (target: { sheet?: number; page?: number }): InMsg => ({
+const renderMsg = (target: { sheet?: number; gap?: number }): InMsg => ({
   type: 'render',
   req: { ...target, viewport, config },
 });
@@ -134,22 +135,22 @@ describe('открытие DOCX', () => {
 });
 
 describe('кадр DOCX', () => {
-  it('идёт через сборщик страниц: страница и окно, без настроек показа', async () => {
+  it('идёт через сборщик стопки: окно и зазор, без настроек показа', async () => {
     await handler({ data: openMsg('docx') });
-    await handler({ data: renderMsg({ page: 1 }) });
+    await handler({ data: renderMsg({ gap: 16 }) });
 
     expect(wasm.xlsx_build_display_list_sab).not.toHaveBeenCalled();
     expect(stubCalls('docx_build_display_list_sab')).toHaveLength(1);
     const call = stubCalls('docx_build_display_list_sab')[0];
     expect(call?.[1]).toBe(SLOT_CAPACITY);
-    expect(call?.[2]).toBe(1);
-    expect(call?.[3]).toEqual(rustViewport);
-    // Лишнего аргумента (настроек показа) у былл-функции страницы нет.
+    expect(call?.[2]).toEqual(rustViewport);
+    expect(call?.[3]).toBe(16);
+    // Лишнего аргумента (настроек показа) у былл-функции стопки нет.
     expect(call).toHaveLength(4);
     expect(ticks()).toHaveLength(1);
   });
 
-  it('без номера страницы пропускается, а не рисует первую', async () => {
+  it('без зазора между страницами пропускается, а не собирает стопку встык', async () => {
     await handler({ data: openMsg('docx') });
     await handler({ data: renderMsg({}) });
 
@@ -158,7 +159,7 @@ describe('кадр DOCX', () => {
   });
 
   it('до открытия документа не собирается', async () => {
-    await handler({ data: renderMsg({ page: 0 }) });
+    await handler({ data: renderMsg({ gap: 16 }) });
 
     expect(stubCalls('docx_build_display_list_sab')).toHaveLength(0);
     expect(ticks()).toHaveLength(0);
@@ -167,7 +168,7 @@ describe('кадр DOCX', () => {
   it('после закрытия документа не собирается', async () => {
     await handler({ data: openMsg('docx') });
     await handler({ data: { type: 'close' } });
-    await handler({ data: renderMsg({ page: 0 }) });
+    await handler({ data: renderMsg({ gap: 16 }) });
 
     expect(stubCalls('docx_close')).toHaveLength(1);
     expect(stubCalls('docx_build_display_list_sab')).toHaveLength(0);

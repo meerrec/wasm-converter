@@ -20,6 +20,7 @@ const wasm = vi.hoisted(() => {
     resize_canvas: vi.fn(),
     register_bitmap: vi.fn(),
     drop_bitmap: vi.fn(() => true),
+    font_bytes: vi.fn(() => new Uint8Array(4)),
     paint_display_list_sab: vi.fn(() => ({ cmds: 1, dropped: false, paintMs: 0 })),
     xlsx_build_display_list_sab: vi.fn(
       (_sab: unknown, _slot: number, _sheet: number, _viewport: unknown, _options: unknown) => ({
@@ -86,7 +87,7 @@ const openMsg = (format: 'xlsx' | 'docx'): InMsg => ({
   bytes: new ArrayBuffer(8),
 });
 
-const renderMsg = (target: { sheet?: number; page?: number }): InMsg => ({
+const renderMsg = (target: { sheet?: number; gap?: number }): InMsg => ({
   type: 'render',
   req: { ...target, viewport, config },
 });

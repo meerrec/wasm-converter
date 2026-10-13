@@ -17,9 +17,9 @@ const config: RenderConfig = { showGrid: true, showHeaders: false, theme: 'dark'
 const xlsxReq = (sheet?: number): RenderRequest =>
   sheet === undefined ? { viewport, config } : { sheet, viewport, config };
 
-/** Кадр DOCX: страница; настроек показа у него нет. */
-const docxReq = (page?: number): RenderRequest =>
-  page === undefined ? { viewport, config } : { page, viewport, config };
+/** Кадр DOCX: зазор между страницами; настроек показа у него нет. */
+const docxReq = (gap?: number): RenderRequest =>
+  gap === undefined ? { viewport, config } : { gap, viewport, config };
 
 describe('toViewport', () => {
   it('перекладывает окно в единицы Rust', () => {
@@ -54,16 +54,16 @@ describe('frameTarget', () => {
     expect(frameTarget('xlsx', xlsxReq())).toMatchObject({ kind: 'xlsx', sheet: 0 });
   });
 
-  it('для DOCX берёт страницу запроса и не тащит настройки показа', () => {
+  it('для DOCX берёт зазор стопки и не тащит настройки показа', () => {
     const target = frameTarget('docx', docxReq(2));
 
-    expect(target).toEqual({ kind: 'docx', page: 2, viewport: toViewport(viewport) });
-    // Настроек показа у кадра страницы нет — их не должно быть и в аргументах.
+    expect(target).toEqual({ kind: 'docx', gap: 2, viewport: toViewport(viewport) });
+    // Настроек показа у кадра стопки нет — их не должно быть и в аргументах.
     expect('options' in target).toBe(false);
   });
 
-  it('для DOCX без страницы отказывает, а не рисует первую', () => {
-    expect(() => frameTarget('docx', docxReq())).toThrow(/page/);
+  it('для DOCX без зазора отказывает, а не рисует стопку встык', () => {
+    expect(() => frameTarget('docx', docxReq())).toThrow(/gap/);
   });
 
   it('пока ничего не открыто, кадр не собирается', () => {
