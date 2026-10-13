@@ -62,3 +62,8 @@ experiments/lowa-spike/vendor/
 # (.gitattributes). `*.wasm` из правила выше покрывает сырой модуль; `x2t.js`,
 # `x2t.js.br` и `x2t.wasm.br` ни одним правилом не исключены, negation им не нужен.
 !packages/x2t/vendor/x2t.wasm
+
+# Страница конвертера примера: сюда скрипт `examples/viewer/scripts/copy-x2t.mjs`
+# кладёт копии артефактов x2t из вендорного каталога выше — источниками они не
+# являются, в сборку уезжает копия.
+examples/viewer/public/x2t/

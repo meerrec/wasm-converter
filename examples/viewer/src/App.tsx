@@ -3,12 +3,13 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { BootFallback } from './components/BootFallback.js';
 
 // Страницы грузятся лениво: код одной не нужен на другой. Статический импорт
-// втянул бы в общий бандл обе — и разметку DOCX-страницы на XLSX-странице, и
-// наоборот, — хотя пользователь открывает в один момент ровно один формат.
+// втянул бы в общий бандл все три — разметку DOCX на XLSX-странице, пакет
+// конвертера на обеих вьюерных, — а пользователь открывает формат за раз.
+const ConvertPage = lazy(() => import('./pages/convert/ConvertPage.js'));
 const DocxPage = lazy(() => import('./pages/docx/DocxPage.js'));
 const XlsxPage = lazy(() => import('./pages/xlsx/XlsxPage.js'));
 
-/** Маршруты примера: DOCX — на `/docx`, XLSX — на `/xlsx`. */
+/** Маршруты примера: DOCX — на `/docx`, XLSX — на `/xlsx`, конвертер — на `/convert`. */
 export default function App(): ReactElement {
   // Страница подгружается чанком, поэтому каждая обёрнута в `Suspense`: без
   // него отрисовка ждала бы промис и роняла React.
@@ -20,6 +21,7 @@ export default function App(): ReactElement {
       <Route path="/" element={<Navigate to="/docx" replace />} />
       <Route path="/docx" element={page(<DocxPage />)} />
       <Route path="/xlsx" element={page(<XlsxPage />)} />
+      <Route path="/convert" element={page(<ConvertPage />)} />
       {/* Незнакомый (или старый) адрес ведёт на DOCX — примера это не роняет. */}
       <Route path="*" element={<Navigate to="/docx" replace />} />
     </Routes>

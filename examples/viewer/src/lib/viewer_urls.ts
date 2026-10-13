@@ -1,11 +1,12 @@
 // URL-ы воркеров и ленивых wasm-модулей. Здесь они собраны в одном месте,
-// потому что нужны обеим страницам, а собираться должны один раз: чанки
-// воркеров и wasm-модулей общие для DOCX и XLSX.
+// потому что нужны страницам, а собираться должны один раз: чанки воркеров и
+// wasm-модулей общие для DOCX и XLSX.
 
 // Воркеры подключаются суффиксом `?worker&url`: только так Vite собирает их
 // отдельными чанками. Голый `new URL('./docx_worker.ts', import.meta.url)` он
 // считает обычным ассетом и инлайнит исходник в data-URL, где импорт
 // `@doc-converter/core/worker` уже не разрешается, — воркер молча не стартует.
+import convertWorkerFileUrl from '../workers/convert_worker.ts?worker&url';
 import docxWorkerFileUrl from '../workers/docx_worker.ts?worker&url';
 import xlsxWorkerFileUrl from '../workers/xlsx_worker.ts?worker&url';
 import { getWasm, putWasm } from './doc_cache.js';
@@ -15,6 +16,21 @@ export const docxWorkerUrl = docxWorkerFileUrl;
 
 /** URL собранного воркера XLSX — уходит в `createXlsxViewer({ workerUrl })`. */
 export const xlsxWorkerUrl = xlsxWorkerFileUrl;
+
+/** URL собранного воркера конвертера — страница создаёт его `new Worker(...)`. */
+export const convertWorkerUrl = convertWorkerFileUrl;
+
+// Артефакты x2t (обвязка и wasm) лежат статикой: dev-сервер отдаёт `public/x2t/`
+// как есть, сборка кладёт их туда скриптом `scripts/copy-x2t.mjs`. На Pages путь
+// сдвигается базой Vite (`/<repo>/`), поэтому URL собирается от `BASE_URL`, —
+// локально это корень, и оба режима остаются рабочими.
+const X2T_DIR = `${import.meta.env.BASE_URL}x2t/`;
+
+/** URL обвязки x2t — её воркер вставляет `<script>` при первом запросе. */
+export const x2tScriptUrl = `${X2T_DIR}x2t.js`;
+
+/** URL wasm-модуля x2t: 38 МБ, лежит рядом с обвязкой и грузится ею же. */
+export const x2tWasmUrl = `${X2T_DIR}x2t.wasm`;
 
 // Ленивые wasm-модули отдаются URL-ами, а не импортом: `new URL(...)` Vite
 // разворачивает в ассет, тогда как импорт модуля втянул бы его в основной
