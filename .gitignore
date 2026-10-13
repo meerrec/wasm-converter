@@ -38,3 +38,7 @@ fuzz/artifacts/
 fuzz/target/
 oracle-out/
 oracle-out-docx/
+
+# TypeDoc API docs (сгенерированное: `pnpm docs:api`; .gitkeep держит каталог)
+docs/api/*
+!docs/api/.gitkeep

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  // Публичный API публикуемых пакетов: просмотрщик (@doc-converter/core) и
+  // CLI (@doc-converter/cli). Пакеты wasm* — сгенерированные wasm-bindgen
+  // биндинги, их документация — pkg/*.d.ts, TypeDoc их не обрабатывает.
+  // Стратегия packages: у core и cli разные tsconfig (bundler vs NodeNext),
+  // каждый пакет конвертируется со своим.
+  "name": "doc-converter",
+  "readme": "./README.md",
+  "entryPointStrategy": "packages",
+  "entryPoints": ["packages/core", "packages/cli"],
+  "packageOptions": {
+    "entryPoints": ["src/index.ts"],
+    // Символы из зависимостей (wasm-биндинги и пр.) не документируем.
+    "excludeExternals": true
+  },
+  // В 0.28 cleanOutputDir по умолчанию true и вычищает каталог целиком —
+  // вместе с отслеживаемым docs/api/.gitkeep.
+  "cleanOutputDir": false,
+  "out": "docs/api"
+}
