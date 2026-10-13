@@ -105,16 +105,31 @@ async function ensureViewer(host: HTMLElement): Promise<DocxViewerHandle> {
 }
 
 /**
+ * Очередь открытий. Документ в вьюере один, и ответ воркера — один на запрос: два открытия
+ * вперемешку (быстрый выбор файла и следом конвертация) разрешились бы по первому же ответу, и
+ * на экране оказался бы не тот документ. Ошибка очередь не рвёт — следующий документ откроется.
+ */
+let queue: Promise<unknown> = Promise.resolve();
+
+/**
  * Показать документ: `bytes` — байты `.docx` (свои или полученные конвертацией).
  *
  * Буфер передаётся воркеру переводом владения, поэтому вызывающий отдаёт копию: оригинал
  * остаётся ему для скачивания и повторных конвертаций.
  */
-export async function openDocument(
-  host: HTMLElement,
-  bytes: ArrayBuffer,
-  from: string,
-): Promise<PageInfo[]> {
+export function openDocument(host: HTMLElement, bytes: ArrayBuffer, from: string): Promise<PageInfo[]> {
+  const opening = queue.then(
+    () => openOne(host, bytes, from),
+    () => openOne(host, bytes, from),
+  );
+  queue = opening.then(
+    () => undefined,
+    () => undefined,
+  );
+  return opening;
+}
+
+async function openOne(host: HTMLElement, bytes: ArrayBuffer, from: string): Promise<PageInfo[]> {
   status = 'opening';
   source = from;
   lastError = null;
