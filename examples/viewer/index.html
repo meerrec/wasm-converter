@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>doc-converter: Слово и ДваИксель</title>
-    <!-- Pages не отдаёт COOP/COEP, поэтому в проде заголовки подставляет service worker;
-         в dev и preview он выходит сразу — crossOriginIsolated уже true. -->
-    <script src="%BASE_URL%coi-serviceworker.js"></script>
+    <!-- COOP/COEP (нужны для SharedArrayBuffer) на Pages ставит корневой service
+         worker сайта — его регистрирует src/lib/isolation.ts; в dev и preview
+         заголовки ставит сам Vite, и воркер там не нужен. -->
   </head>
   <body>
     <div id="root"></div>

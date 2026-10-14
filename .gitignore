@@ -3,6 +3,10 @@ dist/
 target/
 pkg/
 .turbo/
+# Артефакты публикации: собранный сайт Euro-Office и смонтированный `.pages/`.
+# Якорь обязателен: без него правило съело бы `experiments/lowa-spike/build/`.
+/build/
+/.pages/
 *.wasm
 *.wasm.d.ts
 coverage/
@@ -22,6 +26,9 @@ packages/*/pkg/
 .env
 .env.*
 !.env.example
+# ...кроме дев-адреса хоста Euro-Office: это не секрет, а часть рабочего контура
+# (страница `#/eurooffice` без него уедет в прод-ветку кода). См. examples/viewer.
+!examples/viewer/.env.development
 
 # IDE
 .idea/
