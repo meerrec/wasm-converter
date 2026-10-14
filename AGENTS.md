@@ -36,7 +36,7 @@ wasm-pack test --headless --chrome --release crates/wasm     # так же crate
 
 - `crates/wasm`, `crates/docx-wasm`, `crates/pdf-wasm` целиком под `#![cfg(target_arch = "wasm32")]`: нативный clippy/test их не видит, доккомментарии проверяет только wasm32-нога CI (`cargo doc --target wasm32-unknown-unknown -p …`).
 - criterion-бенчи живут в крейтах (`crates/render/benches/render.rs`, `crates/pdf/benches/pdf.rs`, `crates/xlsx/benches/{open,conditional,hit_test}.rs`, `crates/docx/benches/{open,pagination}.rs`): `cargo bench -p doc-converter-<крейт>`. Baseline'ов нет — «до/после» берётся из локального прогона. CI компилирует все бенчи (`cargo bench --workspace --no-run`) — бенчи обязаны собираться.
-- `crates/fuzz` — отдельный workspace (исключён из корневого, свой nightly). Фаззинг: `cargo fuzz run docx_document` (цели `core_{zip,xml_reader,rels}`, `xlsx_worksheet`, `docx_{document,numbering,package,rels,styles}`).
+- `crates/fuzz` — отдельный workspace (исключён из корневого, свой nightly). Фаззинг: `cargo fuzz run docx_document` (цели `core_{zip,xml_reader,rels}`, `xlsx_worksheet`, `docx_{document,numbering,rels,styles}`).
 
 ### Сборка WASM
 
