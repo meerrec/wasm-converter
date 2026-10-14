@@ -343,5 +343,5 @@ export type WorkerResponse =
   | { id: number; type: 'ready'; meta: { pages?: number; sheets?: string[] } }
   | { id: number; type: 'pdf';   bytes: Uint8Array }
   | { id: number; type: 'png';   bytes: Uint8Array }
-  | { id: number; type: 'hit';   ref: HitResult | null }
+  | { id: number; type: 'hit';   cell: [number, number] | null }
   | { id: number; type: 'tick';  frameId: number; timings: FrameTimings };
