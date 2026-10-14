@@ -15,6 +15,7 @@
   "dependencies": {
     "@doc-converter/browser-convert": "workspace:*",
     "@doc-converter/core": "workspace:*",
+    "@doc-converter/eurooffice": "workspace:*",
     "@doc-converter/wasm-docx": "workspace:*",
     "@doc-converter/wasm-pdf": "workspace:*",
     "react": "^19.0.0",

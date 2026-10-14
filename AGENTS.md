@@ -101,7 +101,7 @@ pnpm -F @doc-converter/example-viewer test   # весь Playwright: 3 брауз
 | `@doc-converter/core` | worker RPC, оба транспорта кадра, OffscreenCanvas-просмотрщики XLSX и DOCX |
 | `@doc-converter/wasm`, `-wasm-pdf`, `-wasm-docx` | сгенерированные wasm-bindgen-биндинги; `pkg/` в `.gitignore`, не редактировать |
 | `@doc-converter/cli` | `convert` и `batch` на тех же wasm-модулях, пул воркеров |
-| `examples/viewer` | демо (Vite + React) и Playwright-e2e; страницы «Слово» `/#/docx` и «ДваИксель» `/#/xlsx` |
+| `examples/viewer` | демо (Vite + React) и Playwright-e2e; страницы «Слово» `/#/docx`, «ДваИксель» `/#/xlsx`, «Конвертер» `/#/convert`, Euro-Office `/#/eurooffice` |
 
 ### Контракт Rust ↔ TS: DisplayList
 
