@@ -30,5 +30,6 @@
 | 0022 | Свой PDF-бэкенд вместо форка printpdf | [`0022-own-pdf-backend.md`](0022-own-pdf-backend.md) |
 | 0023 | LibreOffice-WASM как «точный» бэкенд — no-go | [`0023-libreoffice-wasm-exact-backend.md`](0023-libreoffice-wasm-exact-backend.md) |
 | 0024 | x2t (ONLYOFFICE) как рисующий бэкенд — no-go | [`0024-x2t-rendering-backend.md`](0024-x2t-rendering-backend.md) |
+| 0025 | Граница раскладки XLSX — без отдельного крейта `xlsx-layout` | [`0025-xlsx-layout-boundary.md`](0025-xlsx-layout-boundary.md) |
 
 Сводка принятых решений по спринтам — `ROADMAP.md` §11.
