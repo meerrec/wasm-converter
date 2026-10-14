@@ -7,6 +7,23 @@
 
 ## Что делает pages.yml
 
+**Прогон ниже — исторический** (13.10.2026): он описывает пайплайн на тот
+момент, когда публиковалось только демо и корень сайта был самим приложением.
+Текущий пайплайн шире и собирает на один сайт два артефакта — движок
+Euro-Office в корне и демо в `/viewer/`:
+
+1. сборка wasm (`scripts/build-wasm.sh`) → `core` → `browser-convert...` →
+   `@doc-converter/eurooffice`;
+2. сборка сайта движка с кэшем `build/eurooffice/.cache` и
+   `EUROOFFICE_X2T_BR=copy node scripts/eurooffice/assemble.mjs`;
+3. сборка демо с `VITE_BASE=/<имя-репозитория>/viewer/`;
+4. `node scripts/pages/stage.mjs --out .pages` — раскладка артефакта
+   публикации, затем upload `.pages`.
+
+Датированный прогон ниже не переписывался и не удалялся: он остаётся
+свидетельством того, что было проверено руками — сборкой, сервингом в режиме
+Pages и дым-прогоном Playwright.
+
 Workflow `.github/workflows/pages.yml` (triggers: push в `main`,
 `workflow_dispatch`; permissions: `pages: write`, `id-token: write`;
 concurrency-группа `pages` без отмены — деплои Pages не параллелятся):

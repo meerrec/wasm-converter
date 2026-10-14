@@ -1,0 +1,207 @@
+<!doctype html>
+<!--
+  Страница-указатель в корне сайта. Корень занимает self-host движка Euro-Office,
+  поэтому эта страница — единственное, что видит посетитель, пришедший на голый
+  адрес сайта; вход в редактор — только через демо: `editor.html` сам файлы
+  открывать не умеет (его грузит демо в iframe и отдаёт документ байтами).
+
+  Пути здесь только относительные: сайт публикуется и в подкаталог
+  (https://<логин>.github.io/wasm-converter/), где абсолютный `/viewer/` указывал
+  бы в корень домена. Внешних ресурсов нет — ни шрифтов, ни CDN: страница должна
+  открываться при выключенной сети так же, как при включённой.
+-->
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>doc-converter — просмотрщик OOXML и движок Euro-Office</title>
+    <meta
+      name="description"
+      content="Просмотрщик OOXML (DOCX, XLSX) на Rust и WebAssembly и self-host движка Euro-Office: демо — в /viewer/."
+    />
+    <style>
+      /* Тема — только через prefers-color-scheme: переключатель потребовал бы JS
+         и localStorage, а выигрыш нулевой: значение всё равно приходит из системы. */
+      :root {
+        color-scheme: light dark;
+        --bg: #f5f6f8;
+        --panel: #ffffff;
+        --ink: #16181d;
+        --muted: #5b6270;
+        --line: #e3e6eb;
+        --accent: #2f6feb;
+        --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 6px 20px rgb(16 24 40 / 7%);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #101217;
+          --panel: #181b22;
+          --ink: #e9ebf1;
+          --muted: #9aa2b1;
+          --line: #272c36;
+          --accent: #84a9ff;
+          --shadow: 0 1px 2px rgb(0 0 0 / 45%), 0 6px 20px rgb(0 0 0 / 35%);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 2.75rem 1.25rem 3rem;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        font-size: 16px;
+        line-height: 1.55;
+        -webkit-text-size-adjust: 100%;
+      }
+      main {
+        max-width: 44rem;
+        margin: 0 auto;
+      }
+      h1 {
+        margin: 0 0 0.5rem;
+        font-size: 1.9rem;
+        line-height: 1.2;
+        letter-spacing: -0.01em;
+      }
+      .lead {
+        margin: 0;
+        max-width: 38rem;
+        color: var(--muted);
+      }
+      h2 {
+        margin: 2.25rem 0 0.85rem;
+        font-size: 0.8125rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+      ul.pages {
+        display: grid;
+        gap: 0.75rem;
+        grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      ul.pages a {
+        display: block;
+        height: 100%;
+        padding: 1rem 1.1rem;
+        border: 1px solid var(--line);
+        border-radius: 0.75rem;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        color: inherit;
+        text-decoration: none;
+      }
+      ul.pages a:hover,
+      ul.pages a:focus-visible {
+        border-color: var(--accent);
+      }
+      ul.pages h3 {
+        margin: 0 0 0.3rem;
+        font-size: 1.05rem;
+        color: var(--accent);
+      }
+      ul.pages p {
+        margin: 0;
+        font-size: 0.9375rem;
+        color: var(--muted);
+      }
+      code {
+        padding: 0.1em 0.35em;
+        border: 1px solid var(--line);
+        border-radius: 0.3em;
+        background: var(--panel);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.875em;
+      }
+      footer {
+        margin-top: 2.5rem;
+        padding-top: 1.25rem;
+        border-top: 1px solid var(--line);
+        font-size: 0.875rem;
+        color: var(--muted);
+      }
+      footer p {
+        margin: 0 0 0.4rem;
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        ul.pages a {
+          transition: border-color 120ms ease;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>doc-converter</h1>
+        <p class="lead">
+          Просмотрщик OOXML — DOCX и XLSX — на Rust и WebAssembly, а рядом self-host движка
+          Euro-Office: редакторы ONLYOFFICE-форка, собранные статикой. Ни сервера, ни отправки
+          документа куда-либо — всё считается в браузере.
+        </p>
+      </header>
+
+      <h2>Демо</h2>
+      <ul class="pages">
+        <li>
+          <a href="./viewer/#/docx">
+            <h3>Слово</h3>
+            <p>Просмотр DOCX: постраничная навигация, зум, экспорт — в каркасе текстового редактора.</p>
+          </a>
+        </li>
+        <li>
+          <a href="./viewer/#/xlsx">
+            <h3>ДваИксель</h3>
+            <p>Просмотр XLSX: листы, прокрутка книги целиком, зум — в каркасе табличного редактора.</p>
+          </a>
+        </li>
+        <li>
+          <a href="./viewer/#/convert">
+            <h3>Конвертер</h3>
+            <p>Конвертация OOXML без сервера: x2t поднимается лениво, при первой конвертации.</p>
+          </a>
+        </li>
+        <li>
+          <a href="./viewer/#/eurooffice">
+            <h3>Euro-Office</h3>
+            <p>
+              Просмотр документа в редакторе ONLYOFFICE-форка, встроенном в страницу. При первом
+              открытии страница тянет около 35 МиБ движка.
+            </p>
+          </a>
+        </li>
+      </ul>
+
+      <footer>
+        <p>
+          Код проекта — Apache-2.0. Движок Euro-Office распространяется под AGPL-3.0-only; тексты
+          лицензий движка — в <a href="./LICENSES/">./LICENSES/</a>.
+        </p>
+      </footer>
+    </main>
+
+    <script>
+      // Воркер корня только снимает кэши прежних версий сайта: без него страница
+      // работает, поэтому отказ регистрации молча гасим — сообщать пользователю
+      // тут нечего, а ошибку в консоли он не искал.
+      //
+      // Та же проверка, что в `examples/viewer/src/lib/isolation.ts` (источник
+      // правды) и в `scripts/pages/sw.js`; воркер ставит заголовки всему сайту,
+      // поэтому корень обязан спрашивать то же самое. Формулировка — про
+      // `userAgentData`, а не про атрибут `credentialless`: она одна годится и
+      // странице, и воркеру, где DOM нет. Firefox и Safari не знают ни того ни
+      // другого, а заглянув сперва на корень, такой браузер получил бы изоляцию
+      // и снова упёрся бы в мёртвый `#/eurooffice`.
+      if ('serviceWorker' in navigator && 'userAgentData' in navigator) {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      }
+    </script>
+  </body>
+</html>

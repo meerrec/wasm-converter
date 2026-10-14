@@ -1,20 +1,37 @@
 // Сборка статического сайта Euro-Office из npm-частей @kreijstal/eurooffice-*.
 //
 // Что делает: берёт у реестра npm метаданные каждой части (версия пинится
-// константой), скачивает тарболы в .cache/ (повторные запуски берут их оттуда),
-// распаковывает в site/ overlay'ем — подчинённые части первыми, главный пакет
-// последним, — зеркалирует каталог движковых шрифтов fonts/ из репозитория
-// ranuts/document (npm-части eurooffice-fonts-1/-2 не опубликованы; сеть не
-// должна ронять сборку — при стойкой неудаче громкое предупреждение и
-// продолжение), копирует наш просмотрщик (viewer.html и собранную TS-оболочку
-// dist/, см. pnpm run build) и готовит brotli-копию x2t.wasm.br (в частях
-// лежит только несжатый x2t.wasm, а сайт ходит за .br), после чего проверяет
-// обязательные пути собранного сайта.
+// константой), скачивает тарболы в build/eurooffice/.cache/ (повторные запуски
+// берут их оттуда), распаковывает в build/eurooffice/site/ overlay'ем —
+// подчинённые части первыми, главный пакет последним, — зеркалирует каталог
+// движковых шрифтов fonts/ из репозитория ranuts/document (npm-части
+// eurooffice-fonts-1/-2 не опубликованы; сеть не должна ронять сборку — при
+// стойкой неудаче громкое предупреждение и продолжение), готовит x2t.wasm.br в
+// режиме EUROOFFICE_X2T_BR (см. ensureX2tBr) и проверяет, что обязательные пути
+// сайта на месте.
 //
-// Запуск: node scripts/assemble.mjs
+// Страницы просмотрщика здесь нет: она живёт в примере examples/viewer и
+// публикуется отдельно — scripts/pages/stage.mjs.
+//
+// Запуск: node scripts/eurooffice/assemble.mjs
+//         EUROOFFICE_X2T_BR=copy node scripts/eurooffice/assemble.mjs   (CI: plain-байты под именем .br)
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, createWriteStream, copyFileSync, writeFileSync, rmSync } from 'node:fs';
+import {
+  closeSync,
+  copyFileSync,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { once } from 'node:events';
 import { Readable } from 'node:stream';
 import { brotliCompress, constants as zlibConstants } from 'node:zlib';
@@ -22,9 +39,10 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
-const EXAMPLE_DIR = resolve(SCRIPT_DIR, '..');
-const SITE_DIR = join(EXAMPLE_DIR, 'site');
-const CACHE_DIR = join(EXAMPLE_DIR, '.cache');
+/** Корень репозитория — от расположения скрипта, а не от cwd: запускать можно откуда угодно. */
+const ROOT_DIR = resolve(SCRIPT_DIR, '..', '..');
+const SITE_DIR = join(ROOT_DIR, 'build', 'eurooffice', 'site');
+const CACHE_DIR = join(ROOT_DIR, 'build', 'eurooffice', '.cache');
 
 /** Версия всех частей одна: части собираются из общего dist сайта. */
 const VERSION = '9.3.5-rc.1.build.1';
@@ -35,6 +53,9 @@ const REGISTRY = 'https://registry.npmjs.org';
 const FONTS_API = 'https://api.github.com/repos/ranuts/document/contents/public/fonts';
 /** Конкурентность скачивания файлов каталога шрифтов. */
 const FONTS_PARALLELISM = 8;
+
+/** Сигнатура wasm-модуля: по ней отличаем сжатый x2t.wasm.br от plain-байтов. */
+const WASM_MAGIC = Buffer.from([0x00, 0x61, 0x73, 0x6d]);
 
 /**
  * Порядок overlay: первыми ложатся подчинённые части, последним — главный
@@ -55,6 +76,47 @@ function formatBytes(size) {
   if (size < 1024) return `${size} Б`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} КиБ`;
   return `${(size / (1024 * 1024)).toFixed(1)} МиБ`;
+}
+
+/** Первые байты файла без чтения всего файла: x2t.wasm — 35,8 МиБ, читать его ради сигнатуры незачем. */
+function headBytes(path, count) {
+  const fd = openSync(path, 'r');
+  try {
+    const buffer = Buffer.alloc(count);
+    const read = readSync(fd, buffer, 0, count, 0);
+    return buffer.subarray(0, read);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Файл начинается с сигнатуры wasm — то есть под именем .br лежат несжатые байты. */
+function isPlainWasm(path) {
+  return headBytes(path, 4).equals(WASM_MAGIC);
+}
+
+/**
+ * Режим x2t.wasm.br из EUROOFFICE_X2T_BR:
+ *
+ * - `brotli` (по умолчанию) — локальная разработка: сжатая копия x2t.wasm.br,
+ *   сервер отдаёт её с Content-Encoding: br;
+ * - `copy` — для CI: `.br` получает несжатые байты x2t.wasm. GitHub Pages не
+ *   отдаёт Content-Encoding: br, поэтому в публикуемом артефакте под именем
+ *   `.br` обязаны лежать plain-байты — иначе браузер попытается разжать wasm
+ *   как brotli и редактор не поднимется. Сжатие там же — только потерянные
+ *   2–4 минуты сборки.
+ *
+ * Значение проверяется до скачивания частей: опечатка не должна ждать
+ * пятиминутной распаковки, чтобы упасть.
+ */
+function x2tBrMode() {
+  const raw = (process.env.EUROOFFICE_X2T_BR ?? '').trim().toLowerCase();
+  if (raw === '' || raw === 'brotli') return 'brotli';
+  if (raw === 'copy') return 'copy';
+  console.error(
+    `EUROOFFICE_X2T_BR=«${process.env.EUROOFFICE_X2T_BR}» — неизвестный режим; допустимые значения: brotli (по умолчанию), copy`,
+  );
+  process.exit(1);
 }
 
 /**
@@ -114,34 +176,46 @@ function extractTarball(tgz) {
   execFileSync('tar', ['-xzf', tgz, '-C', SITE_DIR, '--strip-components=1']);
 }
 
-/** Рекурсивная копия каталога: целевой затирается, чтобы не копить устаревшие файлы. */
-function copyDir(source, target) {
-  rmSync(target, { recursive: true, force: true });
-  mkdirSync(target, { recursive: true });
-  for (const entry of readdirSync(source, { withFileTypes: true })) {
-    const from = join(source, entry.name);
-    const to = join(target, entry.name);
-    if (entry.isDirectory()) copyDir(from, to);
-    else copyFileSync(from, to);
-  }
-}
-
 /**
  * x2t.wasm.br — то, что редактор реально просит (WASM_PATH в assets/document-*.js).
  * В опубликованных частях есть только несжатый x2t.wasm (35,8 МиБ), поэтому
- * brotli-копию делаем сами тем же zlib из Node: иначе first-save тянет 35 МиБ
- * вместо ~7. Уже существующую копию не трогаем — сборка идемпотентна.
+ * копию делаем сами. Режим `brotli` сжимает тем же zlib из Node (иначе
+ * first-save тянет 35 МиБ вместо ~7) и уже готовую копию не пересчитывает —
+ * сборка идемпотентна. Режим `copy` кладёт несжатые байты: см. x2tBrMode().
  */
-async function ensureX2tBrotli() {
+async function ensureX2tBr(mode) {
   const wasm = join(SITE_DIR, 'sdkjs', 'common', 'wasm', 'x2t', 'x2t.wasm');
-  if (!existsSync(wasm)) return;
   const br = `${wasm}.br`;
-  if (existsSync(br) && statSync(br).size > 1024 * 1024) {
-    console.log(`\nbrotli-копия x2t.wasm.br на месте (${formatBytes(statSync(br).size)})`);
+  if (!existsSync(wasm)) {
+    // Копировать и сжимать нечего; что файла нет, поймает checkSite() ниже.
+    console.log('\nx2t.wasm.br: x2t.wasm в собранном сайте не найден — делать нечего');
     return;
   }
+  const wasmSize = statSync(wasm).size;
+
+  if (mode === 'copy') {
+    // Безусловная перезапись: после brotli-прогона под этим именем лежит
+    // сжатая копия, и «уже есть» здесь означало бы сломать публикацию.
+    copyFileSync(wasm, br);
+    console.log(
+      `\nx2t.wasm.br: режим copy — несжатые байты x2t.wasm (${formatBytes(wasmSize)}), Content-Encoding не нужен`,
+    );
+    return;
+  }
+
+  if (existsSync(br)) {
+    const brSize = statSync(br).size;
+    // Проверка «размер > 1 МиБ» одна пропускает главную ловушку: остаток от
+    // copy-прогона (35,8 МиБ plain-байтов). Сигнатура была — копию надо сжать.
+    if (brSize > 1024 * 1024 && !isPlainWasm(br)) {
+      console.log(`\nx2t.wasm.br: режим brotli — готовая копия на месте (${formatBytes(brSize)}), не пересчитываю`);
+      return;
+    }
+    console.log(`\nx2t.wasm.br: режим brotli — прежняя копия не сжата (${formatBytes(brSize)}), пересчитываю…`);
+  }
+
   const source = readFileSync(wasm);
-  console.log(`\nbrotli-копия x2t.wasm.br: в частях только несжатый x2t.wasm (${formatBytes(source.length)}), сжимаю…`);
+  console.log(`\nx2t.wasm.br: режим brotli — в частях только несжатый x2t.wasm (${formatBytes(source.length)}), сжимаю…`);
   const started = Date.now();
   const compressed = await new Promise((resolveCompress, rejectCompress) => {
     brotliCompress(
@@ -158,7 +232,8 @@ async function ensureX2tBrotli() {
   });
   writeFileSync(br, compressed);
   console.log(
-    `brotli-копия готова: ${formatBytes(compressed.length)} за ${((Date.now() - started) / 1000).toFixed(0)} с — сервер отдаёт её с Content-Encoding: br`,
+    `x2t.wasm.br: режим brotli — ${formatBytes(compressed.length)} за ${((Date.now() - started) / 1000).toFixed(0)} с,` +
+      ` сервер отдаёт её с Content-Encoding: br`,
   );
 }
 
@@ -342,7 +417,11 @@ async function mirrorFonts() {
 
 /**
  * Обязательные пути собранного сайта. Возвращает список проблем; пустой список —
- * сайт цел. Каталог fonts/ (движковый каталог шрифтов) здесь не проверяется: его
+ * сайт цел. Это проверка «сборка не развалилась», а не приёмка артефакта:
+ * строгие гейты публикуемого сайта (размеры, маршруты, запрет лишнего) живут в
+ * scripts/pages/stage.mjs, куда сайт и уезжает целиком.
+ *
+ * Каталог fonts/ (движковый каталог шрифтов) здесь не проверяется: его
  * наполняет шаг зеркалирования, и его отсутствие — предупреждение, а не отказ
  * сборки (редактор запросы к /fonts/* переносит).
  */
@@ -362,8 +441,6 @@ function checkSite() {
   requireFile('sdkjs/common/wasm/x2t/x2t.js');
   requireFile('sdkjs/common/wasm/x2t/x2t.wasm.br');
   requireFile('ran-fonts/fonts.css');
-  requireFile('dist/main.js');
-  requireFile('dist/style.css');
   requireDirNonEmpty('sdkjs/word');
   requireDirNonEmpty('ran-fonts');
 
@@ -393,6 +470,7 @@ function siteStats() {
 }
 
 async function main() {
+  const brMode = x2tBrMode();
   mkdirSync(CACHE_DIR, { recursive: true });
   mkdirSync(SITE_DIR, { recursive: true });
   console.log(`сборка сайта Euro-Office ${VERSION} — ${PARTS.length} частей, overlay в ${SITE_DIR}`);
@@ -412,20 +490,8 @@ async function main() {
     extractTarball(tgz);
   }
 
-  const viewerSource = join(EXAMPLE_DIR, 'viewer.html');
-  copyFileSync(viewerSource, join(SITE_DIR, 'viewer.html'));
-  console.log(`\nнаш просмотрщик: viewer.html → site/viewer.html`);
-
   await mirrorFonts();
-
-  const distSource = join(EXAMPLE_DIR, 'dist');
-  if (!existsSync(join(distSource, 'main.js')) || !existsSync(join(distSource, 'style.css'))) {
-    throw new Error(`dist/ не собран (нет dist/main.js или dist/style.css) — запустите pnpm run build`);
-  }
-  copyDir(distSource, join(SITE_DIR, 'dist'));
-  console.log(`наш просмотрщик: dist/ → site/dist/`);
-
-  await ensureX2tBrotli();
+  await ensureX2tBr(brMode);
 
   const problems = checkSite();
   const stats = siteStats();
@@ -440,7 +506,8 @@ async function main() {
     throw new Error(`собранный сайт неполон:\n  - ${problems.join('\n  - ')}`);
   }
   console.log('проверка состава: обязательные пути на месте');
-  console.log('готово: node scripts/serve.mjs, затем http://127.0.0.1:5271/viewer.html');
+  console.log(`готово: node scripts/eurooffice/serve.mjs — http://127.0.0.1:5271/editor (локальная разработка)`);
+  console.log('       node scripts/pages/stage.mjs — сборка артефакта публикации (.pages/)');
 }
 
 await main();

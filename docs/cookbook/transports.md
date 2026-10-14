@@ -106,9 +106,9 @@ console.log(viewer.transport); // 'bytes'
 ```
 
 **Под капотом.** Путь без SAB — полноценный, а не fallback: так требует
-[ADR-0021](../adr/0021-frame-transports.md); на GitHub Pages заголовки
-подставляет вендоренный `coi-serviceworker.js`, который включается на первом
-заходе, отчего страница один раз перезагружается (`docs/workers.md`).
+[ADR-0021](../adr/0021-frame-transports.md); на GitHub Pages заголовки ставит
+корневой service worker сайта, который включается на первом заходе, отчего
+страница один раз перезагружается (`docs/workers.md`).
 
 ---
 
@@ -176,4 +176,4 @@ viewer.onTick((stats: PaintStats) => {
 
 Ссылки: [ADR-0021](../adr/0021-frame-transports.md) — равноправие транспортов,
 [ADR-0004](../adr/0004-sab-acceleration.md) — SAB-ускорение,
-`docs/workers.md` — COOP/COEP и coi-serviceworker.
+`docs/workers.md` — COOP/COEP и корневой service worker.
