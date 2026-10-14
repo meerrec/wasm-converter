@@ -1,6 +1,6 @@
 {
   "name": "@doc-converter/core",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Core primitives: worker RPC, OffscreenCanvas glue, DisplayList transport.",
   "license": "Apache-2.0",
   "type": "module",
@@ -18,8 +18,14 @@
       "import": "./dist/worker.js"
     }
   },
-  "files": ["dist", "README.md"],
-  "sideEffects": ["./dist/worker.js", "./dist/worker.cjs"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": [
+    "./dist/worker.js",
+    "./dist/worker.cjs"
+  ],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",

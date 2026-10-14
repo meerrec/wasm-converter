@@ -14,6 +14,17 @@ import { euroofficeBaseUrl } from './viewer_urls.js';
 const RELOAD_FLAG = 'coiReloadedBySelf';
 
 /**
+ * Сколько ждать активации воркера, прежде чем смириться с транспортом `bytes`.
+ *
+ * Ожидание не вечное: воркер, который не встал (404 на `sw.js`, обрыв сети),
+ * не должен задерживать инициализацию приложения дольше, чем стоит попытка
+ * получить SAB. По этому таймауту функция завершается без перезагрузки: без
+ * активного воркера она всё равно ничего не изменит. Страница без изоляции
+ * работает и так (ADR-0021).
+ */
+const ACTIVATION_TIMEOUT_MS = 5000;
+
+/**
  * Прочитать и снять метку перезагрузки.
  *
  * Снимается, а не только читается: следующая навигация в этой вкладке получает
@@ -66,6 +77,49 @@ export function supportsCredentiallessFrames(): boolean {
   return 'userAgentData' in navigator;
 }
 
+/** Встал ли у регистрации воркер, готовый перехватить следующую навигацию. */
+function isActivated(registration: ServiceWorkerRegistration): boolean {
+  return registration.active?.state === 'activated';
+}
+
+/**
+ * Дождаться активации воркера регистрации, но не дольше `timeoutMs`;
+ * `false` — воркер так и не встал.
+ *
+ * `register()` резолвится сразу после создания регистрации, а не установки:
+ * перезагрузка, попавшая в навигацию до активации, до воркера не дошла бы — и
+ * страница осталась бы неизолированной, уже израсходовав единственную попытку
+ * (метку в `sessionStorage`). Поэтому ждём именно состояния `activated`, при
+ * котором воркер перехватывает навигации.
+ */
+function waitForActivation(
+  registration: ServiceWorkerRegistration,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (isActivated(registration)) return Promise.resolve(true);
+
+  return new Promise<boolean>((resolve) => {
+    // Воркер по ходу установки переезжает между слотами регистрации
+    // (`installing` → `waiting` → `active`), поэтому слушаем тот, в котором он
+    // сейчас; смена состояния видна на нём же до самого конца.
+    const worker = registration.installing ?? registration.waiting ?? registration.active;
+
+    function finish(): void {
+      worker?.removeEventListener('statechange', onStateChange);
+      window.clearTimeout(timer);
+      resolve(isActivated(registration));
+    }
+
+    function onStateChange(): void {
+      // `redundant` — воркер не встанет никогда: ждать нечего.
+      if (isActivated(registration) || worker?.state === 'redundant') finish();
+    }
+
+    const timer = window.setTimeout(finish, timeoutMs);
+    worker?.addEventListener('statechange', onStateChange);
+  });
+}
+
 /**
  * Обеспечить странице кросс-origin изоляцию: зарегистрировать корневой service
  * worker сайта и, если изоляция так и не появилась, один раз перезагрузить
@@ -103,10 +157,24 @@ export async function ensureCrossOriginIsolation(): Promise<void> {
     return;
   }
 
-  // Текущий документ ушёл браузеру задолго до регистрации — заголовки принесёт
-  // только следующая навигация, и начнёт контролироваться она же. Нет активного
-  // воркера или страница уже контролируется — перезагружаться незачем.
-  if (registration.active === null || navigator.serviceWorker.controller !== null) return;
+  // Ждём активации: перезагрузка, стартовавшая раньше, попала бы в навигацию, до
+  // которой воркер не дорос, и изоляция не появилась бы вовсе. Воркер не встал за
+  // отведённое время — перезагружаться нечем: заголовков у новой навигации не
+  // будет, а метка единственной попытки сгорит зря.
+  if (!(await waitForActivation(registration, ACTIVATION_TIMEOUT_MS))) return;
+
+  // Признак один — изоляции у страницы так и нет. Текущий документ ушёл браузеру
+  // задолго до регистрации, а `crossOriginIsolated` у загруженного документа сам
+  // не включается: COOP/COEP приходят с ответом. Изоляцию получает только
+  // документ, чей ответ прошёл через воркер, — значит, лечится это лишь
+  // следующей навигацией, то есть перезагрузкой.
+  //
+  // Раньше здесь стояло `navigator.serviceWorker.controller === null`, и его не
+  // хватало: воркер на `activate` зовёт `clients.claim()`, который выставляет
+  // контроллер текущему документу немедленно. Условие становилось ложным, хотя
+  // изолированным документ от этого не становился, — и первый заход в сессию ехал
+  // на транспорте `bytes`, а SAB появлялся только со второго захода.
+  if (window.crossOriginIsolated) return;
   if (alreadyReloaded || !markReloaded()) return;
   window.location.reload();
 }

@@ -1,6 +1,6 @@
 {
   "name": "@doc-converter/cli",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Command-line converter: DOCX to PDF/Markdown/HTML/text, XLSX to PDF, with a worker pool for batch runs.",
   "license": "Apache-2.0",
   "type": "module",
@@ -16,7 +16,10 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "sideEffects": false,
   "engines": {
     "node": ">=20"
