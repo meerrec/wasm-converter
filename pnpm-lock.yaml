@@ -66,6 +66,9 @@ importers:
       '@doc-converter/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@doc-converter/eurooffice':
+        specifier: workspace:*
+        version: link:../../packages/eurooffice
       '@doc-converter/wasm-docx':
         specifier: workspace:*
         version: link:../../packages/wasm-docx

@@ -107,6 +107,43 @@ async function urlFromCache(url: string, type: string): Promise<string> {
   }
 }
 
+// ── Сайт редактора Euro-Office ─────────────────────────────────────────────
+
+/**
+ * База со слэшем на конце: дальше к ней приклеивается имя страницы, а значение
+ * из `.env.development` рукописное — без слэша склейка дала бы `…5271editor.html`.
+ */
+function withTrailingSlash(url: string): string {
+  return url.endsWith('/') ? url : `${url}/`;
+}
+
+/**
+ * База сайта редактора: в проде — на уровень выше страницы демо, в dev — свой
+ * хост (`VITE_EUROOFFICE_BASE` из `.env.development`).
+ *
+ * Демо публикуется по `BASE_URL` (`/<repo>/viewer/`), а сайт редактора лежит в
+ * корне (`/<repo>/`) — подъём на уровень вверх и есть его адрес. База здесь
+ * одна: и `src` iframe, и его origin считаются от неё, разъехаться им нечем.
+ */
+export const euroofficeBaseUrl: string = withTrailingSlash(
+  import.meta.env.VITE_EUROOFFICE_BASE ??
+    new URL('../', new URL(import.meta.env.BASE_URL, window.location.origin)).href,
+);
+
+/** Адрес страницы редактора: embed-режим, без хрома сайта вокруг документа. */
+export const euroofficeEditorUrl = `${euroofficeBaseUrl}editor.html?embed=1`;
+
+/**
+ * Origin редактора — опция клиента Embed API.
+ *
+ * Клиент отсеивает входящие сообщения по origin'у iframe'а и по умолчанию берёт
+ * `window.location.origin`. В дев-режиме «два сервера» (демо 5178, редактор
+ * 5271) — это разные origin'ы, и без явной опции до страницы не дошло бы ни
+ * одного события. В проде origin'ы совпадают, но опция передаётся всегда:
+ * ветка кода одна.
+ */
+export const euroofficeEditorOrigin: string = new URL(euroofficeBaseUrl).origin;
+
 /**
  * URL-ы DOCX-модуля для воркера: прогретый кэш — blob-URL-ы, холодный — сеть.
  *
