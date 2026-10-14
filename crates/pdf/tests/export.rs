@@ -8,11 +8,16 @@
 //! Совпадение точек переноса с canvas-путём (DoD «Единая логика переноса»)
 //! проверяется сравнением строк текста, а не пикселей: обе стороны рисуют
 //! по `break_lines`.
+//!
+//! Фикстур с печатаемыми заголовками (`_xlnm.Print_Titles`) в наборе нет, а
+//! счёт фикстур закреплён документацией: такая книга собирается в памяти
+//! ([`package`]).
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use doc_converter_pdf::{PdfExporter, PdfOptions};
+use doc_converter_pdf::{PageConfig, PdfExporter, PdfOptions};
 use doc_converter_render::display_list::{DisplayList, DrawCommand};
 use doc_converter_render::viewport::Viewport;
 use doc_converter_xlsx::paint::PaintOptions;
@@ -531,4 +536,287 @@ fn pdf_wraps_text_exactly_like_canvas() {
         canvas.iter().any(|line| line.contains("гидро")),
         "в фикстуре нет длинного слова: {canvas:?}"
     );
+}
+
+/// Ячейка собираемой книги: строка (0-based), столбец буквой A1-нотации, текст.
+type TestCell = (u32, &'static str, String);
+
+/// Лист собираемой книги: имя и ячейки.
+type TestSheet = (&'static str, Vec<TestCell>);
+
+/// Собрать книгу XLSX в памяти: листы и `definedNames` книги.
+///
+/// Минимум частей, как в `crates/xlsx/tests/print_settings.rs`: текст ячеек
+/// записан прямо в листе (`inlineStr`), общей таблицы строк и стилей нет.
+fn package(sheets: &[TestSheet], defined_names: &str) -> Vec<u8> {
+    let worksheet = |cells: &[TestCell]| {
+        let mut rows: Vec<u32> = cells.iter().map(|(row, _, _)| *row).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        let mut data = String::new();
+        for row in rows {
+            data.push_str(&format!("<row r=\"{}\">", row + 1));
+            for (_, column, text) in cells.iter().filter(|(at, _, _)| *at == row) {
+                data.push_str(&format!(
+                    "<c r=\"{column}{}\" t=\"inlineStr\"><is><t>{text}</t></is></c>",
+                    row + 1
+                ));
+            }
+            data.push_str("</row>");
+        }
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">\
+<sheetData>{data}</sheetData></worksheet>"
+        )
+    };
+
+    let sheet_entries: String = sheets
+        .iter()
+        .enumerate()
+        .map(|(index, (name, _))| {
+            format!(
+                "<sheet name=\"{name}\" sheetId=\"{}\" r:id=\"rId{}\"/>",
+                index + 1,
+                index + 1
+            )
+        })
+        .collect();
+    let workbook = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>{sheet_entries}</sheets>
+  {defined_names}
+</workbook>"#
+    );
+    let workbook_rels: String = sheets
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            format!(
+                "<Relationship Id=\"rId{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{}.xml\"/>",
+                index + 1,
+                index + 1
+            )
+        })
+        .collect();
+    let workbook_rels = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+{workbook_rels}</Relationships>"
+    );
+    let root_rels = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Target="xl/workbook.xml"
+                Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"/>
+</Relationships>"#;
+    let content_types = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml"
+            ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+</Types>"#;
+
+    let mut buf = Vec::new();
+    {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let options = zip::write::SimpleFileOptions::default();
+        let mut parts: Vec<(String, String)> = vec![
+            ("[Content_Types].xml".to_owned(), content_types.to_owned()),
+            ("_rels/.rels".to_owned(), root_rels.to_owned()),
+            ("xl/workbook.xml".to_owned(), workbook),
+            ("xl/_rels/workbook.xml.rels".to_owned(), workbook_rels),
+        ];
+        for (index, (_, cells)) in sheets.iter().enumerate() {
+            parts.push((
+                format!("xl/worksheets/sheet{}.xml", index + 1),
+                worksheet(cells),
+            ));
+        }
+        for (name, body) in parts {
+            zip.start_file(name, options).expect("часть в архив");
+            zip.write_all(body.as_bytes()).expect("часть записана");
+        }
+        zip.finish().expect("пакет собран");
+    }
+    buf
+}
+
+/// Ячейки одного столбца: шапка в A1 и текст «{prefix} N» в строках под ней.
+///
+/// Строк заведомо больше страницы (48 строк по 20 px на A4): без разбивки на
+/// страницы повторять шапку было бы негде.
+fn sheet_cells(header: &str, prefix: &str, rows: u32) -> Vec<TestCell> {
+    let mut cells = vec![(0, "A", header.to_owned())];
+    for row in 1..=rows {
+        cells.push((row, "A", format!("{prefix} {row}")));
+    }
+    cells
+}
+
+/// Тексты прогонов страницы, в порядке потока: по одному на строку набора.
+fn page_lines(doc: &lopdf::Document, page: lopdf::ObjectId) -> Vec<String> {
+    text_runs(doc, page)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect()
+}
+
+/// Есть ли на странице прогон ровно с таким текстом.
+fn has_line(lines: &[String], text: &str) -> bool {
+    lines.iter().any(|line| line == text)
+}
+
+/// Тексты страниц документа в порядке номеров.
+fn document_lines(bytes: &[u8]) -> Vec<Vec<String>> {
+    let doc = lopdf::Document::load_mem(bytes).expect("PDF разбирается lopdf");
+    doc.get_pages()
+        .into_values()
+        .map(|page| page_lines(&doc, page))
+        .collect()
+}
+
+/// Печатаемые заголовки книги (`_xlnm.Print_Titles`) повторяют шапку на
+/// каждой странице своего листа.
+///
+/// До этой связки `sheet.print` до PDF не доезжал, и шапка печаталась один
+/// раз — на первой странице. У второго листа заголовков нет: его шапка
+/// повторяться не должна — у каждого листа свои `Print_Titles`, а конфиг у
+/// них общий.
+#[test]
+fn print_titles_repeat_rows_on_every_page() {
+    let book = doc_converter_xlsx::open(package(
+        &[
+            ("Первый", sheet_cells("Шапка первого", "первая", 120)),
+            ("Второй", sheet_cells("Шапка второго", "вторая", 120)),
+        ],
+        r#"<definedNames>
+             <definedName name="_xlnm.Print_Titles">'Первый'!$1:$1</definedName>
+           </definedNames>"#,
+    ))
+    .expect("книга открывается");
+
+    let mut bytes = Vec::new();
+    PdfExporter::new(PdfOptions::default())
+        .export_xlsx_book_to(&book, &mut bytes)
+        .expect("книга экспортируется");
+    let pages = document_lines(&bytes);
+
+    // Страницы первого листа — те, где есть его данные: тексты листов разные.
+    let first: Vec<&Vec<String>> = pages
+        .iter()
+        .filter(|lines| lines.iter().any(|line| line.starts_with("первая ")))
+        .collect();
+    assert!(
+        first.len() >= 2,
+        "лист не разбит на страницы: страниц {}",
+        first.len()
+    );
+    for lines in &first {
+        assert!(
+            has_line(lines, "Шапка первого"),
+            "шапка пропала со страницы: {lines:?}"
+        );
+    }
+    // Содержимое не потерялось: последняя страница листа — про последнюю строку.
+    assert!(has_line(first.last().expect("страницы есть"), "первая 120"));
+
+    let repeats = pages
+        .iter()
+        .filter(|lines| has_line(lines, "Шапка второго"))
+        .count();
+    assert_eq!(repeats, 1, "лист без Print_Titles повторил шапку");
+}
+
+/// Повторяемые столбцы книги (`$A:$A` в `_xlnm.Print_Titles`) печатаются на
+/// каждой полосе столбцов, а не только на первой.
+#[test]
+fn print_titles_repeat_first_columns_on_every_band() {
+    let mut cells = vec![
+        (0, "A", "Шапка первого".to_owned()),
+        (0, "K", "Шапка права".to_owned()),
+    ];
+    for row in 1..=120 {
+        cells.push((row, "A", format!("метка {row}")));
+        cells.push((row, "K", format!("право {row}")));
+    }
+    let book = doc_converter_xlsx::open(package(
+        &[("Первый", cells)],
+        r#"<definedNames>
+             <definedName name="_xlnm.Print_Titles">'Первый'!$A:$A</definedName>
+           </definedNames>"#,
+    ))
+    .expect("книга открывается");
+
+    let bytes = PdfExporter::new(PdfOptions::default())
+        .export_xlsx_sheet(&book, 0)
+        .expect("лист экспортируется");
+    let pages = document_lines(&bytes);
+    assert!(pages.len() >= 4, "лист не разбит по столбцам и строкам");
+
+    // Правая полоса столбцов: столбец K за границей страницы.
+    let right: Vec<&Vec<String>> = pages
+        .iter()
+        .filter(|lines| lines.iter().any(|line| line.starts_with("право ")))
+        .collect();
+    assert!(!right.is_empty(), "лист не разбит по столбцам");
+    let last = right
+        .iter()
+        .find(|lines| has_line(lines, "право 120"))
+        .expect("страница последней строки");
+    assert!(
+        has_line(last, "метка 120"),
+        "повторяемый столбец потерялся на полосе: {last:?}"
+    );
+    // Первая полоса строк: её правая полоса столбцов несёт и ячейку шапки из
+    // повторяемого столбца.
+    let first = right
+        .iter()
+        .find(|lines| has_line(lines, "право 1"))
+        .expect("страница первой строки");
+    assert!(
+        has_line(first, "Шапка первого"),
+        "шапка повторяемого столбца потерялась: {first:?}"
+    );
+    assert!(
+        has_line(first, "метка 1"),
+        "повторяемый столбец потерялся на полосе: {first:?}"
+    );
+}
+
+/// Явный `PageConfig::repeat_header_rows` сильнее книги: вызывающий печатает
+/// не «как Excel», а как ему сказали.
+#[test]
+fn explicit_page_config_beats_print_titles() {
+    let book = doc_converter_xlsx::open(package(
+        &[("Первый", sheet_cells("Шапка первого", "первая", 120))],
+        r#"<definedNames>
+             <definedName name="_xlnm.Print_Titles">'Первый'!$1:$1</definedName>
+           </definedNames>"#,
+    ))
+    .expect("книга открывается");
+
+    let bytes = PdfExporter::new(PdfOptions {
+        page: PageConfig {
+            repeat_header_rows: 2,
+            ..PageConfig::default()
+        },
+        ..PdfOptions::default()
+    })
+    .export_xlsx_sheet(&book, 0)
+    .expect("лист экспортируется");
+    let pages = document_lines(&bytes);
+    assert!(pages.len() >= 2, "лист не разбит на страницы");
+    for lines in &pages {
+        assert!(
+            has_line(lines, "Шапка первого"),
+            "шапка пропала со страницы: {lines:?}"
+        );
+        assert!(
+            has_line(lines, "первая 1"),
+            "явные две строки не победили книгу: {lines:?}"
+        );
+    }
 }

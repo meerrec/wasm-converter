@@ -83,7 +83,16 @@ pub struct PageConfig {
     /// увеличивает лист; подбор не опускается ниже 10% — предела Excel.
     pub fit_to_height: Option<u32>,
     pub print_grid_lines: bool,
+    /// Повторять первые N строк листа на каждой странице; `0` (умолчание) —
+    /// «не задан».
+    ///
+    /// Незаданное берётся из печатаемых заголовков книги
+    /// (`_xlnm.Print_Titles` → `sheet.print.repeat_header_rows`) — так лист
+    /// печатает Excel; заданное вызывающим сильнее книги.
     pub repeat_header_rows: usize,
+    /// Повторять первые N столбцов листа на каждой полосе столбцов; `0`
+    /// (умолчание) — «не задан», как и у
+    /// [`PageConfig::repeat_header_rows`].
     pub repeat_first_columns: usize,
     /// Не разрывать строку между страницами (как Excel).
     ///

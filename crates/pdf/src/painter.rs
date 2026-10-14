@@ -25,7 +25,7 @@ use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
 use doc_converter_render::text_measure::measure_text;
 use doc_converter_xlsx::layout::{SheetLayout, PX_PER_POINT};
 use doc_converter_xlsx::paint::{anchor_rect, display_text};
-use doc_converter_xlsx::{CellValue, Orientation, Sheet, Workbook, WorkbookImage};
+use doc_converter_xlsx::{CellValue, Orientation, Sheet, Span, Workbook, WorkbookImage};
 use lopdf::Dictionary;
 
 use crate::fonts::{EmbeddedFonts, Face};
@@ -792,6 +792,25 @@ fn sheet_margins(sheet: &Sheet) -> Option<Margins> {
     })
 }
 
+/// Сколько первых строк (столбцов) листа повторять по полосе
+/// `_xlnm.Print_Titles`.
+///
+/// Пагинация повторяет только первые строки (столбцы) листа, а полоса из файла
+/// — включительный отрезок `Span` (`$1:$2` — это `first: 0, last: 1`), поэтому
+/// число берётся по её концу: `last + 1`. Полоса, начатая не с первой строки
+/// (`$3:$4`), повторит и строки до неё: они и так стоят выше шапки на первой
+/// странице, а пропустить названные строки было бы хуже. Excel пишет полосу от
+/// начала листа практически всегда, и тогда отображение точное.
+fn repeat_span(span: Option<Span>) -> usize {
+    // Строк и столбцов на листе много меньше u32::MAX; приведение насыщающее,
+    // как у пагинации (`repeat_count`).
+    span.map_or(0, |span| {
+        usize::try_from(span.last)
+            .unwrap_or(usize::MAX)
+            .saturating_add(1)
+    })
+}
+
 /// Граница «уместить на N страниц» из листового `fitToWidth`/`fitToHeight`.
 ///
 /// `0` по семантике Excel — «сколько потребуется», то есть границы нет;
@@ -847,11 +866,14 @@ fn resolve_page_scale(page: &mut PageConfig, sheet: &Sheet) {
 /// Подготовить лист к записи: раскладка, геометрия, срезы, диаграммы.
 ///
 /// Масштаб считается на лист: `fit_to_width`/`fit_to_height` — настройка
-/// листа, и у листов одной книги он выходит разным. Поля, ориентация и
-/// масштаб — тоже свойства листа, и незаданные вызывающим подставляются из
-/// книги (`<pageMargins>`, `<pageSetup>`), а если лист молчит — умолчанием
+/// листа, и у листов одной книги он выходит разным. Поля, ориентация,
+/// повторяемые заголовки и масштаб — тоже свойства листа, и незаданные
+/// вызывающим подставляются из книги (`<pageMargins>`, `<pageSetup>`,
+/// `_xlnm.Print_Titles`), а если лист молчит — умолчанием
 /// [`resolve_page_scale`]; остальные настройки страницы общие, поэтому
-/// геометрия собирается из копии конфига с итоговым масштабом.
+/// геометрия собирается из копии конфига с итоговым масштабом. Копия берётся
+/// на каждый лист, так что печать книги даёт каждому листу его заголовки, хотя
+/// [`PdfOptions::page`] у них один.
 fn prepare_sheet<'a>(
     book: &'a Workbook,
     sheet_index: usize,
@@ -882,6 +904,22 @@ fn prepare_sheet<'a>(
         },
         explicit => explicit,
     };
+    // Печатаемые заголовки лист тоже несёт сам (`_xlnm.Print_Titles` книги,
+    // разбор уже перенёс их в `sheet.print`): Excel повторяет шапку на каждой
+    // странице, и без этой подстановки о повторяемых строках знал бы только
+    // вызывающий. Ноль у вызывающего — «не задан», а не «повторять ноль
+    // строк»: настройки «повторять ничего» в файле нет (её роль играет
+    // отсутствие полосы), а полоса `Span` непустая по определению, так что из
+    // книги ноль прийти не может и умолчание неотличимо от «не задано».
+    // Заданное вызывающим сильнее — он печатает не «как Excel», а как ему
+    // сказали. Подстановка до `print_scale`: подбор «уместить по высоте»
+    // считает число полос вместе с шапкой.
+    if page_cfg.repeat_header_rows == 0 {
+        page_cfg.repeat_header_rows = repeat_span(sheet.print.repeat_header_rows);
+    }
+    if page_cfg.repeat_first_columns == 0 {
+        page_cfg.repeat_first_columns = repeat_span(sheet.print.repeat_first_columns);
+    }
     // Масштаб — из настроек листа или умолчания, до `print_scale`: без этой
     // подстановки лист, который Excel печатает ужатым по ширине (`fitToPage`),
     // режется на страницы-полосы. Без настроек лист печатается в 100 % и

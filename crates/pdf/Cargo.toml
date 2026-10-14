@@ -35,6 +35,10 @@ thiserror            = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+# Сквозные тесты собирают книги XLSX в памяти, как это делает Excel: фикстур
+# с `_xlnm.Print_Titles` в `test-fixtures/xlsx` нет, а счёт фикстур закреплён
+# документацией (как у `docx`-тестов).
+zip       = { workspace = true }
 
 [[bench]]
 name = "pdf"
