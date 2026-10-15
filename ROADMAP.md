@@ -77,10 +77,11 @@
 
 ### 3.1 Структура репозитория
 
-Дерево ниже — план целиком. Что из него уже есть на 05.10.2026: все шесть
-крейтов, `packages/core`, `packages/wasm`, `examples/viewer`,
-`test-fixtures/xlsx` (100 книг + эталон), `docs/adr`. Остальных пакетов,
-примеров и `test-fixtures/docx` пока нет.
+Дерево ниже — план целиком. Что из него уже есть на 05.10.2026: шесть
+крейтов (сейчас — все восемь: добавились `pdf-wasm` и `docx-wasm`;
+`crates/fuzz` — отдельный workspace), `packages/core`, `packages/wasm`,
+`examples/viewer`, `test-fixtures/xlsx` (100 книг + эталон), `docs/adr`.
+Остальных пакетов, примеров и `test-fixtures/docx` пока нет.
 
 ```
 doc-converter/
@@ -101,7 +102,10 @@ doc-converter/
 │   ├── docx/                        # парсинг + pagination + layout
 │   ├── xlsx/                        # парсинг + раскладка
 │   ├── pdf/                         # ручной PDF-экспорт
-│   └── wasm/                        # wasm-bindgen точка входа
+│   ├── pdf-wasm/                    # PDF-экспорт ленивым wasm-модулем
+│   ├── docx-wasm/                   # просмотр DOCX ленивым wasm-модулем
+│   ├── wasm/                        # wasm-bindgen точка входа
+│   └── fuzz/                        # отдельный workspace (nightly + sanitizer)
 ├── packages/
 │   ├── core/
 │   ├── docx/
@@ -276,10 +280,12 @@ PDF/PNG transfer) работают без SAB с приемлемой произ
 
 ## 6. Roadmap по спринтам
 
-> **Состояние после Спринта 5 (05.10.2026).** Закрыты Фаза 1 (workspace, CI,
-> core-крейты), Фаза 2 (RPC Main↔Worker, OffscreenCanvas, SAB ring) и Спринты
-> 3–5: XLSX разбирается целиком и **показывается в браузере** со стилями,
-> границами, условным форматированием, изображениями и гиперссылками.
+> **Состояние после Спринта 5 (05.10.2026) — снимок на ту дату.** Закрыты
+> Фаза 1 (workspace, CI, core-крейты), Фаза 2 (RPC Main↔Worker, OffscreenCanvas,
+> SAB ring) и Спринты 3–5: XLSX разбирается целиком и **показывается в
+> браузере** со стилями, границами, условным форматированием, изображениями и
+> гиперссылками. Ниже план доведён до Спринта 13 с отметками исполнения;
+> сводные итоги — в §7.
 >
 > **Что работает.** `crates/xlsx` разбирает книгу `open()` — каталог листов,
 > общие строки, стили, форматы чисел, геометрию, объединения, гиперссылки.
@@ -1276,6 +1282,11 @@ DOCX: 97 коммитируемых фикстур, ещё 5 «больших» 
 | 0018 | Границы редактирования в v1 | v1 — read-only; модель только в Rust/WASM; Jotai — только view state; `NodeId` без editing-инфраструктуры | `docs/adr/0018-editing-boundaries.md` |
 | 0019 | NodeId | `NodeId(u64)`, присваивается при парсинге, детерминирован, не переживает переоткрытие, не публичный API | `docs/adr/0019-node-id.md` |
 | 0020 | Границы парсера и writer | Парсер = десериализатор; `serde` в JSON — да; writer в DOCX — non-goal v1 | `docs/adr/0020-parser-writer-boundary.md` |
+| 0021 | Два транспорта кадра: SAB и ArrayBuffer | Оба транспорта равноправны: один API и один кадр; `transport: 'auto'` — SAB при `crossOriginIsolated`, иначе `bytes`; бюджеты отдельно на каждый путь | `docs/adr/0021-frame-transports.md` |
+| 0022 | Свой PDF-бэкенд вместо форка printpdf | Отказ от `printpdf` (заменяет ADR-0010): свой бэкенд в `src/pdf/` на модели `lopdf`, `skrifa`/`subsetter`/`image`; публичный API не меняется | `docs/adr/0022-own-pdf-backend.md` |
+| 0023 | LibreOffice-WASM как «точный» бэкенд — no-go | No-go: решающая тройка H1/H2/H4 — «нет» (49,97 МиБ поставки, 14–28 с до готовности, ~2,2 ГБ памяти вкладки) | `docs/adr/0023-libreoffice-wasm-exact-backend.md` |
+| 0024 | x2t (ONLYOFFICE) как рисующий бэкенд — no-go | No-go: в wasm-сборке нет рисующего движка (sdkjs под V8 вырезан при сборке), рендер-цели дают код 80 | `docs/adr/0024-x2t-rendering-backend.md` |
+| 0025 | Граница раскладки XLSX — без отдельного крейта `xlsx-layout` | Раскладка остаётся в `crates/xlsx`; крейт не создаётся, границы ADR-0003/0007 подтверждены | `docs/adr/0025-xlsx-layout-boundary.md` |
 
 ADR 0002–0005 приняты 05.10.2026 (0002 пересмотрен на `skrifa`). Реализация
 0002, 0003 и 0005 — Спринт 5.5, 0004 — Спринт 11. ADR-0006 — чужая работа про
