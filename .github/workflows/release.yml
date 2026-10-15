@@ -194,11 +194,51 @@ jobs:
 
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 
+      # Гейт версий ДО применения changesets: `changeset version` правит
+      # package.json, поэтому сверять дерево с тегом можно только до него.
+      # На теге падаем при любом расхождении:
+      #   * в .changeset есть нерелизнутые changesets — значит, дерево тега не
+      #     релизный коммит, и `changeset version` увёл бы публикацию на
+      #     версию вперёд тега;
+      #   * версия npm-пакетов не совпадает с тегом;
+      #   * версия крейта doc-converter-core не совпадает с тегом (версии Rust
+      #     changesets не трогает вовсе, поэтому проверка отдельная).
+      # Вручную (workflow_dispatch) тега нет — согласие двух реестров проверяет
+      # шаг после `changeset version`.
+      - name: check tag matches package version
+        run: |
+          set -euo pipefail
+          crate_version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "doc-converter-core") | .version')
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "workflow_dispatch: тега нет, сверку с тегом пропускаем; версии npm и крейтов сверяет шаг после changeset version"
+            exit 0
+          fi
+          pending=$(find .changeset -maxdepth 1 -name '*.md' ! -name 'README.md' | wc -l | tr -d ' ')
+          if [ "$pending" -ne 0 ]; then
+            echo "::error::дерево тега $GITHUB_REF_NAME содержит нерелизнутых changesets: $pending — это не релизный коммит, changeset version увёл бы публикацию вперёд тега"
+            exit 1
+          fi
+          version=$(node -p "require('./packages/core/package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::тег $GITHUB_REF_NAME не совпадает с версией npm-пакетов $version (packages/core/package.json)"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_NAME" != "v$crate_version" ]; then
+            echo "::error::тег $GITHUB_REF_NAME не совпадает с версией крейта doc-converter-core $crate_version (Cargo.toml)"
+            exit 1
+          fi
+          echo "OK: тег $GITHUB_REF_NAME совпадает с npm-пакетами и крейтом doc-converter-core ($version)"
+
       # Версии npm-пакетов: если в .changeset есть нерелизнутые changesets —
       # применяем их (versions + CHANGELOG.md). Если их нет, версии уже
       # подняты релизным коммитом тега — берём из package.json как есть.
       # README.md в .changeset не changeset — релизными считаются остальные .md.
+      # Из тега шаг не запускается вовсе: тег обязан указывать на коммит, где
+      # версии уже подняты (гейт выше это проверил), иначе публикация уехала бы
+      # не с той версией.
       - name: changeset version
+        if: github.ref_type != 'tag'
         run: |
           set -euo pipefail
           pending=$(find .changeset -maxdepth 1 -name '*.md' ! -name 'README.md' | wc -l | tr -d ' ')
@@ -209,21 +249,25 @@ jobs:
           echo "Применяю накопленные changesets (${pending}): versions + CHANGELOG.md"
           pnpm changeset version
 
-      # Публикация из тега обязана совпадать с версией пакетов: расхождение
-      # значит, что тег поставлен до (или мимо) `changeset version`, и npm
-      # уехал бы не с той версией. Вручную (workflow_dispatch) тега нет —
-      # версии и так из package.json, проверять нечего.
-      - name: check tag matches package version
+      # Согласие двух реестров: npm-пятёрка и крейт doc-converter-core обязаны
+      # иметь одну версию. На теге это уже гарантировал гейт выше, а на
+      # workflow_dispatch этот шаг — единственная проверка: `changeset version`
+      # только что поднял npm-версии, а версии крейтов остались прежними
+      # (changesets версии Rust не трогает), и без проверки в npm уехала бы
+      # версия вперёд crates.io.
+      - name: check npm and crate versions agree
         run: |
           set -euo pipefail
-          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
-            exit 0
-          fi
-          version=$(node -p "require('./packages/core/package.json').version")
-          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::тег $GITHUB_REF_NAME не совпадает с версией npm-пакетов $version"
-            exit 1
-          fi
+          crate_version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "doc-converter-core") | .version')
+          for pkg in core wasm wasm-docx wasm-pdf cli; do
+            version=$(node -p "require('./packages/$pkg/package.json').version")
+            if [ "$version" != "$crate_version" ]; then
+              echo "::error::@doc-converter/$pkg@$version не совпадает с версией крейта doc-converter-core $crate_version: в npm и crates.io уехали бы разные версии"
+              exit 1
+            fi
+          done
+          echo "OK: npm-пятёрка и doc-converter-core на версии $crate_version"
 
       - run: pnpm build:wasm
 
@@ -240,9 +284,13 @@ jobs:
             version=$(node -p "require('./packages/$pkg/package.json').version")
             # Уже опубликованную версию пропускаем: повторный запуск после
             # частичного сбоя не должен падать на дубле (версию npm
-            # не перезаписать).
-            published=$(npm view "@doc-converter/$pkg" version --registry=https://registry.npmjs.org/ 2>/dev/null || true)
-            if [ "$published" = "$version" ]; then
+            # не перезаписать). Сверяем полный список версий, а не `latest`:
+            # переопубликовать старую версию всё равно нельзя, и проверка по
+            # одной последней версии пропустила бы такой случай до жёсткой
+            # ошибки публикации.
+            published=$(npm view "@doc-converter/$pkg" versions --json --registry=https://registry.npmjs.org/ 2>/dev/null || true)
+            if [ -n "$published" ] &&
+               printf '%s' "$published" | jq -e --arg v "$version" 'if type == "array" then . else [.] end | index($v)' >/dev/null; then
               echo "@doc-converter/$pkg@$version уже в npm — пропускаем"
               return
             fi
@@ -274,12 +322,46 @@ jobs:
             # crates.io API требует User-Agent. Версию, которая уже на
             # crates.io, пропускаем: повторный запуск после частичного сбоя
             # не должен падать на дубле (версию не перезаписать, не удалить).
-            published=$(curl -fsS -A "doc-converter-release (github actions)" "https://crates.io/api/v1/crates/$crate" | jq -r '.crate.max_version // empty' || true)
-            if [ "$published" = "$version" ]; then
-              echo "$crate@$version уже на crates.io — пропускаем"
-              return
-            fi
-            cargo publish -p "$crate" $target_flag
+            # Сверяем полный список версий, а не max_version: повторная
+            # публикация старой версии всё равно невозможна, и проверка по
+            # одной максимальной версии пропустила бы такой случай до жёсткой
+            # ошибки публикации.
+            published=$(curl -fsS -A "doc-converter-release (github actions)" \
+              "https://crates.io/api/v1/crates/$crate/versions" \
+              | jq -r '[.versions[].num] | join(" ")' || true)
+            for num in $published; do
+              if [ "$num" = "$version" ]; then
+                echo "$crate@$version уже на crates.io — пропускаем"
+                return
+              fi
+            done
+            # Индекс crates.io обновляется асинхронно, поэтому только что
+            # опубликованная зависимость может быть ещё не видна — «no matching
+            # package named doc-converter-…» на первом релизе это ожидаемая
+            # гонка, а не ошибка пакета. Ждём её до пяти попыток; на любую
+            # другую ошибку падаем сразу, не тратя пять минут.
+            attempt=1
+            while :; do
+              log=$(mktemp)
+              if cargo publish -p "$crate" $target_flag 2>&1 | tee "$log"; then
+                echo "OK: $crate@$version опубликован"
+                return
+              fi
+              if grep -qE "no matching package named .doc-converter-" "$log"; then
+                if [ "$attempt" -ge 5 ]; then
+                  cat "$log"
+                  echo "::error::$crate: зависимость не появилась в индексе crates.io после 5 попыток; повторите джобу — уже опубликованные крейты пропускаются"
+                  exit 1
+                fi
+                echo "::warning::$crate: зависимость ещё не видна в индексе crates.io (попытка $attempt/5), пауза 15 с"
+                attempt=$((attempt + 1))
+                sleep 15
+                continue
+              fi
+              cat "$log"
+              echo "::error::$crate: cargo publish упал"
+              exit 1
+            done
           }
           # Порядок — строго по графу зависимостей (план спринта 12, S2.4):
           # в опубликованном манифесте path-деп становится реестровым,

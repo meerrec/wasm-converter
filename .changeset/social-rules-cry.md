@@ -1,5 +1,4 @@
 ---
-"@doc-converter/eurooffice": minor
 "@doc-converter/wasm-docx": minor
 "@doc-converter/wasm-pdf": minor
 "@doc-converter/core": minor

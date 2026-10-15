@@ -7,6 +7,10 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": [],
+  "ignore": [
+    "@doc-converter/eurooffice",
+    "@doc-converter/x2t",
+    "@doc-converter/browser-convert"
+  ],
   "privatePackages": { "version": false, "tag": false }
 }
