@@ -171,6 +171,7 @@ pnpm -F @doc-converter/example-viewer test   # весь Playwright: 3 брауз
 - TS: `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`; импорты с явным `.js`; JSDoc на экспортируемых функциях; без `any`.
 - Conventional Commits, trunk-based (работа в `main`); feature-flags для незавершённого; 2 approver'а на изменения публичного API.
 - Соавторов в коммитах нет: `Co-Authored-By` и любые другие подписи не добавляются.
+- Документация: `ROADMAP.md` ведётся как живой документ — устаревшие числа и статусы (включая записи о спринтах и снимки) переписываются до текущего факта, обновлённое число подтверждается командой. Конвенция изменена 15.10.2026 (прежнее «роадмап задним числом не переписываем» отменено).
 - Новые WASM-функции покрываются `wasm-bindgen-test`; тяжёлые вычисления — только в воркере; `postMessage` с учётом transferables.
 - Покрытие — гейты CI: `doc-converter-docx` ≥ 85 %, `doc-converter-core` ≥ 80 % строк; TS-порог (≥ 80 %) в CI не проверяется. Числовые бюджеты — ROADMAP §9; тесты-бюджеты (`crates/pdf/tests/budgets.rs`, `crates/xlsx/tests/budget.rs`) не ослаблять без вопроса.
 

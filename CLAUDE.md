@@ -147,6 +147,7 @@ SAB требует COOP/COEP (`Cross-Origin-Opener-Policy: same-origin`, `Cross-
 - TS: `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`; импорты с явным `.js`; JSDoc на экспортируемых функциях; без `any`.
 - Conventional Commits, trunk-based (работа в `main`); feature-flags для незавершённого; 2 approver'а на изменения публичного API.
 - Соавторов в коммитах нет: трейлер `Co-Authored-By` и любые другие подписи не добавляются.
+- Документация: `ROADMAP.md` ведётся как живой документ — устаревшие числа и статусы (включая записи о спринтах и снимки) переписываются до текущего факта, обновлённое число подтверждается командой. Конвенция изменена 15.10.2026 (прежнее «роадмап задним числом не переписываем» отменено).
 - Новые WASM-функции покрываются `wasm-bindgen-test`; тяжёлые вычисления — только в воркере; `postMessage` с учётом transferables.
 - Покрытие: Rust ≥ 85%, TS ≥ 80%; бюджеты размера и производительности — `ROADMAP.md` §9.
 
