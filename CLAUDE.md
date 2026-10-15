@@ -3,7 +3,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Что это
 
-Монорепозиторий **doc-converter**: просмотрщик OOXML (DOCX/XLSX) и экспортёр в PDF — Rust/WASM, рендер на `OffscreenCanvas` внутри Web Worker. Cargo workspace (`crates/*`) + pnpm workspaces (`packages/*`) + Turborepo. Разработка идёт фазами по `ROADMAP.md` (13 спринтов): сделаны Фаза 1 (workspace, CI, core-крейты, RPC Main↔Worker) и Фаза 2 (painter, DisplayList, SAB ring). Незаконченное помечено `TODO (Фаза N)` / `todo!("… (Фаза N)")` — при работе над фазой ищите эти маркеры, а не только ROADMAP.
+Монорепозиторий **doc-converter**: просмотрщик OOXML (DOCX/XLSX) и экспортёр в PDF — Rust/WASM, рендер на `OffscreenCanvas` внутри Web Worker. Cargo workspace (`crates/*`) + pnpm workspaces (`packages/*`) + Turborepo. Разработка идёт фазами по `ROADMAP.md` (13 спринтов): сделаны Фаза 1 (workspace, CI, core-крейты; RPC-слой той фазы позже удалён как неиспользуемый, канал — прямой) и Фаза 2 (painter, DisplayList, SAB ring). Незаконченное помечено `TODO (Фаза N)` / `todo!("… (Фаза N)")` — при работе над фазой ищите эти маркеры, а не только ROADMAP.
 
 ## Команды
 
