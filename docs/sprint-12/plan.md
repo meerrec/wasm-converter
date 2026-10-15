@@ -133,7 +133,7 @@ S1.4 → S3.1 (README пишется после фиксации non-goal)
 - [x] Демо на GitHub Pages открывается по обоим путям (`/#/xlsx`, `/#/docx`).
 - [x] README переписан; cookbook 40+ (46); migration guides ×2.
 - [x] Аудиты чистые; e2e трёх браузеров зелёные (80 passed).
-- [ ] v1.0.0 опубликован: npm (`core`, wasm-биндинги, `cli`) + crates.io (6 крейтов). — шаг S4.3, за пользователем
+- [ ] v1.0.0: npm — пять пакетов `@meerrec/*` 1.0.0 в GitHub Packages (не npmjs); crates.io (6 крейтов) — не опубликовано: `CARGO_REGISTRY_TOKEN` даёт 401. — шаг S4.3, за пользователем
 
 ## 8. Артефакты
 

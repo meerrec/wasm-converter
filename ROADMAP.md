@@ -971,11 +971,11 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 4. Migration guides: `migration-from-mammoth.md`, `-from-exceljs.md` — ✅ сделаны (`docs/`).
 5. Демо-приложение — ✅ сделано: `pages.yml` собирает обе страницы (`/#/xlsx`, `/#/docx`), дым-прогон `bytes`-транспорта (`docs/sprint-12/demo.md`).
 6. Видео-демо: scroll 1M ячеек 60 FPS — ⚠️ заменено на демо на GitHub Pages + бенч-отчёт `docs/bench-js.md` (решение 4 плана Спринта 12).
-7. Публикация в npm + crates.io — ⬜ ожидает S4.3: версии 1.0.0 подняты (крейты + changeset major), публикует `.github/workflows/release.yml` по тегу `v*`.
+7. Публикация в npm + crates.io — ⚠️ частично: пять npm-пакетов `@meerrec/*` 1.0.0 опубликованы в **GitHub Packages** по тегу `v1.0.0`; crates.io не опубликован — `CARGO_REGISTRY_TOKEN` вернул 401 (токен неверного формата, нужен новый с https://crates.io/me). Публикует `.github/workflows/release.yml`.
 8. GitHub Release + changelog — ⬜ ожидает S4.3 (заметки релиза собирает джоба `publish` из CHANGELOG пяти пакетов).
 
 **DoD:**
-- ⬜ Все пакеты v1.0.0 опубликованы — ожидает S4.3 (тег `v1.0.0`); версии и changeset major готовы.
+- ⚠️ Пакеты v1.0.0: npm-пятёрка (`@meerrec/core`, `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`, `@meerrec/cli`) — в GitHub Packages (не в npmjs.org); шесть крейтов на crates.io — нет, ждут валидный `CARGO_REGISTRY_TOKEN`.
 - ⚠️ Документация на docs.doc-converter.dev — хостинг не заводился; публичная документация: README, cookbook, migration guides, TypeDoc (`docs/api/`) и docs.rs.
 - ✅ Примеры в 3 браузерах (Playwright Chromium + Firefox + WebKit) — 80 passed, 2 skipped штатных + проект chromium-dpr2 (`docs/sprint-12/rc.md`).
 - ✅ Покрытие ≥ 85% / 80% — docx 92,75 %, core 97,68 % (гейты CI).
@@ -1363,7 +1363,7 @@ ADR 0002–0005 приняты 05.10.2026 (0002 пересмотрен на `skr
 - [x] ✅ Round-trip `Model → JSON → Model` lossless — serde-модель, обход всего корпуса `test-fixtures/docx` (104 файла, 101 разобранная фикстура; `crates/docx/tests/roundtrip.rs`).
 - [x] ✅ Writer в DOCX не реализован (ADR-0020) — non-goal v1, зафиксирован.
 - [x] ✅ Все ADR в `docs/adr/` — индекс актуален (включая ADR-0021–0025).
-- [ ] ⬜ Опубликовано в npm + crates.io под Apache-2.0 — ожидает S4.3; версии 1.0.0, changeset major и `LICENSE` готовы, публикует `.github/workflows/release.yml`.
+- [ ] ⚠️ Опубликовано под Apache-2.0: пять npm-пакетов `@meerrec/*` 1.0.0 — в GitHub Packages этого репозитория (тег `v1.0.0`, ассеты релиза); crates.io (6 крейтов) — не опубликовано, нужен валидный `CARGO_REGISTRY_TOKEN`.
 
 ---
 
