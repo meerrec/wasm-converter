@@ -10,7 +10,7 @@ import type { ImageInfo, InMsg, OutMsg } from '../src/protocol.js';
  * «список из wasm → `createImageBitmap` → `register_bitmap`».
  */
 
-/** Ответы основного wasm-модуля: настоящего `@doc-converter/wasm` в тесте нет. */
+/** Ответы основного wasm-модуля: настоящего `@meerrec/wasm` в тесте нет. */
 const wasm = vi.hoisted(() => {
   return {
     init: vi.fn(async () => {}),
@@ -31,7 +31,7 @@ const wasm = vi.hoisted(() => {
   };
 });
 
-vi.mock('@doc-converter/wasm', () => ({ default: wasm.init, ...wasm }));
+vi.mock('@meerrec/wasm', () => ({ default: wasm.init, ...wasm }));
 
 /** Отметки заглушки DOCX-модуля: те же, что у `docx_lazy.spec.ts`. */
 interface DocxStub {

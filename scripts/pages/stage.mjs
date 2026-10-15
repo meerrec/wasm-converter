@@ -40,7 +40,7 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = resolve(SCRIPT_DIR, '..', '..');
 /** Источник корня сайта: распакованные части движка (scripts/eurooffice/assemble.mjs). */
 const ENGINE_DIR = join(ROOT_DIR, 'build', 'eurooffice', 'site');
-/** Источник /viewer/: собранное демо (pnpm -F @doc-converter/example-viewer build). */
+/** Источник /viewer/: собранное демо (pnpm -F @meerrec/example-viewer build). */
 const DEMO_DIR = join(ROOT_DIR, 'examples', 'viewer', 'dist');
 
 /** Сигнатура wasm-модуля: по ней отличаем plain-байты x2t.wasm от brotli-копии. */
@@ -514,7 +514,7 @@ function requireSources() {
     fail(`нет собранного сайта движка (${ENGINE_DIR}) — запустите: node scripts/eurooffice/assemble.mjs`);
   }
   if (!hasFile(join(DEMO_DIR, 'index.html'))) {
-    fail(`нет сборки демо (${DEMO_DIR}) — запустите: pnpm -F @doc-converter/example-viewer build`);
+    fail(`нет сборки демо (${DEMO_DIR}) — запустите: pnpm -F @meerrec/example-viewer build`);
   }
   for (const name of ['index.html', 'sw.js']) {
     if (!hasFile(join(SCRIPT_DIR, name))) fail(`нет ${join(SCRIPT_DIR, name)} — без него артефакт неполон`);

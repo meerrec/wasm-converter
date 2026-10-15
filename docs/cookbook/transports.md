@@ -13,7 +13,7 @@
 **Задача.** Узнать, каким путём поехали кадры, ничего не задавая.
 
 ```ts
-import { createXlsxViewer } from '@doc-converter/core';
+import { createXlsxViewer } from '@meerrec/core';
 
 const viewer = await createXlsxViewer(host, {
   workerUrl,
@@ -117,7 +117,7 @@ console.log(viewer.transport); // 'bytes'
 **Задача.** Объяснить (или выбрать), зачем вообще нужен SAB-путь.
 
 ```ts
-import { createXlsxViewer, type FrameTransport } from '@doc-converter/core';
+import { createXlsxViewer, type FrameTransport } from '@meerrec/core';
 
 // Простейший замер: прогнать один и тот же файл обоими путями и сравнить.
 // 'sab' требует COOP/COEP — на странице без заголовков probe('sab') упадёт
@@ -156,7 +156,7 @@ console.log(await probe('bytes'));
 **Задача.** Заметить, что кадры пропускаются, и понять, чем это грозит.
 
 ```ts
-import type { PaintStats } from '@doc-converter/core';
+import type { PaintStats } from '@meerrec/core';
 
 viewer.onTick((stats: PaintStats) => {
   if (stats.dropped) {

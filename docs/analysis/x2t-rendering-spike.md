@@ -7,7 +7,7 @@ ONLYOFFICE, «точным рисующим бэкендом» (экспорт P
 OOXML своим кодом и пишет PDF своим бэкендом ([ADR-0022](../adr/0022-own-pdf-backend.md)),
 LOWA закрыта решением no-go ([ADR-0023](../adr/0023-libreoffice-wasm-exact-backend.md)).
 Харнесс спайка — [`experiments/x2t-spike/`](../../experiments/x2t-spike/README.md),
-обвязка — пакет [`@doc-converter/x2t`](../../packages/x2t/README.md), артефакты —
+обвязка — пакет [`@meerrec/x2t`](../../packages/x2t/README.md), артефакты —
 [`packages/x2t/vendor/`](../../packages/x2t/vendor/) (`x2t.wasm` 38,7 МБ, Git LFS,
 сборка `cryptpad/onlyoffice-x2t-wasm` v9.3.2+3).
 
@@ -128,7 +128,7 @@ LOWA закрыта решением no-go ([ADR-0023](../adr/0023-libreoffice-w
 |---|---|---|---|
 | x2t.wasm как рисующий бэкенд (docx/xlsx → pdf/png в браузере) | артефакт уже собран и обёрнут (38,7 МБ) | рисовать нечем: движка раскладки в сборке нет, все цели с рендером дают код 80 | **no-go** |
 | Снять заглушку `ExecuteScript` и сшить `CJSContext` с jitless-движком в wasm | месяцы исследования | мост, DOM/canvas-шим и шрифтовой движок с нуля; движок в 3–12× медленнее; прецедентов нет; LOWA при этом уже даёт 4,62 с на 161 страницу | не окупается |
-| x2t как конвертер внутри семейства форматов (docx↔odt/rtf/txt, xlsx↔ods/csv) | обвязка готова ([`@doc-converter/x2t`](../../packages/x2t/README.md)) | на реальных документах падает и портит пакет | единственная рабочая область, и та с оговоркой |
+| x2t как конвертер внутри семейства форматов (docx↔odt/rtf/txt, xlsx↔ods/csv) | обвязка готова ([`@meerrec/x2t`](../../packages/x2t/README.md)) | на реальных документах падает и портит пакет | единственная рабочая область, и та с оговоркой |
 | Серверный путь: Document Server или один нативный x2t | ~1,5 ГБ сжатый образ (7.2.1) + слой шрифтов ~190 МБ, 2+ ГБ RAM; нативный x2t легче — `FileConverter/bin` + ~12 либ + `DoctRenderer.config` + шрифты + `AllFonts.js` | AGPL-3.0, сетевое copyleft (Developer Edition — коммерческий); файлы пользователя покидают устройство; Document Builder CLI с 8.3.0 ставит водяной знак (8.2.0 — последняя без него) | вне клиентской модели продукта |
 
 ## Вывод

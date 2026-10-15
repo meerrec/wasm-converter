@@ -1,7 +1,7 @@
 # Рецепты: экспорт
 
 Экспорт считается в воркере — там же, где лежит разобранная книга или
-документ. PDF-путь идёт через ленивый модуль `@doc-converter/wasm-pdf`
+документ. PDF-путь идёт через ленивый модуль `@meerrec/wasm-pdf`
 (собственный бэкенд, [ADR-0022](../adr/0022-own-pdf-backend.md)), который
 воркер грузит при первом экспорте.
 
@@ -34,7 +34,7 @@ URL.revokeObjectURL(url);
 **Задача.** Экспортировать текущий (или конкретный) лист в PDF.
 
 ```ts
-import type { PdfOptions } from '@doc-converter/core';
+import type { PdfOptions } from '@meerrec/core';
 
 // Без настроек — весь текущий лист на A4.
 const pdf = await viewer.exportPdf();
@@ -71,7 +71,7 @@ const pdf = await viewer.exportPdf({ allSheets: true });
 **Задача.** A3 альбомный с полями и уменьшенным масштабом.
 
 ```ts
-import type { PdfOptions } from '@doc-converter/core';
+import type { PdfOptions } from '@meerrec/core';
 
 const opts: PdfOptions = {
   pageSize: 'A3',      // 'A4' | 'A3' | 'Letter' | 'Legal'
@@ -107,7 +107,7 @@ const pdf = await docxViewer.exportPdf();
 
 ### <a id="ex-06"></a>Рецепт 6. Ленивый PDF-модуль: как отдать URL
 
-**Задача.** Подключить `@doc-converter/wasm-pdf` так, чтобы страница не
+**Задача.** Подключить `@meerrec/wasm-pdf` так, чтобы страница не
 платила за него до первого экспорта.
 
 ```ts
@@ -116,13 +116,13 @@ const viewer = await createXlsxViewer(host, {
   pdfWasm: {
     // JS-обвязка: воркер импортирует её динамически по первому exportPdf.
     module: new URL(
-      '@doc-converter/wasm-pdf/pkg/doc_converter_pdf_wasm.js',
+      '@meerrec/wasm-pdf/pkg/doc_converter_pdf_wasm.js',
       import.meta.url,
     ).href,
     // Бинарь: сборщик копирует JS как есть и не кладёт рядом .wasm,
     // поэтому второй URL передаётся явно.
     binary: new URL(
-      '@doc-converter/wasm-pdf/pkg/doc_converter_pdf_wasm_bg.wasm',
+      '@meerrec/wasm-pdf/pkg/doc_converter_pdf_wasm_bg.wasm',
       import.meta.url,
     ).href,
   },

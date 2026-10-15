@@ -5,12 +5,12 @@ import type { InMsg, OutMsg, RenderConfig, Viewport } from '../src/protocol.js';
 /**
  * Ленивость DOCX-модуля: заглушка `test/fixtures/docx-module.js` — это
  * настоящий файл, который воркер грузит рантайм-URL из `init` тем же
- * динамическим импортом, что и `@doc-converter/wasm-docx`. `vi.mock` тут не
+ * динамическим импортом, что и `@meerrec/wasm-docx`. `vi.mock` тут не
  * годится: он подменил бы модуль, но не проверил бы, что до открытия `.docx`
  * его никто не грузит.
  */
 
-/** Ответы основного wasm-модуля: настоящего `@doc-converter/wasm` в тесте нет. */
+/** Ответы основного wasm-модуля: настоящего `@meerrec/wasm` в тесте нет. */
 const wasm = vi.hoisted(() => {
   return {
     init: vi.fn(async () => {}),
@@ -37,7 +37,7 @@ const wasm = vi.hoisted(() => {
   };
 });
 
-vi.mock('@doc-converter/wasm', () => ({ default: wasm.init, ...wasm }));
+vi.mock('@meerrec/wasm', () => ({ default: wasm.init, ...wasm }));
 
 /**
  * Отметки заглушки: вычисление модуля отмечается в `loads`, `init()` — в

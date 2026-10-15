@@ -18,7 +18,7 @@ import type {
  * первого экспорта его никто не грузит.
  */
 
-/** Ответы основного wasm-модуля: настоящего `@doc-converter/wasm` в тесте нет. */
+/** Ответы основного wasm-модуля: настоящего `@meerrec/wasm` в тесте нет. */
 const wasm = vi.hoisted(() => {
   return {
     init: vi.fn(async () => {}),
@@ -45,7 +45,7 @@ const wasm = vi.hoisted(() => {
   };
 });
 
-vi.mock('@doc-converter/wasm', () => ({ default: wasm.init, ...wasm }));
+vi.mock('@meerrec/wasm', () => ({ default: wasm.init, ...wasm }));
 
 /**
  * Отметки заглушек: вычисление модуля отмечается в `loads`, `init()` — в

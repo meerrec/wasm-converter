@@ -14,7 +14,7 @@ We have a quick list of common questions to get you started engaging with this p
 - `linked` — все пять публикуемых пакетов (`core`, `cli`, `wasm`, `wasm-docx`,
   `wasm-pdf`) версионируются вместе: `core → wasm` и `cli → wasm-docx/wasm-pdf`
   (всё через `workspace:*`), рассинхрон версий биндингов ломал бы потребителей.
-- `@doc-converter/example-viewer` приватный и исключён из версионирования (`privatePackages`).
+- `@meerrec/example-viewer` приватный и исключён из версионирования (`privatePackages`).
 - `commit: false` — коммиты делает агент/человек (Conventional Commits), не changesets.
 - `packages/*/pkg/` — сгенерированный wasm-bindgen-вывод, в workspace-глобах pnpm его нет,
   changesets его не видит.

@@ -96,7 +96,7 @@ const DOCX_ENGINES = [
   {
     id: 'wasm-cli',
     title: 'wasm (наш CLI, в процессе)',
-    note: 'convertFile из @doc-converter/cli',
+    note: 'convertFile из @meerrec/cli',
     outExt: '.html',
     async run(input, output) {
       const { convertFile } = await cli();
@@ -366,7 +366,7 @@ function renderErrors(engines, kind) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (!existsSync(CLI_ENTRY) || !existsSync(CLI_BIN)) {
-    throw new Error('packages/cli/dist пуст — сначала `pnpm -F @doc-converter/cli build`');
+    throw new Error('packages/cli/dist пуст — сначала `pnpm -F @meerrec/cli build`');
   }
   await mkdir(OUT_DIR, { recursive: true });
 

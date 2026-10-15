@@ -1,8 +1,8 @@
-# @doc-converter/cli
+# @meerrec/cli
 
 Конвертер OOXML из командной строки: DOCX в PDF, Markdown, HTML или текст,
 XLSX в PDF. Вся конвертация — те же Rust/WASM-модули, что и в просмотрщике
-(`@doc-converter/wasm-pdf`, `@doc-converter/wasm-docx`), поэтому результат
+(`@meerrec/wasm-pdf`, `@meerrec/wasm-docx`), поэтому результат
 совпадает с тем, что отдаёт интерфейс.
 
 ## Установка
@@ -12,7 +12,7 @@ Node ≥ 20 (как в корневом `package.json`). Из монорепоз
 ```bash
 pnpm install
 pnpm build:wasm                 # обязательный шаг: pkg/ wasm-модулей
-pnpm -F @doc-converter/cli build
+pnpm -F @meerrec/cli build
 node packages/cli/dist/cli.js --version
 # или из корня
 pnpm cli convert report.docx -o report.pdf
@@ -92,9 +92,9 @@ doc-converter batch './in/**/*.docx' --out ./out --format md
 ## Разработка
 
 ```bash
-pnpm -F @doc-converter/cli build       # tsc → dist/ (+ shebang +x)
-pnpm -F @doc-converter/cli test        # vitest: аргументы, glob, пул, wasm-фикстуры, bin
-pnpm -F @doc-converter/cli typecheck
+pnpm -F @meerrec/cli build       # tsc → dist/ (+ shebang +x)
+pnpm -F @meerrec/cli test        # vitest: аргументы, glob, пул, wasm-фикстуры, bin
+pnpm -F @meerrec/cli typecheck
 ```
 
 Тесты `test/cli.e2e.spec.ts` запускают `dist/cli.js` и потому требуют сборки

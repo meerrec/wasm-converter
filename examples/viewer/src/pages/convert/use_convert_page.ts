@@ -5,14 +5,14 @@ import {
   preprocessPptx,
   preprocessXlsxLineBreaks,
   saveFileToDisk,
-} from '@doc-converter/browser-convert';
-import type { ConvertWorkerResponse } from '@doc-converter/browser-convert/worker';
+} from '@meerrec/browser-convert';
+import type { ConvertWorkerResponse } from '@meerrec/browser-convert/worker';
 import { exportFileName } from '../../lib/download.js';
 import { convertWorkerUrl, x2tScriptUrl, x2tWasmUrl } from '../../lib/viewer_urls.js';
 
 /**
  * Логика страницы «Конвертер»: конвертация в воркере пакета
- * `@doc-converter/browser-convert` плюс витрина его локальных возможностей —
+ * `@meerrec/browser-convert` плюс витрина его локальных возможностей —
  * медиа-экстракции и препроцессоров.
  *
  * Состояние обычное: страница ведёт одну операцию за раз, результат приходит по

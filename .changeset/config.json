@@ -3,14 +3,14 @@
   "changelog": "@changesets/cli/changelog",
   "commit": false,
   "fixed": [],
-  "linked": [["@doc-converter/core", "@doc-converter/wasm", "@doc-converter/wasm-docx", "@doc-converter/wasm-pdf", "@doc-converter/cli"]],
+  "linked": [["@meerrec/core", "@meerrec/wasm", "@meerrec/wasm-docx", "@meerrec/wasm-pdf", "@meerrec/cli"]],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "ignore": [
-    "@doc-converter/eurooffice",
-    "@doc-converter/x2t",
-    "@doc-converter/browser-convert"
+    "@meerrec/eurooffice",
+    "@meerrec/x2t",
+    "@meerrec/browser-convert"
   ],
   "privatePackages": { "version": false, "tag": false }
 }

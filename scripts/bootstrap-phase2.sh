@@ -2235,7 +2235,7 @@ import init, {
   register_bitmap,
   resize_canvas,
   sab_total_bytes,
-} from '@doc-converter/wasm';
+} from '@meerrec/wasm';
 import { startFrameLoop } from './frame_loop';
 
 type Ctx = OffscreenCanvasRenderingContext2D;

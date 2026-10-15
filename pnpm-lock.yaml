@@ -47,19 +47,19 @@ importers:
 
   examples/viewer:
     dependencies:
-      '@doc-converter/browser-convert':
+      '@meerrec/browser-convert':
         specifier: workspace:*
         version: link:../../packages/browser-convert
-      '@doc-converter/core':
+      '@meerrec/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@doc-converter/eurooffice':
+      '@meerrec/eurooffice':
         specifier: workspace:*
         version: link:../../packages/eurooffice
-      '@doc-converter/wasm-docx':
+      '@meerrec/wasm-docx':
         specifier: workspace:*
         version: link:../../packages/wasm-docx
-      '@doc-converter/wasm-pdf':
+      '@meerrec/wasm-pdf':
         specifier: workspace:*
         version: link:../../packages/wasm-pdf
       react:
@@ -96,7 +96,7 @@ importers:
 
   packages/browser-convert:
     dependencies:
-      '@doc-converter/x2t':
+      '@meerrec/x2t':
         specifier: workspace:*
         version: link:../x2t
     devDependencies:
@@ -112,10 +112,10 @@ importers:
 
   packages/cli:
     dependencies:
-      '@doc-converter/wasm-docx':
+      '@meerrec/wasm-docx':
         specifier: workspace:*
         version: link:../wasm-docx
-      '@doc-converter/wasm-pdf':
+      '@meerrec/wasm-pdf':
         specifier: workspace:*
         version: link:../wasm-pdf
     devDependencies:
@@ -131,14 +131,14 @@ importers:
 
   packages/core:
     dependencies:
-      '@doc-converter/wasm':
+      '@meerrec/wasm':
         specifier: workspace:*
         version: link:../wasm
     devDependencies:
-      '@doc-converter/wasm-docx':
+      '@meerrec/wasm-docx':
         specifier: workspace:*
         version: link:../wasm-docx
-      '@doc-converter/wasm-pdf':
+      '@meerrec/wasm-pdf':
         specifier: workspace:*
         version: link:../wasm-pdf
       tsup:

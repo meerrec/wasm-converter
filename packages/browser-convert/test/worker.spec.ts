@@ -6,7 +6,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@doc-converter/x2t', () => ({
+vi.mock('@meerrec/x2t', () => ({
   loadX2t: vi.fn(),
   convert: vi.fn(),
   X2tError: class X2tError extends Error {
@@ -22,8 +22,8 @@ vi.mock('@doc-converter/x2t', () => ({
   },
 }));
 
-import { convert as convertWithX2t, loadX2t, X2tError } from '@doc-converter/x2t';
-import type { X2tModule } from '@doc-converter/x2t';
+import { convert as convertWithX2t, loadX2t, X2tError } from '@meerrec/x2t';
+import type { X2tModule } from '@meerrec/x2t';
 
 import {
   createConvertWorkerHandler,

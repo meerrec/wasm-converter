@@ -6,7 +6,7 @@ import {
   type DragEvent,
   type RefObject,
 } from 'react';
-import { createDocxViewer, type DocxViewerHandle, type PageInfo } from '@doc-converter/core';
+import { createDocxViewer, type DocxViewerHandle, type PageInfo } from '@meerrec/core';
 import { publishViewer } from '../../lib/bridge.js';
 import { cacheStats, fileDocumentKey, getDocument, putDocument } from '../../lib/doc_cache.js';
 import { downloadBlob, exportFileName } from '../../lib/download.js';

@@ -117,7 +117,7 @@ export interface ImageInfo {
  * него ничего не значит. Не задан — `export-pdf` вернёт внятную ошибку.
  */
 export interface PdfModuleUrls {
-  /** JS-модуль `@doc-converter/wasm-pdf`: воркер импортирует его по клику. */
+  /** JS-модуль `@meerrec/wasm-pdf`: воркер импортирует его по клику. */
   module: string;
   /** Бинарь для `init()`; без него wasm-bindgen ищет его рядом с модулем. */
   binary?: string | undefined;
@@ -130,7 +130,7 @@ export interface PdfModuleUrls {
  * него ничего не значит. Не задан — открытие `.docx` вернёт внятную ошибку.
  */
 export interface DocxModuleUrls {
-  /** JS-модуль `@doc-converter/wasm-docx`: воркер импортирует его при открытии `.docx`. */
+  /** JS-модуль `@meerrec/wasm-docx`: воркер импортирует его при открытии `.docx`. */
   module: string;
   /** Бинарь для `init()`; без него wasm-bindgen ищет его рядом с модулем. */
   binary?: string | undefined;

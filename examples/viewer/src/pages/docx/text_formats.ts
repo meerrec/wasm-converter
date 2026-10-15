@@ -1,4 +1,4 @@
-import type { DocxViewerHandle } from '@doc-converter/core';
+import type { DocxViewerHandle } from '@meerrec/core';
 
 /**
  * Реестр текстовых форматов экспорта DOCX.

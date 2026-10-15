@@ -1,4 +1,4 @@
-# @doc-converter/x2t
+# @meerrec/x2t
 
 Типизированная обвязка вокруг `x2t.js` — WASM-сборки конвертера форматов ONLYOFFICE
 (`cryptpad/onlyoffice-x2t-wasm`, релиз v9.3.2+3). Оборачивает то, что иначе пришлось бы
@@ -12,7 +12,7 @@
 ## Вызов
 
 ```ts
-import { convert, loadX2t } from '@doc-converter/x2t';
+import { convert, loadX2t } from '@meerrec/x2t';
 
 const module = await loadX2t({
   scriptUrl: '/x2t/x2t.js',
@@ -74,9 +74,9 @@ interface ConvertResult {
 ## Разработка
 
 ```bash
-pnpm -F @doc-converter/x2t test        # vitest: чистые части, без wasm
-pnpm -F @doc-converter/x2t typecheck
-pnpm -F @doc-converter/x2t build       # tsup: dist/ с декларациями
+pnpm -F @meerrec/x2t test        # vitest: чистые части, без wasm
+pnpm -F @meerrec/x2t typecheck
+pnpm -F @meerrec/x2t build       # tsup: dist/ с декларациями
 ```
 
 Тесты не поднимают wasm: модуль подменён заглушкой `FS`/`ccall`, а glue-скрипт — строкой из

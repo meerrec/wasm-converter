@@ -1,5 +1,5 @@
 /**
- * Публичное API пакета `@doc-converter/eurooffice`: типизированный клиент Embed API
+ * Публичное API пакета `@meerrec/eurooffice`: типизированный клиент Embed API
  * редактора Euro-Office поверх iframe.
  *
  * Контракт — docs/embed-api.md репозитория ranuts/document; происхождение и границы

@@ -47,11 +47,11 @@ await viewer.open(bytes);            // страницы документа
 const html = await viewer.exportHtml();
 ```
 
-Программно в Node — `convertFile` из `@doc-converter/cli` (то же, что зовёт
+Программно в Node — `convertFile` из `@meerrec/cli` (то же, что зовёт
 bin, без старта процесса):
 
 ```ts
-import { convertFile } from '@doc-converter/cli';
+import { convertFile } from '@meerrec/cli';
 
 await convertFile({
   input: 'report.docx',

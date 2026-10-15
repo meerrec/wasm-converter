@@ -16,7 +16,7 @@ import init, {
   xlsx_image_bytes,
   xlsx_images,
   xlsx_open,
-} from '@doc-converter/wasm';
+} from '@meerrec/wasm';
 import type {
   DocxModuleUrls,
   FrameTransport,
@@ -39,7 +39,7 @@ import { FramePool, pickTransport } from './transport.js';
 type Ctx = OffscreenCanvasRenderingContext2D;
 
 /** Тип ленивого модуля берём у сгенерированных wasm-bindgen деклараций. */
-type PdfWasm = typeof import('@doc-converter/wasm-pdf');
+type PdfWasm = typeof import('@meerrec/wasm-pdf');
 
 /**
  * Что такое `BuildStats` из Rust: сколько вышло из попытки собрать кадр.
@@ -114,7 +114,7 @@ async function loadPdfWasm(urls: PdfModuleUrls): Promise<PdfWasm> {
 }
 
 /** Тип ленивого DOCX-модуля берём у сгенерированных wasm-bindgen деклараций. */
-type DocxWasm = typeof import('@doc-converter/wasm-docx');
+type DocxWasm = typeof import('@meerrec/wasm-docx');
 
 /** Откуда грузить DOCX-модуль: заполняется на `init`, до него экспорта нет. */
 let docxUrls: DocxModuleUrls | null = null;

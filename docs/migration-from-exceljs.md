@@ -58,11 +58,11 @@ doc-converter convert book.xlsx -o book.pdf --scale 0.9 --page-size A4
 doc-converter batch ./in/*.xlsx --out ./pdf --workers 4
 ```
 
-Программно в Node — `convertFile` из `@doc-converter/cli` (то же, что зовёт
+Программно в Node — `convertFile` из `@meerrec/cli` (то же, что зовёт
 bin, без старта процесса):
 
 ```ts
-import { convertFile } from '@doc-converter/cli';
+import { convertFile } from '@meerrec/cli';
 
 await convertFile({
   input: 'book.xlsx',

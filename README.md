@@ -9,12 +9,12 @@
   кадра целиком в Web Worker, основной поток получает готовый холст.
 - **Экспорт**: PDF (собственный PDF-бэкенд, [ADR-0022](docs/adr/0022-own-pdf-backend.md)),
   PNG, Markdown, HTML, текст.
-- **Node-CLI** `@doc-converter/cli`: `convert` и `batch` на тех же
+- **Node-CLI** `@meerrec/cli`: `convert` и `batch` на тех же
   wasm-модулях, с пулом воркеров.
 - Монорепозиторий: шесть Rust-крейтов (`core`, `render`, `xlsx`, `docx`,
-  `pdf`, три wasm-модуля) и JS/TS-пакеты (`@doc-converter/core`,
-  `@doc-converter/wasm`, `@doc-converter/wasm-docx`, `@doc-converter/wasm-pdf`,
-  `@doc-converter/cli`).
+  `pdf`, три wasm-модуля) и JS/TS-пакеты (`@meerrec/core`,
+  `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`,
+  `@meerrec/cli`).
 
 ## Статус
 
@@ -73,9 +73,9 @@ Chromium (проверку спрашивают и страницы, и сам �
 ### Установка
 
 ```bash
-npm install @doc-converter/core @doc-converter/wasm \
-  @doc-converter/wasm-docx @doc-converter/wasm-pdf
-npm install -g @doc-converter/cli
+npm install @meerrec/core @meerrec/wasm \
+  @meerrec/wasm-docx @meerrec/wasm-pdf
+npm install -g @meerrec/cli
 ```
 
 `wasm-docx` и `wasm-pdf` — ленивые модули: воркер грузит их по URL при
@@ -87,18 +87,18 @@ npm install -g @doc-converter/cli
 
 ```ts
 // xlsx_worker.ts
-import '@doc-converter/core/worker';
+import '@meerrec/core/worker';
 ```
 
 ```ts
-import { createXlsxViewer } from '@doc-converter/core';
+import { createXlsxViewer } from '@meerrec/core';
 import workerUrl from './xlsx_worker.ts?worker&url'; // Vite
 
 const viewer = await createXlsxViewer(host, {
   workerUrl,
   pdfWasm: {
     module: new URL(
-      '@doc-converter/wasm-pdf/pkg/doc_converter_pdf_wasm.js',
+      '@meerrec/wasm-pdf/pkg/doc_converter_pdf_wasm.js',
       import.meta.url,
     ).href,
   },
@@ -121,20 +121,20 @@ viewer.destroy();
 ### Просмотрщик DOCX
 
 ```ts
-import { createDocxViewer } from '@doc-converter/core';
+import { createDocxViewer } from '@meerrec/core';
 import workerUrl from './docx_worker.ts?worker&url'; // Vite
 
 const viewer = await createDocxViewer(host, {
   workerUrl,
   docxWasm: {
     module: new URL(
-      '@doc-converter/wasm-docx/pkg/doc_converter_docx_wasm.js',
+      '@meerrec/wasm-docx/pkg/doc_converter_docx_wasm.js',
       import.meta.url,
     ).href,
   },
   pdfWasm: {
     module: new URL(
-      '@doc-converter/wasm-pdf/pkg/doc_converter_pdf_wasm.js',
+      '@meerrec/wasm-pdf/pkg/doc_converter_pdf_wasm.js',
       import.meta.url,
     ).href,
   },
@@ -238,7 +238,7 @@ round-trip < 1 мс на SAB против < 3 мс на буферах (RPC-сл
 
 | Ассет | Факт | Бюджет |
 |---|---|---|
-| `@doc-converter/core` worker.js / index.js | 7,17 / 3,34 КБ | 550 / 200 КБ |
+| `@meerrec/core` worker.js / index.js | 7,17 / 3,34 КБ | 550 / 200 КБ |
 | `wasm (viewer)` — XLSX-просмотрщик | 464,2 КБ | 480 КБ |
 | `wasm (docx)` — ленивый модуль DOCX | 384,4 КБ | 400 КБ |
 | `wasm (pdf)` — ленивый модуль PDF | 1,01 МБ | 1,05 МБ |

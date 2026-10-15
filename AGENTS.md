@@ -15,7 +15,7 @@ This block is written and re-added by `turbo` before repository-scoped commands 
 
 ## Обзор проекта
 
-- **Что делает:** просмотрщики XLSX и DOCX в браузере (разбор, раскладка и отрисовка целиком в воркере), экспорт PDF/PNG/Markdown/HTML/текст, CLI `@doc-converter/cli` c командами `convert` и `batch`, демо на GitHub Pages с браузерными конвертерами (страницы «Конвертер» на x2t и «Euro-Office»).
+- **Что делает:** просмотрщики XLSX и DOCX в браузере (разбор, раскладка и отрисовка целиком в воркере), экспорт PDF/PNG/Markdown/HTML/текст, CLI `@meerrec/cli` c командами `convert` и `batch`, демо на GitHub Pages с браузерными конвертерами (страницы «Конвертер» на x2t и «Euro-Office»).
 - **Скоуп v1 — только чтение и конвертация** (ADR-0018, ADR-0020). Осознанно нет: PPTX и XLSB, Strict OOXML (только Transitional, ADR-0017), VML-фолбэков `mc:Fallback` (ADR-0014), обтекания текстом вокруг плавающих рисунков; сноски и комментарии парсятся в модели, но в раскладку не попадают.
 - **Состояние:** версии крейтов и пяти npm-пакетов — `1.0.0`; релиз закрыт по коду и ожидает публикации в npm/crates.io (открытый пункт DoD — `ROADMAP.md` §12). Спринты 3–13 закрыты; Спринт 13 (спайк LOWA) завершён решением no-go (ADR-0023, ADR-0024).
 - Раздел «Статус» корневого `README.md` **устарел — не ориентир**; фактическое состояние — `ROADMAP.md` (§7 сводка, §9 бюджеты, §12 DoD).
@@ -24,7 +24,7 @@ This block is written and re-added by `turbo` before repository-scoped commands 
 
 - **Слои Rust:** `crates/core` (примитивы OOXML: `Archive` над zip, стриминговый `XmlReader`, rels, `Error` на thiserror+miette) → `crates/xlsx` / `crates/docx` (разбор в модель → раскладка в пикселях → сборка DisplayList) → `crates/render` (формат DisplayList, painter, SAB-кольцо, геометрия, метрики текста) → `crates/pdf` (собственный PDF-бэкенд, ADR-0022). Правило границы: `core` не знает про DOCX/XLSX, `render` — общая граница обоих форматов (ADR-0003).
 - **wasm-мосты:** `crates/wasm` — основной модуль (painter, SAB-аллокатор, XLSX-просмотрщик), `crates/pdf-wasm` — ленивый экспорт PDF, `crates/docx-wasm` — ленивый просмотр DOCX. Все три целиком под `#![cfg(target_arch = "wasm32")]`: на нативном таргете они пусты, поэтому нативные `cargo test`/`clippy` и `cargo doc` их не видят — их доккомментарии и сборку проверяет wasm32-нога CI.
-- **TS-слой:** `@doc-converter/core` — воркер просмотра и фабрики `createXlsxViewer`/`createDocxViewer`; канал один и прямой — сообщения `InMsg`/`OutMsg`, источник истины `packages/core/src/protocol.ts` (Rust описывает только payload). `@doc-converter/cli` гоняет те же wasm-модули в пуле `node:worker_threads`.
+- **TS-слой:** `@meerrec/core` — воркер просмотра и фабрики `createXlsxViewer`/`createDocxViewer`; канал один и прямой — сообщения `InMsg`/`OutMsg`, источник истины `packages/core/src/protocol.ts` (Rust описывает только payload). `@meerrec/cli` гоняет те же wasm-модули в пуле `node:worker_threads`.
 - **Поток кадра:** main отдаёт `OffscreenCanvas` воркеру → воркер инициализирует wasm и отвечает `ready` с транспортом → `resize` + `render` → воркер собирает DisplayList в слот ring → painter рисует → `tick` со статистикой. На `render` ответа нет; по `id` коррелируются только `hit-test`, `hyperlink-at`, `export-*`. Кадры коалесцируются в `packages/core/src/worker/frame_loop.ts`; ошибка кадра логируется, цикл не роняется.
 - **XLSX:** книга живёт в `thread_local!` воркера (`crates/wasm/src/xlsx_api.rs`), кадр собирается сразу в слот ring (`crates/xlsx/src/paint.rs`). **DOCX:** раскладка считается один раз при открытии (`crates/docx/src/layout/engine.rs`), кадры рисуют стопку страниц (`crates/docx/src/render.rs`); ленивый модуль painter'а и SAB не несёт — рисует основной модуль.
 - **DisplayList — бинарный контракт Rust ↔ TS:** магия `"DLST"`, `DL_VERSION = 4`, заголовок 20 байт, однобайтовые теги команд, строки в общем string pool (`StringRef`), цвет `RRGGBBAA` (в OOXML — `AARRGGBB`, каналы переставляет `xlsx::paint::resolve_color`). TS кадр не разбирает, painter читает его прямо из SAB, поэтому формат обязан быть самодостаточным. Меняя раскладку, синхронно поднимайте версию, теги и потребителей.
@@ -37,8 +37,8 @@ This block is written and re-added by `turbo` before repository-scoped commands 
 | `crates/core`, `crates/render`, `crates/xlsx`, `crates/docx`, `crates/pdf` | Ядро: OOXML-примитивы, рендер и DisplayList, разбор и раскладка XLSX/DOCX, PDF-экспорт |
 | `crates/wasm`, `crates/docx-wasm`, `crates/pdf-wasm` | wasm-bindgen-модули: основной, ленивый DOCX, ленивый PDF |
 | `crates/fuzz` | Отдельный workspace (nightly, свой `target/`): 8 таргетов, запуск `cargo fuzz run --fuzz-dir . <target>` |
-| `packages/core` | `@doc-converter/core`: протокол, воркер, транспорты кадра, просмотрщики |
-| `packages/cli` | `@doc-converter/cli`: `convert`/`batch`, пул воркеров |
+| `packages/core` | `@meerrec/core`: протокол, воркер, транспорты кадра, просмотрщики |
+| `packages/cli` | `@meerrec/cli`: `convert`/`batch`, пул воркеров |
 | `packages/wasm`, `packages/wasm-pdf`, `packages/wasm-docx` | Сгенерированные wasm-bindgen-биндинги; `pkg/` в `.gitignore`, руками не править |
 | `packages/x2t`, `packages/browser-convert`, `packages/eurooffice` | Обвязка браузерных конвертеров (x2t) и клиент Embed API Euro-Office для демо; версии 0.1.0 |
 | `examples/viewer` | Демо (Vite + React) и Playwright-e2e; страницы `#/docx`, `#/xlsx`, `#/convert`, `#/eurooffice` |
@@ -76,16 +76,16 @@ JS/TS:
 pnpm install
 pnpm build:wasm                        # ОБЯЗАТЕЛЬНО до typecheck/test: core типизируется против сгенерированных pkg/*.d.ts
 pnpm turbo run typecheck test build    # то же, что гоняет CI
-pnpm -F @doc-converter/core test                                     # vitest
-pnpm -F @doc-converter/core exec vitest run test/tick.spec.ts        # один файл
-pnpm -F @doc-converter/core exec vitest run -t 'coalesces repeated'  # один тест
-pnpm -F @doc-converter/example-viewer exec playwright test e2e/docx --project=chromium   # один e2e
-pnpm -F @doc-converter/example-viewer test   # весь Playwright: chromium/firefox/webkit + chromium-dpr2
+pnpm -F @meerrec/core test                                     # vitest
+pnpm -F @meerrec/core exec vitest run test/tick.spec.ts        # один файл
+pnpm -F @meerrec/core exec vitest run -t 'coalesces repeated'  # один тест
+pnpm -F @meerrec/example-viewer exec playwright test e2e/docx --project=chromium   # один e2e
+pnpm -F @meerrec/example-viewer test   # весь Playwright: chromium/firefox/webkit + chromium-dpr2
 pnpm size-limit                        # после build; бюджеты — .size-limit.mjs
-pnpm -F @doc-converter/cli build && pnpm cli convert report.docx -o report.pdf
+pnpm -F @meerrec/cli build && pnpm cli convert report.docx -o report.pdf
 ```
 
-E2E сам поднимает dev-сервер демо на порту 5178; браузеры ставятся один раз: `pnpm -F @doc-converter/example-viewer exec playwright install chromium firefox webkit`. `pnpm lint` не работает (eslint не установлен) — как проверку не использовать.
+E2E сам поднимает dev-сервер демо на порту 5178; браузеры ставятся один раз: `pnpm -F @meerrec/example-viewer exec playwright install chromium firefox webkit`. `pnpm lint` не работает (eslint не установлен) — как проверку не использовать.
 
 Фикстуры, оракулы, шрифты:
 

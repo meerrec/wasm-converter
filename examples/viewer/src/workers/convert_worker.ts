@@ -8,4 +8,4 @@
 //
 // Конвертация только здесь: сборка x2t без asyncify, и на главном потоке
 // страница зависла бы на время `main1` — это ограничение пакета, не страницы.
-import '@doc-converter/browser-convert/worker';
+import '@meerrec/browser-convert/worker';

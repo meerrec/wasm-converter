@@ -104,16 +104,16 @@ jobs:
             case "$pkg" in
               wasm|wasm-docx|wasm-pdf)
                 printf '%s\n' "$files" | grep -qE '^pkg/[^/]+\.js$' \
-                  || { echo "::error::@doc-converter/$pkg: в тарболе нет pkg/*.js (содержимое pkg/ выпало целиком)"; printf '%s\n' "$files"; exit 1; }
+                  || { echo "::error::@meerrec/$pkg: в тарболе нет pkg/*.js (содержимое pkg/ выпало целиком)"; printf '%s\n' "$files"; exit 1; }
                 printf '%s\n' "$files" | grep -qE '^pkg/[^/]+\.wasm$' \
-                  || { echo "::error::@doc-converter/$pkg: в тарболе нет pkg/*.wasm — пакет уехал бы без бинарника"; printf '%s\n' "$files"; exit 1; }
+                  || { echo "::error::@meerrec/$pkg: в тарболе нет pkg/*.wasm — пакет уехал бы без бинарника"; printf '%s\n' "$files"; exit 1; }
                 ;;
               *)
                 printf '%s\n' "$files" | grep -qE '^dist/' \
-                  || { echo "::error::@doc-converter/$pkg: в тарболе нет dist/ — пакет уехал бы без сборки"; printf '%s\n' "$files"; exit 1; }
+                  || { echo "::error::@meerrec/$pkg: в тарболе нет dist/ — пакет уехал бы без сборки"; printf '%s\n' "$files"; exit 1; }
                 ;;
             esac
-            echo "OK: @doc-converter/$pkg — файлов в тарболе: $(printf '%s\n' "$files" | grep -c .)"
+            echo "OK: @meerrec/$pkg — файлов в тарболе: $(printf '%s\n' "$files" | grep -c .)"
           done
 
       # Упаковка без верификации сборкой. Здесь проверяем то, что недоступно
@@ -189,6 +189,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # создание GitHub Release (softprops/action-gh-release)
+      packages: write # публикация npm-пакетов в GitHub Packages этого репозитория
     steps:
       - uses: actions/checkout@v4
         with:
@@ -208,16 +209,20 @@ jobs:
 
       - uses: pnpm/action-setup@v4
 
-      # registry-url + NODE_AUTH_TOKEN: setup-node кладёт токен в ~/.npmrc
-      # (в лог он не попадает), откуда его читает `pnpm publish`. Токен в
-      # файле workflow не появляется — секрет только через env.
+      # registry-url + scope + NODE_AUTH_TOKEN: setup-node кладёт в ~/.npmrc
+      # и реестр, и токен (в лог он не попадает), откуда их читает `pnpm
+      # publish`. Целевой реестр — GitHub Packages этого репозитория: там скоуп
+      # обязан совпадать с владельцем (`@meerrec`), поэтому токен — штатный
+      # GITHUB_TOKEN с правом `packages: write`. registry.npmjs.org подключается
+      # отдельным шагом и только по явному выключателю `PUBLISH_TO_NPMJS`.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
-          registry-url: https://registry.npmjs.org
+          registry-url: https://npm.pkg.github.com
+          scope: '@meerrec'
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 
@@ -290,7 +295,7 @@ jobs:
           for pkg in core wasm wasm-docx wasm-pdf cli; do
             version=$(node -p "require('./packages/$pkg/package.json').version")
             if [ "$version" != "$crate_version" ]; then
-              echo "::error::@doc-converter/$pkg@$version не совпадает с версией крейта doc-converter-core $crate_version: в npm и crates.io уехали бы разные версии"
+              echo "::error::@meerrec/$pkg@$version не совпадает с версией крейта doc-converter-core $crate_version: в npm и crates.io уехали бы разные версии"
               exit 1
             fi
           done
@@ -300,9 +305,12 @@ jobs:
 
       - run: pnpm turbo run build --filter='./packages/*'
 
-      - name: npm publish (по зависимостям)
+      # Целевой реестр — GitHub Packages этого репозитория. Скоуп пакета обязан
+      # совпадать с владельцем (`@meerrec`), иначе реестр отвергает публикацию.
+      - name: npm publish в GitHub Packages (по зависимостям)
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Токен GitHub Packages; право publish выдано в `permissions` джобы.
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           publish_pkg() {
@@ -315,19 +323,52 @@ jobs:
             # переопубликовать старую версию всё равно нельзя, и проверка по
             # одной последней версии пропустила бы такой случай до жёсткой
             # ошибки публикации.
-            published=$(npm view "@doc-converter/$pkg" versions --json --registry=https://registry.npmjs.org/ 2>/dev/null || true)
+            published=$(npm view "@meerrec/$pkg" versions --json --registry=https://npm.pkg.github.com 2>/dev/null || true)
             if [ -n "$published" ] &&
                printf '%s' "$published" | jq -e --arg v "$version" 'if type == "array" then . else [.] end | index($v)' >/dev/null; then
-              echo "@doc-converter/$pkg@$version уже в npm — пропускаем"
+              echo "@meerrec/$pkg@$version уже в GitHub Packages — пропускаем"
               return
             fi
             # --no-git-checks: после `changeset version` дерево грязное
             # (версии, CHANGELOG, удалённые changesets) — публикации не мешает.
             # workspace:* pnpm при упаковке заменяет на конкретные версии.
-            ( cd "packages/$pkg" && pnpm publish --no-git-checks --registry=https://registry.npmjs.org/ --access public )
+            ( cd "packages/$pkg" && pnpm publish --no-git-checks --registry=https://npm.pkg.github.com --access public )
           }
           # Порядок — по зависимостям: сначала wasm-биндинги (их импортируют
           # core и cli), затем core, затем cli.
+          publish_pkg wasm
+          publish_pkg wasm-docx
+          publish_pkg wasm-pdf
+          publish_pkg core
+          publish_pkg cli
+
+      # Публикация в registry.npmjs.org — за явным выключателем и по умолчанию
+      # выключена: в npm нет ни скоупа `@doc-converter`, ни организации
+      # `@meerrec`, поэтому публикация оттуда вернула бы 404 на PUT. Выключение
+      # `continue-on-error` тут принципиально: включённый шаг обязан быть
+      # строгим. Включение — репозиторная переменная `PUBLISH_TO_NPMJS=true`
+      # плюс секрет `NPM_TOKEN` с правом публикации в скоуп `@meerrec`.
+      - name: npm publish в registry.npmjs.org (выключено по умолчанию)
+        if: vars.PUBLISH_TO_NPMJS == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # setup-node настроил ~/.npmrc на GitHub Packages; для npmjs.org
+          # дописываем его токен в тот же userconfig.
+          npm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
+          publish_pkg() {
+            local pkg=$1
+            local version published
+            version=$(node -p "require('./packages/$pkg/package.json').version")
+            published=$(npm view "@meerrec/$pkg" versions --json --registry=https://registry.npmjs.org/ 2>/dev/null || true)
+            if [ -n "$published" ] &&
+               printf '%s' "$published" | jq -e --arg v "$version" 'if type == "array" then . else [.] end | index($v)' >/dev/null; then
+              echo "@meerrec/$pkg@$version уже в npmjs — пропускаем"
+              return
+            fi
+            ( cd "packages/$pkg" && pnpm publish --no-git-checks --registry=https://registry.npmjs.org/ --access public )
+          }
           publish_pkg wasm
           publish_pkg wasm-docx
           publish_pkg wasm-pdf
@@ -428,7 +469,7 @@ jobs:
           if [ "$notes_ok" = "1" ]; then
             for pkg in core wasm wasm-docx wasm-pdf cli; do
               {
-                echo "## @doc-converter/$pkg"
+                echo "## @meerrec/$pkg"
                 awk '/^## / { if (started) exit; started = 1; next } started { print }' "packages/$pkg/CHANGELOG.md"
               } >> release-notes.md
             done

@@ -265,7 +265,7 @@ JIT, и разбор того же 58-мегабайтного файла. То 
 ## Как воспроизвести
 
 ```bash
-pnpm -F @doc-converter/cli build        # нужен собранный CLI
+pnpm -F @meerrec/cli build        # нужен собранный CLI
 pnpm gen:docx-fixtures:large            # большие фикстуры в target/ (необязательно,
                                         # но без них числа отражают накладные расходы)
 pnpm bench:js                           # таблицы в stdout

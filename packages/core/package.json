@@ -1,5 +1,5 @@
 {
-  "name": "@doc-converter/core",
+  "name": "@meerrec/core",
   "version": "1.0.0",
   "description": "Core primitives: worker protocol, OffscreenCanvas glue, DisplayList transport.",
   "license": "Apache-2.0",
@@ -34,11 +34,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@doc-converter/wasm": "workspace:*"
+    "@meerrec/wasm": "workspace:*"
   },
   "devDependencies": {
-    "@doc-converter/wasm-docx": "workspace:*",
-    "@doc-converter/wasm-pdf": "workspace:*",
+    "@meerrec/wasm-docx": "workspace:*",
+    "@meerrec/wasm-pdf": "workspace:*",
     "tsup": "^8.3.5",
     "vitest": "^2.1.4",
     "typescript": "^5.6.3"

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { InMsg, OutMsg, RenderConfig, Viewport } from '../src/protocol.js';
 
-/** Ответы wasm-модуля: воркер получает их вместо настоящего `@doc-converter/wasm`. */
+/** Ответы wasm-модуля: воркер получает их вместо настоящего `@meerrec/wasm`. */
 const wasm = vi.hoisted(() => {
   return {
     init: vi.fn(async () => {}),
@@ -29,7 +29,7 @@ const wasm = vi.hoisted(() => {
   };
 });
 
-vi.mock('@doc-converter/wasm', () => ({ default: wasm.init, ...wasm }));
+vi.mock('@meerrec/wasm', () => ({ default: wasm.init, ...wasm }));
 
 /**
  * Отметки заглушки ленивого DOCX-модуля (`test/fixtures/docx-module.js`):

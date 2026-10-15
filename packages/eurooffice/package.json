@@ -1,5 +1,5 @@
 {
-  "name": "@doc-converter/eurooffice",
+  "name": "@meerrec/eurooffice",
   "version": "0.1.0",
   "description": "Typed Embed API client for the Euro-Office (ONLYOFFICE fork) editor iframe",
   "license": "Apache-2.0",

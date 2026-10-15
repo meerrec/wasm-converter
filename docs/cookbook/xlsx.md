@@ -12,10 +12,10 @@
 
 ```ts
 // xlsx_worker.ts — отдельный бандл воркера, одна строка
-import '@doc-converter/core/worker';
+import '@meerrec/core/worker';
 
 // main
-import { createXlsxViewer, type SheetInfo } from '@doc-converter/core';
+import { createXlsxViewer, type SheetInfo } from '@meerrec/core';
 import workerUrl from './xlsx_worker.ts?worker&url'; // Vite
 
 const viewer = await createXlsxViewer(document.getElementById('viewer')!, {
@@ -40,7 +40,7 @@ viewer.destroy(); // гасит воркер и убирает разметку
 **Задача.** Показать список листов, переключать их и знать размеры.
 
 ```ts
-import { createXlsxViewer, type SheetInfo } from '@doc-converter/core';
+import { createXlsxViewer, type SheetInfo } from '@meerrec/core';
 
 const viewer = await createXlsxViewer(host, { workerUrl });
 const sheets = await viewer.open(bytes);
@@ -133,7 +133,7 @@ host.addEventListener('pointermove', async (event) => {
 **Задача.** Подсветить ссылку под курсором и открыть её по клику.
 
 ```ts
-import { createXlsxViewer, type HyperlinkInfo } from '@doc-converter/core';
+import { createXlsxViewer, type HyperlinkInfo } from '@meerrec/core';
 
 const viewer = await createXlsxViewer(host, {
   workerUrl,
@@ -194,7 +194,7 @@ viewer.setView({ theme: document.documentElement.classList.contains('dark') ? 'd
 каждый тик.
 
 ```ts
-import type { PaintStats } from '@doc-converter/core';
+import type { PaintStats } from '@meerrec/core';
 
 const meter = document.getElementById('frame-meter')!;
 const unsubscribe = viewer.onTick((stats: PaintStats) => {

@@ -1,4 +1,4 @@
-import type { DocxViewerHandle, XlsxViewerHandle } from '@doc-converter/core';
+import type { DocxViewerHandle, XlsxViewerHandle } from '@meerrec/core';
 
 /** Мост к активному вьюеру: контракт сквозных тестов Playwright. */
 export type ViewerBridge =

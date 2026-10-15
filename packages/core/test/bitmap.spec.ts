@@ -20,7 +20,7 @@ const IMAGES = [
   { id: 7, mime: 'image/jpeg', byteLength: 2 },
 ];
 
-/** Ответы wasm-модуля: воркер получает их вместо настоящего `@doc-converter/wasm`. */
+/** Ответы wasm-модуля: воркер получает их вместо настоящего `@meerrec/wasm`. */
 const wasm = vi.hoisted(() => ({
   init: vi.fn(async () => {}),
   alloc_sab: vi.fn(() => ({})),
@@ -39,7 +39,7 @@ const wasm = vi.hoisted(() => ({
   xlsx_image_bytes: vi.fn(() => new Uint8Array()),
 }));
 
-vi.mock('@doc-converter/wasm', () => ({ default: wasm.init, ...wasm }));
+vi.mock('@meerrec/wasm', () => ({ default: wasm.init, ...wasm }));
 
 type Handler = (ev: { data: InMsg }) => Promise<void>;
 

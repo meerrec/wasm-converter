@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2021"
 license = "Apache-2.0"
 # На crates.io не публикуется: крейт — только сборочный вход wasm-pack для
-# npm-пакета @doc-converter/wasm-pdf (scripts/build-wasm.sh). В npm уезжают
+# npm-пакета @meerrec/wasm-pdf (scripts/build-wasm.sh). В npm уезжают
 # биндинги, а не крейт, поэтому состав релиза — шесть крейтов (план спринта 12,
 # S4.3); менялся бы он только вместе с ROADMAP и DoD.
 publish = false

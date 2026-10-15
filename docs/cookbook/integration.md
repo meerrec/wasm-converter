@@ -11,10 +11,10 @@
 
 ```ts
 // xlsx_worker.ts — точка входа воркера
-import '@doc-converter/core/worker';
+import '@meerrec/core/worker';
 
 // main.ts
-import { createXlsxViewer } from '@doc-converter/core';
+import { createXlsxViewer } from '@meerrec/core';
 import workerUrl from './xlsx_worker.ts?worker&url';
 
 const viewer = await createXlsxViewer(host, { workerUrl });
@@ -31,7 +31,7 @@ export default defineConfig({
 **Под капотом.** Суффикс `?worker&url` — единственный способ получить
 отдельный чанк: голый `new URL('./xlsx_worker.ts', import.meta.url)` Vite
 считает обычным ассетом и инлайнит исходник в data-URL, где импорт
-`@doc-converter/core/worker` уже не разрешается, и воркер молча не стартует.
+`@meerrec/core/worker` уже не разрешается, и воркер молча не стартует.
 
 ---
 
@@ -69,7 +69,7 @@ export default defineConfig({
 **Задача.** Конвертировать файлы из своей Node-программы параллельно.
 
 ```ts
-import { WorkerPool, type ConvertJob, type ConvertResult } from '@doc-converter/cli';
+import { WorkerPool, type ConvertJob, type ConvertResult } from '@meerrec/cli';
 
 const pool = new WorkerPool(4); // ровно столько воркеров, очередь общая
 const job: ConvertJob = {
@@ -98,7 +98,7 @@ await pool.close(); // дожидается всех задач и гасит в
 **Задача.** Одна конвертация из Node — без воркеров и очередей.
 
 ```ts
-import { convertFile, CliError } from '@doc-converter/cli';
+import { convertFile, CliError } from '@meerrec/cli';
 
 try {
   const { bytes, ms } = await convertFile({
@@ -128,7 +128,7 @@ try {
 предложение исправиться.
 
 ```ts
-import { createXlsxViewer } from '@doc-converter/core';
+import { createXlsxViewer } from '@meerrec/core';
 
 async function mount(): Promise<void> {
   try {
@@ -158,7 +158,7 @@ async function mount(): Promise<void> {
 **Задача.** Не рисовать кнопки, которые всё равно не заведутся.
 
 ```ts
-import { supportsOffscreen } from '@doc-converter/core';
+import { supportsOffscreen } from '@meerrec/core';
 
 // Chrome 90+, Firefox 96+, Safari 16.4+ (README «Браузеры»).
 if (!supportsOffscreen()) {
@@ -181,8 +181,8 @@ defined` в SSR и тестах без DOM.
 
 ```ts
 // У каждого вьюера свой воркер-файл и свой чанк:
-//   xlsx_worker.ts  → import '@doc-converter/core/worker';
-//   docx_worker.ts  → import '@doc-converter/core/worker';
+//   xlsx_worker.ts  → import '@meerrec/core/worker';
+//   docx_worker.ts  → import '@meerrec/core/worker';
 import docxWorkerUrl from '../workers/docx_worker.ts?worker&url';
 import xlsxWorkerUrl from '../workers/xlsx_worker.ts?worker&url';
 

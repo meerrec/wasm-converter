@@ -1,8 +1,8 @@
 # Cookbook: рецепты по API doc-converter
 
 Сборник рабочих примеров для v1.0.0. Каждый рецепт — **задача**, **код на
-TypeScript** (сверен с публичным API `@doc-converter/core`,
-`@doc-converter/cli` и биндингами wasm-пакетов) и одно предложение
+TypeScript** (сверен с публичным API `@meerrec/core`,
+`@meerrec/cli` и биндингами wasm-пакетов) и одно предложение
 **«под капотом»** — почему это работает именно так и где искать подробности.
 
 ## Домены
@@ -23,7 +23,7 @@ TypeScript** (сверен с публичным API `@doc-converter/core`,
 
 | Ассет | Факт (gzip) | Бюджет |
 |---|---|---|
-| `@doc-converter/core` worker.js / index.js | 7,17 / 3,34 КБ | 550 / 200 КБ |
+| `@meerrec/core` worker.js / index.js | 7,17 / 3,34 КБ | 550 / 200 КБ |
 | `wasm (viewer)` — XLSX-просмотрщик | 464,2 КБ | 480 КБ |
 | `wasm (docx)` — ленивый модуль DOCX | 384,4 КБ | 400 КБ |
 | `wasm (pdf)` — ленивый модуль PDF | 1,01 МБ | 1,05 МБ |

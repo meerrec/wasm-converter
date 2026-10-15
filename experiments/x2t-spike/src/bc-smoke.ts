@@ -1,11 +1,11 @@
 /**
- * Смоук пакета `@doc-converter/browser-convert` на странице харнесса: конвертация через
+ * Смоук пакета `@meerrec/browser-convert` на странице харнесса: конвертация через
  * `X2TConverter` и медиа-экстракция `extractDocxMediaUrls` из собранного dist пакета.
  *
  * Пакет подключён относительным путём — харнесс лежит вне pnpm-workspace, и имя пакета в нём
- * не резолвится (та же причина, что у `packages/x2t` в src/worker.ts и `@doc-converter/core`
+ * не резолвится (та же причина, что у `packages/x2t` в src/worker.ts и `@meerrec/core`
  * в src/viewer.ts). Отсюда и три `..`: файл живёт в `src/`, а `packages/` — в корне репозитория.
- * Сборка dist — забота вызывающего: `pnpm -F @doc-converter/browser-convert build`; наличие
+ * Сборка dist — забота вызывающего: `pnpm -F @meerrec/browser-convert build`; наличие
  * файла проверяет tools/preview-check.mjs перед прогоном смоука и просит собрать.
  *
  * Модуль в разметку не подключён: приёмка тянет его из evaluate динамическим import()

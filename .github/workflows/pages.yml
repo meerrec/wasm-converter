@@ -57,13 +57,13 @@ jobs:
       # Пакеты собираются по одному и вручную: пример импортирует core и
       # browser-convert из dist/, которого в репозитории нет, — Vite резолвит
       # их оттуда.
-      - run: pnpm -F @doc-converter/core build
+      - run: pnpm -F @meerrec/core build
 
-      - run: pnpm -F @doc-converter/browser-convert... build
+      - run: pnpm -F @meerrec/browser-convert... build
 
       # Клиент Embed API, которым демо загружает self-host движка Euro-Office:
       # его exports смотрят в dist/.
-      - run: pnpm -F @doc-converter/eurooffice build
+      - run: pnpm -F @meerrec/eurooffice build
 
       # Тарболы частей движка (~290 МиБ) и зеркало каталога шрифтов кэшируются
       # в build/eurooffice/.cache. Восстановление экономит десятки минут и
@@ -88,7 +88,7 @@ jobs:
       # не пробрасывает незадекларированные env-переменные, а VITE_BASE как раз
       # такая. Страницы демо: `/#/docx` («Слово»), `/#/xlsx` («ДваИксель»),
       # `/#/convert` («Конвертер»); корень демо ведёт на `/#/docx`.
-      - run: pnpm -F @doc-converter/example-viewer build
+      - run: pnpm -F @meerrec/example-viewer build
         env:
           VITE_BASE: /${{ github.event.repository.name }}/viewer/
 

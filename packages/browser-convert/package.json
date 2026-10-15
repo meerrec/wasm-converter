@@ -1,7 +1,7 @@
 {
-  "name": "@doc-converter/browser-convert",
+  "name": "@meerrec/browser-convert",
   "version": "0.1.0",
-  "description": "Browser-side OOXML conversion and preprocessing on top of @doc-converter/x2t",
+  "description": "Browser-side OOXML conversion and preprocessing on top of @meerrec/x2t",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -28,7 +28,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@doc-converter/x2t": "workspace:*"
+    "@meerrec/x2t": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.3.5",

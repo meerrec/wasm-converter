@@ -4,12 +4,12 @@
  * [`packages/x2t/README.md`](../../x2t/README.md); почему pdf/html/png/jpg-цели на текущих
  * сборках возвращают код 80 — [`docs/adr/0024-x2t-rendering-backend.md`](../../../docs/adr/0024-x2t-rendering-backend.md).
  */
-import { convert as convertWithX2t, loadX2t } from '@doc-converter/x2t';
+import { convert as convertWithX2t, loadX2t } from '@meerrec/x2t';
 import type {
   ConvertOptions as X2tConvertOptions,
   X2tLoadOptions,
   X2tModule,
-} from '@doc-converter/x2t';
+} from '@meerrec/x2t';
 
 import { documentMimeType } from './mime.js';
 
@@ -79,7 +79,7 @@ export class X2TConverter {
   private module: X2tModule | undefined;
 
   /**
-   * Поднимает модуль x2t (`loadX2t` из `@doc-converter/x2t`). Повторный вызов бросает:
+   * Поднимает модуль x2t (`loadX2t` из `@meerrec/x2t`). Повторный вызов бросает:
    * glue-скрипт исполняется глобально и кладёт единственный `Module` на область видимости,
    * поэтому второй init — и init другого экземпляра в той же области — невозможен.
    *

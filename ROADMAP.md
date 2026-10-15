@@ -43,12 +43,12 @@
   не реализован (см. §3.3 п. 6).
 
 **Публичные пакеты:**
-- `@doc-converter/core` — есть (вьюеры XLSX и DOCX живут в `core`)
-- `@doc-converter/wasm`, `@doc-converter/wasm-docx`, `@doc-converter/wasm-pdf` — есть (wasm-bindgen-биндинги, ленивая загрузка)
-- `@doc-converter/cli` — есть (0.1.0 → 1.0.0 в релизе)
-- `@doc-converter/docx` — не выделен (вьюер DOCX живёт в `core`)
-- `@doc-converter/xlsx` — не выделен (вьюер XLSX живёт в `core`)
-- `@doc-converter/react` — не начат
+- `@meerrec/core` — есть (вьюеры XLSX и DOCX живут в `core`)
+- `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf` — есть (wasm-bindgen-биндинги, ленивая загрузка)
+- `@meerrec/cli` — есть (0.1.0 → 1.0.0 в релизе)
+- `@meerrec/docx` — не выделен (вьюер DOCX живёт в `core`)
+- `@meerrec/xlsx` — не выделен (вьюер XLSX живёт в `core`)
+- `@meerrec/react` — не начат
 
 **Rust-крейты на crates.io:**
 - `doc-converter-core`
@@ -323,7 +323,7 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 >   по контрасту WCAG 2.1 AA (≥ 4.5) для явных цветов; в JS —
 >   `theme: 'light' | 'dark'` с переключением на лету.
 >
-> `createXlsxViewer` из `@doc-converter/core` даёт прокрутку, зум,
+> `createXlsxViewer` из `@meerrec/core` даёт прокрутку, зум,
 > переключение листов и определение ячейки под курсором; пример —
 > `examples/viewer/`.
 >
@@ -331,7 +331,7 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 > фикстур, собранных exceljs
 > (+7 по условному форматированию, +3 по изображениям; генератор стал
 > детерминированным), и дифф-тест нашего разбора против эталона того же
-> exceljs — в обе стороны; **86** тестов vitest в `@doc-converter/core`;
+> exceljs — в обе стороны; **86** тестов vitest в `@meerrec/core`;
 > 80 сквозных тестов Playwright в настоящем Chromium, Firefox и WebKit (плюс
 > проект DPR=2), часть из них декодирует PNG из воркера
 > и смотрит на пиксели; criterion-замеры открытия книги и условного
@@ -397,7 +397,7 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 | 2 | **ADR-0002** (шрифты) и **ADR-0003** (граница `render`) принимаются до Спринта 5.5 | Блокеры, а не «решим в Фазе 4» |
 | 3 | Спринт 8 (DOCX) переработан: fuzz первым делом, дифференциальный тест vs mammoth, ADR 0013–0020, бюджеты памяти, лимиты ZIP, `NodeId` | Парсер чужого XML — fuzz с первого дня; DoD должен быть проверяемым; модель должна быть пригодна для Спринта 9 |
 | 4 | §3.4 и §11 переписаны: SAB — ускорение, не обязательное условие | Embed-сценарий — основной, не edge case |
-| 5 | Бюджет `@doc-converter/core` снижен 200 КБ → 30 КБ | Бюджет, который не может провалиться, бесполезен |
+| 5 | Бюджет `@meerrec/core` снижен 200 КБ → 30 КБ | Бюджет, который не может провалиться, бесполезен |
 | 6 | Playwright расширен на Firefox + WebKit с Спринта 6 | Заявлена поддержка трёх браузеров — тестируем три |
 | 7 | `insta` вводится с Спринта 5.5 | Snapshot DisplayList — дешёвый регресс-тест |
 | 8 | CI-замер времени введён с Спринта 5 | 181 тест + 100 фикстур — уже не «< 5 мин» |
@@ -453,7 +453,7 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 6. Фикстуры: 20 XLSX + 20 DOCX в `test-fixtures/`.
 7. Тесты: parse `[Content_Types].xml`, `proptest` XML round-trip.
 
-**Артефакт:** `@doc-converter/core@0.1.0` в npm + crates.io.
+**Артефакт:** `@meerrec/core@0.1.0` в npm + crates.io.
 
 **DoD:**
 - ✅ `cargo test --workspace` зелёный.
@@ -942,7 +942,7 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
    - тесты обоих путей в Playwright.
 2. Transferable везде.
 3. `WorkerPool` для batch.
-4. `@doc-converter/cli`:
+4. `@meerrec/cli`:
    - `convert input.docx -o out.pdf`;
    - `batch ./in/*.xlsx --out ./pdf --workers 4`;
    - прогресс-бар, сжатие, опции.
@@ -998,7 +998,7 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 4. Своя сборка writer-only из LO core на арендованной VM — ⬜ не выполнялась: на рабочей машине нет ресурсов под линковку (18 ГБ RAM против ≥ 64 ГБ), VM не арендовалась; процедура, пины emsdk и риски — `docs/sprint-13/build-log.md`.
 5. H6 против нативного оракула и работа в трёх движках — ✅ `docs/sprint-13/ssim.md` (mean SSIM 0,7797, min 0,5156; расхождение версионное — оракул 26.8.1.1 против сборки 24.2), `docs/sprint-13/engines.md` (Chromium, Firefox, WebKit; PDF из трёх движков различается только метаданными — 86–91 байт из 4 791 564).
 6. ADR-0023 с вердиктом по каждой гипотезе и оценкой интеграции — ✅ `docs/adr/0023-libreoffice-wasm-exact-backend.md`.
-7. Пакет `@doc-converter/browser-convert` — конвертерная обвязка OOXML поверх `@doc-converter/x2t` после no-go по рисованию (ADR-0024), аналог неопубликованного `@ranuts/converter` — ✅ `packages/browser-convert/README.md`, `docs/sprint-13/report.md`.
+7. Пакет `@meerrec/browser-convert` — конвертерная обвязка OOXML поверх `@meerrec/x2t` после no-go по рисованию (ADR-0024), аналог неопубликованного `@ranuts/converter` — ✅ `packages/browser-convert/README.md`, `docs/sprint-13/report.md`.
 
 **DoD:**
 
@@ -1007,7 +1007,7 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 - ✅ Прод не тронут: `experiments/` лежит вне workspace, гейты (`pnpm size-limit`, `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`) зелёные.
 - ⬜ Своя сборка LOWA и повтор H1–H4 на ней (этапы B/C плана) — не выполнялись: спайк закрылся на гейте этапа A («любая нет по H1/H2/H4 → no-go»), VM не арендовалась.
 - ✅ `docs/sprint-13/report.md` — сводный отчёт спринта: числа по H1–H7 со ссылками на источники, разбор «провал — цена доставки, а не качество движка», ограничения методики.
-- ✅ Пакет `@doc-converter/browser-convert`: 72 vitest-теста зелёные, zero-dep, честная матрица кодов 0/88/80; проверка сборки 9.3.5 не меняет вердикт ADR-0024.
+- ✅ Пакет `@meerrec/browser-convert`: 72 vitest-теста зелёные, zero-dep, честная матрица кодов 0/88/80; проверка сборки 9.3.5 не меняет вердикт ADR-0024.
 
 ---
 
@@ -1027,9 +1027,9 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 | 16–17 | DOCX | Парсинг + fuzz | сделано волнами 1–3: парсер, 104 фикстуры (101 разбирается, 3 фатальные по замыслу), fuzz (8 целей), differential vs mammoth, бюджеты времени и памяти, покрытие с гейтом в CI |
 | 18–19 | DOCX | Layout | сделано: пагинация, секции, каскад стилей, таблицы, floats; сверка с эталоном измерена в Спринте 11 — число страниц ±1 у 97 из 98, SSIM первой страницы mean 0,9782 (табличные фикстуры тянут вниз), пагинация 100 страниц 20,1 мс (`docs/sprint-11/report.md`) |
 | 20–21 | DOCX | Рендер + PDF | сделано: просмотрщик DOCX — 101 из 104 фикстур (3 фатальные отвергнуты), PDF — 211 страниц за 438–469 мс debug / 23,6–24,0 мс release, экспорт Markdown/HTML/текста, разрез wasm-модуля 440,17 → 285,38 + 354,58 КБ gzip |
-| 22–23 | Полировка | SAB (оба пути) + CLI | сделано в Спринте 11: оба транспорта кадра first-class (ADR-0021), `@doc-converter/cli` с WorkerPool (116 файлов за 0,20 с), бенчмарки vs JS (медиана ×5,3 — цель ×10–300 не подтверждена), README про COOP/COEP; отчёт — `docs/sprint-11/report.md` |
+| 22–23 | Полировка | SAB (оба пути) + CLI | сделано в Спринте 11: оба транспорта кадра first-class (ADR-0021), `@meerrec/cli` с WorkerPool (116 файлов за 0,20 с), бенчмарки vs JS (медиана ×5,3 — цель ×10–300 не подтверждена), README про COOP/COEP; отчёт — `docs/sprint-11/report.md` |
 | 24–25 | Релиз | v1.0.0 | сделано, ожидает публикацию (S4.3): аудиты, документация (README/cookbook 46/migration ×2/TypeDoc), демо на Pages, release workflow, версии крейтов 1.0.0, changeset major, RC зелёный — `docs/sprint-12/report.md` |
-| вне плана | Спайк | LOWA — точный бэкенд (ADR-0023) | закрыто решением **no-go**: H1/H2/H4 — «нет» (49,97 МиБ по сети, 14,6–28,1 с до готовности, 2,2 ГБ памяти вкладки), H5/H7 — «да»; своя сборка не выполнялась — `docs/sprint-13/plan.md`, `docs/adr/0023-libreoffice-wasm-exact-backend.md`; пакет `@doc-converter/browser-convert` — конвертерная обвязка поверх x2t (ADR-0024) |
+| вне плана | Спайк | LOWA — точный бэкенд (ADR-0023) | закрыто решением **no-go**: H1/H2/H4 — «нет» (49,97 МиБ по сети, 14,6–28,1 с до готовности, 2,2 ГБ памяти вкладки), H5/H7 — «да»; своя сборка не выполнялась — `docs/sprint-13/plan.md`, `docs/adr/0023-libreoffice-wasm-exact-backend.md`; пакет `@meerrec/browser-convert` — конвертерная обвязка поверх x2t (ADR-0024) |
 
 **Сдвиг:** +1 неделя от v1 (25 недель вместо 24). Обоснование — закрытие
 трёх системных рисков без рефакторинга на Спринте 9.
@@ -1050,7 +1050,7 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 | M8: DOCX парсер | 17 | 100% фикстур | достигнута: 104/104 коммитируемых фикстур (101 разобрано, 3 фатальные по замыслу), differential vs mammoth 81/81, fuzz — ночные прогоны CI (§10) |
 | M9: DOCX layout | 19 | ±1 страница vs LibreOffice | достигнута: страницы ±1 у 99/99 фикстур (эталон LibreOffice, `docs/sprint-12/oracle.md`) |
 | M10: DOCX viewer | 21 | 200 страниц < 2 с | достигнута: раскладка 150 страниц — 32,47 мс (`docs/sprint-12/oracle.md`) |
-| M11: Оптимизация | 23 | Оба пути SAB + CLI | достигнута: оба транспорта first-class (ADR-0021) + `@doc-converter/cli` с WorkerPool (Спринт 11) |
+| M11: Оптимизация | 23 | Оба пути SAB + CLI | достигнута: оба транспорта first-class (ADR-0021) + `@meerrec/cli` с WorkerPool (Спринт 11) |
 | M12: v1.0.0 | 25 | Публикация | ожидает публикацию (S4.3): версии 1.0.0, changeset major, RC зелёный — `docs/sprint-12/report.md` |
 | M13: LOWA спайк | — | Вердикт по H1–H7 (ADR-0023) | закрыта решением **no-go** (решающая тройка H1/H2/H4 — «нет»); числа и механизм — `docs/adr/0023-libreoffice-wasm-exact-backend.md` |
 
@@ -1135,10 +1135,10 @@ DOCX: страницы ±1 у **99/99** фикстур, SSIM первой стр
 
 | Пакет | Бюджет v1 | Бюджет v2 | Факт |
 |---|---|---|---|
-| `@doc-converter/core` | 200 КБ | **30 КБ** | 3,34 КБ |
-| `@doc-converter/docx` | 450 КБ | 450 КБ | пакета нет |
-| `@doc-converter/xlsx` | 500 КБ | 500 КБ | пакета нет |
-| `@doc-converter/react` | 25 КБ | 25 КБ | пакета нет |
+| `@meerrec/core` | 200 КБ | **30 КБ** | 3,34 КБ |
+| `@meerrec/docx` | 450 КБ | 450 КБ | пакета нет |
+| `@meerrec/xlsx` | 500 КБ | 500 КБ | пакета нет |
+| `@meerrec/react` | 25 КБ | 25 КБ | пакета нет |
 | Worker bundle | 600 КБ | 600 КБ | 7,17 КБ JS + 464,2 КБ wasm (просмотрщик); модули просмотра DOCX (384,4 КБ) и экспорта PDF (1,01 МБ) грузятся по требованию |
 
 `size-limit` меряет JS-бандлы и два wasm-модуля: `wasm (viewer)` —
@@ -1216,7 +1216,7 @@ Differential vs mammoth введён: 83 кандидата из 104 фикст�
 DOCX: 104 коммитируемые фикстуры (101 разбирается, 3 фатальные по замыслу),
 ещё 5 «больших» (11–15 МиБ) генерируются по
 требованию в gitignored `target/fixtures/docx-large/`. TS: 86 тестов vitest
-в `@doc-converter/core`.
+в `@meerrec/core`.
 
 ---
 

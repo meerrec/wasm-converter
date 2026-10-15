@@ -15,8 +15,8 @@
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 
-type PdfWasm = typeof import('@doc-converter/wasm-pdf');
-type DocxWasm = typeof import('@doc-converter/wasm-docx');
+type PdfWasm = typeof import('@meerrec/wasm-pdf');
+type DocxWasm = typeof import('@meerrec/wasm-docx');
 
 let pdfModule: Promise<PdfWasm> | undefined;
 let docxModule: Promise<DocxWasm> | undefined;
@@ -34,14 +34,14 @@ export function loadDocxWasm(): Promise<DocxWasm> {
 }
 
 async function initPdf(): Promise<PdfWasm> {
-  const module = await import('@doc-converter/wasm-pdf');
-  await module.default({ module_or_path: await wasmBytes('@doc-converter/wasm-pdf/pkg/doc_converter_pdf_wasm.js') });
+  const module = await import('@meerrec/wasm-pdf');
+  await module.default({ module_or_path: await wasmBytes('@meerrec/wasm-pdf/pkg/doc_converter_pdf_wasm.js') });
   return module;
 }
 
 async function initDocx(): Promise<DocxWasm> {
-  const module = await import('@doc-converter/wasm-docx');
-  await module.default({ module_or_path: await wasmBytes('@doc-converter/wasm-docx/pkg/doc_converter_docx_wasm.js') });
+  const module = await import('@meerrec/wasm-docx');
+  await module.default({ module_or_path: await wasmBytes('@meerrec/wasm-docx/pkg/doc_converter_docx_wasm.js') });
   return module;
 }
 

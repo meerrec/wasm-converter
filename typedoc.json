@@ -1,7 +1,7 @@
 {
   "$schema": "https://typedoc.org/schema.json",
-  // Публичный API публикуемых пакетов: просмотрщик (@doc-converter/core) и
-  // CLI (@doc-converter/cli). Пакеты wasm* — сгенерированные wasm-bindgen
+  // Публичный API публикуемых пакетов: просмотрщик (@meerrec/core) и
+  // CLI (@meerrec/cli). Пакеты wasm* — сгенерированные wasm-bindgen
   // биндинги, их документация — pkg/*.d.ts, TypeDoc их не обрабатывает.
   // Стратегия packages: у core и cli разные tsconfig (bundler vs NodeNext),
   // каждый пакет конвертируется со своим.

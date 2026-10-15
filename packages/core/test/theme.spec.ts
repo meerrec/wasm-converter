@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { InMsg, OutMsg, RenderConfig, Viewport } from '../src/protocol.js';
 
-/** Ответы wasm-модуля: воркер получает их вместо настоящего `@doc-converter/wasm`. */
+/** Ответы wasm-модуля: воркер получает их вместо настоящего `@meerrec/wasm`. */
 const wasm = vi.hoisted(() => ({
   init: vi.fn(async () => {}),
   alloc_sab: vi.fn(() => ({})),
@@ -21,7 +21,7 @@ const wasm = vi.hoisted(() => ({
   xlsx_image_bytes: vi.fn(() => new Uint8Array()),
 }));
 
-vi.mock('@doc-converter/wasm', () => ({ default: wasm.init, ...wasm }));
+vi.mock('@meerrec/wasm', () => ({ default: wasm.init, ...wasm }));
 
 type Handler = (ev: { data: InMsg }) => Promise<void>;
 

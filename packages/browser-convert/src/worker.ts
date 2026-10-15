@@ -7,8 +7,8 @@
  * поэтому обработчик гоняется в тестах без настоящего воркера. Слушатель реального
  * воркера висит внизу файла и только перекладывает сообщения из `self` в фабрику.
  */
-import { convert as convertWithX2t, loadX2t } from '@doc-converter/x2t';
-import type { X2tLoadOptions, X2tModule } from '@doc-converter/x2t';
+import { convert as convertWithX2t, loadX2t } from '@meerrec/x2t';
+import type { X2tLoadOptions, X2tModule } from '@meerrec/x2t';
 
 /** Запрос конвертации воркеру: байты приезжают через postMessage с transfer. */
 export interface ConvertWorkerRequest {

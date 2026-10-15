@@ -4,8 +4,8 @@
  * а страница подключает её суффиксом `?worker&url` — только так Vite собирает воркер отдельным
  * чанком (см. src/viewer.ts).
  *
- * Импорт относительный, а не `@doc-converter/core/worker`: харнесс вне pnpm-workspace, и имя
- * пакета в нём не резолвится. Голый импорт `@doc-converter/wasm` внутри этой сборки закрывает
+ * Импорт относительный, а не `@meerrec/core/worker`: харнесс вне pnpm-workspace, и имя
+ * пакета в нём не резолвится. Голый импорт `@meerrec/wasm` внутри этой сборки закрывает
  * алиас из vite.config.ts.
  */
 import '../../../packages/core/dist/worker.js';

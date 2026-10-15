@@ -13,7 +13,7 @@ import {
   type PdfOptions,
   type SheetInfo,
   type XlsxViewerHandle,
-} from '@doc-converter/core';
+} from '@meerrec/core';
 import { clearViewer, publishViewer } from '../../lib/bridge.js';
 import { cacheStats, fileDocumentKey, getDocument, putDocument } from '../../lib/doc_cache.js';
 import { downloadBlob } from '../../lib/download.js';

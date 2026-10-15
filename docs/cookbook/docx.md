@@ -2,7 +2,7 @@
 
 Просмотрщик DOCX устроен как XLSX (холст над областью прокрутки), но страницы
 идут стопкой по вертикали. Парсер и пагинация — в ленивом модуле
-`@doc-converter/wasm-docx`, который воркер грузит при открытии документа.
+`@meerrec/wasm-docx`, который воркер грузит при открытии документа.
 
 ---
 
@@ -12,10 +12,10 @@
 
 ```ts
 // docx_worker.ts — свой воркер для документов, одна строка
-import '@doc-converter/core/worker';
+import '@meerrec/core/worker';
 
 // main
-import { createDocxViewer, type PageInfo } from '@doc-converter/core';
+import { createDocxViewer, type PageInfo } from '@meerrec/core';
 import workerUrl from './docx_worker.ts?worker&url'; // Vite
 
 const viewer = await createDocxViewer(document.getElementById('viewer')!, {
@@ -23,7 +23,7 @@ const viewer = await createDocxViewer(document.getElementById('viewer')!, {
   // Без docxWasm открытие вернёт внятную ошибку вместо страниц.
   docxWasm: {
     module: new URL(
-      '@doc-converter/wasm-docx/pkg/doc_converter_docx_wasm.js',
+      '@meerrec/wasm-docx/pkg/doc_converter_docx_wasm.js',
       import.meta.url,
     ).href,
   },

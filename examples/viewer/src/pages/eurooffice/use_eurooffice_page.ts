@@ -6,8 +6,8 @@ import {
   type ChangeEvent,
   type RefObject,
 } from 'react';
-import { createEditorClient, describeEditorError } from '@doc-converter/eurooffice';
-import type { DocumentErrorEvent, EditorClient, EditorEvent } from '@doc-converter/eurooffice';
+import { createEditorClient, describeEditorError } from '@meerrec/eurooffice';
+import type { DocumentErrorEvent, EditorClient, EditorEvent } from '@meerrec/eurooffice';
 import { euroofficeBaseUrl, euroofficeEditorOrigin, euroofficeEditorUrl } from '../../lib/viewer_urls.js';
 import { supportsCredentiallessFrames } from '../../lib/isolation.js';
 
@@ -18,7 +18,7 @@ import { supportsCredentiallessFrames } from '../../lib/isolation.js';
  * Файл читает страница и отдаёт его редактору командой `document:open-buffer`:
  * так не нужен ни CORS, ни URL документа на сервере, а сохранение в редакторе
  * выключено (`readonly`). Протокол Embed API целиком живёт в пакете
- * `@doc-converter/eurooffice` — здесь только состояние и хук приёмки.
+ * `@meerrec/eurooffice` — здесь только состояние и хук приёмки.
  */
 
 /** Состояния статуса страницы: те же значения, что читает приёмка. */

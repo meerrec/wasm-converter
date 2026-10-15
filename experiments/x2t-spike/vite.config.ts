@@ -2,10 +2,10 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
 /**
- * Просмотр документа идёт нашим вьюером из `@doc-converter/core`, а харнесс лежит вне
+ * Просмотр документа идёт нашим вьюером из `@meerrec/core`, а харнесс лежит вне
  * pnpm-workspace: по имени пакет не резолвится (та же причина, что у `packages/x2t` в
  * src/worker.ts). Страница поэтому импортирует ядро относительным путём, а здесь остаётся
- * то, что разрешить иначе нечем: сборка `@doc-converter/wasm` — её тянет воркер ядра
+ * то, что разрешить иначе нечем: сборка `@meerrec/wasm` — её тянет воркер ядра
  * (`dist/worker.js`), и это единственный голый импорт в нём.
  */
 const wasmEntry = fileURLToPath(
@@ -33,7 +33,7 @@ export default defineConfig({
   root: import.meta.dirname,
   publicDir: '../../packages/x2t/vendor',
   resolve: {
-    alias: { '@doc-converter/wasm': wasmEntry },
+    alias: { '@meerrec/wasm': wasmEntry },
   },
   server: { port: 5191, strictPort: true, headers: isolationHeaders },
   preview: { headers: isolationHeaders },

@@ -247,7 +247,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
 
-      # @doc-converter/core типизируется против сгенерированных wasm-bindgen
+      # @meerrec/core типизируется против сгенерированных wasm-bindgen
       # деклараций, поэтому pkg/ приезжает артефактом из джобы wasm.
       - uses: actions/download-artifact@v4
         with:
@@ -293,7 +293,7 @@ jobs:
         run: |
           set -uo pipefail
           attempt=1
-          until timeout 300 pnpm --filter @doc-converter/example-viewer exec playwright install --with-deps chromium firefox webkit; do
+          until timeout 300 pnpm --filter @meerrec/example-viewer exec playwright install --with-deps chromium firefox webkit; do
             if [ "$attempt" -ge 3 ]; then
               echo "::error::playwright install не удался за ${attempt} попытки — браузеры не поставлены"
               exit 1

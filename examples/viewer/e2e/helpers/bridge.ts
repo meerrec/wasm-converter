@@ -5,7 +5,7 @@
 // `src` остаётся только для сборки приложения: спеки и хелперы видят тип
 // отсюда, а `declare global` написано ровно один раз — на весь набор.
 
-import type { DocxViewerHandle, XlsxViewerHandle } from '@doc-converter/core';
+import type { DocxViewerHandle, XlsxViewerHandle } from '@meerrec/core';
 import type { Page } from '@playwright/test';
 
 /** Вид вьюера: какое приложение поднято маршрутом. */

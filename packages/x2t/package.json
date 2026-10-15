@@ -1,5 +1,5 @@
 {
-  "name": "@doc-converter/x2t",
+  "name": "@meerrec/x2t",
   "version": "0.1.0",
   "description": "Typed wrapper around x2t.js — the WASM build of the ONLYOFFICE format converter.",
   "license": "Apache-2.0",

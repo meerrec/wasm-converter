@@ -1,4 +1,4 @@
-# @doc-converter/eurooffice
+# @meerrec/eurooffice
 
 Типизированный клиент Embed API редактора Euro-Office (форк ONLYOFFICE) поверх iframe
 `/editor.html?embed=1`: команды уходят в iframe через `postMessage`, события приходят
@@ -18,8 +18,8 @@
 ## Вызов
 
 ```ts
-import { createEditorClient, describeEditorError } from '@doc-converter/eurooffice';
-import type { EditorEvent } from '@doc-converter/eurooffice';
+import { createEditorClient, describeEditorError } from '@meerrec/eurooffice';
+import type { EditorEvent } from '@meerrec/eurooffice';
 
 // iframe с src="/editor.html?embed=1" уже в разметке страницы
 const frame = document.querySelector<HTMLIFrameElement>('#editor')!;
@@ -95,9 +95,9 @@ client.save({ targetExt: 'docx' });
 ## Разработка
 
 ```bash
-pnpm -F @doc-converter/eurooffice test      # vitest в jsdom: iframe подменён моком
-pnpm -F @doc-converter/eurooffice typecheck
-pnpm -F @doc-converter/eurooffice build     # tsup: dist/ с декларациями
+pnpm -F @meerrec/eurooffice test      # vitest в jsdom: iframe подменён моком
+pnpm -F @meerrec/eurooffice typecheck
+pnpm -F @meerrec/eurooffice build     # tsup: dist/ с декларациями
 ```
 
 Тесты не поднимают редактор: `postMessage` iframe'а — мок, входящие события —

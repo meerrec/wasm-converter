@@ -1,11 +1,11 @@
 // Приёмка страницы харнесса x2t: поднимает её, проверяет просмотр документа нашим вьюером,
 // прогоняет три конвертации мелкой фикстуры — docx → odt, docx → txt и попытку docx → pdf, —
-// и следом смоук пакета @doc-converter/browser-convert: docx → odt, docx → pdf и
+// и следом смоук пакета @meerrec/browser-convert: docx → odt, docx → pdf и
 // extractDocxMediaUrls через X2TConverter из собранного dist (src/bc-smoke.ts, тянется
 // страницей из evaluate мимо воркера харнесса).
 //
 // Запуск:
-//   pnpm -F @doc-converter/browser-convert build   # dist смоука — собирает вызывающий
+//   pnpm -F @meerrec/browser-convert build   # dist смоука — собирает вызывающий
 //   node experiments/x2t-spike/tools/preview-check.mjs
 //
 // Сервер: если на порту из vite.config.ts уже отвечает харнесс (например, поднятый
@@ -491,13 +491,13 @@ function toBuffer(value) {
 }
 
 /**
- * Смоук пакета @doc-converter/browser-convert: страница гоняет конвертации через
+ * Смоук пакета @meerrec/browser-convert: страница гоняет конвертации через
  * `X2TConverter` из собранного dist — мимо воркера харнесса, на главном потоке (модуль
  * src/bc-smoke.ts тянется из evaluate динамическим import() через Vite, в разметке его нет).
  * Байты фикстур читает Node и передаёт в evaluate; отчёты — сериализуемые структуры.
  *
  * Сборку dist скрипт не делает — только проверяет наличие и просит собрать
- * (`pnpm -F @doc-converter/browser-convert build`): так надёжнее для CI-стиля запуска, где
+ * (`pnpm -F @meerrec/browser-convert build`): так надёжнее для CI-стиля запуска, где
  * сборку делает вызывающий. Сбои смоука валят приёмку, кроме pdf-кода 80 (нет движка
  * раскладки, ADR-0024) — это ожидаемый исход, и он печатается как таковой.
  */
@@ -505,7 +505,7 @@ async function runBrowserConvertSmoke(page, result, server) {
   if (!existsSync(BROWSER_CONVERT_DIST)) {
     throw new Error(
       `browser-convert не собран: нет ${BROWSER_CONVERT_DIST} — соберите пакет ` +
-        '(pnpm -F @doc-converter/browser-convert build) и повторите',
+        '(pnpm -F @meerrec/browser-convert build) и повторите',
     );
   }
   if (!existsSync(MEDIA_FIXTURE)) {

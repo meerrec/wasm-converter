@@ -1,11 +1,11 @@
-# @doc-converter/browser-convert
+# @meerrec/browser-convert
 
-Браузерный конвертер OOXML поверх обвязки `@doc-converter/x2t` (x2t.wasm, конвертер
+Браузерный конвертер OOXML поверх обвязки `@meerrec/x2t` (x2t.wasm, конвертер
 форматов из состава ONLYOFFICE) плюс то, что x2t сама не умеет: препроцессинг OOXML
 перед конвертацией, извлечение медиа из контейнеров и сохранение результата на диск.
 
 Сами артефакты `x2t.js`/`x2t.wasm` пакет **не поставляет** — оба URL задаёт вызывающий
-(см. [`@doc-converter/x2t`](../x2t/README.md); готовые файлы релиза v9.3.2+3 лежат в
+(см. [`@meerrec/x2t`](../x2t/README.md); готовые файлы релиза v9.3.2+3 лежат в
 [`packages/x2t/vendor/`](../x2t/vendor/README.md), Git LFS). Пакет не знает ни раскладки
 каталогов потребителя, ни откуда приезжают 39 МиБ wasm.
 
@@ -13,10 +13,10 @@
 
 Конвертация живёт только в воркере: сборка x2t без asyncify, `main1` крутится в потоке
 до конца вызова, и на главном потоке страница зависнет. Пакет отдаёт готовый вход
-воркера — точку `@doc-converter/browser-convert/worker`:
+воркера — точку `@meerrec/browser-convert/worker`:
 
 ```ts
-const worker = new Worker(new URL('@doc-converter/browser-convert/worker', import.meta.url), {
+const worker = new Worker(new URL('@meerrec/browser-convert/worker', import.meta.url), {
   type: 'module',
 });
 
@@ -48,7 +48,7 @@ worker.addEventListener('message', (event: MessageEvent<ConvertWorkerResponse>) 
 ```
 
 Протокол и типы (`ConvertWorkerRequest`, `ConvertWorkerResponse`) экспортируются из той
-же точки `@doc-converter/browser-convert/worker`; сама логика — фабрика
+же точки `@meerrec/browser-convert/worker`; сама логика — фабрика
 `createConvertWorkerHandler(post)`, слушатель реального воркера висит на ней же.
 
 - Модуль x2t поднимается лениво на первом запросе: 38 МБ не должны быть ценой входа,
@@ -87,7 +87,7 @@ worker.addEventListener('message', (event: MessageEvent<ConvertWorkerResponse>) 
 ### Препроцессинг перед конвертацией
 
 ```ts
-import { preprocessDocxRuby } from '@doc-converter/browser-convert';
+import { preprocessDocxRuby } from '@meerrec/browser-convert';
 
 // Импортёр x2t роняет <w:ruby> вместе с базовым словом — снимаем ruby до конвертации.
 const fixed = await preprocessDocxRuby(await file.arrayBuffer());
@@ -97,7 +97,7 @@ const fixed = await preprocessDocxRuby(await file.arrayBuffer());
 ### Медиа-экстракция с ревокацией
 
 ```ts
-import { extractDocxMediaUrls } from '@doc-converter/browser-convert';
+import { extractDocxMediaUrls } from '@meerrec/browser-convert';
 
 const urls = await extractDocxMediaUrls(bytes); // { 'media/image1.png': blobUrl }
 // …показать <img src={urls['media/image1.png']} />…
@@ -108,7 +108,7 @@ for (const url of Object.values(urls)) URL.revokeObjectURL(url);
 ### X2TConverter внутри собственного воркера
 
 ```ts
-import { X2TConverter } from '@doc-converter/browser-convert';
+import { X2TConverter } from '@meerrec/browser-convert';
 
 const converter = new X2TConverter();
 await converter.init({ scriptUrl: '/x2t/x2t.js', wasmUrl: '/x2t/x2t.wasm' });
@@ -156,9 +156,9 @@ wasm-сборки заглушкой. У `@ranuts/converter` pdf работае�
 ## Разработка
 
 ```bash
-pnpm -F @doc-converter/browser-convert test        # vitest: архив строится руками, x2t замокан
-pnpm -F @doc-converter/browser-convert typecheck
-pnpm -F @doc-converter/browser-convert build       # tsup: dist/ с декларациями, две точки входа
+pnpm -F @meerrec/browser-convert test        # vitest: архив строится руками, x2t замокан
+pnpm -F @meerrec/browser-convert typecheck
+pnpm -F @meerrec/browser-convert build       # tsup: dist/ с декларациями, две точки входа
 ```
 
 Тесты не поднимают wasm: рантайм x2t подменён заглушкой, вход воркера гоняется через

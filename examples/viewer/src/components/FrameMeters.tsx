@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactElement } from 'react';
-import type { DocxViewerHandle, XlsxViewerHandle } from '@doc-converter/core';
+import type { DocxViewerHandle, XlsxViewerHandle } from '@meerrec/core';
 
 export interface FrameMetersProps {
   /** Ручка активного вьюера; `null` — вьюер ещё не создан. */

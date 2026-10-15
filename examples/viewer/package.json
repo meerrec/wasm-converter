@@ -1,5 +1,5 @@
 {
-  "name": "@doc-converter/example-viewer",
+  "name": "@meerrec/example-viewer",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,11 +13,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@doc-converter/browser-convert": "workspace:*",
-    "@doc-converter/core": "workspace:*",
-    "@doc-converter/eurooffice": "workspace:*",
-    "@doc-converter/wasm-docx": "workspace:*",
-    "@doc-converter/wasm-pdf": "workspace:*",
+    "@meerrec/browser-convert": "workspace:*",
+    "@meerrec/core": "workspace:*",
+    "@meerrec/eurooffice": "workspace:*",
+    "@meerrec/wasm-docx": "workspace:*",
+    "@meerrec/wasm-pdf": "workspace:*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.18.4"
