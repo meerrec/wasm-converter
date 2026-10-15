@@ -383,10 +383,10 @@ export function useXlsxPage(): XlsxPageApi {
     exporting,
     exportDisabled: label === null || exporting,
     onExportSheet: () => {
-      void exportPdf({}, '');
+      void exportPdf({ scale: 1 }, '');
     },
     onExportBook: () => {
-      void exportPdf({ allSheets: true }, ' (все листы)');
+      void exportPdf({ scale: 1, allSheets: true }, ' (все листы)');
     },
   };
 }
