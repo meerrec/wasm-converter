@@ -7,6 +7,22 @@ XLSX в PDF. Вся конвертация — те же Rust/WASM-модули,
 
 ## Установка
 
+Пакет живёт в **GitHub Packages** этого репозитория (`@meerrec/cli@1.0.0`), а не в
+`registry.npmjs.org`: реестр и токен с правом `read:packages` — в `~/.npmrc`:
+
+```ini
+# ~/.npmrc — <токен> это personal access token (classic) с read:packages
+@meerrec:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=<токен>
+```
+
+```bash
+npm install -g @meerrec/cli --registry=https://npm.pkg.github.com
+```
+
+Без реестра — тарбол (`meerrec-cli-1.0.0.tgz`) в ассетах релиза
+[`v1.0.0`](https://github.com/meerrec/wasm-converter/releases/tag/v1.0.0).
+
 Node ≥ 20 (как в корневом `package.json`). Из монорепозитория:
 
 ```bash

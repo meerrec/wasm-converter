@@ -72,11 +72,28 @@ Chromium (проверку спрашивают и страницы, и сам �
 
 ### Установка
 
+Пакеты опубликованы в **GitHub Packages** этого репозитория — не в
+`registry.npmjs.org`: `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`,
+`@meerrec/core`, `@meerrec/cli`, версия `1.0.0`. GitHub Packages требует
+авторизацию даже на чтение, поэтому сначала — реестр и токен с правом
+`read:packages` в `~/.npmrc`:
+
+```ini
+# ~/.npmrc — <токен> это personal access token (classic) с read:packages
+@meerrec:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=<токен>
+```
+
 ```bash
 npm install @meerrec/core @meerrec/wasm \
   @meerrec/wasm-docx @meerrec/wasm-pdf
-npm install -g @meerrec/cli
+npm install -g @meerrec/cli --registry=https://npm.pkg.github.com
 ```
+
+Разовая альтернатива `~/.npmrc` — `npm install --registry=https://npm.pkg.github.com …`
+(токен всё равно нужен). Совсем без реестра — собранные тарболы в ассетах
+релиза [`v1.0.0`](https://github.com/meerrec/wasm-converter/releases/tag/v1.0.0)
+(`meerrec-*.tgz`, ставится как `npm install ./meerrec-core-1.0.0.tgz`).
 
 `wasm-docx` и `wasm-pdf` — ленивые модули: воркер грузит их по URL при
 открытии `.docx` и при первом экспорте в PDF соответственно.
