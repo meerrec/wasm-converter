@@ -31,5 +31,6 @@
 | 0023 | LibreOffice-WASM как «точный» бэкенд — no-go | [`0023-libreoffice-wasm-exact-backend.md`](0023-libreoffice-wasm-exact-backend.md) |
 | 0024 | x2t (ONLYOFFICE) как рисующий бэкенд — no-go | [`0024-x2t-rendering-backend.md`](0024-x2t-rendering-backend.md) |
 | 0025 | Граница раскладки XLSX — без отдельного крейта `xlsx-layout` | [`0025-xlsx-layout-boundary.md`](0025-xlsx-layout-boundary.md) |
+| 0026 | Дистрибутив Rust-крейтов: GitHub Packages + ассеты релиза, crates.io — non-goal | [`0026-rust-crates-distribution.md`](0026-rust-crates-distribution.md) |
 
 Сводка принятых решений по спринтам — `ROADMAP.md` §11.
