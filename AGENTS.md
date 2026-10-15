@@ -16,7 +16,7 @@ This block is written and re-added by `turbo` before repository-scoped commands 
 ## Что это
 
 - Монорепозиторий **doc-converter**: просмотрщик OOXML (DOCX/XLSX) и экспортёр в PDF/Markdown/HTML/текст — Rust/WASM, рендер на `OffscreenCanvas` в Web Worker; batch-конвертация — Node-CLI. Cargo workspace (`crates/*`) + pnpm workspaces (`packages/*`, `examples/*`) + Turborepo.
-- Планы, бюджеты и DoD — `ROADMAP.md` (§7 состояние, §9 бюджеты, §12 DoD). Закрыты спринты 1–11 (сводка — ROADMAP §7, отчёты — `docs/sprint-6..11`, последний — `docs/sprint-11/report.md`); впереди Спринт 12 — релиз v1.0.0. «Статус» корневого README устарел — не ориентир.
+- Планы, бюджеты и DoD — `ROADMAP.md` (§7 состояние, §9 бюджеты, §12 DoD). Закрыты спринты 1–13 (сводка — ROADMAP §7, отчёты — `docs/sprint-6..13`, последний — `docs/sprint-13/report.md`): Спринт 12 — релиз v1.0.0, ожидает публикацию (S4.3); Спринт 13 — спайк LOWA, закрыт решением **no-go** (ADR-0023), попутный пакет-обвязка x2t — ADR-0024. «Статус» корневого README устарел — не ориентир.
 - Незаконченное помечено `TODO (…)` / `todo!("…")` — ищите маркеры, а не только роадмап. Архитектурные решения — `docs/adr/` (индекс в `docs/adr/README.md`; принятый ADR не правят, а заводят новый).
 
 ## Команды
