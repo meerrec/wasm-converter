@@ -297,7 +297,7 @@ jobs:
             # --no-git-checks: после `changeset version` дерево грязное
             # (версии, CHANGELOG, удалённые changesets) — публикации не мешает.
             # workspace:* pnpm при упаковке заменяет на конкретные версии.
-            pnpm --dir "packages/$pkg" publish --no-git-checks --registry=https://registry.npmjs.org/ --access public
+            ( cd "packages/$pkg" && pnpm publish --no-git-checks --registry=https://registry.npmjs.org/ --access public )
           }
           # Порядок — по зависимостям: сначала wasm-биндинги (их импортируют
           # core и cli), затем core, затем cli.
