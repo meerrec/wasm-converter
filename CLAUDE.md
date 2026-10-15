@@ -99,10 +99,9 @@ canvas, `scale` — зум, умноженный на DPR.
 редакторе Euro-Office на `/#/eurooffice`; сквозные тесты идут в настоящих
 Chromium, Firefox и WebKit и проверяют пиксели через `exportPng`).
 
-### Два канала Main ↔ Worker (намеренно разные)
+### Протокол Main ↔ Worker
 
-1. **RPC-конверт** — `packages/core/src/protocol.ts` (`WorkerRequest`/`WorkerResponse`) и `rpc.ts` (id, `call`/`notify`/`on`/`dispose`). Источник истины — TS-файл; Rust описывает только payload.
-2. **Прямой протокол кадров** — `InitMsg`/`ResizeMsg`/`BitmapMsg`/`RenderMsg`/`ExportPngMsg` → `ReadyMsg`/`TickMsg`/`PngMsg`. Без request/response, чтобы кадр не ждал ответа: воркер на `render` не отвечает, а шлёт `tick` со статистикой (`PaintStats`).
+Канал один — прямой: сообщения `InMsg`/`OutMsg` из `packages/core/src/protocol.ts`, без конверта `{id, type, payload}` и слоя `call`/`notify`. Источник истины — TS-файл; Rust описывает только payload. Кадр не ждёт ответа: воркер на `render` не отвечает, а шлёт `tick` со статистикой (`PaintStats`); без `id` приходят и `ready` на `init`, и `opened`/`docx-opened` на `open`. У части команд ответ коррелируется по `id`: `hit-test` → `hit`, `hyperlink-at` → `hyperlink`, `export-png` → `png`, `export-pdf`/`export-docx-pdf` → `pdf`, `export-docx-text` → `docx-text`. Ошибка — отдельное `error` (`WorkerErrorMsg`) без `id`.
 
 Поток: main вызывает `canvas.transferControlToOffscreen()` и **один раз** отдаёт canvas воркеру (`render/offscreen.ts:initOffscreen`) → воркер инициализирует wasm, делает `alloc_sab`, отвечает `ready` с SAB → `ResizeObserver` (debounce 100 мс, DPR клампится по лимиту 16M пикселей в `render/resize_observer.ts:computeDpr`) шлёт `resize` + `render` → воркер собирает DisplayList в слот ring → painter рисует → `tick`. Кадры коалесцируются через `requestAnimationFrame` в `worker/frame_loop.ts`; ошибки кадра логируются, loop не роняется.
 

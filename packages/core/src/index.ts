@@ -1,6 +1,4 @@
 export type {
-  WorkerRequest,
-  WorkerResponse,
   FrameTransport,
   ReadyInfo,
   Viewport,
@@ -11,14 +9,12 @@ export type {
   HitResult,
   CellRef,
   TextPos,
-  FrameTimings,
   PaintStats,
   SheetInfo,
   PageInfo,
   HyperlinkInfo,
 } from './protocol.js';
 
-export { createRpc, type RpcHandle } from './rpc.js';
 export {
   supportsOffscreen,
   assertFallbackAvailable,

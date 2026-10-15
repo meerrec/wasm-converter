@@ -42,19 +42,6 @@ export interface PdfOptions {
   allSheets?: boolean;
 }
 
-export type WorkerRequest =
-  | { id: number; type: 'init';      payload: { canvas: OffscreenCanvas } }
-  | { id: number; type: 'resize';    payload: { width: number; height: number; dpr: number } }
-  | { id: number; type: 'open';      payload: { format: DocFormat; bytes: ArrayBuffer } }
-  | { id: number; type: 'render';    payload: { sheet?: number; page?: number; viewport: Viewport; config: RenderConfig } }
-  | { id: number; type: 'hitTest';   payload: { x: number; y: number } }
-  | { id: number; type: 'exportPdf'; payload: PdfOptions }
-  | { id: number; type: 'exportPng'; payload: { dpi: number } }
-  | { id: number; type: 'cancel';    payload: { targetId: number } }
-  | { id: number; type: 'dispose' };
-
-export interface FrameTimings { buildMs: number; paintMs: number }
-
 /**
  * Чем кадр едет от сборщика к painter'у. Для хоста пути неразличимы: тот же
  * API, та же картинка, отличается только транспорт и, вслед за ним, скорость.
@@ -121,8 +108,7 @@ export interface ImageInfo {
 }
 
 // ── Фаза 2: прямой протокол Main ↔ Worker ───────────────────
-// Отдельно от RPC-конверта выше: paint-путь намеренно без request/response,
-// чтобы кадр не ждал ответа.
+// Paint-путь намеренно без request/response, чтобы кадр не ждал ответа.
 
 /**
  * Ленивый PDF-модуль: URL его JS-модуля и wasm-бинаря.
@@ -336,12 +322,3 @@ export type OutMsg =
   | HyperlinkMsg
   | DocxTextMsg
   | WorkerErrorMsg;
-
-export type WorkerResponse =
-  | { id: number; type: 'ok';    result?: unknown }
-  | { id: number; type: 'error'; message: string; stack?: string }
-  | { id: number; type: 'ready'; meta: { pages?: number; sheets?: string[] } }
-  | { id: number; type: 'pdf';   bytes: Uint8Array }
-  | { id: number; type: 'png';   bytes: Uint8Array }
-  | { id: number; type: 'hit';   cell: [number, number] | null }
-  | { id: number; type: 'tick';  frameId: number; timings: FrameTimings };

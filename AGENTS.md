@@ -98,7 +98,7 @@ pnpm -F @doc-converter/example-viewer test   # весь Playwright: 3 брауз
 
 | Пакет | Роль |
 |---|---|
-| `@doc-converter/core` | worker RPC, оба транспорта кадра, OffscreenCanvas-просмотрщики XLSX и DOCX |
+| `@doc-converter/core` | воркер просмотра (прямой протокол, оба транспорта кадра), OffscreenCanvas-просмотрщики XLSX и DOCX |
 | `@doc-converter/wasm`, `-wasm-pdf`, `-wasm-docx` | сгенерированные wasm-bindgen-биндинги; `pkg/` в `.gitignore`, не редактировать |
 | `@doc-converter/cli` | `convert` и `batch` на тех же wasm-модулях, пул воркеров |
 | `examples/viewer` | демо (Vite + React) и Playwright-e2e; страницы «Слово» `/#/docx`, «ДваИксель» `/#/xlsx`, «Конвертер» `/#/convert`, Euro-Office `/#/eurooffice` |
@@ -121,10 +121,9 @@ pnpm -F @doc-converter/example-viewer test   # весь Playwright: 3 брауз
 
 Книга живёт в `thread_local!` воркера (`crates/wasm/src/xlsx_api.rs`), кадр собирается сразу в слот ring'а: гонять сотни килобайт команд через `postMessage` значило бы платить за копирование на каждом кадре. `createDocxViewer` (`packages/core/src/render/docx_viewer.ts`) устроен так же, но в ленивом модуле `crates/docx-wasm`: `docx_build_display_list*` рисуют стопку страниц.
 
-### Два канала Main ↔ Worker (намеренно разные)
+### Протокол Main ↔ Worker
 
-1. **RPC-конверт** — `packages/core/src/protocol.ts` (`WorkerRequest`/`WorkerResponse`) и `rpc.ts` (id, `call`/`notify`/`on`/`dispose`). Источник истины — TS-файл; Rust описывает только payload.
-2. **Прямой протокол кадров** — `InitMsg`/`ResizeMsg`/`BitmapMsg`/`RenderMsg`/`ExportPngMsg` → `ReadyMsg`/`TickMsg`/`PngMsg`. Без request/response, чтобы кадр не ждал ответа: воркер на `render` не отвечает, а шлёт `tick` со статистикой (`PaintStats`).
+Канал один — прямой: сообщения `InMsg`/`OutMsg` из `packages/core/src/protocol.ts`, без конверта `{id, type, payload}` и слоя `call`/`notify`. Источник истины — TS-файл; Rust описывает только payload. Кадр не ждёт ответа: воркер на `render` не отвечает, а шлёт `tick` со статистикой (`PaintStats`); без `id` приходят и `ready` на `init`, и `opened`/`docx-opened` на `open`. У части команд ответ коррелируется по `id`: `hit-test` → `hit`, `hyperlink-at` → `hyperlink`, `export-png` → `png`, `export-pdf`/`export-docx-pdf` → `pdf`, `export-docx-text` → `docx-text`. Ошибка — отдельное `error` (`WorkerErrorMsg`) без `id`.
 
 Поток: main вызывает `canvas.transferControlToOffscreen()` и один раз отдаёт canvas воркеру (`render/offscreen.ts:initOffscreen`) → воркер инициализирует wasm, делает `alloc_sab`, отвечает `ready` с SAB → `ResizeObserver` (debounce 100 мс, DPR клампится по лимиту 16M пикселей в `render/resize_observer.ts:computeDpr`) шлёт `resize` + `render` → воркер собирает DisplayList в слот → painter рисует → `tick`. Кадры коалесцируются через `requestAnimationFrame` в `worker/frame_loop.ts`; ошибки кадра логируются, loop не роняется. Без COOP/COEP работает тот же путь на `bytes` — детали в `docs/workers.md`.
 
