@@ -34,6 +34,17 @@ wasm-pack build crates/docx-wasm \
   --out-name doc_converter_docx_wasm \
   --release
 
+# wasm-pack кладёт в каждый pkg/ свой .gitignore со содержимым `*`. npm при
+# упаковке читает .gitignore внутри каталогов и учитывает его, поэтому всё
+# содержимое pkg/ выпадает из тарбола — вместе с самим .wasm, и пакет уезжает
+# без бинарника. Каталог и так закрыт корневым .gitignore (`packages/*/pkg/`),
+# так что сгенерированные заглушки убираем сразу после сборки (`rm -f` — идемпотентно,
+# повторный запуск скрипта не ломает; до этой строки выполнение доходит только
+# при наличии wasm-pack — проверка выше).
+rm -f "$ROOT/packages/wasm/pkg/.gitignore" \
+      "$ROOT/packages/wasm-pdf/pkg/.gitignore" \
+      "$ROOT/packages/wasm-docx/pkg/.gitignore"
+
 if command -v wasm-opt >/dev/null 2>&1; then
   wasm-opt -O4 packages/wasm/pkg/doc_converter_wasm_bg.wasm \
     -o packages/wasm/pkg/doc_converter_wasm_bg.wasm

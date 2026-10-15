@@ -89,6 +89,33 @@ jobs:
       # для релиза не нужен.
       - run: pnpm turbo run build --filter='./packages/*'
 
+      # Preflight упаковки npm: шаги ниже проверяют крейты, а npm-пакеты
+      # доходили до реальной публикации непроверенными — и первый же релиз
+      # выяснил, что wasm-пакет уезжает без бинарника (wasm-pack кладёт в pkg/
+      # .gitignore со `*`, npm его учитывает и выбрасывает содержимое pkg/).
+      # `npm pack --dry-run` ничего не публикует, не требует авторизации и не
+      # пишет тарбол — только печатает список файлов, который здесь и сверяем.
+      - name: npm pack preflight (пять пакетов)
+        run: |
+          set -euo pipefail
+          for pkg in wasm wasm-docx wasm-pdf core cli; do
+            files=$(cd "packages/$pkg" && npm pack --dry-run --json 2>/dev/null \
+              | jq -r 'if type == "array" then .[0].files else .files end | .[].path')
+            case "$pkg" in
+              wasm|wasm-docx|wasm-pdf)
+                printf '%s\n' "$files" | grep -qE '^pkg/[^/]+\.js$' \
+                  || { echo "::error::@doc-converter/$pkg: в тарболе нет pkg/*.js (содержимое pkg/ выпало целиком)"; printf '%s\n' "$files"; exit 1; }
+                printf '%s\n' "$files" | grep -qE '^pkg/[^/]+\.wasm$' \
+                  || { echo "::error::@doc-converter/$pkg: в тарболе нет pkg/*.wasm — пакет уехал бы без бинарника"; printf '%s\n' "$files"; exit 1; }
+                ;;
+              *)
+                printf '%s\n' "$files" | grep -qE '^dist/' \
+                  || { echo "::error::@doc-converter/$pkg: в тарболе нет dist/ — пакет уехал бы без сборки"; printf '%s\n' "$files"; exit 1; }
+                ;;
+            esac
+            echo "OK: @doc-converter/$pkg — файлов в тарболе: $(printf '%s\n' "$files" | grep -c .)"
+          done
+
       # Упаковка без верификации сборкой. Здесь проверяем то, что недоступно
       # остальному CI: полноту файлов .crate, версионированные зависимости,
       # метаданные манифеста. Сборку кода проверяет ci.yml, а сборку именно
