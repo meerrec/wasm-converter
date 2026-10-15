@@ -1164,14 +1164,14 @@ CI-гейт: `pnpm size-limit` (шаг на Node 20) блокирует merge п
 
 | Уровень | Инструмент | Спринт ввода | Состояние |
 |---|---|---|---|
-| Unit Rust | `cargo test` | 1 | 889 тестов |
+| Unit Rust | `cargo test` | 1 | 1251 тест (+3 ignored) |
 | Property | `proptest` | 1 | `cellref`, `strings`, `model` |
 | **Snapshot** | **`insta`** | **5.5** | **20 фикстур** |
 | **Fuzz** | **`cargo-fuzz`** | **8** | **введён: `crates/fuzz/`, 8 целей; ночной прогон и ручные длинные (`workflow_dispatch`: `target`/`minutes`, до 330 мин на цель); корпус кэшируется между прогонами** |
 | WASM | `wasm-bindgen-test` | 5.5 | painter пока не покрыт |
 | **E2E** | **Playwright** | 6 | **80 passed, 2 skipped (штатных) — chromium, firefox, webkit + chromium-dpr2 (DPR=2); `docs/sprint-12/rc.md`** |
 | Stress | 1M ячеек, 30 мин scroll | 5.5 | вводится |
-| Differential | mammoth (DOCX), exceljs (XLSX) | 8 / 4 | 110 фикстур XLSX; DOCX — 83 кандидата: 81 совпадение, 2 non-goal, 0 неклассифицированных (`crates/docx/tests/differential.rs`) |
+| Differential | mammoth (DOCX), exceljs (XLSX) | 8 / 4 | 116 фикстур XLSX; DOCX — 83 кандидата: 81 совпадение, 2 non-goal, 0 неклассифицированных (`crates/docx/tests/differential.rs`) |
 | Размер | `size-limit` | 5.5 | 3 бюджета, включая `wasm (viewer)` |
 | Производительность | `criterion` | 3 | открытие книги |
 | **Покрытие** | **`cargo-llvm-cov` + TS** | **8** | **джоба `coverage` в CI: `crates/docx` ≥ 85 % строк (факт 92,75 %), `crates/core` ≥ 80 % (факт 97,68 %); TS-гейта нет** |
@@ -1203,7 +1203,7 @@ Differential vs mammoth введён: 83 кандидата из 104 фикст�
 `crates/docx/tests/differential.rs` (`match / (кандидаты − non-goal) ≥ 0.95`).
 DOCX: 104 коммитируемые фикстуры (101 разбирается, 3 фатальные по замыслу),
 ещё 5 «больших» (11–15 МиБ) генерируются по
-требованию в gitignored `target/fixtures/docx-large/`. TS: 28 тестов vitest
+требованию в gitignored `target/fixtures/docx-large/`. TS: 86 тестов vitest
 в `@doc-converter/core`.
 
 ---
