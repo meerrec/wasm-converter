@@ -9,175 +9,137 @@ Read `docs/README.md` inside that installed package first, then read the relevan
 This block is written and re-added by `turbo` before repository-scoped commands when an AI agent is detected. In the Turborepo source repository, its template is defined in `crates/turborepo-cli/src/cli/agent_guidance.rs`. Removing the managed block while updates are enabled means a later qualifying invocation will add it again. Set `"agentGuidance": false` in the root `turbo.json` or `turbo.jsonc` to opt out; this does not remove an existing block. Keep the block committed with your work to avoid an uncommitted change on the next agent invocation.
 <!-- END:turborepo-agent-rules -->
 
-# Project guidance
+# Repository Guidelines
 
-Этот файл — инструкция для агентов OpenCode; его близнец для Claude Code — `CLAUDE.md`. Правки конвенций и команд дублируйте в оба файла, иначе они разъедутся.
+Монорепозиторий **doc-converter**: просмотр OOXML (DOCX/XLSX) и конвертация в PDF/Markdown/HTML/текст. Движок — Rust/WASM, кадр собирается и рисуется в Web Worker на `OffscreenCanvas`; batch-конвертация — Node-CLI на тех же wasm-модулях. Этот файл — единственный источник правды для агентов; `CLAUDE.md` указывает сюда.
 
-## Что это
+## Обзор проекта
 
-- Монорепозиторий **doc-converter**: просмотрщик OOXML (DOCX/XLSX) и экспортёр в PDF/Markdown/HTML/текст — Rust/WASM, рендер на `OffscreenCanvas` в Web Worker; batch-конвертация — Node-CLI. Cargo workspace (`crates/*`) + pnpm workspaces (`packages/*`, `examples/*`) + Turborepo.
-- Планы, бюджеты и DoD — `ROADMAP.md` (§7 состояние, §9 бюджеты, §12 DoD). Закрыты спринты 1–13 (сводка — ROADMAP §7, отчёты — `docs/sprint-6..13`, последний — `docs/sprint-13/report.md`): Спринт 12 — релиз v1.0.0, ожидает публикацию (S4.3); Спринт 13 — спайк LOWA, закрыт решением **no-go** (ADR-0023), попутный пакет-обвязка x2t — ADR-0024. «Статус» корневого README устарел — не ориентир.
-- Незаконченное помечено `TODO (…)` / `todo!("…")` — ищите маркеры, а не только роадмап. Архитектурные решения — `docs/adr/` (индекс в `docs/adr/README.md`; принятый ADR не правят, а заводят новый).
+- **Что делает:** просмотрщики XLSX и DOCX в браузере (разбор, раскладка и отрисовка целиком в воркере), экспорт PDF/PNG/Markdown/HTML/текст, CLI `@doc-converter/cli` c командами `convert` и `batch`, демо на GitHub Pages с браузерными конвертерами (страницы «Конвертер» на x2t и «Euro-Office»).
+- **Скоуп v1 — только чтение и конвертация** (ADR-0018, ADR-0020). Осознанно нет: PPTX и XLSB, Strict OOXML (только Transitional, ADR-0017), VML-фолбэков `mc:Fallback` (ADR-0014), обтекания текстом вокруг плавающих рисунков; сноски и комментарии парсятся в модели, но в раскладку не попадают.
+- **Состояние:** версии крейтов и пяти npm-пакетов — `1.0.0`; релиз закрыт по коду и ожидает публикации в npm/crates.io (открытый пункт DoD — `ROADMAP.md` §12). Спринты 3–13 закрыты; Спринт 13 (спайк LOWA) завершён решением no-go (ADR-0023, ADR-0024).
+- Раздел «Статус» корневого `README.md` **устарел — не ориентир**; фактическое состояние — `ROADMAP.md` (§7 сводка, §9 бюджеты, §12 DoD).
 
-## Команды
+## Архитектура и поток данных
 
-### Rust
+- **Слои Rust:** `crates/core` (примитивы OOXML: `Archive` над zip, стриминговый `XmlReader`, rels, `Error` на thiserror+miette) → `crates/xlsx` / `crates/docx` (разбор в модель → раскладка в пикселях → сборка DisplayList) → `crates/render` (формат DisplayList, painter, SAB-кольцо, геометрия, метрики текста) → `crates/pdf` (собственный PDF-бэкенд, ADR-0022). Правило границы: `core` не знает про DOCX/XLSX, `render` — общая граница обоих форматов (ADR-0003).
+- **wasm-мосты:** `crates/wasm` — основной модуль (painter, SAB-аллокатор, XLSX-просмотрщик), `crates/pdf-wasm` — ленивый экспорт PDF, `crates/docx-wasm` — ленивый просмотр DOCX. Все три целиком под `#![cfg(target_arch = "wasm32")]`: на нативном таргете они пусты, поэтому нативные `cargo test`/`clippy` и `cargo doc` их не видят — их доккомментарии и сборку проверяет wasm32-нога CI.
+- **TS-слой:** `@doc-converter/core` — воркер просмотра и фабрики `createXlsxViewer`/`createDocxViewer`; канал один и прямой — сообщения `InMsg`/`OutMsg`, источник истины `packages/core/src/protocol.ts` (Rust описывает только payload). `@doc-converter/cli` гоняет те же wasm-модули в пуле `node:worker_threads`.
+- **Поток кадра:** main отдаёт `OffscreenCanvas` воркеру → воркер инициализирует wasm и отвечает `ready` с транспортом → `resize` + `render` → воркер собирает DisplayList в слот ring → painter рисует → `tick` со статистикой. На `render` ответа нет; по `id` коррелируются только `hit-test`, `hyperlink-at`, `export-*`. Кадры коалесцируются в `packages/core/src/worker/frame_loop.ts`; ошибка кадра логируется, цикл не роняется.
+- **XLSX:** книга живёт в `thread_local!` воркера (`crates/wasm/src/xlsx_api.rs`), кадр собирается сразу в слот ring (`crates/xlsx/src/paint.rs`). **DOCX:** раскладка считается один раз при открытии (`crates/docx/src/layout/engine.rs`), кадры рисуют стопку страниц (`crates/docx/src/render.rs`); ленивый модуль painter'а и SAB не несёт — рисует основной модуль.
+- **DisplayList — бинарный контракт Rust ↔ TS:** магия `"DLST"`, `DL_VERSION = 4`, заголовок 20 байт, однобайтовые теги команд, строки в общем string pool (`StringRef`), цвет `RRGGBBAA` (в OOXML — `AARRGGBB`, каналы переставляет `xlsx::paint::resolve_color`). TS кадр не разбирает, painter читает его прямо из SAB, поэтому формат обязан быть самодостаточным. Меняя раскладку, синхронно поднимайте версию, теги и потребителей.
+- **Транспорты кадра (ADR-0021):** `sab` — кольцо из двух слотов в `SharedArrayBuffer` (нужны COOP/COEP), `bytes` — два `ArrayBuffer` с transfer. Выбор автоматический по `crossOriginIsolated`; явный `transport: 'sab'` без заголовков — ошибка инициализации, а не тихая подмена. Раскладка ring продублирована и должна совпадать: `crates/render/src/sab/ring.rs` ↔ `packages/core/src/sab/protocol.ts` (`HEADER_INTS = 4`, `SLOT_COUNT = 2`). Нет свободного слота — кадр дропается (`dropped: true`).
+
+## Ключевые каталоги
+
+| Путь | Содержимое |
+|---|---|
+| `crates/core`, `crates/render`, `crates/xlsx`, `crates/docx`, `crates/pdf` | Ядро: OOXML-примитивы, рендер и DisplayList, разбор и раскладка XLSX/DOCX, PDF-экспорт |
+| `crates/wasm`, `crates/docx-wasm`, `crates/pdf-wasm` | wasm-bindgen-модули: основной, ленивый DOCX, ленивый PDF |
+| `crates/fuzz` | Отдельный workspace (nightly, свой `target/`): 8 таргетов, запуск `cargo fuzz run --fuzz-dir . <target>` |
+| `packages/core` | `@doc-converter/core`: протокол, воркер, транспорты кадра, просмотрщики |
+| `packages/cli` | `@doc-converter/cli`: `convert`/`batch`, пул воркеров |
+| `packages/wasm`, `packages/wasm-pdf`, `packages/wasm-docx` | Сгенерированные wasm-bindgen-биндинги; `pkg/` в `.gitignore`, руками не править |
+| `packages/x2t`, `packages/browser-convert`, `packages/eurooffice` | Обвязка браузерных конвертеров (x2t) и клиент Embed API Euro-Office для демо; версии 0.1.0 |
+| `examples/viewer` | Демо (Vite + React) и Playwright-e2e; страницы `#/docx`, `#/xlsx`, `#/convert`, `#/eurooffice` |
+| `test-fixtures/` | `docx/` — 104 фикстуры с json-сайдкарами, `xlsx/` — 116 книг и `oracle.json` (эталон exceljs), `corrupted/`, `conf-xlsx/` (git-ignored) |
+| `scripts/` | Сборка wasm, генераторы фикстур, оракулы LibreOffice, memory-гейты, стайдинг Pages, сборка Euro-Office |
+| `docs/` | `adr/` (25 ADR и индекс), `sprint-6…13/`, `cookbook/`, `testing/`, `workers.md`, `bench-js.md`, `agent-contract.md` |
+| `experiments/` | Спайки Спринта 13 (`lowa-spike`, `x2t-spike`); часть артефактов в Git LFS |
+| `target/`, `build/`, `.pages/`, `oracle-out/`, `oracle-out-docx/` | Выводы прогонов, git-ignored |
+
+## Команды разработки
+
+Rust (из корня; тулчейн 1.98.0 берётся из `rust-toolchain.toml`):
 
 ```bash
-cargo test --workspace --all-features   # нативные тесты; CI гоняет с --all-features
-cargo test -p doc-converter-render      # один крейт
+cargo test --workspace --all-features                  # CI гоняет именно так
+cargo test -p doc-converter-docx --test differential   # один файл
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
-RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps   # CI валит битые intra-doc-ссылки
-cargo deny check && cargo audit
-cargo llvm-cov -p doc-converter-docx --fail-under-lines 85   # гейты CI: docx ≥ 85 %, core ≥ 80 % строк
-wasm-pack test --headless --chrome --release crates/wasm     # так же crates/docx-wasm и crates/pdf-wasm; chromedriver лучше в PATH: без него wasm-pack качает «самый свежий», который может разойтись с браузером
+RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps
+cargo bench -p doc-converter-pdf --bench pdf           # criterion; базлайнов нет, «до/после» — локальный прогон
 ```
 
-- `crates/wasm`, `crates/docx-wasm`, `crates/pdf-wasm` целиком под `#![cfg(target_arch = "wasm32")]`: нативный clippy/test их не видит, доккомментарии проверяет только wasm32-нога CI (`cargo doc --target wasm32-unknown-unknown -p …`).
-- criterion-бенчи живут в крейтах (`crates/render/benches/render.rs`, `crates/pdf/benches/pdf.rs`, `crates/xlsx/benches/{open,conditional,hit_test}.rs`, `crates/docx/benches/{open,pagination}.rs`): `cargo bench -p doc-converter-<крейт>`. Baseline'ов нет — «до/после» берётся из локального прогона. CI компилирует все бенчи (`cargo bench --workspace --no-run`) — бенчи обязаны собираться.
-- `crates/fuzz` — отдельный workspace (исключён из корневого, свой nightly). Фаззинг: `cargo fuzz run docx_document` (цели `core_{zip,xml_reader,rels}`, `xlsx_worksheet`, `docx_{document,numbering,rels,styles}`).
-
-### Сборка WASM
+Сборка и тесты WASM:
 
 ```bash
-pnpm build:wasm   # = bash scripts/build-wasm.sh
+pnpm build:wasm   # wasm-pack --target web --release ×3 → packages/{wasm,wasm-pdf,wasm-docx}/pkg, затем системный wasm-opt -O4, если он в PATH
+wasm-pack test --headless --chrome --release crates/wasm      # так же crates/docx-wasm и crates/pdf-wasm
 ```
 
-Собирает три модуля: `crates/wasm` → `packages/wasm/pkg` (просмотрщик), `crates/pdf-wasm` → `packages/wasm-pdf/pkg` (экспорт PDF), `crates/docx-wasm` → `packages/wasm-docx/pkg` (просмотр DOCX), затем системный `wasm-opt -O4`, если он в `PATH`. Встроенный в wasm-pack wasm-opt отключён: rustc эмитит bulk-memory, который та версия не понимает. `packages/*/pkg/` — сгенерированное и в `.gitignore`; руками не править.
+`wasm-pack test` идёт в настоящий Chrome: положите `chromedriver` в `PATH` — иначе wasm-pack скачает «самый свежий», который может разойтись с браузером.
 
-CI удерживает разрезы: сверяет `.d.ts` ленивых модулей с `#[wasm_bindgen]`-функциями крейтов и падает, если в основном модуле появились экспорты `docx_*` (их возврат — регрессия бюджета `wasm (viewer)` и нарушение ленивости).
-
-### JS/TS
+JS/TS:
 
 ```bash
 pnpm install
-pnpm build:wasm                        # ОБЯЗАТЕЛЬНО до typecheck/test: core типизируется против сгенерированных .d.ts
+pnpm build:wasm                        # ОБЯЗАТЕЛЬНО до typecheck/test: core типизируется против сгенерированных pkg/*.d.ts
 pnpm turbo run typecheck test build    # то же, что гоняет CI
-pnpm -F @doc-converter/core test       # vitest
+pnpm -F @doc-converter/core test                                     # vitest
 pnpm -F @doc-converter/core exec vitest run test/tick.spec.ts        # один файл
 pnpm -F @doc-converter/core exec vitest run -t 'coalesces repeated'  # один тест
-pnpm -F @doc-converter/cli build && pnpm cli convert report.docx -o report.pdf
 pnpm -F @doc-converter/example-viewer exec playwright test e2e/docx --project=chromium   # один e2e
+pnpm -F @doc-converter/example-viewer test   # весь Playwright: chromium/firefox/webkit + chromium-dpr2
 pnpm size-limit                        # после build; бюджеты — .size-limit.mjs
-pnpm gen:fixtures                      # XLSX-фикстуры + эталон exceljs; тяжёлые книги — в target/fixtures
-pnpm gen:docx-fixtures                 # DOCX-фикстуры; :large (≥ 10 МиБ) — в target/fixtures/docx-large
-pnpm diff:mammoth                      # differential DOCX против mammoth (oracle-out-docx/ в .gitignore)
-pnpm bench:js                          # vs mammoth/exceljs/xlsx, отчёт — docs/bench-js.md
-pnpm -F @doc-converter/example-viewer test   # весь Playwright: 3 браузера + проект chromium-dpr2 (deviceScaleFactor=2, только dpr.spec.ts)
+pnpm -F @doc-converter/cli build && pnpm cli convert report.docx -o report.pdf
 ```
 
-- Порядок не косметический: без `pnpm build:wasm` typecheck падает на отсутствующих `pkg/*.d.ts`; в CI `pkg/` трёх модулей приезжает артефактами джобы `wasm`.
-- E2E просмотрщика идут в настоящих Chromium/Firefox/WebKit (сервер поднимает Playwright, порт 5178). Браузеры ставятся один раз: `pnpm -F @doc-converter/example-viewer exec playwright install chromium firefox webkit` — без них `turbo run test` падает.
-- `pnpm lint` не работает: eslint не установлен (скрипт `lint` объявлен только у `core`); как проверку не использовать.
-- Эталонный оракул против LibreOffice (`scripts/oracle-docx-pages.sh`, `scripts/oracle-ssim.sh`) требует системные `soffice`/`pdftoppm`/`ffmpeg`; без них локальный прогон штатно скипается. Живёт в отдельном workflow `Oracle`, методика — `docs/testing/`.
-- Бюджеты памяти снимаются `scripts/check-pdf-memory.sh` и `scripts/check-docx-memory.sh` (жёсткие лимиты CI: 40 МиБ PDF, 200 МиБ DOCX).
+E2E сам поднимает dev-сервер демо на порту 5178; браузеры ставятся один раз: `pnpm -F @doc-converter/example-viewer exec playwright install chromium firefox webkit`. `pnpm lint` не работает (eslint не установлен) — как проверку не использовать.
 
-### Turborepo
+Фикстуры, оракулы, шрифты:
 
-- Установлен turbo 2.11.5 (`package.json` объявляет `^2.3.3`). Перед правкой `turbo.json` или turbo-команд читайте бандленные доки именно этой версии: `node_modules/.pnpm/turbo@2.11.5/node_modules/turbo/docs/`.
-- Граф: `build` → `^build`; `test` → `build`; `typecheck` → `^build`; `clean` без кэша. `packages/wasm{,-pdf,-docx}/turbo.json` переопределяют `build.outputs: []` — `pkg/` не кэшируется, его собирает скрипт.
-- Блок `<!-- BEGIN:turborepo-agent-rules -->` в начале файла пишет и переписывает сам turbo; не удаляйте его из коммитов.
+```bash
+pnpm gen:fixtures              # XLSX-фикстуры и эталон exceljs; тяжёлые книги — в target/fixtures
+pnpm gen:docx-fixtures         # DOCX-фикстуры; :large — в target/fixtures/docx-large
+pnpm diff:mammoth              # differential DOCX против mammoth (оракул test-fixtures/docx/mammoth-oracle.json)
+pnpm bench:js                  # против mammoth/exceljs/SheetJS, отчёт — docs/bench-js.md
+bash scripts/oracle-docx-pages.sh <docx_export> test-fixtures/docx <workdir>   # LibreOffice-оракул; для XLSX — scripts/oracle-ssim.sh
+bash scripts/subset-fonts.sh   # пересборка подрезанных Carlito (нужен uv)
+```
 
-## Архитектура
+Оракулы требуют системных `soffice`, `pdftoppm`, `ffmpeg` и ImageMagick; без них скрипты выходят с кодом 3 — это не провал тестов.
 
-### Крейты
+## Конвенции кода и типовые паттерны
 
-| Крейт | Роль |
-|---|---|
-| `crates/core` | OOXML-примитивы: `Archive` (обёртка над `zip`), `XmlReader` (streaming `quick-xml`, пропускает Decl/Comment/PI/DocType), rels, `Error` (thiserror + miette `Diagnostic`). Ничего не знает про DOCX/XLSX |
-| `crates/render` | painter (OffscreenCanvas, только wasm32), `DisplayList`, SAB-кольцо, `geometry`, `text_measure`, `font` (метрики через `skrifa`); общая граница `xlsx`/`docx` (ADR-0003) |
-| `crates/xlsx` | разбор книги целиком (`open()`), раскладка листа в пикселях, сборка кадра (`paint::build`) |
-| `crates/docx` | разбор (`open()`/`parse_docx`), пагинация, сборка кадра (`render::build` / `build_stack`) |
-| `crates/pdf` | экспорт в PDF собственным бэкендом (`src/pdf/`, ADR-0022): лист/книга XLSX (`export_xlsx_sheet`/`export_xlsx_book`), документ DOCX (`export_docx`) |
-| `crates/wasm` | основной wasm-модуль просмотрщика: painter, SAB-аллокатор, XLSX-просмотрщик |
-| `crates/pdf-wasm` | ленивый модуль PDF-экспорта: `export_pdf`, `export_pdf_book`, `export_docx_pdf` |
-| `crates/docx-wasm` | ленивый модуль просмотра DOCX: экспорты `docx_*`, грузится воркером при открытии `.docx` |
+- **Язык:** комментарии и доккомментарии — по-русски; сообщения ошибок `#[error(...)]` — по-английски (это публичный API). У публичных fallible-функций обязательна секция `# Errors` (clippy pedantic). Комментарий объясняет **почему** (неочевидное решение, ловушка формата, цена ошибки), а не пересказывает код.
+- **Ошибки:** `thiserror` 2 + `miette` 7; в каждом крейте свой `Error` и `pub type Result<T>`, вложенность — `#[error(transparent)]` / `#[diagnostic(transparent)]`; `doc-converter-docx::Error` помечен `#[non_exhaustive]`.
+- **Линты:** `#![forbid(unsafe_code)]` + `#![deny(clippy::pedantic)]` в `core`, `xlsx`, `docx`, `pdf`; в `crates/render` их нет; wasm-крейты несут только `#![cfg(target_arch = "wasm32")]`. Узкие `allow` — с комментарием-обоснованием. `unsafe` вне `crates/wasm` не добавляется: остановиться и спросить.
+- **Состояние:** в wasm — `thread_local!` + `RefCell` (буферы `DOC`/`FRAME`/`SCRATCH`, singleton painter, LRU-реестр шрифтов); в TS — фабрики-замыкания (`createXlsxViewer`/`createDocxViewer` возвращают handle), не классы.
+- **TS:** `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`; относительные импорты с явным `.js`; `import type`; JSDoc на экспортируемых функциях; без `any`. Файлы — `snake_case.ts`, типы и классы — PascalCase, тесты — `*.spec.ts`.
+- **Wire-формат:** поля camelCase — на Rust-стороне за это отвечает `serde(rename_all = "camelCase")`.
+- **Единицы — в именах** (`_px`, `_pt`, `_mm`, twips). В запросе кадра `viewport.x/y` — пиксели раскладки, `w/h` — физические пиксели canvas, `scale` — зум, умноженный на DPR.
+- **Rust-нейминг:** крейты `doc-converter-*`, модули и методы snake_case, варианты ошибок PascalCase, `#[must_use]` на чистых геттерах.
+- **Архитектурные решения — только через ADR:** `docs/adr/` (индекс `docs/adr/README.md`); принятый ADR не правят — заводят новый.
+- **Тесты:** unit — inline `#[cfg(test)]` рядом с кодом, интеграционные — `crates/*/tests/*.rs` с общими помощниками в `tests/common/`; снапшоты — insta, свойства — proptest, wasm-функции — `wasm-bindgen-test`.
 
-### Пакеты
+## Важные файлы
 
-| Пакет | Роль |
-|---|---|
-| `@doc-converter/core` | воркер просмотра (прямой протокол, оба транспорта кадра), OffscreenCanvas-просмотрщики XLSX и DOCX |
-| `@doc-converter/wasm`, `-wasm-pdf`, `-wasm-docx` | сгенерированные wasm-bindgen-биндинги; `pkg/` в `.gitignore`, не редактировать |
-| `@doc-converter/cli` | `convert` и `batch` на тех же wasm-модулях, пул воркеров |
-| `examples/viewer` | демо (Vite + React) и Playwright-e2e; страницы «Слово» `/#/docx`, «ДваИксель» `/#/xlsx`, «Конвертер» `/#/convert`, Euro-Office `/#/eurooffice` |
+- `Cargo.toml` — workspace (8 крейтов, `crates/fuzz` исключён), MSRV 1.82, release-профиль `lto = "fat"`, `opt-level = "s"`, `panic = "abort"`; `rust-toolchain.toml` закрепляет 1.98.0.
+- `packages/core/src/protocol.ts` — источник истины протокола Main ↔ Worker.
+- `crates/render/src/display_list.rs` — бинарный формат кадра (`DL_VERSION`).
+- `.size-limit.mjs` — бюджеты бандлов и wasm-модулей (жёсткий гейт CI) и заодно сторож ленивости PDF/DOCX.
+- `.github/workflows/ci.yml` — канонический набор гейтов; `oracle.yml`, `fuzz.yml`, `release.yml`, `pages.yml` — отдельные контуры.
+- `examples/viewer/playwright.config.ts` — порт 5178, проекты браузеров, каталог e2e.
+- `ROADMAP.md` — статус, бюджеты (§9) и DoD (§12); `docs/agent-contract.md` — правила постановки задач субагентам и список стоп-сигналов.
+- `CLAUDE.md` — заглушка, указывающая на этот файл.
 
-### Контракт Rust ↔ TS: DisplayList
+## Требования к среде и инструментам
 
-`crates/render/src/display_list.rs` — бинарный формат кадра: магия `"DLST"`, `DL_VERSION = 4`, заголовок 20 байт, команды с однобайтовыми тегами, строки — в общем string pool (`StringRef { off, len }`). TS-сторона кадр только переносит, не разбирает; painter читает его прямо из SAB и не может спросить у вызывающего, что за шрифт номер три, — формат обязан быть самодостаточным. Меняя раскладку, синхронизируйте `DL_VERSION`, теги и потребителей; это стоп-сигнал (`docs/agent-contract.md` §5).
+- **Node ≥ 20** (`engines`), **pnpm 9.12.0** (`packageManager`), **turbo 2.11.5** установлен при объявленном `^2.3.3`.
+- **Turborepo:** перед правкой `turbo.json` или turbo-команд читать бандленные доки именно установленной версии — `node -p "require.resolve('turbo/package.json')"`, дальше `docs/README.md` внутри пакета. Граф задач: `build → ^build` (`outputs: dist/**`), `test → build`, `typecheck → ^build`, `clean` без кэша; `packages/wasm*/turbo.json` переопределяют `build.outputs: []` — `pkg/` не кэшируется. Управляемый блок turbo в начале этого файла машинный: удалять его из коммитов нельзя.
+- **Rust:** 1.98.0 закреплён `rust-toolchain.toml` (совпадает с CI), MSRV — 1.82; `.cargo/config.toml` держит `incompatible-rust-versions = "fallback"`, чтобы резолвинг не вылезал за MSRV. `crates/fuzz` — свой workspace на nightly.
+- **Системные инструменты по требованию шага:** `wasm-pack` — обязателен для `build:wasm`; `wasm-opt` — системный, шаг опционален (встроенный в wasm-pack отключён: rustc эмитит bulk-memory, который та версия не понимает); `chromedriver` — для браузерных wasm-тестов; `uv` — для `subset-fonts.sh`; `soffice`, `pdftoppm`, `pdfinfo`, `ffmpeg`, ImageMagick — для оракулов; `/usr/bin/time` — для memory-гейтов; `qpdf` и `pdftotext` — для части тестов PDF (без них они скипаются).
+- **Генерируемое не править:** `packages/*/pkg/` (wasm-pack), `docs/api/` (TypeDoc).
+- **Git LFS:** `packages/x2t/vendor/*` и `experiments/lowa-spike/**` — после клона нужен `git lfs pull`.
 
-Команда `Text` несёт гарнитуру строкой в общем пуле и флаги начертания, у `Line` рисунок штриха — `LineStyle` (толщина остаётся в `stroke_w`). Цвет — `RRGGBBAA`; в OOXML он записан как `AARRGGBB`, поэтому `xlsx::paint::resolve_color` каналы переставляет.
+## Тестирование и контроль качества
 
-### Транспорты кадра и SAB-кольцо
-
-Два равноправных транспорта (ADR-0021): `sab` — кольцо из двух слотов в `SharedArrayBuffer` (при COOP/COEP), `bytes` — `ArrayBuffer` + transfer (iframe, расширения, GitHub Pages). Выбор автоматический по `crossOriginIsolated`; опция `transport: 'sab' | 'bytes' | 'auto'`, явный `sab` без заголовков — ошибка инициализации, а не тихая подмена. Кадр и API одинаковы, отличается транспорт.
-
-Раскладка кольца продублирована и должна совпадать: `crates/render/src/sab/ring.rs` (`SabRing` на Atomics для wasm, чистый `RingState` для нативных тестов) ↔ `packages/core/src/sab/protocol.ts` + `reader.ts` (`HEADER_INTS = 4`, `SLOT_COUNT = 2`). Нет свободного слота — кадр дропается (`dropped: true`), а не копится в очереди.
-
-### Просмотр XLSX и DOCX
-
-`createXlsxViewer` (`packages/core/src/render/xlsx_viewer.ts`) собирает разметку сам: прокручиваемая область, распорка по размеру листа и холст, приклеенный к видимой части трансформом. Единицы в запросе кадра разные и это важно: `viewport.x/y` — в пикселях раскладки (до зума), `w/h` — в физических пикселях canvas, `scale` — зум, умноженный на DPR.
-
-Книга живёт в `thread_local!` воркера (`crates/wasm/src/xlsx_api.rs`), кадр собирается сразу в слот ring'а: гонять сотни килобайт команд через `postMessage` значило бы платить за копирование на каждом кадре. `createDocxViewer` (`packages/core/src/render/docx_viewer.ts`) устроен так же, но в ленивом модуле `crates/docx-wasm`: `docx_build_display_list*` рисуют стопку страниц.
-
-### Протокол Main ↔ Worker
-
-Канал один — прямой: сообщения `InMsg`/`OutMsg` из `packages/core/src/protocol.ts`, без конверта `{id, type, payload}` и слоя `call`/`notify`. Источник истины — TS-файл; Rust описывает только payload. Кадр не ждёт ответа: воркер на `render` не отвечает, а шлёт `tick` со статистикой (`PaintStats`); без `id` приходят и `ready` на `init`, и `opened`/`docx-opened` на `open`. У части команд ответ коррелируется по `id`: `hit-test` → `hit`, `hyperlink-at` → `hyperlink`, `export-png` → `png`, `export-pdf`/`export-docx-pdf` → `pdf`, `export-docx-text` → `docx-text`. Ошибка — отдельное `error` (`WorkerErrorMsg`) без `id`.
-
-Поток: main вызывает `canvas.transferControlToOffscreen()` и один раз отдаёт canvas воркеру (`render/offscreen.ts:initOffscreen`) → воркер инициализирует wasm, делает `alloc_sab`, отвечает `ready` с SAB → `ResizeObserver` (debounce 100 мс, DPR клампится по лимиту 16M пикселей в `render/resize_observer.ts:computeDpr`) шлёт `resize` + `render` → воркер собирает DisplayList в слот → painter рисует → `tick`. Кадры коалесцируются через `requestAnimationFrame` в `worker/frame_loop.ts`; ошибки кадра логируются, loop не роняется. Без COOP/COEP работает тот же путь на `bytes` — детали в `docs/workers.md`.
-
-### Шрифты
-
-Четыре подрезанных Carlito лежат в `crates/render/src/fonts/`; пересобрать — `bash scripts/subset-fonts.sh` (нужен `uv`). `OFL.txt` обязан оставаться рядом (требование лицензии). Руками `.ttf` не править.
-
-## Работа через субагентов
-
-Работу выполняют субагенты, основной агент — оркестратор: разведка,
-декомпозиция, постановка задач, приёмка результата, диалог с пользователем.
-Правки кода, тестов, документации и роадмапа идут через субагента, а не делаются
-в основном контексте. Как ставить задачу, что исполнитель возвращает и когда
-остановиться, — `docs/agent-contract.md`.
-
-**Почему:** независимые задачи выполняются параллельно, а основной контекст не
-забивается содержимым файлов, которое после правки уже не нужно.
-
-Исключение — правка в одну-две строки внутри задачи, которая и так ведётся
-основным агентом: постановка такой задачи дороже выполнения. Если строк
-больше или правок несколько — это уже задача для субагента.
-
-Задачи делятся мелко: один субагент — один слайс (парсер, маппинг, тесты,
-краевые случаи), а не «сделай фичу целиком». Контекст субагента ограничен, и
-чтение больших файлов съедает его быстрее всего: несколько агентов на правках
-`paint.rs` и `display_list.rs` упали с «Prompt is too long», не доделав работу.
-В постановке прямо указывай, что читать `grep`-ом и участками, а не файл целиком,
-и какие файлы трогать нельзя — чтобы параллельные слайсы не конфликтовали.
-
-Дробление рекурсивно: если слайс всё равно велик, субагент дробит его сам и
-раздаёт своим субагентам, а не тянет до переполнения контекста. Это разрешено
-и ожидается — в постановке стоит снимать сомнения на этот счёт, иначе агент
-считает, что обязан сделать всё сам.
-
-Коммит — сразу после того, как проверки позеленели, до дальнейших изысканий.
-Агенты, уходившие в «проверю ещё одно перед коммитом», падали с переполнением
-контекста и оставляли готовую работу незакоммиченной; та же осторожность в
-постановке («сначала коммит, потом разбирательства») стоит дешевле.
-
-## Соглашения
-
-- Комментарии и доккомментарии — по-русски; сообщения об ошибках (`#[error(...)]`) — по-английски, это часть публичного API. Секции `# Errors` у публичных fallible-функций обязательны (clippy pedantic).
-- Комментарии — только необходимые: тот, что объясняет **почему** (неочевидное решение, ссылка на спецификацию, ловушка чужого формата, цена ошибки), а не пересказ кода.
-- `#![forbid(unsafe_code)]` + `#![deny(clippy::pedantic)]` стоят в `core`, `docx`, `xlsx`, `pdf`; у `render` их нет (факт, а не разрешение). `unsafe` вне `crates/wasm` не добавляется — вместо этого остановиться и спросить (`docs/agent-contract.md` §5).
-- TS: `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`; импорты с явным `.js`; JSDoc на экспортируемых функциях; без `any`.
-- Conventional Commits, trunk-based (работа в `main`); feature-flags для незавершённого; 2 approver'а на изменения публичного API.
-- Соавторов в коммитах нет: `Co-Authored-By` и любые другие подписи не добавляются.
-- Документация: `ROADMAP.md` ведётся как живой документ — устаревшие числа и статусы (включая записи о спринтах и снимки) переписываются до текущего факта, обновлённое число подтверждается командой. Конвенция изменена 15.10.2026 (прежнее «роадмап задним числом не переписываем» отменено).
-- Новые WASM-функции покрываются `wasm-bindgen-test`; тяжёлые вычисления — только в воркере; `postMessage` с учётом transferables.
-- Покрытие — гейты CI: `doc-converter-docx` ≥ 85 %, `doc-converter-core` ≥ 80 % строк; TS-порог (≥ 80 %) в CI не проверяется. Числовые бюджеты — ROADMAP §9; тесты-бюджеты (`crates/pdf/tests/budgets.rs`, `crates/xlsx/tests/budget.rs`) не ослаблять без вопроса.
-
-## CI и зависимости
-
-- Тулчейн закреплён: `rust-toolchain.toml` — 1.98.0 (совпадает с CI), workspace объявляет MSRV `rust-version = "1.82"`; `.cargo/config.toml` включает `incompatible-rust-versions = "fallback"`, чтобы резолвинг не вылезал за MSRV.
-- `deny.toml` разрешает только Apache-2.0/MIT/BSD-2-Clause/BSD-3-Clause/ISC/Unicode-3.0/Zlib; `openssl` забанен, `wildcards = "deny"`. PDF-бэкенд собственный (ADR-0022); сторонние библиотеки в нём — только `lopdf` (модель объектов), `subsetter`, `skrifa`, `image` — все из allow-списка. Новая зависимость вне allowlist — ADR и вопрос пользователю.
-- Версии держатся не случайно: `quick-xml = 0.41` и `lru = 0.18` закрывают RUSTSEC-адвизори; `ttf-parser` намеренно не взят (unmaintained) — метрики на `skrifa` (ADR-0002). Понижение или замена — только с разбором advisories.
-- Гейты CI: fmt, clippy `-D warnings`, `cargo doc` `-D warnings`, тесты workspace; браузерные `wasm-pack test` трёх модулей; JS на Node 20 и 22 + `pnpm size-limit` (только Node 20, бюджеты `.size-limit.mjs`); бюджеты памяти PDF/DOCX — жёстко, времени — мягко; покрытие; `cargo deny` + `cargo audit` — жёстко, `pnpm audit` — информационно (`|| true` в CI). Оракул LibreOffice и fuzz — отдельные workflow (по расписанию и по путям, с nightly).
+- **Уровни:** inline `#[cfg(test)]` в крейтах; интеграционные `crates/*/tests/*.rs` (у `crates/core` своего `tests/` нет); снапшоты insta и свойства proptest; `wasm-bindgen-test` в трёх wasm-крейтах (`run_in_browser`, фикстуры через `include_bytes!`); дифференциальные тесты и оракулы; fuzz-таргеты в `crates/fuzz/fuzz_targets` (8 таргетов); criterion-бенчи в крейтах (базлайнов нет, CI их только компилирует).
+- **Фикстуры:** генераторы детерминированы (свой ZIP-писатель, фиксированные таймстампы). Пропавшая фикстура — падение, а не скип (`crates/docx/tests/layout.rs`, `crates/pdf/tests/docx_budgets.rs`).
+- **Дифференциальные гейты:** mammoth (`crates/docx/tests/differential.rs`: кандидатов ≥ 50, `non-goal` ≤ 8, доля совпадений ≥ 0.95; путь оракула переопределяется `DOCX_MAMMOTH_ORACLE`) и exceljs (`crates/xlsx/tests/fixtures.rs`: сверка с `oracle.json` в обе стороны).
+- **Жёсткие гейты CI** (`ci.yml`): `cargo fmt --all -- --check`; clippy с `-D warnings`; `cargo doc` с `-D warnings` на обеих ногах; `cargo test --workspace --all-features`; сборка трёх wasm-крейтов под wasm32; сверка `.d.ts` с `#[wasm_bindgen]`-экспортами и запрет экспортов `docx_*` в основном модуле; `wasm-pack test --headless --chrome --release` для трёх крейтов; `pnpm turbo run typecheck test build` на Node 20 и 22; `pnpm size-limit` (Node 20); память — PDF ≤ 40 МиБ и DOCX ≤ 200 МиБ; `cargo deny check` и `cargo audit`; покрытие — `cargo llvm-cov -p doc-converter-core --fail-under-lines 80` и `-p doc-converter-docx --fail-under-lines 85`.
+- **Мягкие и информационные:** время в бенчах (500 страниц PDF < 3000 мс, разбор 50 МиБ DOCX < 1500 мс), `pnpm audit`.
+- **Бюджет-тесты не ослаблять без вопроса:** `crates/pdf/tests/budgets.rs` (200 КиБ на 1000 ячеек, 32 КиБ для сжатого плотного PDF, мягкие 900 мс и 9000 мс), `crates/xlsx/tests/budget.rs` (`size_of::<Cell>() == 48`, `#[ignore]`-тест на миллион ячеек), `crates/docx/tests/memory.rs` (модель: Paragraph ≤ 256 Б, Run ≤ 128 Б, Cell ≤ 192 Б).
+- **Отдельные workflow:** `oracle.yml` (LibreOffice SSIM, cron и path-фильтр), `fuzz.yml` (nightly, cron и path-фильтр), `release.yml` (changesets, dry-run пакетов), `pages.yml` (демо).
+- **Границы:** TS-порог покрытия (≥ 80 %) в CI не проверяется; e2e-тесты CLI скипаются, если `dist/cli.js` не собран.

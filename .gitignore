@@ -74,3 +74,4 @@ experiments/lowa-spike/vendor/
 # кладёт копии артефактов x2t из вендорного каталога выше — источниками они не
 # являются, в сборку уезжает копия.
 examples/viewer/public/x2t/
+test-fixtures/conf-xlsx/
