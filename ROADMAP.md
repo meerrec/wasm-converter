@@ -67,7 +67,7 @@
 | Парсинг и чтение OOXML | Редактирование документов |
 | Рендеринг на OffscreenCanvas | Колаборация (Yjs / CRDT) |
 | Экспорт в PDF / PNG / MD / HTML / CSV | ИИ-предложения (human-in-the-loop) |
-| DOCX и XLSX | PPTX, XLSB |
+| DOCX и XLSX | Статусы форматов — [ADR-0039](docs/adr/0039-cancel-v1-non-goals.md) |
 | Web Worker + OffscreenCanvas | Server-side (кроме batch-CLI) |
 | Zero-copy через Transferables; SAB — ускорение, когда доступен | Real-time синхронизация |
 
@@ -405,7 +405,7 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 | 10 | ADR-0014 (mc:AlternateContent) — принят до Спринта 8 | Блокер: без него часть DOCX парсится неверно |
 | 11 | ADR-0015 (лимиты ZIP) — принят до Спринта 8 | Безопасность: zip bomb, zip slip |
 | 12 | ADR-0016 (политика ошибок) — принят до Спринта 8 | Recover-and-continue вместо fail-fast |
-| 13 | ADR-0017 (Strict vs Transitional) — принят до Спринта 8 | Non-goal: Strict OOXML |
+| 13 | ADR-0017 (Strict vs Transitional) — принят до Спринта 8 | Transitional-only в v1; пересмотрено [ADR-0039](docs/adr/0039-cancel-v1-non-goals.md): Strict — в плане |
 | 14 | ADR-0018 (границы редактирования) — принят | v1 — read-only, модель только в Rust, Jotai — view state |
 | 15 | ADR-0019 (NodeId) — принят до Спринта 8 | Hit-test, snapshot-тесты, отладка |
 | 16 | ADR-0020 (парсер/writer) — принят до Спринта 8 | Writer в DOCX — non-goal v1 |
@@ -837,12 +837,12 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 
 **Non-goals:**
 
-- Strict OOXML — только Transitional (ADR-0017).
+- Strict OOXML — Transitional в v1; статус non-goal отменён ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)), Strict — в плане.
 - Track changes — парсятся как `Unknown`.
 - VML — только `mc:Choice`, `mc:Fallback` игнорируется.
 - TOC — поле парсится, содержимое не генерируется.
 - Уравнения OMML, SmartArt, embedded OLE — `Unknown`.
-- Encrypted DOCX, `.docm`, `.doc` — ошибка.
+- Encrypted DOCX, `.docm`, `.doc` — ошибка; non-goal-статус снят ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)), реализаций нет.
 - Writer в DOCX — ADR-0020.
 - Command API, undo/redo, diff/patch — ADR-0018.
 - Резолвинг каскада стилей — Спринт 9.
@@ -1314,7 +1314,7 @@ DOCX: 104 коммитируемые фикстуры (101 разбираетс�
 | 0014 | `mc:AlternateContent` | Берём `mc:Choice` (первая поддержанная ветка), `mc:Fallback` игнорируем; неподдержанное — `Unknown` с XML | `docs/adr/0014-alternate-content.md` |
 | 0015 | Лимиты ZIP для OOXML | Per-part 64 МиБ, per-archive 256 МиБ, ratio ≤ 200:1, запрет path traversal | `docs/adr/0015-ooxml-zip-limits.md` |
 | 0016 | Политика ошибок DOCX | Recover-and-continue: `Vec<ParseWarning>`, частичная модель; фатально только ZIP и отсутствие `document.xml` | `docs/adr/0016-docx-error-policy.md` |
-| 0017 | Strict vs Transitional OOXML | Transitional — единственный поддерживаемый; Strict — non-goal v1 | `docs/adr/0017-strict-vs-transitional.md` |
+| 0017 | Strict vs Transitional OOXML | Transitional — единственный поддерживаемый в v1; отменено [ADR-0039](docs/adr/0039-cancel-v1-non-goals.md) (Strict — в плане, пересмотр — ADR-0034) | `docs/adr/0017-strict-vs-transitional.md` |
 | 0018 | Границы редактирования в v1 | v1 — read-only; модель только в Rust/WASM; Jotai — только view state; `NodeId` без editing-инфраструктуры | `docs/adr/0018-editing-boundaries.md` |
 | 0019 | NodeId | `NodeId(u64)`, присваивается при парсинге, детерминирован, не переживает переоткрытие, не публичный API | `docs/adr/0019-node-id.md` |
 | 0020 | Границы парсера и writer | Парсер = десериализатор; `serde` в JSON — да; writer в DOCX — non-goal v1 | `docs/adr/0020-parser-writer-boundary.md` |
@@ -1327,6 +1327,10 @@ DOCX: 104 коммитируемые фикстуры (101 разбираетс�
 | 0027 | Реестры npm: npmjs.org — основной, GitHub Packages — зеркало | npmjs.org — целевой основной публичный реестр, GitHub Packages — действующее зеркало; публикация npmjs первой; crates.io — за `PUBLISH_CRATES_IO`; первый publish токеном, OIDC — со следующего релиза; откат — `npm deprecate` | `docs/adr/0027-npmjs-primary-registry.md` |
 | 0028 | Типизированный wire-протокол — Rust как источник истины | Payload'ы — DTO в `core::wire`, TS генерируется `ts-rs` 10.1 примером `export_wire` (`pnpm gen:wire`); конверт ручной; дрейф и ошибки типов ловит CI | `docs/adr/0028-typed-wire-protocol.md` |
 | 0029 | Рендер на main-потоке без OffscreenCanvas | Гибрид: парсинг и сборка DisplayList — в воркере, painter — на main через `init_painter_main`; протокол `frame`/`frame-ack` с двумя `ArrayBuffer`, коалесцирование по rAF; `renderMode` (`auto`/`worker`/`main`); один main-вьюер на страницу | `docs/adr/0029-main-thread-render-backend.md` |
+| 0030 | Trait-слой форматов | `FormatPlugin`/`DocumentModel` в `render::plugin`; DisplayList — единственный IR (sketch `RenderCommand` не вводится); `CanvasPainter` — wasm32; wasm-роутера нет — диспетчеризация по `DocFormat` в `worker.ts`; ленивые модули остаются | `docs/adr/0030-format-plugin-traits.md` |
+| 0031 | Потоковый ZIP и `ReadableStream`-вход | Вход потоком дополнителен к байтам; парс после конца архива; `SegmentedBuffer` (Read+Seek над чанками) в core, `Archive::from_segmented`; реестр потоков в каждом wasm-модуле; протокол `open-stream`/`append`/`end-stream`, `onProgress`; пик воркера == пути через буфер (предвыделенный `sourceBytes`) | `docs/adr/0031-streaming-zip.md` |
+| 0032 | Отмена операций — кооперативный флаг и `AbortSignal` | Флаг `&Cell<bool>` передаётся явно (без `thread_local!` в библиотечных крейтах); точки проверки — блоки тела DOCX, полосы кадра XLSX; `LayoutError`/`XlsxError::Cancelled`; wasm-экспорты `set_cancel` сбрасывают флаг в начале операции; протокол `cancel { id }`, код `'cancelled'`; `open`/экспорты принимают `signal` | `docs/adr/0032-cancellation.md` |
+| 0039 | Отмена non-goal'ов v1, противоречащих To-Be | PPTX/Strict/ODF/`.docm` — в плане; XLSB/шифрование/бинарный `.doc` — статус non-goal снят, реализаций нет; редактирование/коллаборация/ИИ/server-side/real-time — в силе | `docs/adr/0039-cancel-v1-non-goals.md` |
 
 ADR 0002–0005 приняты 05.10.2026 (0002 пересмотрен на `skrifa`). Реализация
 0002, 0003 и 0005 — Спринт 5.5, 0004 — Спринт 11. ADR-0006 — чужая работа про

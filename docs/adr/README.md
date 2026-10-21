@@ -35,5 +35,9 @@
 | 0027 | Реестры npm: npmjs.org — основной, GitHub Packages — зеркало | [`0027-npmjs-primary-registry.md`](0027-npmjs-primary-registry.md) |
 | 0028 | Типизированный wire-протокол — Rust как источник истины | [`0028-typed-wire-protocol.md`](0028-typed-wire-protocol.md) |
 | 0029 | Рендер на main-потоке без OffscreenCanvas | [`0029-main-thread-render-backend.md`](0029-main-thread-render-backend.md) |
+| 0030 | Trait-слой форматов | [`0030-format-plugin-traits.md`](0030-format-plugin-traits.md) |
+| 0031 | Потоковый ZIP и `ReadableStream`-вход | [`0031-streaming-zip.md`](0031-streaming-zip.md) |
+| 0032 | Отмена операций — кооперативный флаг и `AbortSignal` | [`0032-cancellation.md`](0032-cancellation.md) |
+| 0039 | Отмена non-goal'ов v1 | [`0039-cancel-v1-non-goals.md`](0039-cancel-v1-non-goals.md) |
 
 Сводка принятых решений по спринтам — `ROADMAP.md` §11.
