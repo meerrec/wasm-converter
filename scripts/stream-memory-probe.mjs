@@ -67,7 +67,7 @@ try {
   const host = document.getElementById('host');
   const fixtureUrl = new URLSearchParams(location.search).get('fixture');
   const viewer = await createDocxViewer(host, {
-    workerUrl: '/packages/core/dist/worker.js',
+    workerUrl: '/packages/core/dist/docx_worker.js',
     wasmUrl: '/packages/wasm/pkg/doc_converter_wasm_bg.wasm',
     docxWasm: {
       module: '/packages/wasm-docx/pkg/doc_converter_docx_wasm.js',
@@ -127,9 +127,9 @@ const server = createServer(async (req, res) => {
     const info = await stat(file);
     if (!info.isFile()) throw new Error('не файл');
     let body = await readFile(file);
-    // Единственный bare-импорт сборок: worker.js тянет @meerrec/wasm, а
+    // Единственный bare-импорт сборок: docx_worker.js тянет @meerrec/wasm, а
     // статический сервер bare-спекификаторы не резолвит.
-    if (path.endsWith('/dist/worker.js')) {
+    if (path.endsWith('/dist/docx_worker.js')) {
       body = Buffer.from(
         body.toString().replace("from '@meerrec/wasm'", "from '/packages/wasm/pkg/doc_converter_wasm.js'"),
       );

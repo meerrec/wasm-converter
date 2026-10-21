@@ -5,7 +5,7 @@
 // Воркеры подключаются суффиксом `?worker&url`: только так Vite собирает их
 // отдельными чанками. Голый `new URL('./docx_worker.ts', import.meta.url)` он
 // считает обычным ассетом и инлайнит исходник в data-URL, где импорт
-// `@meerrec/core/worker` уже не разрешается, — воркер молча не стартует.
+// `@meerrec/core/xlsx-worker` уже не разрешается, — воркер молча не стартует.
 import docxWorkerFileUrl from '../workers/docx_worker.ts?worker&url';
 import xlsxWorkerFileUrl from '../workers/xlsx_worker.ts?worker&url';
 import pptxWorkerFileUrl from '../workers/pptx_worker.ts?worker&url';

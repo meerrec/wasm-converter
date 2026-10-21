@@ -96,7 +96,7 @@ npm install -g @meerrec/cli --registry=https://npm.pkg.github.com
 
 ```ts
 // xlsx_worker.ts
-import '@meerrec/core/worker';
+import '@meerrec/core/xlsx-worker';
 ```
 
 ```ts

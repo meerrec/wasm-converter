@@ -22,9 +22,13 @@
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
-    "./worker": {
-      "types": "./dist/worker.d.ts",
-      "import": "./dist/worker.js"
+    "./xlsx-worker": {
+      "types": "./dist/xlsx_worker.d.ts",
+      "import": "./dist/xlsx_worker.js"
+    },
+    "./docx-worker": {
+      "types": "./dist/docx_worker.d.ts",
+      "import": "./dist/docx_worker.js"
     },
     "./pptx-worker": {
       "types": "./dist/pptx_worker.d.ts",
@@ -37,8 +41,10 @@
     "LICENSE"
   ],
   "sideEffects": [
-    "./dist/worker.js",
-    "./dist/worker.cjs",
+    "./dist/xlsx_worker.js",
+    "./dist/xlsx_worker.cjs",
+    "./dist/docx_worker.js",
+    "./dist/docx_worker.cjs",
     "./dist/pptx_worker.js",
     "./dist/pptx_worker.cjs"
   ],

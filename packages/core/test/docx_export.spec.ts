@@ -173,7 +173,7 @@ async function startWorker(withUrls: { pdf?: boolean; docx?: boolean }): Promise
   // Пропущенный кадр воркер логирует — для теста это ожидаемый ход событий.
   vi.spyOn(console, 'error').mockImplementation(() => {});
 
-  await import('../src/worker/worker.js');
+  await import('../src/worker/docx_worker.js');
   const onmessage = selfStub.onmessage;
   if (!onmessage) throw new Error('worker did not subscribe to messages');
   handler = onmessage;

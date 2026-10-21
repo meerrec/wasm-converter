@@ -11,7 +11,14 @@ import type {
   SlideInfoWire,
 } from './generated/wire.js';
 
-/** Формат документа, который умеет открыть воркер. */
+/**
+ * Формат документа.
+ *
+ * Диспетчеризация — по воркерам: `xlsx_worker` обслуживает только `xlsx`,
+ * `docx_worker` — только `docx`, `pptx_worker` — только `pptx`. Поле остаётся
+ * в конверте для совместимости: воркер принимает свой формат, а чужой
+ * отбрасывает ошибкой с кодом `open`, не переключая состояние.
+ */
 export type DocFormat = 'xlsx' | 'docx' | 'pptx';
 
 export interface Viewport { x: number; y: number; w: number; h: number; scale: number }
@@ -275,6 +282,11 @@ export interface RenderRequest {
  * параллельных открытий она адресована. Ответ `opened`/`docx-opened`/
  * `pptx-opened` несёт тот же `id` — по нему просмотрщик находит свой
  * ожидающий промис.
+ *
+ * `format` обязан совпадать с форматом воркера: диспетчеризация теперь
+ * по-воркерная, и чужой формат воркер отбрасывает ошибкой `open`, не трогая
+ * открытый документ. Поле остаётся в конверте для совместимости с
+ * просмотрщиками, которые всегда присылают свой формат.
  */
 export interface OpenMsg { type: 'open'; id: number; format: DocFormat; bytes: ArrayBuffer }
 
@@ -282,6 +294,9 @@ export interface OpenMsg { type: 'open'; id: number; format: DocFormat; bytes: A
  * Начать стримовое открытие (ADR-0031): воркер заводит буфер чанков под этим
  * id и грузит форматный модуль, как при обычном `open`. `totalSize` —
  * подсказка для прогресса (`onProgress`), необязателен.
+ *
+ * `format` — как у `open`: воркер принимает только свой формат, чужой
+ * отбрасывает ошибкой `open`.
  */
 export interface OpenStreamMsg {
   type: 'open-stream';

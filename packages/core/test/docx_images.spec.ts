@@ -122,7 +122,7 @@ async function startWorker(): Promise<void> {
   });
   vi.stubGlobal('createImageBitmap', decode);
 
-  await import('../src/worker/worker.js');
+  await import('../src/worker/docx_worker.js');
   const onmessage = selfStub.onmessage;
   if (!onmessage) throw new Error('worker did not subscribe to messages');
   handler = onmessage;

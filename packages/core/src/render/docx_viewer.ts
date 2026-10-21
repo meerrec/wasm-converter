@@ -175,7 +175,7 @@ export async function createDocxViewer(
   const renderMode = resolveRenderMode(canvas, options.renderMode, options.transport);
 
   const worker = new Worker(
-    options.workerUrl ?? new URL('../worker/worker.js', import.meta.url),
+    options.workerUrl ?? new URL('../worker/docx_worker.js', import.meta.url),
     { type: 'module', name: 'doc-converter-docx' },
   );
 

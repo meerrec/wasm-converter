@@ -159,7 +159,7 @@ export async function createXlsxViewer(
   const renderMode = resolveRenderMode(canvas, options.renderMode, options.transport);
 
   const worker = new Worker(
-    options.workerUrl ?? new URL('../worker/worker.js', import.meta.url),
+    options.workerUrl ?? new URL('../worker/xlsx_worker.js', import.meta.url),
     { type: 'module', name: 'doc-converter-xlsx' },
   );
 

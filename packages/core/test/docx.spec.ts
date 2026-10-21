@@ -112,7 +112,7 @@ beforeEach(async () => {
   // Пропущенный кадр воркер логирует — для теста это ожидаемый ход событий.
   vi.spyOn(console, 'error').mockImplementation(() => {});
 
-  await import('../src/worker/worker.js');
+  await import('../src/worker/docx_worker.js');
   const onmessage = selfStub.onmessage;
   if (!onmessage) throw new Error('worker did not subscribe to messages');
   handler = onmessage;
@@ -176,28 +176,25 @@ describe('кадр DOCX', () => {
   });
 });
 
-describe('смена формата', () => {
-  it('книга по-прежнему идёт своим сборщиком с настройками показа', async () => {
+describe('чужой формат', () => {
+  it('книгу XLSX воркер DOCX не открывает и состояние не трогает', async () => {
     await handler({ data: openMsg('xlsx') });
-    await handler({ data: renderMsg({ sheet: 1 }) });
 
-    expect(stubCalls('docx_build_display_list_sab')).toHaveLength(0);
-    expect(wasm.xlsx_build_display_list_sab).toHaveBeenCalledTimes(1);
-    expect(wasm.xlsx_build_display_list_sab.mock.calls[0]?.[2]).toBe(1);
-    expect(wasm.xlsx_build_display_list_sab.mock.calls[0]?.[4]).toEqual({
-      showGrid: true,
-      showHeaders: true,
-      dark: false,
+    expect(wasm.xlsx_open).not.toHaveBeenCalled();
+    expect(stubCalls('docx_open_bytes')).toHaveLength(0);
+    expect(posted).toContainEqual({
+      type: 'error',
+      message: "open: unsupported format 'xlsx'",
+      id: 1,
+      code: 'open',
     });
   });
 
-  it('открытие книги отпускает разобранный документ', async () => {
-    await handler({ data: openMsg('docx') });
+  it('после отказа воркер открывает свой документ', async () => {
     await handler({ data: openMsg('xlsx') });
+    await handler({ data: openMsg('docx') });
 
-    expect(stubCalls('docx_close')).toHaveLength(1);
-    expect(wasm.xlsx_open).toHaveBeenCalledTimes(1);
-    // Отвечает как на книгу: листы, а не страницы.
-    expect(posted.at(-1)).toEqual({ type: 'opened', id: 1, sheets: [] });
+    expect(stubCalls('docx_open_bytes')).toHaveLength(1);
+    expect(posted).toContainEqual({ type: 'docx-opened', id: 1, pages: docxStub()?.pages });
   });
 });

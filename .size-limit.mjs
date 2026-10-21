@@ -8,7 +8,21 @@
 // (ROADMAP §9) его строка стережёт и рост модуля, и возврат его кода в
 // основной бандл.
 export default [
-  { path: 'packages/core/dist/worker.js', limit: '550 KB', gzip: true },
+  {
+    // Воркеры XLSX и DOCX разделены (направление «воркер на формат»,
+    // ADR-0030 §6): в каждом та же painter/SAB-обвязка и кадровый цикл,
+    // поэтому бюджет прежний — общий диспетчер по `DocFormat` больше не нужен.
+    name: 'core (xlsx-worker)',
+    path: 'packages/core/dist/xlsx_worker.js',
+    limit: '550 KB',
+    gzip: true,
+  },
+  {
+    name: 'core (docx-worker)',
+    path: 'packages/core/dist/docx_worker.js',
+    limit: '550 KB',
+    gzip: true,
+  },
   {
     // Воркер PPTX — отдельный бандл (направление «воркер на формат»,
     // ADR-0030 §6): тот же бюджет, что у общего воркера — в нём те же
