@@ -146,7 +146,10 @@ export async function createXlsxViewer(
   const pendingOpen = new Map<number, { resolve: (s: SheetInfo[]) => void; reject: (e: Error) => void }>();
   const pendingHit = new Map<number, { resolve: (c: [number, number] | null) => void }>();
   const pendingHyperlink = new Map<number, { resolve: (link: HyperlinkInfo | null) => void }>();
-  const pendingPng = new Map<number, (bytes: Uint8Array) => void>();
+  const pendingPng = new Map<
+    number,
+    { resolve: (bytes: Uint8Array) => void; reject: (e: Error) => void }
+  >();
   const pendingPdf = new Map<
     number,
     { resolve: (bytes: Uint8Array) => void; reject: (e: Error) => void }
@@ -159,13 +162,18 @@ export async function createXlsxViewer(
       case 'tick':
         for (const handler of tickHandlers) handler(msg.stats);
         break;
-      case 'opened':
+      case 'opened': {
         sheets = msg.sheets;
-        for (const p of pendingOpen.values()) p.resolve(msg.sheets);
-        pendingOpen.clear();
+        // Ответ адресный: разрешаем ровно тот промис, чей id эхом вернул воркер.
+        const pending = pendingOpen.get(msg.id);
+        if (pending) {
+          pendingOpen.delete(msg.id);
+          pending.resolve(msg.sheets);
+        }
         applySheetSize();
         schedule();
         break;
+      }
       case 'hit': {
         pendingHit.get(msg.id)?.resolve(msg.cell);
         pendingHit.delete(msg.id);
@@ -177,7 +185,7 @@ export async function createXlsxViewer(
         break;
       }
       case 'png': {
-        pendingPng.get(msg.id)?.(msg.bytes);
+        pendingPng.get(msg.id)?.resolve(msg.bytes);
         pendingPng.delete(msg.id);
         break;
       }
@@ -186,14 +194,39 @@ export async function createXlsxViewer(
         pendingPdf.delete(msg.id);
         break;
       }
-      case 'error':
-        for (const p of pendingOpen.values()) p.reject(new Error(msg.message));
+      case 'error': {
+        const error = new Error(msg.message);
+        console.error('[xlsx]', msg.code ? `${msg.code}: ${msg.message}` : msg.message);
+        if (msg.id !== undefined) {
+          // Ошибка адресная: отклоняем только свой запрос, соседние ждут
+          // своих ответов — их ошибка не касается.
+          const open = pendingOpen.get(msg.id);
+          if (open) {
+            pendingOpen.delete(msg.id);
+            open.reject(error);
+          }
+          const png = pendingPng.get(msg.id);
+          if (png) {
+            pendingPng.delete(msg.id);
+            png.reject(error);
+          }
+          const pdf = pendingPdf.get(msg.id);
+          if (pdf) {
+            pendingPdf.delete(msg.id);
+            pdf.reject(error);
+          }
+          break;
+        }
+        // Ошибки без id — сбой воркера целиком (init): ответа не будет ни на
+        // один запрос, поэтому отклоняем всё ожидающее.
+        for (const p of pendingOpen.values()) p.reject(error);
         pendingOpen.clear();
-        // У ошибки нет id: отклоняем все экспорты — незавершённый повис бы навсегда.
-        for (const p of pendingPdf.values()) p.reject(new Error(msg.message));
+        for (const p of pendingPng.values()) p.reject(error);
+        pendingPng.clear();
+        for (const p of pendingPdf.values()) p.reject(error);
         pendingPdf.clear();
-        console.error('[xlsx]', msg.message);
         break;
+      }
       default:
         break;
     }
@@ -369,7 +402,7 @@ export async function createXlsxViewer(
       const id = nextRequestId++;
       return new Promise<SheetInfo[]>((resolve, reject) => {
         pendingOpen.set(id, { resolve, reject });
-        worker.postMessage({ type: 'open', format: 'xlsx', bytes } satisfies InMsg, [bytes]);
+        worker.postMessage({ type: 'open', id, format: 'xlsx', bytes } satisfies InMsg, [bytes]);
       });
     },
 
@@ -413,8 +446,8 @@ export async function createXlsxViewer(
 
     exportPng(): Promise<Uint8Array> {
       const id = nextRequestId++;
-      return new Promise<Uint8Array>((resolve) => {
-        pendingPng.set(id, resolve);
+      return new Promise<Uint8Array>((resolve, reject) => {
+        pendingPng.set(id, { resolve, reject });
         worker.postMessage({ type: 'export-png', id } satisfies InMsg);
       });
     },
@@ -443,6 +476,15 @@ export async function createXlsxViewer(
       observer.disconnect();
       scroller.removeEventListener('scroll', onScroll);
       canvas.removeEventListener('click', onCanvasClick);
+      // Воркер сейчас остановим: ответа на эти запросы уже не будет, и без
+      // отказа их промисы повисли бы навсегда.
+      const error = new Error('viewer destroyed');
+      for (const p of pendingOpen.values()) p.reject(error);
+      pendingOpen.clear();
+      for (const p of pendingPng.values()) p.reject(error);
+      pendingPng.clear();
+      for (const p of pendingPdf.values()) p.reject(error);
+      pendingPdf.clear();
       worker.postMessage({ type: 'close' } satisfies InMsg);
       worker.terminate();
       scroller.remove();

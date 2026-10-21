@@ -29,6 +29,8 @@ import type {
   PdfModuleUrls,
   RenderRequest,
   SheetInfo,
+  WorkerErrorCode,
+  WorkerErrorMsg,
 } from '../protocol.js';
 import { exportPng } from '../render/export_png.js';
 import { frameTarget, toViewport, type FrameTarget, type OpenFormat } from './frame_args.js';
@@ -148,6 +150,25 @@ async function loadDocxWasm(urls: DocxModuleUrls): Promise<DocxWasm> {
 const post = (msg: OutMsg, transfer: Transferable[] = []) => {
   (self as unknown as Worker).postMessage(msg, transfer);
 };
+
+/**
+ * Ошибка на main-сторону.
+ *
+ * `id` адресует её конкретному запросу, `code` называет стадию. Без `id`
+ * ошибка относится к воркеру целиком (инициализация): ответа не будет ни на
+ * один запрос, и просмотрщик по этому признаку отклоняет все ожидающие.
+ * Поля собираются условно: `exactOptionalPropertyTypes` не даёт положить
+ * `undefined` в необязательное поле.
+ */
+function postError(
+  message: string,
+  opts: { id?: number; code?: WorkerErrorCode } = {},
+): void {
+  const msg: WorkerErrorMsg = { type: 'error', message };
+  if (opts.id !== undefined) msg.id = opts.id;
+  if (opts.code !== undefined) msg.code = opts.code;
+  post(msg);
+}
 
 /** Битмапы, зарегистрированные в painter'е: их возвращают после ресайза и снимают при закрытии. */
 const bitmaps = new Map<number, ImageBitmap>();
@@ -339,7 +360,9 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
   switch (msg.type) {
     case 'init': {
       if (ctx) {
-        post({ type: 'error', message: 'worker already initialised' });
+        // Повторный init — нарушение протокола, а не сбой инициализации:
+        // воркер уже работает, и терять его запросы из-за второго init нельзя.
+        postError('worker already initialised', { code: 'internal' });
         return;
       }
       try {
@@ -380,7 +403,8 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
           onTick: (s) => post({ type: 'tick', stats: { ...s, buildMs } }),
         });
       } catch (e) {
-        post({ type: 'error', message: String(e) });
+        // Ошибка без id: воркер не поднялся, ответить на запросы нечем.
+        postError(String(e), { code: 'init' });
       }
       break;
     }
@@ -406,9 +430,9 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         if (msg.format === 'docx') {
           const urls = docxUrls;
           if (!urls) {
-            post({
-              type: 'error',
-              message: 'docx module is not configured: init has no docx urls',
+            postError('docx module is not configured: init has no docx urls', {
+              id: msg.id,
+              code: 'open',
             });
             break;
           }
@@ -433,8 +457,13 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
             },
             gen,
           );
-          if (gen !== bitmapsGen) break;
-          post({ type: 'docx-opened', pages });
+          if (gen !== bitmapsGen) {
+            // Пока грузились картинки, документ сменили или закрыли: ответа
+            // этому открытию не будет, и его промис повис бы без этой ошибки.
+            postError('open superseded by a newer request', { id: msg.id, code: 'open' });
+            break;
+          }
+          post({ type: 'docx-opened', id: msg.id, pages });
           loop?.request();
           break;
         }
@@ -458,12 +487,16 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
           },
           gen,
         );
-        if (gen !== bitmapsGen) break;
-        post({ type: 'opened', sheets });
+        if (gen !== bitmapsGen) {
+          // См. DOCX-ветку: отставшее открытие обязано завершиться ошибкой.
+          postError('open superseded by a newer request', { id: msg.id, code: 'open' });
+          break;
+        }
+        post({ type: 'opened', id: msg.id, sheets });
         // Пока декодировались картинки, мог прийти кадр — просим показать полный.
         loop?.request();
       } catch (e) {
-        post({ type: 'error', message: String(e) });
+        postError(String(e), { id: msg.id, code: 'open' });
       }
       break;
     }
@@ -496,14 +529,14 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     }
     case 'export-png': {
       if (!ctx) {
-        post({ type: 'error', message: 'export-png before init' });
+        postError('export-png before init', { id: msg.id, code: 'export' });
         break;
       }
       try {
         const bytes = await exportPng(ctx.canvas);
         post({ type: 'png', id: msg.id, bytes }, [bytes.buffer]);
       } catch (e) {
-        post({ type: 'error', message: String(e) });
+        postError(String(e), { id: msg.id, code: 'export' });
       }
       break;
     }
@@ -512,11 +545,14 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       // Снимок: за время загрузки модуля книгу могли закрыть или сменить.
       const source = sourceBytes;
       if (!urls) {
-        post({ type: 'error', message: 'pdf module is not configured: init has no pdf urls' });
+        postError('pdf module is not configured: init has no pdf urls', {
+          id: msg.id,
+          code: 'export',
+        });
         break;
       }
       if (!source) {
-        post({ type: 'error', message: 'no workbook is open' });
+        postError('no workbook is open', { id: msg.id, code: 'export' });
         break;
       }
       try {
@@ -528,7 +564,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         post({ type: 'pdf', id: msg.id, bytes }, [bytes.buffer]);
       } catch (e) {
         // Ошибка экспорта — ответ, а не падение воркера: книга остаётся открытой.
-        post({ type: 'error', message: String(e) });
+        postError(String(e), { id: msg.id, code: 'export' });
       }
       break;
     }
@@ -537,11 +573,14 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       // Снимок: за время загрузки модуля документ могли закрыть или сменить.
       const source = sourceBytes;
       if (!urls) {
-        post({ type: 'error', message: 'pdf module is not configured: init has no pdf urls' });
+        postError('pdf module is not configured: init has no pdf urls', {
+          id: msg.id,
+          code: 'export',
+        });
         break;
       }
       if (format !== 'docx' || !source) {
-        post({ type: 'error', message: 'no docx document is open' });
+        postError('no docx document is open', { id: msg.id, code: 'export' });
         break;
       }
       try {
@@ -551,7 +590,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         post({ type: 'pdf', id: msg.id, bytes }, [bytes.buffer]);
       } catch (e) {
         // Ошибка экспорта — ответ, а не падение воркера: документ остаётся открытым.
-        post({ type: 'error', message: String(e) });
+        postError(String(e), { id: msg.id, code: 'export' });
       }
       break;
     }
@@ -559,11 +598,14 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       const urls = docxUrls;
       const source = sourceBytes;
       if (!urls) {
-        post({ type: 'error', message: 'docx module is not configured: init has no docx urls' });
+        postError('docx module is not configured: init has no docx urls', {
+          id: msg.id,
+          code: 'export',
+        });
         break;
       }
       if (format !== 'docx' || !source) {
-        post({ type: 'error', message: 'no docx document is open' });
+        postError('no docx document is open', { id: msg.id, code: 'export' });
         break;
       }
       try {
@@ -579,7 +621,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         post({ type: 'docx-text', id: msg.id, text });
       } catch (e) {
         // Разбор мог упасть и здесь: документ остаётся открытым, клиент получает ошибку.
-        post({ type: 'error', message: String(e) });
+        postError(String(e), { id: msg.id, code: 'export' });
       }
       break;
     }

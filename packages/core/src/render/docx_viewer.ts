@@ -163,10 +163,10 @@ export async function createDocxViewer(
   let dpr = computeDpr(scroller.clientWidth, scroller.clientHeight, devicePixelRatio);
   let destroyed = false;
   let frameScheduled = false;
-  const pendingOpen = new Set<{
-    resolve: (pages: PageInfo[]) => void;
-    reject: (e: Error) => void;
-  }>();
+  const pendingOpen = new Map<
+    number,
+    { resolve: (pages: PageInfo[]) => void; reject: (e: Error) => void }
+  >();
   const pendingPng = new Map<
     number,
     { resolve: (bytes: Uint8Array) => void; reject: (e: Error) => void }
@@ -187,15 +187,20 @@ export async function createDocxViewer(
       case 'tick':
         for (const handler of tickHandlers) handler(msg.stats);
         break;
-      case 'docx-opened':
+      case 'docx-opened': {
         pages = msg.pages;
         layoutStack();
         applyStackSize();
         pageIndex = pageAt(scroller.scrollTop);
-        for (const p of pendingOpen) p.resolve(msg.pages);
-        pendingOpen.clear();
+        // Ответ адресный: разрешаем ровно тот промис, чей id эхом вернул воркер.
+        const pending = pendingOpen.get(msg.id);
+        if (pending) {
+          pendingOpen.delete(msg.id);
+          pending.resolve(msg.pages);
+        }
         schedule();
         break;
+      }
       case 'png': {
         pendingPng.get(msg.id)?.resolve(msg.bytes);
         pendingPng.delete(msg.id);
@@ -211,18 +216,46 @@ export async function createDocxViewer(
         pendingText.delete(msg.id);
         break;
       }
-      case 'error':
-        for (const p of pendingOpen) p.reject(new Error(msg.message));
+      case 'error': {
+        const error = new Error(msg.message);
+        console.error('[docx]', msg.code ? `${msg.code}: ${msg.message}` : msg.message);
+        if (msg.id !== undefined) {
+          // Ошибка адресная: отклоняем только свой запрос, соседние ждут
+          // своих ответов — их ошибка не касается.
+          const open = pendingOpen.get(msg.id);
+          if (open) {
+            pendingOpen.delete(msg.id);
+            open.reject(error);
+          }
+          const png = pendingPng.get(msg.id);
+          if (png) {
+            pendingPng.delete(msg.id);
+            png.reject(error);
+          }
+          const pdf = pendingPdf.get(msg.id);
+          if (pdf) {
+            pendingPdf.delete(msg.id);
+            pdf.reject(error);
+          }
+          const text = pendingText.get(msg.id);
+          if (text) {
+            pendingText.delete(msg.id);
+            text.reject(error);
+          }
+          break;
+        }
+        // Ошибки без id — сбой воркера целиком (init): ответа не будет ни на
+        // один запрос, поэтому отклоняем всё ожидающее.
+        for (const p of pendingOpen.values()) p.reject(error);
         pendingOpen.clear();
-        // У ошибки нет id: отклоняем весь экспорт — незавершённый повис бы навсегда.
-        for (const p of pendingPng.values()) p.reject(new Error(msg.message));
+        for (const p of pendingPng.values()) p.reject(error);
         pendingPng.clear();
-        for (const p of pendingPdf.values()) p.reject(new Error(msg.message));
+        for (const p of pendingPdf.values()) p.reject(error);
         pendingPdf.clear();
-        for (const p of pendingText.values()) p.reject(new Error(msg.message));
+        for (const p of pendingText.values()) p.reject(error);
         pendingText.clear();
-        console.error('[docx]', msg.message);
         break;
+      }
       default:
         break;
     }
@@ -427,9 +460,10 @@ export async function createDocxViewer(
     },
 
     open(bytes: ArrayBuffer): Promise<PageInfo[]> {
+      const id = nextRequestId++;
       return new Promise<PageInfo[]>((resolve, reject) => {
-        pendingOpen.add({ resolve, reject });
-        worker.postMessage({ type: 'open', format: 'docx', bytes } satisfies InMsg, [bytes]);
+        pendingOpen.set(id, { resolve, reject });
+        worker.postMessage({ type: 'open', id, format: 'docx', bytes } satisfies InMsg, [bytes]);
       });
     },
 
@@ -491,13 +525,14 @@ export async function createDocxViewer(
       observer.disconnect();
       scroller.removeEventListener('scroll', onScroll);
       // Воркер остановлен: ответа на эти запросы уже не будет.
-      for (const p of pendingOpen) p.reject(new Error('viewer destroyed'));
+      const error = new Error('viewer destroyed');
+      for (const p of pendingOpen.values()) p.reject(error);
       pendingOpen.clear();
-      for (const p of pendingPng.values()) p.reject(new Error('viewer destroyed'));
+      for (const p of pendingPng.values()) p.reject(error);
       pendingPng.clear();
-      for (const p of pendingPdf.values()) p.reject(new Error('viewer destroyed'));
+      for (const p of pendingPdf.values()) p.reject(error);
       pendingPdf.clear();
-      for (const p of pendingText.values()) p.reject(new Error('viewer destroyed'));
+      for (const p of pendingText.values()) p.reject(error);
       pendingText.clear();
       worker.postMessage({ type: 'close' } satisfies InMsg);
       worker.terminate();

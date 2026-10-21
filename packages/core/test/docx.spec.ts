@@ -79,6 +79,7 @@ const initMsg = (): InMsg => ({
 
 const openMsg = (format: 'xlsx' | 'docx'): InMsg => ({
   type: 'open',
+  id: 1,
   format,
   bytes: new ArrayBuffer(8),
 });
@@ -130,7 +131,7 @@ describe('открытие DOCX', () => {
 
     expect(stubCalls('docx_open_bytes')).toHaveLength(1);
     expect(wasm.xlsx_open).not.toHaveBeenCalled();
-    expect(posted).toContainEqual({ type: 'docx-opened', pages: docxStub()?.pages });
+    expect(posted).toContainEqual({ type: 'docx-opened', id: 1, pages: docxStub()?.pages });
   });
 });
 
@@ -197,6 +198,6 @@ describe('смена формата', () => {
     expect(stubCalls('docx_close')).toHaveLength(1);
     expect(wasm.xlsx_open).toHaveBeenCalledTimes(1);
     // Отвечает как на книгу: листы, а не страницы.
-    expect(posted.at(-1)).toEqual({ type: 'opened', sheets: [] });
+    expect(posted.at(-1)).toEqual({ type: 'opened', id: 1, sheets: [] });
   });
 });

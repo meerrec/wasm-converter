@@ -184,8 +184,15 @@ export interface RenderRequest {
   config: RenderConfig;
 }
 
-/** Открыть книгу или документ. Байты передаются переводом владения. */
-export interface OpenMsg { type: 'open'; format: DocFormat; bytes: ArrayBuffer }
+/**
+ * Открыть книгу или документ. Байты передаются переводом владения.
+ *
+ * `id` обязателен, хотя ответ на открытие и так один на запрос: ошибка
+ * приходит общим тегом `error`, и без `id` main не отличил бы, какому из
+ * параллельных открытий она адресована. Ответ `opened`/`docx-opened` несёт
+ * тот же `id` — по нему просмотрщик находит свой ожидающий промис.
+ */
+export interface OpenMsg { type: 'open'; id: number; format: DocFormat; bytes: ArrayBuffer }
 export interface CloseMsg { type: 'close' }
 export interface RenderMsg { type: 'render'; req?: RenderRequest }
 
@@ -286,15 +293,18 @@ export interface ReadyMsg {
 /** `ReadyMsg` без тега: то, что просмотрщик знает о воркере после `init`. */
 export type ReadyInfo = Omit<ReadyMsg, 'type'>;
 export interface TickMsg { type: 'tick'; stats: PaintStats }
-/** Книга разобрана: листы и их размеры. */
-export interface OpenedMsg { type: 'opened'; sheets: SheetInfo[] }
+/**
+ * Книга разобрана: листы и их размеры. `id` — id запроса `open`: по нему
+ * просмотрщик разрешает именно свой промис, а не все ожидающие открытия.
+ */
+export interface OpenedMsg { type: 'opened'; id: number; sheets: SheetInfo[] }
 /**
  * Документ разложен: размеры страниц.
  *
  * Тег свой, а не `opened` с другим полем: сообщения с общим `type` в union не
  * сужаются, и ветка `opened` на main-стороне потеряла бы `sheets`.
  */
-export interface DocxOpenedMsg { type: 'docx-opened'; pages: PageInfo[] }
+export interface DocxOpenedMsg { type: 'docx-opened'; id: number; pages: PageInfo[] }
 /** Ответ на `hit-test`: строка и столбец либо ничего, если точка мимо. */
 export interface HitMsg { type: 'hit'; id: number; cell: [number, number] | null }
 /** Ответ на `hyperlink-at`: ссылка под точкой либо ничего. */
@@ -309,7 +319,32 @@ export interface PngMsg { type: 'png'; id: number; bytes: Uint8Array }
 export interface PdfMsg { type: 'pdf'; id: number; bytes: Uint8Array }
 /** Текстовая выгрузка документа в том формате, что запросил клиент. */
 export interface DocxTextMsg { type: 'docx-text'; id: number; text: string }
-export interface WorkerErrorMsg { type: 'error'; message: string }
+/**
+ * Стадия, на которой воркер потерпел неудачу. Код отличает сбой инициализации,
+ * после которого воркер бесполезен, от ошибки одного запроса, после которой
+ * остальные запросы продолжают работать.
+ */
+export type WorkerErrorCode = 'init' | 'open' | 'export' | 'internal';
+
+/**
+ * Ошибка воркера.
+ *
+ * `id` — запрос, который её вызвал: по нему просмотрщик отклоняет только свой
+ * промис, не трогая параллельные. Ошибки без `id` — сбой воркера целиком
+ * (инициализация, повторный `init`): ответа не будет ни на один запрос, и
+ * просмотрщик отклоняет все ожидающие.
+ */
+export interface WorkerErrorMsg {
+  type: 'error';
+  message: string;
+  /** id запроса, если ошибка адресная. */
+  id?: number;
+  /**
+   * Стадия сбоя: `init` — воркер не поднялся, `open`/`export` — один запрос,
+   * `internal` — нарушение протокола (например, повторный `init`).
+   */
+  code?: WorkerErrorCode;
+}
 
 export type OutMsg =
   | ReadyMsg

@@ -83,6 +83,7 @@ const initMsg = (withDocx: boolean): InMsg => ({
 
 const openMsg = (format: 'xlsx' | 'docx'): InMsg => ({
   type: 'open',
+  id: 1,
   format,
   bytes: new ArrayBuffer(8),
 });
@@ -149,7 +150,7 @@ describe('ленивая загрузка DOCX-модуля', () => {
     expect(docxStub()?.loads).toBe(1);
     expect(docxStub()?.initCalls).toBe(1);
     expect(stubCalls('docx_open_bytes')).toHaveLength(1);
-    expect(posted).toContainEqual({ type: 'docx-opened', pages: docxStub()?.pages });
+    expect(posted).toContainEqual({ type: 'docx-opened', id: 1, pages: docxStub()?.pages });
   });
 
   it('повторное открытие DOCX не грузит заглушку второй раз', async () => {
@@ -183,6 +184,8 @@ describe('ленивая загрузка DOCX-модуля', () => {
     expect(posted).toContainEqual({
       type: 'error',
       message: 'docx module is not configured: init has no docx urls',
+      id: 1,
+      code: 'open',
     });
     expect(posted.filter((m) => m.type === 'docx-opened')).toHaveLength(0);
     expect(docxStub()).toBeUndefined();

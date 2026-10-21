@@ -99,6 +99,7 @@ const fileBytes = (mark: number): Uint8Array =>
 
 const openMsg = (bytes: Uint8Array, format: 'xlsx' | 'docx' = 'docx'): InMsg => ({
   type: 'open',
+  id: 1,
   format,
   bytes: bytes.buffer as ArrayBuffer,
 });
@@ -249,6 +250,8 @@ describe('экспорт DOCX в PDF', () => {
     expect(posted).toContainEqual({
       type: 'error',
       message: 'pdf module is not configured: init has no pdf urls',
+      id: 41,
+      code: 'export',
     });
     expect(pdfIds(posted)).toEqual([]);
     expect(pdfStub()).toBeUndefined();
@@ -258,7 +261,12 @@ describe('экспорт DOCX в PDF', () => {
     await startWorker({ pdf: true, docx: true });
     await handler({ data: exportPdfMsg(51, {}) });
 
-    expect(posted).toContainEqual({ type: 'error', message: 'no docx document is open' });
+    expect(posted).toContainEqual({
+      type: 'error',
+      message: 'no docx document is open',
+      id: 51,
+      code: 'export',
+    });
     expect(pdfIds(posted)).toEqual([]);
     expect(pdfStub()).toBeUndefined();
   });
@@ -268,7 +276,12 @@ describe('экспорт DOCX в PDF', () => {
     await handler({ data: openMsg(fileBytes(0x41), 'xlsx') });
     await handler({ data: exportPdfMsg(61, {}) });
 
-    expect(posted).toContainEqual({ type: 'error', message: 'no docx document is open' });
+    expect(posted).toContainEqual({
+      type: 'error',
+      message: 'no docx document is open',
+      id: 61,
+      code: 'export',
+    });
     expect(pdfStub()).toBeUndefined();
   });
 
@@ -278,7 +291,12 @@ describe('экспорт DOCX в PDF', () => {
     await handler({ data: { type: 'close' } });
     await handler({ data: exportPdfMsg(71, {}) });
 
-    expect(posted).toContainEqual({ type: 'error', message: 'no docx document is open' });
+    expect(posted).toContainEqual({
+      type: 'error',
+      message: 'no docx document is open',
+      id: 71,
+      code: 'export',
+    });
     expect(pdfIds(posted)).toEqual([]);
     expect(pdfStub()).toBeUndefined();
   });
@@ -339,6 +357,8 @@ describe('текстовая выгрузка DOCX', () => {
     expect(posted).toContainEqual({
       type: 'error',
       message: 'docx module is not configured: init has no docx urls',
+      id: 101,
+      code: 'export',
     });
     expect(docxStub()).toBeUndefined();
     expect(pdfStub()).toBeUndefined();
@@ -348,7 +368,12 @@ describe('текстовая выгрузка DOCX', () => {
     await startWorker({ pdf: true, docx: true });
     await handler({ data: exportTextMsg(111, 'markdown') });
 
-    expect(posted).toContainEqual({ type: 'error', message: 'no docx document is open' });
+    expect(posted).toContainEqual({
+      type: 'error',
+      message: 'no docx document is open',
+      id: 111,
+      code: 'export',
+    });
     // Открытия не было — модуль не грузили; ошибка не тянет за собой загрузку.
     expect(docxStub()).toBeUndefined();
     expect(pdfStub()).toBeUndefined();
@@ -359,7 +384,12 @@ describe('текстовая выгрузка DOCX', () => {
     await handler({ data: openMsg(fileBytes(0x81), 'xlsx') });
     await handler({ data: exportTextMsg(121, 'html') });
 
-    expect(posted).toContainEqual({ type: 'error', message: 'no docx document is open' });
+    expect(posted).toContainEqual({
+      type: 'error',
+      message: 'no docx document is open',
+      id: 121,
+      code: 'export',
+    });
     expect(pdfStub()).toBeUndefined();
   });
 
@@ -369,7 +399,12 @@ describe('текстовая выгрузка DOCX', () => {
     await handler({ data: { type: 'close' } });
     await handler({ data: exportTextMsg(131, 'text') });
 
-    expect(posted).toContainEqual({ type: 'error', message: 'no docx document is open' });
+    expect(posted).toContainEqual({
+      type: 'error',
+      message: 'no docx document is open',
+      id: 131,
+      code: 'export',
+    });
     expect(docxCalls('docx_export_text')).toHaveLength(0);
     expect(pdfStub()).toBeUndefined();
   });

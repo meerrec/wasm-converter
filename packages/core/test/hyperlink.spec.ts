@@ -57,7 +57,8 @@ class FakeWorker {
       });
     }
     if (msg.type === 'open') {
-      this.reply({ type: 'opened', sheets: [SHEET] });
+      // Ответ обязан эхом вернуть id запроса: по нему просмотрщик находит промис.
+      this.reply({ type: 'opened', id: msg.id, sheets: [SHEET] });
     }
   }
 

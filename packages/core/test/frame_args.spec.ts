@@ -77,10 +77,10 @@ describe('ответ на открытие DOCX', () => {
     { width: 595, height: 842 },
     { width: 595, height: 842 },
   ];
-  const opened: OutMsg = { type: 'docx-opened', pages } satisfies DocxOpenedMsg;
+  const opened: OutMsg = { type: 'docx-opened', id: 1, pages } satisfies DocxOpenedMsg;
 
   it('отдельного тега и страниц хватает, чтобы отличить его от книги', () => {
-    expect(opened).toEqual({ type: 'docx-opened', pages });
+    expect(opened).toEqual({ type: 'docx-opened', id: 1, pages });
     expect('sheets' in opened).toBe(false);
   });
 });
