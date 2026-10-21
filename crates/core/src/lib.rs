@@ -9,6 +9,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 pub mod archive;
+pub mod chunk_reader;
 pub mod error;
 pub mod node_id;
 pub mod rels;
@@ -18,6 +19,7 @@ pub mod xml;
 pub mod zip_limits;
 
 pub use archive::Archive;
+pub use chunk_reader::SegmentedBuffer;
 pub use error::{Error, Result};
 pub use node_id::{NodeId, NodeIdAllocator};
 pub use warning::{ParseWarning, WarningKind, WarningLocation, Warnings};
