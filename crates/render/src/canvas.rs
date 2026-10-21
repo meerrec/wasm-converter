@@ -27,6 +27,15 @@ pub struct OffscreenPainter {
     inner: Painter2D,
 }
 
+/// Реализация общего контракта painter'ов (ADR-0030): обёртка жизненного
+/// цикла делегирует в тот же `Painter2D`, что и worker-путь.
+impl crate::plugin::CanvasPainter for OffscreenPainter {
+    fn paint_bytes(&mut self, bytes: &[u8]) -> Result<PaintStats, crate::plugin::PaintError> {
+        self.paint_bytes(bytes)
+            .map_err(|e| crate::plugin::PaintError(crate::plugin::js_error_string(&e)))
+    }
+}
+
 impl OffscreenPainter {
     #[must_use]
     pub fn new(ctx: OffscreenCanvasRenderingContext2d) -> Self {

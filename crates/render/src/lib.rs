@@ -11,6 +11,7 @@ pub mod font;
 pub mod geometry;
 pub mod hit_test;
 pub mod painter;
+pub mod plugin;
 pub mod sab;
 pub mod text_measure;
 pub mod viewport;

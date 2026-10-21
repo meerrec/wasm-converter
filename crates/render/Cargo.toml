@@ -14,6 +14,9 @@ bytemuck = { workspace = true }
 thiserror = { workspace = true }
 lru = { workspace = true }
 skrifa = { workspace = true }
+# ZipLimits в сигнатуре `FormatPlugin::parse` (ADR-0030): render — общая
+# граница форматов, core лежит ниже неё, цикл зависимостей невозможен.
+doc-converter-core = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
