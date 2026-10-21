@@ -97,14 +97,14 @@ jobs:
       # .gitignore со `*`, npm его учитывает и выбрасывает содержимое pkg/).
       # `npm pack --dry-run` ничего не публикует, не требует авторизации и не
       # пишет тарбол — только печатает список файлов, который здесь и сверяем.
-      - name: npm pack preflight (пять пакетов)
+      - name: npm pack preflight (десять пакетов)
         run: |
           set -euo pipefail
-          for pkg in wasm wasm-docx wasm-pdf core cli; do
+          for pkg in wasm wasm-docx wasm-pdf wasm-pptx wasm-pptx-pdf core cli react vue svelte; do
             files=$(cd "packages/$pkg" && npm pack --dry-run --json 2>/dev/null \
               | jq -r 'if type == "array" then .[0].files else .files end | .[].path')
             case "$pkg" in
-              wasm|wasm-docx|wasm-pdf)
+              wasm|wasm-docx|wasm-pdf|wasm-pptx|wasm-pptx-pdf)
                 printf '%s\n' "$files" | grep -qE '^pkg/[^/]+\.js$' \
                   || { echo "::error::@meerrec/$pkg: в тарболе нет pkg/*.js (содержимое pkg/ выпало целиком)"; printf '%s\n' "$files"; exit 1; }
                 printf '%s\n' "$files" | grep -qE '^pkg/[^/]+\.wasm$' \
@@ -321,8 +321,8 @@ jobs:
           echo "Применяю накопленные changesets (${pending}): versions + CHANGELOG.md"
           pnpm changeset version
 
-      # Согласие двух реестров: npm-пятёрка и крейт doc-converter-core обязаны
-      # иметь одну версию. На теге это уже гарантировал гейт выше, а на
+      # Согласие двух реестров: все десять npm-пакетов и крейт
+      # doc-converter-core обязаны иметь одну версию. На теге это уже гарантировал гейт выше, а на
       # workflow_dispatch этот шаг — единственная проверка: `changeset version`
       # только что поднял npm-версии, а версии крейтов остались прежними
       # (changesets версии Rust не трогает), и без проверки в npm уехала бы
@@ -332,14 +332,14 @@ jobs:
           set -euo pipefail
           crate_version=$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "doc-converter-core") | .version')
-          for pkg in core wasm wasm-docx wasm-pdf cli; do
+          for pkg in core wasm wasm-docx wasm-pdf cli react vue svelte wasm-pptx wasm-pptx-pdf; do
             version=$(node -p "require('./packages/$pkg/package.json').version")
             if [ "$version" != "$crate_version" ]; then
               echo "::error::@meerrec/$pkg@$version не совпадает с версией крейта doc-converter-core $crate_version: в npm и crates.io уехали бы разные версии"
               exit 1
             fi
           done
-          echo "OK: npm-пятёрка и doc-converter-core на версии $crate_version"
+          echo "OK: все десять npm-пакетов и doc-converter-core на версии $crate_version"
 
       - run: pnpm build:wasm
 
@@ -381,11 +381,16 @@ jobs:
             ( cd "packages/$pkg" && pnpm publish --no-git-checks --registry=https://registry.npmjs.org/ --access public )
           }
           # Порядок — по зависимостям: сначала wasm-биндинги (их импортируют
-          # core и cli), затем core, затем cli.
+          # core и cli), затем core и обёртки, зависящие от него, затем cli.
           publish_pkg wasm
           publish_pkg wasm-docx
           publish_pkg wasm-pdf
+          publish_pkg wasm-pptx
+          publish_pkg wasm-pptx-pdf
           publish_pkg core
+          publish_pkg react
+          publish_pkg vue
+          publish_pkg svelte
           publish_pkg cli
 
       # GitHub Packages — действующее зеркало npmjs.org (ADR-0027). После
@@ -414,7 +419,12 @@ jobs:
           publish_pkg wasm
           publish_pkg wasm-docx
           publish_pkg wasm-pdf
+          publish_pkg wasm-pptx
+          publish_pkg wasm-pptx-pdf
           publish_pkg core
+          publish_pkg react
+          publish_pkg vue
+          publish_pkg svelte
           publish_pkg cli
 
       # crates.io — за отдельным выключателем: публикация в crates.io — non-goal
@@ -490,7 +500,7 @@ jobs:
           # гоняем на его родном таргете, иначе cargo собрал бы пустышку.
           publish_crate doc-converter-wasm --target wasm32-unknown-unknown
 
-      # Заметки релиза: верхние секции CHANGELOG.md пяти пакетов (их пишет
+      # Заметки релиза: верхние секции CHANGELOG.md десяти пакетов (их пишет
       # `changeset version` — в этой джобе или в релизном коммите тега).
       # Секции сверяются с публикуемой версией; расхождение или отсутствие
       # CHANGELOG — признак, что версии подняты мимо changesets, тогда
@@ -502,7 +512,7 @@ jobs:
           version=$(node -p "require('./packages/core/package.json').version")
 
           notes_ok=1
-          for pkg in core wasm wasm-docx wasm-pdf cli; do
+          for pkg in core wasm wasm-docx wasm-pdf cli react vue svelte wasm-pptx wasm-pptx-pdf; do
             f="packages/$pkg/CHANGELOG.md"
             if [ ! -f "$f" ]; then
               notes_ok=0
@@ -514,7 +524,7 @@ jobs:
 
           : > release-notes.md
           if [ "$notes_ok" = "1" ]; then
-            for pkg in core wasm wasm-docx wasm-pdf cli; do
+            for pkg in core wasm wasm-docx wasm-pdf cli react vue svelte wasm-pptx wasm-pptx-pdf; do
               {
                 echo "## @meerrec/$pkg"
                 awk '/^## / { if (started) exit; started = 1; next } started { print }' "packages/$pkg/CHANGELOG.md"

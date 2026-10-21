@@ -17,6 +17,8 @@ const packages = [
   'react',
   'vue',
   'svelte',
+  'wasm-pptx',
+  'wasm-pptx-pdf',
 ];
 
 // Единые для всех восьми пакетов значения: монорепозиторий meerrec/wasm-converter.
