@@ -1,9 +1,10 @@
-import type { DocxViewerHandle, XlsxViewerHandle } from '@meerrec/core';
+import type { DocxViewerHandle, PptxViewerHandle, XlsxViewerHandle } from '@meerrec/core';
 
 /** Мост к активному вьюеру: контракт сквозных тестов Playwright. */
 export type ViewerBridge =
   | { kind: 'docx'; viewer: DocxViewerHandle }
-  | { kind: 'xlsx'; viewer: XlsxViewerHandle };
+  | { kind: 'xlsx'; viewer: XlsxViewerHandle }
+  | { kind: 'pptx'; viewer: PptxViewerHandle };
 
 declare global {
   interface Window {

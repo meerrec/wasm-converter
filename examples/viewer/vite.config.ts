@@ -5,8 +5,10 @@ import { defineConfig, type Plugin } from 'vite';
 
 const DOCX_ROOT = path.resolve(import.meta.dirname, '../../test-fixtures/docx');
 const XLSX_ROOT = path.resolve(import.meta.dirname, '../../test-fixtures/xlsx');
+const PPTX_ROOT = path.resolve(import.meta.dirname, '../../test-fixtures/pptx');
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
 
 /**
  * Имена фикстур DOCX — пути от корня фикстур, с категорией (`simple/one_paragraph.docx`):
@@ -46,6 +48,7 @@ interface FixtureRoot {
 const ROOTS: Record<string, FixtureRoot> = {
   docx: { dir: DOCX_ROOT, mime: DOCX_MIME, names: () => docxFixtureNames() },
   xlsx: { dir: XLSX_ROOT, mime: XLSX_MIME, names: xlsxFixtureNames },
+  pptx: { dir: PPTX_ROOT, mime: PPTX_MIME, names: () => docxFixtureNames(PPTX_ROOT) },
 };
 
 /** Путь к фикстуре по имени из запроса; `null` — имени нельзя доверять. */

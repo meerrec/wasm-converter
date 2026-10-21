@@ -285,8 +285,11 @@ printpdf на собственный бэкенд похудел на 31 % gzip.
   вынимается из потока.
 - **VML-фолбэки** (`mc:Fallback`) игнорируются — рисуется только `mc:Choice`
   ([ADR-0014](docs/adr/0014-alternate-content.md)).
-- **PPTX, Strict OOXML и ODF (`.odt`/`.ods`/`.odp`)** — в плане, пока не
-  поддерживаются ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
+- **PPTX поддерживается**: просмотр слайдов, экспорт PDF (слайд = страница,
+  размер из `p:sldSz`), PNG и текстового конспекта (Markdown/HTML/text) —
+  паритет с DOCX/XLSX ([ADR-0033](docs/adr/0033-pptx-plugin.md)). Strict OOXML
+  и ODF (`.odt`/`.ods`/`.odp`) — в плане, пока не поддерживаются
+  ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
 - **Макрофайлы `.docm`** поддерживаются как обычные DOCX: макрос-часть
   (`word/vbaProject.bin`) не читается
   ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).

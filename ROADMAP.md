@@ -67,7 +67,7 @@
 | Парсинг и чтение OOXML | Редактирование документов |
 | Рендеринг на OffscreenCanvas | Колаборация (Yjs / CRDT) |
 | Экспорт в PDF / PNG / MD / HTML / CSV | ИИ-предложения (human-in-the-loop) |
-| DOCX и XLSX | Статусы форматов — [ADR-0039](docs/adr/0039-cancel-v1-non-goals.md) |
+| DOCX, XLSX и PPTX | Статусы форматов — [ADR-0039](docs/adr/0039-cancel-v1-non-goals.md) |
 | Web Worker + OffscreenCanvas | Server-side (кроме batch-CLI) |
 | Zero-copy через Transferables; SAB — ускорение, когда доступен | Real-time синхронизация |
 

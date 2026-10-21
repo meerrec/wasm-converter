@@ -60,4 +60,16 @@ export default [
     gzip: true,
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },
+  {
+    // Экспортёр PPTX в PDF — отдельный ленивый модуль (ADR-0033: просмотрщик
+    // и экспортёр разнесены, как у DOCX): полный стек PPTX+PDF (разбор,
+    // раскладка, шрифты, постраничный бэкенд) стоит ~782 КБ gzip. Лимит
+    // 800 КБ — решение владельца T3.1; строка стережёт возврат экспортёра в
+    // модуль просмотра и рост за счёт фич без пересмотра.
+    name: 'wasm (pptx-pdf)',
+    path: 'packages/wasm-pptx-pdf/pkg/*.wasm',
+    limit: '800 KB',
+    gzip: true,
+    modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
+  },
 ];
