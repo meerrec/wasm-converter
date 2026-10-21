@@ -16,6 +16,25 @@ const ONE_PARAGRAPH: &[u8] = include_bytes!(concat!(
     "/../../test-fixtures/docx/simple/one_paragraph.docx"
 ));
 
+#[wasm_bindgen_test]
+fn cancel_stops_open_and_worker_stays_healthy() {
+    // Флаг, взведённый до открытия, обрывает раскладку на первом блоке (ADR-0032).
+    doc_converter_docx_wasm::docx_api::set_cancel(true);
+    let err = doc_converter_docx_wasm::docx_api::docx_open(ONE_PARAGRAPH.to_vec())
+        .expect_err("взведённый флаг отменяет открытие");
+    assert!(
+        err.as_string()
+            .is_some_and(|m| m.starts_with("[cancelled]")),
+        "ошибка: {err:?}"
+    );
+
+    // Отмена не портит состояние: снятый флаг возвращает обычное открытие.
+    doc_converter_docx_wasm::docx_api::set_cancel(false);
+    let pages = doc_converter_docx_wasm::docx_api::docx_open(ONE_PARAGRAPH.to_vec())
+        .expect("после снятия флага открытие проходит");
+    assert!(pages.is_array(), "ответ — массив страниц");
+}
+
 /// Фикстура с рисунком: у неё в модели есть хотя бы одна медиачасть.
 const INLINE_IMAGE: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
