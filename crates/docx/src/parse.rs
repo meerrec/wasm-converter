@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 use doc_converter_core::rels::{rels_part, RelMap};
 use doc_converter_core::xml::XmlReader;
 use doc_converter_core::zip_limits::ZipLimits;
-use doc_converter_core::{Archive, NodeId, ParseWarning, WarningKind, CONTENT_TYPES, ROOT_RELS};
+use doc_converter_core::{
+    Archive, NodeId, ParseWarning, SegmentedBuffer, WarningKind, CONTENT_TYPES, ROOT_RELS,
+};
 use quick_xml::events::Event;
 
 use crate::context::ParseCtx;
@@ -60,11 +62,16 @@ const SIGNATURE_SCAN: usize = 8 * 1024;
 /// [`Error::EncryptedDocument`] — CFB с потоками шифрования;
 /// [`Error::LegacyFormat`] — прочий CFB, то есть `.doc`.
 fn reject_ole_container(bytes: &[u8]) -> Result<()> {
-    if !bytes.starts_with(&CFB_MAGIC) {
+    reject_ole_window(scan_window(bytes))
+}
+
+/// CFB-проверка по уже отрезанному окну сигнатуры: общая для пути байтов
+/// ([`scan_window`]) и пути стрима ([`SegmentedBuffer::peek`], ADR-0031).
+fn reject_ole_window(window: &[u8]) -> Result<()> {
+    if !window.starts_with(&CFB_MAGIC) {
         return Ok(());
     }
 
-    let window = scan_window(bytes);
     if ENCRYPTION_STREAMS
         .iter()
         .any(|name| contains(window, name.as_bytes()))
@@ -766,7 +773,32 @@ pub fn parse_docx(bytes: &[u8], limits: ZipLimits) -> Result<Document> {
 pub fn parse_docx_owned(bytes: Vec<u8>, limits: ZipLimits) -> Result<Document> {
     reject_ole_container(&bytes)?;
 
-    let mut archive = Archive::open_with_limits(bytes, limits)?;
+    parse_archive(Archive::open_with_limits(bytes, limits)?)
+}
+
+/// Разбирает пакет DOCX из потокового буфера чанков (ADR-0031).
+///
+/// Буфер переходит во владение парса и не собирается в контигуальный
+/// `Vec<u8>`: `Archive::from_segmented` читает чанки как есть. Проверка
+/// CFB-сигнатуры идёт по префиксу буфера до открытия архива — чтение через
+/// `Read` сдвинуло бы позицию, с которой `ZipArchive` начнёт разбор.
+///
+/// # Errors
+/// Тот же набор, что у [`parse_docx`]: [`Error::EncryptedDocument`],
+/// [`Error::LegacyFormat`], [`Error::MacroEnabledDocument`],
+/// [`Error::StrictNotSupported`] — ранние отказы по сигнатуре пакета;
+/// [`Error::MissingPart`] / [`Error::MissingDocumentXml`] — нет обязательной
+/// части; [`Error::XmlFatal`] / [`Error::Malformed`] — часть не читается;
+/// [`Error::Core`] — распаковка и лимиты ZIP (ADR-0015);
+/// [`Error::TooManyWarnings`] — предупреждений больше порога (ADR-0016 §6).
+pub fn parse_docx_segmented(buf: SegmentedBuffer, limits: ZipLimits) -> Result<Document> {
+    reject_ole_window(&buf.peek(SIGNATURE_SCAN))?;
+
+    parse_archive(Archive::from_segmented_with_limits(buf, limits)?)
+}
+
+/// Общее тело разбора: модель собирается одинаково, источник байтов — разный.
+fn parse_archive(mut archive: Archive) -> Result<Document> {
     let mut ctx = ParseCtx::new();
     adopt_archive_warnings(&mut archive, &mut ctx)?;
 

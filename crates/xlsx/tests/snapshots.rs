@@ -140,7 +140,9 @@ fn render_first_sheet(name: &str) -> String {
         Default::default(),
         &PaintOptions::default(),
         &mut dl,
-    );
+        &std::cell::Cell::new(false),
+    )
+    .expect("кадр собирается");
     dump(&dl)
 }
 

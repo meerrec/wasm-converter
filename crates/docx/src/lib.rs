@@ -17,6 +17,7 @@ pub mod error;
 pub mod export;
 pub mod layout;
 pub mod model;
+pub mod plugin;
 pub mod render;
 
 // Парсеры частей пакета и общий контекст разбора.
@@ -76,7 +77,7 @@ pub use model::table::{
     TableBorders, TableLayout, TableLook, TableWidth, VMerge,
 };
 pub use model::{BlockItem, Body, Document, Metadata, Relationships};
-pub use parse::{parse_docx, parse_docx_owned};
+pub use parse::{parse_docx, parse_docx_owned, parse_docx_segmented};
 
 use doc_converter_core::zip_limits::ZipLimits;
 

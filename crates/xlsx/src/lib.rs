@@ -38,6 +38,7 @@ pub mod layout;
 pub mod model;
 pub mod numfmt;
 pub mod paint;
+pub mod plugin;
 pub mod print_settings;
 pub mod sheet_meta;
 pub mod strings;
@@ -73,7 +74,7 @@ pub use workbook::WorkbookMeta;
 use std::collections::HashMap;
 
 use doc_converter_core::rels::{rels_part, RelMap};
-use doc_converter_core::Archive;
+use doc_converter_core::{Archive, SegmentedBuffer};
 
 /// Часть с каталогом листов.
 pub const WORKBOOK_PART: &str = "xl/workbook.xml";
@@ -207,7 +208,23 @@ impl MediaRegistry {
 /// Если байты не OOXML-пакет, в нём нет `xl/workbook.xml` или какая-то из
 /// частей не разбирается.
 pub fn open(bytes: Vec<u8>) -> Result<Workbook> {
-    let mut archive = Archive::new(bytes)?;
+    open_archive(Archive::new(bytes)?)
+}
+
+/// Открыть XLSX из потокового буфера чанков (ADR-0031).
+///
+/// Буфер переходит во владение парса и не собирается в контигуальный
+/// `Vec<u8>`: `Archive::from_segmented` читает чанки как есть. Поведение и
+/// ошибки — как у [`open`].
+///
+/// # Errors
+/// Тот же набор, что у [`open`].
+pub fn open_segmented(buf: SegmentedBuffer) -> Result<Workbook> {
+    open_archive(Archive::from_segmented(buf)?)
+}
+
+/// Общее тело открытия книги: разбор один и тот же, источник байтов — разный.
+fn open_archive(mut archive: Archive) -> Result<Workbook> {
     archive.validate_ooxml()?;
 
     let rels = RelMap::parse(&archive.read(&rels_part(WORKBOOK_PART))?)?;
