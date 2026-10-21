@@ -13,9 +13,11 @@ doc-converter-core = { path = "../core" }
 doc-converter-docx = { path = "../docx" }
 doc-converter-xlsx = { path = "../xlsx" }
 # Мусорные байты подставляются в часть валидного пакета DOCX, для чего цели
-# собирают ZIP в памяти. Записи кладутся `Stored`, но `deflate` включён: он же
-# включён у `doc-converter-core`, и раскладка фич не должна зависеть от цели.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# собирают ZIP в памяти. Записи кладутся `Stored`, но deflate-бэкенд включён: он
+# же включён у `doc-converter-core` (zip 9, flate2 на miniz_oxide), и раскладка
+# фич не должна зависеть от цели.
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 
 # Отдельный workspace: nightly и sanitizer не должны попадать в сборку
 # монорепозитория (в корневом Cargo.toml крейт в `exclude`).

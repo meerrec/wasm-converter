@@ -21,7 +21,7 @@ const TIGHT_LIMITS: ZipLimits = ZipLimits {
 fn read_parts(archive: &mut Archive) {
     // `names()` заимствует архив, поэтому имена сначала копируются в Vec:
     // читать part'ы можно только по `&mut`.
-    let names: Vec<String> = archive.names().map(str::to_owned).take(64).collect();
+    let names: Vec<String> = archive.names().map(|n| n.into_owned()).take(64).collect();
     for name in names {
         let _ = archive.read(&name);
     }

@@ -1,4 +1,5 @@
 //! Read-only OOXML (ZIP) package.
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::io::{Cursor, Read};
 
@@ -51,7 +52,7 @@ impl Archive {
 
         for index in 0..inner.len() {
             let file = inner.by_index(index)?;
-            let name = file.name().to_string();
+            let name = file.name()?.into_owned();
             limits.check_name(&name)?;
 
             // Symlink в OOXML-пакете не бывает легитимным: его содержимое —
@@ -108,15 +109,22 @@ impl Archive {
         self.len() == 0
     }
 
-    pub fn names(&self) -> impl Iterator<Item = &str> {
+    /// Имена частей без symlink'ов.
+    ///
+    /// `file_names()` в zip 9 отдаёт `Result`: имя декодируется из UTF-8/Cp437 и
+    /// может не декодироваться. Такая запись уже отвергнута при открытии
+    /// (`open_with_limits` зовёт `name()?` на каждой части), поэтому здесь
+    /// остаются только корректные имена.
+    pub fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
         self.inner
             .file_names()
-            .filter(|name| !self.symlinks.contains(*name))
+            .filter_map(|name| name.ok())
+            .filter(|name| !self.symlinks.contains(name.as_ref()))
     }
 
     #[must_use]
     pub fn contains(&self, name: &str) -> bool {
-        !self.symlinks.contains(name) && self.inner.file_names().any(|n| n == name)
+        !self.symlinks.contains(name) && self.inner.file_names().any(|n| n.is_ok_and(|c| c == name))
     }
 
     /// Читает part целиком, соблюдая лимиты при распаковке.
