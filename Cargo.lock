@@ -431,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "flate2",
@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-docx"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "criterion",
  "doc-converter-core",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-docx-wasm"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "doc-converter-core",
  "doc-converter-docx",
@@ -481,7 +481,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-pdf"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "criterion",
  "doc-converter-core",
@@ -499,7 +499,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-pdf-wasm"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "doc-converter-core",
  "doc-converter-docx",
@@ -514,10 +514,11 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-render"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "bytemuck",
  "criterion",
+ "doc-converter-core",
  "js-sys",
  "lru",
  "skrifa",
@@ -528,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-wasm"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "doc-converter-core",
  "doc-converter-render",
@@ -543,7 +544,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-xlsx"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "criterion",
