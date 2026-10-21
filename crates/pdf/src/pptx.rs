@@ -335,13 +335,21 @@ fn shape_points(page: &PageGeometry, rect: RectPx, radius: f32) -> Vec<LinePoint
         for step in 0..=ARC_SEGMENTS {
             #[allow(clippy::cast_precision_loss)]
             let angle = start + FRAC_PI_2 * (step as f32 / ARC_SEGMENTS as f32);
-            out.push(point((cx + radius * angle.cos(), cy + radius * angle.sin())));
+            out.push(point((
+                cx + radius * angle.cos(),
+                cy + radius * angle.sin(),
+            )));
         }
     };
     arc(left + radius, bottom + radius, -FRAC_PI_2, &mut points); // левый нижний
     arc(right - radius, bottom + radius, 0.0, &mut points); // правый нижний
     arc(right - radius, top - radius, FRAC_PI_2, &mut points); // правый верхний
-    arc(left + radius, top - radius, std::f32::consts::PI, &mut points); // левый верхний
+    arc(
+        left + radius,
+        top - radius,
+        std::f32::consts::PI,
+        &mut points,
+    ); // левый верхний
     points
 }
 
@@ -395,7 +403,9 @@ fn draw_run(
     ops.push(Op::EndTextSection);
 
     if run.underline {
-        let width_px = registry.measure(DEFAULT_FONT_ID, run.size_px, &run.text).width;
+        let width_px = registry
+            .measure(DEFAULT_FONT_ID, run.size_px, &run.text)
+            .width;
         let y_pt = page.height_pt()
             - page.origin_y_pt()
             - page.y_px_to_pt(baseline_px)
