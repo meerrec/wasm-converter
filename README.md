@@ -238,6 +238,18 @@ Cross-Origin-Embedder-Policy: require-corp
 round-trip < 1 мс на SAB против < 3 мс на буферах (RPC-слой с тех пор удалён
 как неиспользуемый); сборка кадра без деградации (transferables).
 
+Изоляцию дают двумя способами — на сам транспорт это влияет только тем,
+доступен ли он:
+
+- **GitHub Pages + service worker** (текущее демо): заголовки ставит `sw.js`,
+  изоляцию получает Chromium, Firefox и Safari остаются на `bytes`. Патч
+  зависим от вложенных кадров: воркер должен контролировать родителя.
+- **Native COOP/COEP** (рекомендуется для продакшена): заголовки отдаёт сам
+  хостинг, service worker для изоляции не нужен, изоляция есть во всех
+  браузерах с поддержкой COOP/COEP. Пример конфига для Cloudflare Pages —
+  [`demo/cloudflare/_headers`](demo/cloudflare/_headers), порядок подключения
+  и проверки — [`demo/cloudflare/README.md`](demo/cloudflare/README.md).
+
 ## Производительность
 
 Замеры Спринта 12, после миграции PDF-бэкенда
