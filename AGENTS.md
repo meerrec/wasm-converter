@@ -44,7 +44,7 @@ This block is written and re-added by `turbo` before repository-scoped commands 
 | `examples/viewer` | Демо (Vite + React) и Playwright-e2e; страницы `#/docx`, `#/xlsx`, `#/convert`, `#/eurooffice` |
 | `test-fixtures/` | `docx/` — 104 фикстуры с json-сайдкарами, `xlsx/` — 116 книг и `oracle.json` (эталон exceljs), `corrupted/`, `conf-xlsx/` (git-ignored) |
 | `scripts/` | Сборка wasm, генераторы фикстур, оракулы LibreOffice, memory-гейты, стайдинг Pages, сборка Euro-Office |
-| `docs/` | `adr/` (25 ADR и индекс), `sprint-6…13/`, `cookbook/`, `testing/`, `workers.md`, `bench-js.md`, `agent-contract.md` |
+| `docs/` | `adr/` (26 ADR и индекс), `sprint-6…13/`, `cookbook/`, `testing/`, `workers.md`, `bench-js.md`, `agent-contract.md` |
 | `experiments/` | Спайки Спринта 13 (`lowa-spike`, `x2t-spike`); часть артефактов в Git LFS |
 | `target/`, `build/`, `.pages/`, `oracle-out/`, `oracle-out-docx/` | Выводы прогонов, git-ignored |
 
