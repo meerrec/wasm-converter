@@ -529,8 +529,6 @@ dependencies = [
  "doc-converter-core",
  "doc-converter-docx",
  "doc-converter-pdf",
- "doc-converter-pptx",
- "doc-converter-pptx-pdf",
  "doc-converter-xlsx",
  "js-sys",
  "serde",
@@ -569,6 +567,21 @@ dependencies = [
  "doc-converter-render",
  "lopdf",
  "thiserror",
+]
+
+[[package]]
+name = "doc-converter-pptx-pdf-wasm"
+version = "1.1.0"
+dependencies = [
+ "doc-converter-core",
+ "doc-converter-pdf",
+ "doc-converter-pptx",
+ "doc-converter-pptx-pdf",
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
 ]
 
 [[package]]

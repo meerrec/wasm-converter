@@ -13,6 +13,7 @@ members = [
     "crates/pdf-wasm",
     "crates/docx-wasm",
     "crates/pptx-wasm",
+    "crates/pptx-pdf-wasm",
     "crates/wasm",
 ]
 # crates/fuzz — свой workspace (nightly + sanitizer), ему нужен отдельный
@@ -37,6 +38,7 @@ doc-converter-pptx   = { path = "crates/pptx",   version = "1.0.0" }
 doc-converter-pptx-layout = { path = "crates/pptx-layout", version = "1.0.0" }
 doc-converter-pptx-render = { path = "crates/pptx-render", version = "1.0.0" }
 doc-converter-pptx-pdf    = { path = "crates/pptx-pdf",    version = "1.0.0" }
+doc-converter-pptx-pdf-wasm = { path = "crates/pptx-pdf-wasm", version = "1.0.0" }
 doc-converter-pdf    = { path = "crates/pdf",    version = "1.0.0" }
 
 # ── external ────────────────────────────────────────────────

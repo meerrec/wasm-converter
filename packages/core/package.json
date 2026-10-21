@@ -56,6 +56,7 @@
     "@meerrec/wasm-docx": "workspace:*",
     "@meerrec/wasm-pdf": "workspace:*",
     "@meerrec/wasm-pptx": "workspace:*",
+    "@meerrec/wasm-pptx-pdf": "workspace:*",
     "tsup": "^8.3.5",
     "vitest": "^2.1.4",
     "typescript": "^5.6.3"

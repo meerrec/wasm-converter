@@ -30,6 +30,7 @@ wasm-bindgen-test = "0.3"
 zip = { workspace = true }
 
 # rustc эмитит bulk-memory, а bundled wasm-opt в wasm-pack его не понимает.
-# Оптимизацию делает scripts/build-wasm.sh системным wasm-opt, если он есть.
+# Дополнительная оптимизация отключена и в scripts/build-wasm.sh (см. замер
+# там): вывод rustc компактнее, чем после wasm-opt.
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false

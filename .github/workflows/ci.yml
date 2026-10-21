@@ -74,15 +74,15 @@ jobs:
 
       - name: build (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
-        run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm --release
+        run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm -p doc-converter-pptx-pdf-wasm --release
 
-      # На нативном таргете все четыре крейта пусты (`#![cfg(target_arch = "wasm32")]`),
+      # На нативном таргете все пять крейтов пусты (`#![cfg(target_arch = "wasm32")]`),
       # поэтому их доккомментарии проверяет только эта нога матрицы.
       - name: doc (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm --no-deps
+        run: cargo doc --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm -p doc-converter-pptx-pdf-wasm --no-deps
 
   wasm:
     name: Wasm bindings
@@ -139,6 +139,7 @@ jobs:
           check_exports packages/wasm-pdf/pkg/doc_converter_pdf_wasm.d.ts crates/pdf-wasm/src
           check_exports packages/wasm-docx/pkg/doc_converter_docx_wasm.d.ts crates/docx-wasm/src
           check_exports packages/wasm-pptx/pkg/doc_converter_pptx_wasm.d.ts crates/pptx-wasm/src
+          check_exports packages/wasm-pptx-pdf/pkg/doc_converter_pptx_pdf_wasm.d.ts crates/pptx-pdf-wasm/src
 
       # Просмотрщик DOCX уехал из основного модуля в ленивый `wasm-docx`;
       # экспорты `docx_*` в `packages/wasm/pkg` означают его возврат в основной
@@ -180,6 +181,11 @@ jobs:
         with:
           name: wasm-pptx-pkg
           path: packages/wasm-pptx/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pptx-pdf-pkg
+          path: packages/wasm-pptx-pdf/pkg
 
   # Браузерные wasm-bindgen-тесты до этой джобы не запускались нигде: в
   # crates/wasm/tests/ живёт регрессия кэша стилей painter'а, тесты остальных
@@ -262,6 +268,10 @@ jobs:
       - name: wasm-pack test (pptx)
         run: wasm-pack test --headless --chrome --release crates/pptx-wasm
 
+      # Тесты экспортёра PPTX в PDF — в отдельном крейте `crates/pptx-pdf-wasm`.
+      - name: wasm-pack test (pptx-pdf)
+        run: wasm-pack test --headless --chrome --release crates/pptx-pdf-wasm
+
   js:
     name: JS (node ${{ matrix.node }})
     needs: wasm
@@ -302,6 +312,11 @@ jobs:
         with:
           name: wasm-pptx-pkg
           path: packages/wasm-pptx/pkg
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-pptx-pdf-pkg
+          path: packages/wasm-pptx-pdf/pkg
 
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 

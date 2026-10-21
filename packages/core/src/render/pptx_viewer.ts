@@ -97,10 +97,11 @@ export interface PptxViewerOptions {
    */
   pptxWasm?: PptxModuleUrls;
   /**
-   * Где лежит ленивый PDF-модуль. Воркер грузит его при первом экспорте в PDF;
-   * не задан — кнопка экспорта получит внятную ошибку вместо файла.
+   * Где лежит ленивый PPTX-PDF-модуль. Воркер грузит его при первом экспорте в
+   * PDF; не задан — кнопка экспорта получит внятную ошибку вместо файла.
+   * Просмотрщик и экспортёр PPTX разнесены по модулям, как у DOCX (ADR-0033).
    */
-  pdfWasm?: PdfModuleUrls;
+  pptxPdfWasm?: PdfModuleUrls;
   /** Размер слота ring'а в байтах. */
   slotCapacity?: number;
   /**
@@ -343,7 +344,7 @@ export async function createPptxViewer(
         backend: renderMode,
         wasmUrl: options.wasmUrl,
         pptx: options.pptxWasm,
-        pdf: options.pdfWasm,
+        pptxPdf: options.pptxPdfWasm,
         slotCapacity,
         transport: options.transport,
       } satisfies InMsg;

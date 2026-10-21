@@ -40,6 +40,12 @@ wasm-pack build crates/pptx-wasm \
   --out-name doc_converter_pptx_wasm \
   --release
 
+wasm-pack build crates/pptx-pdf-wasm \
+  --target web \
+  --out-dir "$ROOT/packages/wasm-pptx-pdf/pkg" \
+  --out-name doc_converter_pptx_pdf_wasm \
+  --release
+
 # wasm-pack кладёт в каждый pkg/ свой .gitignore со содержимым `*`. npm при
 # упаковке читает .gitignore внутри каталогов и учитывает его, поэтому всё
 # содержимое pkg/ выпадает из тарбола — вместе с самим .wasm, и пакет уезжает
@@ -50,7 +56,8 @@ wasm-pack build crates/pptx-wasm \
 rm -f "$ROOT/packages/wasm/pkg/.gitignore" \
       "$ROOT/packages/wasm-pdf/pkg/.gitignore" \
       "$ROOT/packages/wasm-docx/pkg/.gitignore" \
-      "$ROOT/packages/wasm-pptx/pkg/.gitignore"
+      "$ROOT/packages/wasm-pptx/pkg/.gitignore" \
+      "$ROOT/packages/wasm-pptx-pdf/pkg/.gitignore"
 
 if command -v wasm-opt >/dev/null 2>&1; then
   wasm-opt -O4 packages/wasm/pkg/doc_converter_wasm_bg.wasm \
@@ -61,6 +68,8 @@ if command -v wasm-opt >/dev/null 2>&1; then
     -o packages/wasm-docx/pkg/doc_converter_docx_wasm_bg.wasm
   wasm-opt -O4 packages/wasm-pptx/pkg/doc_converter_pptx_wasm_bg.wasm \
     -o packages/wasm-pptx/pkg/doc_converter_pptx_wasm_bg.wasm
+  wasm-opt -O4 packages/wasm-pptx-pdf/pkg/doc_converter_pptx_pdf_wasm_bg.wasm \
+    -o packages/wasm-pptx-pdf/pkg/doc_converter_pptx_pdf_wasm_bg.wasm
 fi
 
-echo "OK: WASM built -> packages/wasm/pkg/, packages/wasm-pdf/pkg/, packages/wasm-docx/pkg/, packages/wasm-pptx/pkg/"
+echo "OK: WASM built -> packages/wasm/pkg/, packages/wasm-pdf/pkg/, packages/wasm-docx/pkg/, packages/wasm-pptx/pkg/, packages/wasm-pptx-pdf/pkg/"

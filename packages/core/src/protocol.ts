@@ -173,6 +173,12 @@ export interface InitMsg {
   docx?: DocxModuleUrls | undefined;
   /** Где лежит PPTX-модуль. Не задан — открыть презентацию не получится. */
   pptx?: PptxModuleUrls | undefined;
+  /**
+   * Где лежит PPTX-PDF-модуль. Не задан — экспорт презентации в PDF ответит
+   * внятной ошибкой. Просмотрщик и экспортёр PPTX разнесены по модулям, как у
+   * DOCX (ADR-0033).
+   */
+  pptxPdf?: PdfModuleUrls | undefined;
   slotCapacity: number;
   /**
    * Транспорт кадра. `auto` (по умолчанию) — `sab`, если `SharedArrayBuffer`

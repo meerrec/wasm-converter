@@ -9,6 +9,15 @@
 // основной бандл.
 export default [
   { path: 'packages/core/dist/worker.js', limit: '550 KB', gzip: true },
+  {
+    // Воркер PPTX — отдельный бандл (направление «воркер на формат»,
+    // ADR-0030 §6): тот же бюджет, что у общего воркера — в нём те же
+    // painter/SAB-обвязка и кадровый цикл.
+    name: 'core (pptx-worker)',
+    path: 'packages/core/dist/pptx_worker.js',
+    limit: '550 KB',
+    gzip: true,
+  },
   { path: 'packages/core/dist/index.js',  limit: '200 KB', gzip: true },
   {
     // Бюджет поднят 300 → 480 КБ в Спринте 12: коммит b43a2de вшил четыре
@@ -27,6 +36,17 @@ export default [
     name: 'wasm (docx)',
     path: 'packages/wasm-docx/pkg/*.wasm',
     limit: '400 KB',
+    gzip: true,
+    modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
+  },
+  {
+    // Просмотрщик PPTX — второй ленивый воркер-модуль: бюджет как у docx
+    // (480 КБ — решение T3.1, ADR-0033). PDF-экспорта в модуле нет —
+    // `export_pptx_pdf` живёт в @meerrec/wasm-pdf, поэтому строка стережёт
+    // возврат PDF-кода в просмотрщик.
+    name: 'wasm (pptx)',
+    path: 'packages/wasm-pptx/pkg/*.wasm',
+    limit: '480 KB',
     gzip: true,
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },

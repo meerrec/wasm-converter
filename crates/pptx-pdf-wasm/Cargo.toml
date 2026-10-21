@@ -1,0 +1,31 @@
+[package]
+name = "doc-converter-pptx-pdf-wasm"
+version.workspace = true
+edition = "2021"
+license = "Apache-2.0"
+# На crates.io не публикуется: крейт — только сборочный вход wasm-pack для
+# npm-пакета @meerrec/wasm-pptx-pdf (scripts/build-wasm.sh).
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+doc-converter-core = { workspace = true }
+doc-converter-pdf = { workspace = true }
+doc-converter-pptx = { workspace = true }
+# Экспортёр PPTX — отдельный крейт (ADR-0033: просмотрщик и экспортёр
+# разнесены по модулям); `doc-converter-pptx` разбирает байты пакета.
+doc-converter-pptx-pdf = { workspace = true }
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+js-sys = "0.3"
+
+# rustc эмитит bulk-memory, а bundled wasm-opt в wasm-pack его не понимает.
+# Оптимизацию делает scripts/build-wasm.sh системным wasm-opt, если он есть.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

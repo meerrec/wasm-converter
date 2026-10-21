@@ -32,6 +32,9 @@ export type DocxWasm = typeof import('@meerrec/wasm-docx');
 /** Тип ленивого PPTX-модуля берём у сгенерированных wasm-bindgen деклараций. */
 export type PptxWasm = typeof import('@meerrec/wasm-pptx');
 
+/** Тип ленивого PPTX-PDF-модуля берём у сгенерированных wasm-bindgen деклараций. */
+export type PptxPdfWasm = typeof import('@meerrec/wasm-pptx-pdf');
+
 /** Тип ленивого PDF-модуля берём у сгенерированных wasm-bindgen деклараций. */
 export type PdfWasm = typeof import('@meerrec/wasm-pdf');
 
@@ -174,9 +177,9 @@ export const exportDocxPdf = (
   options: PdfOptionsWire,
 ): Uint8Array => mod.export_docx_pdf(bytes, options);
 
-/** Экспортировать презентацию PPTX в PDF. */
+/** Экспортировать презентацию PPTX в PDF. Модуль ленивый и свой у формата. */
 export const exportPptxPdf = (
-  mod: PdfWasm,
+  mod: PptxPdfWasm,
   bytes: Uint8Array,
   options: PdfOptionsWire,
 ): Uint8Array => mod.export_pptx_pdf(bytes, options);

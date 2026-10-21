@@ -42,7 +42,7 @@ import {
   openPptxStream,
   paintBytes,
   paintSab,
-  type PdfWasm,
+  type PptxPdfWasm,
   type PptxWasm,
 } from './wasm_typed.js';
 
@@ -111,31 +111,31 @@ function freeStream(entry: OpenStream): void {
   pptxWasm?.stream_free(entry.streamId);
 }
 
-/** Откуда грузить PDF-модуль: заполняется на `init`, до него экспорта нет. */
-let pdfUrls: PdfModuleUrls | null = null;
+/** Откуда грузить PPTX-PDF-модуль: заполняется на `init`, до него экспорта нет. */
+let pptxPdfUrls: PdfModuleUrls | null = null;
 /** Загруженный модуль: `import()` и `init()` платятся один раз за воркер. */
-let pdfWasm: PdfWasm | null = null;
+let pptxPdfWasm: PptxPdfWasm | null = null;
 /** Незавершённая загрузка — чтобы два клика подряд не тянули модуль дважды. */
-let pdfWasmLoading: Promise<PdfWasm> | null = null;
+let pptxPdfWasmLoading: Promise<PptxPdfWasm> | null = null;
 
 /**
- * Загрузить PDF-модуль по требованию. Неудача не кэшируется: следующий клик
- * попробует снова, иначе один сетевой сбой навсегда ломал бы экспорт.
+ * Загрузить PPTX-PDF-модуль по требованию. Неудача не кэшируется: следующий
+ * клик попробует снова, иначе один сетевой сбой навсегда ломал бы экспорт.
  */
-async function loadPdfWasm(urls: PdfModuleUrls): Promise<PdfWasm> {
-  if (pdfWasm) return pdfWasm;
-  pdfWasmLoading ??= (async () => {
+async function loadPptxPdfWasm(urls: PdfModuleUrls): Promise<PptxPdfWasm> {
+  if (pptxPdfWasm) return pptxPdfWasm;
+  pptxPdfWasmLoading ??= (async () => {
     // URL динамический: модуль лежит отдельным файлом, и статический импорт
     // вернул бы его в основной бандл — ровно то, от чего мы ушли.
-    const mod = (await import(/* @vite-ignore */ urls.module)) as PdfWasm;
+    const mod = (await import(/* @vite-ignore */ urls.module)) as PptxPdfWasm;
     await mod.default(urls.binary);
-    pdfWasm = mod;
+    pptxPdfWasm = mod;
     return mod;
   })();
   try {
-    return await pdfWasmLoading;
+    return await pptxPdfWasmLoading;
   } catch (e) {
-    pdfWasmLoading = null;
+    pptxPdfWasmLoading = null;
     throw e;
   }
 }
@@ -461,7 +461,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       try {
         await init(msg.wasmUrl);
         backend = msg.backend ?? 'worker';
-        pdfUrls = msg.pdf ?? null;
+        pptxPdfUrls = msg.pptxPdf ?? null;
         pptxUrls = msg.pptx ?? null;
         slotCapacity = msg.slotCapacity;
 
@@ -747,11 +747,11 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       break;
     }
     case 'export-pptx-pdf': {
-      const urls = pdfUrls;
+      const urls = pptxPdfUrls;
       // Снимок: за время загрузки модуля презентацию могли закрыть или сменить.
       const source = sourceBytes;
       if (!urls) {
-        postError('pdf module is not configured: init has no pdf urls', {
+        postError('pptx-pdf module is not configured: init has no pptxPdf urls', {
           id: msg.id,
           code: 'export',
         });
@@ -763,7 +763,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       }
       try {
         // Первый клик платит за загрузку модуля; дальше он уже в памяти.
-        const mod = await loadPdfWasm(urls);
+        const mod = await loadPptxPdfWasm(urls);
         const bytes = exportPptxPdf(mod, new Uint8Array(source), msg.options);
         post({ type: 'pdf', id: msg.id, bytes }, [bytes.buffer]);
       } catch (e) {

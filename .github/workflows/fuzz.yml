@@ -70,7 +70,7 @@ jobs:
           # его через fromJSON, и одна лишняя кавычка стоила бы всего прогона.
           all_targets=$(printf '%s\n' \
               core_zip core_xml_reader core_rels xlsx_worksheet \
-              docx_document docx_styles docx_numbering docx_rels |
+              docx_document docx_styles docx_numbering docx_rels pptx_presentation |
             jq -Rcn '[inputs]')
           # Одиночная цель тоже проходит через jq — так значение гарантированно
           # попадает в кавычки и не сломает JSON.
@@ -182,7 +182,7 @@ jobs:
           mkdir -p "$dir"
           flatten() { tr '/' '_'; }
           copy_docs() {
-            find test-fixtures -type f \( -name '*.docx' -o -name '*.xlsx' \) -print0 |
+            find test-fixtures -type f \( -name '*.docx' -o -name '*.xlsx' -o -name '*.pptx' \) -print0 |
               while IFS= read -r -d '' f; do cp "$f" "$dir/$(printf '%s' "$f" | flatten)"; done
           }
           extract() {
@@ -191,7 +191,7 @@ jobs:
             # `word/_rels/document.xml.rels`), и без части они бы затирали
             # друг друга.
             if ! command -v unzip >/dev/null; then return 1; fi
-            find test-fixtures -type f \( -name '*.docx' -o -name '*.xlsx' \) -print0 |
+            find test-fixtures -type f \( -name '*.docx' -o -name '*.xlsx' -o -name '*.pptx' \) -print0 |
               while IFS= read -r -d '' f; do
                 while IFS= read -r entry; do
                   out="$dir/$(printf '%s.%s' "$f" "$entry" | flatten)"
@@ -227,6 +227,11 @@ jobs:
               ;;
             docx_rels)
               extract 'word/_rels/document.xml.rels' || copy_docs
+              ;;
+            pptx_presentation)
+              # pptx-цель подставляет сид в часть слайда, поэтому и корпус ей
+              # нужен распакованной частью, а не пакетом.
+              extract 'ppt/slides/slide1.xml' || copy_docs
               ;;
           esac
           # Пустой корпус — не ошибка (`extract` может не найти ни одной части

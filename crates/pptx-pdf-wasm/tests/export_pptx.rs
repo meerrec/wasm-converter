@@ -13,10 +13,10 @@ const TWO_SLIDES: &[u8] = include_bytes!(concat!(
     "/../../test-fixtures/pptx/simple/two_slides.pptx"
 ));
 
-/// PDF собирается: заголовок и хвост на месте, страниц — сколько слайдов.
+/// PDF собирается: заголовок и хвост на месте, байтов — не пустой файл.
 #[wasm_bindgen_test]
-fn export_pptx_pdf_has_one_page_per_slide() {
-    let pdf = doc_converter_pdf_wasm::export_pptx_pdf(TWO_SLIDES, JsValue::UNDEFINED)
+fn export_pptx_pdf_produces_a_pdf() {
+    let pdf = doc_converter_pptx_pdf_wasm::export_pptx_pdf(TWO_SLIDES, JsValue::UNDEFINED)
         .expect("фикстура экспортируется");
     assert!(pdf.starts_with(b"%PDF"), "заголовок PDF");
     assert!(pdf.ends_with(b"%%EOF"), "хвост PDF");
@@ -25,7 +25,7 @@ fn export_pptx_pdf_has_one_page_per_slide() {
 /// Мусор вместо пакета — ошибка с сообщением, а не пустой массив и не паника.
 #[wasm_bindgen_test]
 fn garbage_is_an_error() {
-    let error = doc_converter_pdf_wasm::export_pptx_pdf(b"not a pptx", JsValue::UNDEFINED)
+    let error = doc_converter_pptx_pdf_wasm::export_pptx_pdf(b"not a pptx", JsValue::UNDEFINED)
         .expect_err("мусор не экспортируется");
     let message = error.as_string().unwrap_or_default();
     assert!(!message.is_empty(), "ошибка приходит сообщением");
