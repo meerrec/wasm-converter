@@ -43,6 +43,28 @@ pnpm cli convert report.docx -o report.pdf
 doc-converter convert report.docx -o report.pdf
 ```
 
+## Рантаймы
+
+CLI запускается на Node, Bun и Deno: общий код не импортирует
+`node:worker_threads` и `node:os`, пул воркеров и чтение wasm-байтов спрятаны
+за адаптером (`src/runtime.ts`). Bun идёт по ветке Node, Deno — по своей: пул
+на веб-воркерах (`worker-deno.js`), wasm-байты через `import.meta.resolve`.
+
+| Рантайм | Установленный пакет | Из монорепозитория |
+|---|---|---|
+| Node ≥ 20 | `doc-converter convert report.docx -o report.pdf` | `node packages/cli/dist/cli.js convert report.docx -o report.pdf` |
+| Bun | `bunx @meerrec/cli convert report.docx -o report.pdf` | `bun packages/cli/dist/cli.js convert report.docx -o report.pdf` |
+| Deno | `deno run --allow-read --allow-write npm:@meerrec/cli convert report.docx -o report.pdf` | `deno run --allow-read --allow-write packages/cli/dist/cli.js convert report.docx -o report.pdf` |
+
+`bunx`/`npm:`-команды требуют публикации в npmjs.org (ADR-0027); пока пакет
+доступен только в GitHub Packages, ставьте его npm'ом и запускайте bin
+`doc-converter`. Для Deno хватает `--allow-read` (фикстуры, `package.json` и
+wasm-модули) и `--allow-write` (выходной файл); сеть не нужна. Права
+наследуются веб-воркерами, поэтому `batch` работает с теми же флагами.
+
+`engines` объявляет только Node (`>=20`): совместимость с Bun и Deno
+проверяет workflow `cli-runtimes.yml`.
+
 ## Команды
 
 ### `convert`

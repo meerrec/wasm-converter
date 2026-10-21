@@ -11,6 +11,7 @@ import { availableParallelism } from 'node:os';
 
 import { CliError } from './errors.js';
 import { parseFormat, type OutputFormat } from './formats.js';
+import type { CliRuntime } from './runtime.js';
 
 /** Опции PDF, которые понимает wasm-модуль `pdf-wasm`. */
 export interface PdfCliOptions {
@@ -97,7 +98,10 @@ interface ScanResult {
   help: boolean;
 }
 
-export function parseArgs(argv: readonly string[]): Command {
+/** Рантайм нужен только для умолчания `--workers`; остальное — чистый разбор. */
+export type ParallelismSource = Pick<CliRuntime, 'availableParallelism'>;
+
+export function parseArgs(argv: readonly string[], runtime?: ParallelismSource): Command {
   if (argv.length === 0) return { kind: 'help' };
 
   const command = argv[0];
@@ -109,7 +113,7 @@ export function parseArgs(argv: readonly string[]): Command {
     case 'convert':
       return toConvert(scan(rest));
     case 'batch':
-      return toBatch(scan(rest));
+      return toBatch(scan(rest), runtime);
     default:
       throw new CliError(`unknown command '${command}': expected 'convert', 'batch', 'help' or 'version'`);
   }
@@ -219,11 +223,11 @@ function toConvert(scanned: ScanResult): Command {
   };
 }
 
-function toBatch(scanned: ScanResult): Command {
+function toBatch(scanned: ScanResult, runtime?: ParallelismSource): Command {
   if (scanned.help) return { kind: 'help' };
   if (scanned.positionals.length === 0) throw new CliError("'batch' needs at least one input file, directory or glob");
   if (scanned.out === null) throw new CliError("'batch' needs --out <dir>");
-  const workers = scanned.workers === null ? defaultWorkers() : parseIndex(scanned.workers, '--workers');
+  const workers = scanned.workers === null ? defaultWorkers(runtime) : parseIndex(scanned.workers, '--workers');
   if (workers < 1) throw new CliError('--workers must be at least 1');
   return {
     kind: 'batch',
@@ -237,9 +241,16 @@ function toBatch(scanned: ScanResult): Command {
   };
 }
 
-/** Умолчание воркеров: по числу ядер, но не больше восьми — дальше выигрыша нет. */
-export function defaultWorkers(): number {
-  return Math.max(1, Math.min(8, availableParallelism()));
+/**
+ * Умолчание воркеров: по числу ядер, но не больше восьми — дальше выигрыша нет.
+ *
+ * CLI передаёт рантайм (Node/Bun — `os.availableParallelism`, Deno —
+ * `navigator.hardwareConcurrency`). Без рантайма (программный вызов, тесты)
+ * берётся `node:os`: его реализуют все три рантайма, включая Deno.
+ */
+export function defaultWorkers(runtime?: ParallelismSource): number {
+  const cores = runtime?.availableParallelism() ?? availableParallelism();
+  return Math.max(1, Math.min(8, cores));
 }
 
 function parsePageSize(value: string): NonNullable<PdfCliOptions['pageSize']> {
