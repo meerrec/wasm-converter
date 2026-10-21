@@ -264,7 +264,7 @@ jobs:
           # файлы не считает — иначе релизный коммит пришлось бы доводить
           # вторым коммитом-удалением с красным dry-run (прецедент v1.0.0:
           # `1a1a251` удалял хвостовой changeset отдельным коммитом).
-          pending=$(grep -lE "^['\"]" .changeset/*.md 2>/dev/null | wc -l | tr -d ' ')
+          pending=$(grep -lE "^['\"]" .changeset/*.md 2>/dev/null | wc -l | tr -d ' ') || true
           if [ "$pending" -ne 0 ]; then
             echo "::error::дерево тега $GITHUB_REF_NAME содержит нерелизнутых changesets: $pending — это не релизный коммит, changeset version увёл бы публикацию вперёд тега"
             exit 1
@@ -313,7 +313,7 @@ jobs:
           # Пустые changesets (без объявлений релизов) версии не двигают —
           # их `changeset version` лишь удалил бы; считать релизными только
           # файлы с объявлениями (frontmatter со строкой `'@scope/pkg': …`).
-          pending=$(grep -lE "^['\"]" .changeset/*.md 2>/dev/null | wc -l | tr -d ' ')
+          pending=$(grep -lE "^['\"]" .changeset/*.md 2>/dev/null | wc -l | tr -d ' ') || true
           if [ "$pending" -eq 0 ]; then
             echo "Нерелизнутых changesets нет — версии npm-пакетов берём из package.json тега"
             exit 0
