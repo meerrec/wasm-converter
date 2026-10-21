@@ -10,6 +10,7 @@ repository = "https://github.com/meerrec/wasm-converter"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+doc-converter-core = { workspace = true }
 doc-converter-render = { workspace = true }
 doc-converter-xlsx = { workspace = true }
 wasm-bindgen = "0.2"

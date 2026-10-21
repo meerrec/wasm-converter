@@ -1,31 +1,13 @@
 // Разбор запроса кадра в аргументы былл-функций. Отдельно от воркера: это
 // чистая логика, и её видно тестам — без wasm и без настоящего воркера.
+import type { RenderOptionsWire, ViewportWire } from '../generated/wire.js';
 import type { DocFormat, RenderConfig, RenderRequest, Viewport } from '../protocol.js';
 
 /** Формат открытого документа; `null` — не открыто ничего. */
 export type OpenFormat = DocFormat | null;
 
-/**
- * Окно в единицах Rust. Единицы намеренно разные: смещение — пиксели
- * раскладки (до зума), размер — физические пиксели canvas.
- */
-export interface RustViewport {
-  scrollX: number;
-  scrollY: number;
-  width: number;
-  height: number;
-  scale: number;
-}
-
-/** Настройки показа в том виде, в каком их ждёт Rust. Нужны только кадру XLSX. */
-export interface XlsxRenderOptions {
-  showGrid: boolean;
-  showHeaders: boolean;
-  dark: boolean;
-}
-
 /** Окно в единицах Rust. */
-export const toViewport = (v: Viewport): RustViewport => ({
+export const toViewport = (v: Viewport): ViewportWire => ({
   scrollX: v.x,
   scrollY: v.y,
   width: v.w,
@@ -34,7 +16,7 @@ export const toViewport = (v: Viewport): RustViewport => ({
 });
 
 /** Настройки показа в единицах Rust. */
-export const toOptions = (config: RenderConfig): XlsxRenderOptions => ({
+export const toOptions = (config: RenderConfig): RenderOptionsWire => ({
   showGrid: config.showGrid,
   showHeaders: config.showHeaders,
   dark: config.theme === 'dark',
@@ -48,8 +30,8 @@ export const toOptions = (config: RenderConfig): XlsxRenderOptions => ({
  * них не зависит.
  */
 export type FrameTarget =
-  | { kind: 'xlsx'; sheet: number; viewport: RustViewport; options: XlsxRenderOptions }
-  | { kind: 'docx'; gap: number; viewport: RustViewport };
+  | { kind: 'xlsx'; sheet: number; viewport: ViewportWire; options: RenderOptionsWire }
+  | { kind: 'docx'; gap: number; viewport: ViewportWire };
 
 /**
  * Разобрать запрос кадра под формат открытого документа.
