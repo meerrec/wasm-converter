@@ -1,11 +1,12 @@
 // URL-ы воркеров и ленивых wasm-модулей. Здесь они собраны в одном месте,
-// потому что нужны страницам, а собираться должны один раз: чанки воркеров и
-// wasm-модулей общие для DOCX и XLSX.
+// потому что нужны страницам: у каждого формата свой воркер-бандл, а
+// wasm-модули DOCX/PDF общие.
 
 // Воркеры подключаются суффиксом `?worker&url`: только так Vite собирает их
 // отдельными чанками. Голый `new URL('./docx_worker.ts', import.meta.url)` он
 // считает обычным ассетом и инлайнит исходник в data-URL, где импорт
-// `@meerrec/core/xlsx-worker` уже не разрешается, — воркер молча не стартует.
+// `@meerrec/core/xlsx-worker` (или `docx-worker`) уже не разрешается, — воркер
+// молча не стартует.
 import docxWorkerFileUrl from '../workers/docx_worker.ts?worker&url';
 import xlsxWorkerFileUrl from '../workers/xlsx_worker.ts?worker&url';
 import pptxWorkerFileUrl from '../workers/pptx_worker.ts?worker&url';
