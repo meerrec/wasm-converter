@@ -455,7 +455,7 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 6. Фикстуры: 20 XLSX + 20 DOCX в `test-fixtures/`.
 7. Тесты: parse `[Content_Types].xml`, `proptest` XML round-trip.
 
-**Артефакт:** `@meerrec/core@0.1.0` — на тот момент публикация планировалась в npm + crates.io; фактически npm-пакеты опубликованы в GitHub Packages (действующее зеркало), npmjs.org — целевой основной реестр (публикация готовится, [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)), а crates.io закрыт как non-goal v1.x ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)).
+**Артефакт:** `@meerrec/core@0.1.0` — на тот момент публикация планировалась в npm + crates.io; фактически npm-пакеты опубликованы в GitHub Packages (действующее зеркало), npmjs.org — основной реестр (публикация выполнена (v1.2.0, десять пакетов), [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)), а crates.io закрыт как non-goal v1.x ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)).
 
 **DoD:**
 - ✅ `cargo test --workspace` зелёный.
@@ -964,7 +964,7 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 
 ### Спринт 12 (недели 24–25): Релиз v1.0
 
-**Цель:** довести проект до публикации — аудит, документация, примеры в трёх браузерах, npm-пакеты: npmjs.org — целевой основной реестр (публикация готовится, [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)), GitHub Packages — действующее зеркало (crates.io — non-goal v1.x, [ADR-0026](docs/adr/0026-rust-crates-distribution.md)).
+**Цель:** довести проект до публикации — аудит, документация, примеры в трёх браузерах, npm-пакеты: npmjs.org — основной реестр (публикация выполнена (v1.2.0, десять пакетов), [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)), GitHub Packages — действующее зеркало (crates.io — non-goal v1.x, [ADR-0026](docs/adr/0026-rust-crates-distribution.md)).
 
 **Задачи:**
 
@@ -974,11 +974,11 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 4. Migration guides: `migration-from-mammoth.md`, `-from-exceljs.md` — ✅ сделаны (`docs/`).
 5. Демо-приложение — ✅ сделано: `pages.yml` собирает обе страницы (`/#/xlsx`, `/#/docx`), дым-прогон `bytes`-транспорта (`docs/sprint-12/demo.md`).
 6. Видео-демо: scroll 1M ячеек 60 FPS — ⚠️ заменено на демо на GitHub Pages + бенч-отчёт `docs/bench-js.md` (решение 4 плана Спринта 12).
-7. Публикация npm-пакетов — ✅ сделано: пять пакетов `@meerrec/*@1.0.0` в **GitHub Packages** этого репозитория по тегу `v1.0.0`; npmjs.org — целевой основной реестр (публикация готовится, [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)), GitHub Packages — действующее зеркало. Rust-крейты отдаются ассетами релиза, публикация в crates.io — осознанный non-goal v1.x ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)). Публикует `.github/workflows/release.yml`.
+7. Публикация npm-пакетов — ✅ сделано: пять пакетов `@meerrec/*@1.0.0` в **GitHub Packages** этого репозитория по тегу `v1.0.0`; npmjs.org — основной реестр (публикация выполнена (v1.2.0, десять пакетов), [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)), GitHub Packages — действующее зеркало. Rust-крейты отдаются ассетами релиза, публикация в crates.io — осознанный non-goal v1.x ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)). Публикует `.github/workflows/release.yml`.
 8. GitHub Release + changelog — ⬜ ожидает S4.3 (заметки релиза собирает джоба `publish` из CHANGELOG пяти пакетов).
 
 **DoD:**
-- ✅ Пакеты v1.0.0: npm-пятёрка (`@meerrec/core`, `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`, `@meerrec/cli`) — в GitHub Packages этого репозитория (действующее зеркало; npmjs.org — целевой основной реестр, публикация готовится — [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)); Rust-крейты — ассетами релиза `v1.0.0` (`doc-converter-*.crate`), в crates.io не публикуются — non-goal v1.x ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)).
+- ✅ Пакеты v1.0.0: npm-пятёрка (`@meerrec/core`, `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`, `@meerrec/cli`) — в GitHub Packages этого репозитория (действующее зеркало; npmjs.org — основной реестр, публикация выполнена (v1.2.0, десять пакетов) — [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)); Rust-крейты — ассетами релиза `v1.0.0` (`doc-converter-*.crate`), в crates.io не публикуются — non-goal v1.x ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)).
 - ⚠️ Документация на docs.doc-converter.dev — хостинг не заводился; публичная документация: README, cookbook, migration guides и TypeDoc (`docs/api/`); docs.rs нет — крейты в crates.io не публикуются ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)).
 - ✅ Примеры в 3 браузерах (Playwright Chromium + Firefox + WebKit) — 80 passed, 2 skipped штатных + проект chromium-dpr2 (`docs/sprint-12/rc.md`).
 - ✅ Покрытие ≥ 85% / 80% — docx 92,75 %, core 97,68 % (гейты CI).
@@ -1044,7 +1044,7 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 | 18–19 | DOCX | Layout | сделано: пагинация, секции, каскад стилей, таблицы, floats; сверка с эталоном измерена в Спринте 11 — число страниц ±1 у 97 из 98, SSIM первой страницы mean 0,9782 (табличные фикстуры тянут вниз), пагинация 100 страниц 20,1 мс (`docs/sprint-11/report.md`) |
 | 20–21 | DOCX | Рендер + PDF | сделано: просмотрщик DOCX — 101 из 104 фикстур (3 фатальные отвергнуты), PDF — 211 страниц за 438–469 мс debug / 23,6–24,0 мс release, экспорт Markdown/HTML/текста, разрез wasm-модуля 440,17 → 285,38 + 354,58 КБ gzip |
 | 22–23 | Полировка | SAB (оба пути) + CLI | сделано в Спринте 11: оба транспорта кадра first-class (ADR-0021), `@meerrec/cli` с WorkerPool (116 файлов за 0,20 с), бенчмарки vs JS (медиана ×5,3 — цель ×10–300 не подтверждена), README про COOP/COEP; отчёт — `docs/sprint-11/report.md` |
-| 24–25 | Релиз | v1.0.0 | сделано: аудиты, документация (README/cookbook 46/migration ×2/TypeDoc), демо на Pages, release workflow, версии крейтов 1.0.0, changeset major, RC зелёный; npm-пятёрка опубликована в GitHub Packages (действующее зеркало; npmjs.org — целевой основной реестр, публикация готовится — [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)), тег `v1.0.0`, Rust-крейты — ассетами релиза, crates.io — non-goal ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)); GitHub Release и changelog — S4.3 (⬜) — `docs/sprint-12/report.md` |
+| 24–25 | Релиз | v1.0.0 | сделано: аудиты, документация (README/cookbook 46/migration ×2/TypeDoc), демо на Pages, release workflow, версии крейтов 1.0.0, changeset major, RC зелёный; npm-пятёрка опубликована в GitHub Packages (действующее зеркало; npmjs.org — основной реестр, публикация выполнена (v1.2.0, десять пакетов) — [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)), тег `v1.0.0`, Rust-крейты — ассетами релиза, crates.io — non-goal ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)); GitHub Release и changelog — S4.3 (⬜) — `docs/sprint-12/report.md` |
 | вне плана | Спайк | LOWA — точный бэкенд (ADR-0023) | закрыто решением **no-go**: H1/H2/H4 — «нет» (49,97 МиБ по сети, 14,6–28,1 с до готовности, 2,2 ГБ памяти вкладки), H5/H7 — «да»; своя сборка не выполнялась — `docs/sprint-13/plan.md`, `docs/adr/0023-libreoffice-wasm-exact-backend.md`; пакет `@meerrec/browser-convert` — конвертерная обвязка поверх x2t (ADR-0024) |
 
 **Сдвиг:** +1 неделя от v1 (25 недель вместо 24). Обоснование — закрытие
@@ -1067,8 +1067,9 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 | M9: DOCX layout | 19 | ±1 страница vs LibreOffice | достигнута: страницы ±1 у 99/99 фикстур (эталон LibreOffice, `docs/sprint-12/oracle.md`) |
 | M10: DOCX viewer | 21 | 200 страниц < 2 с | достигнута: раскладка 150 страниц — 32,47 мс (`docs/sprint-12/oracle.md`) |
 | M11: Оптимизация | 23 | Оба пути SAB + CLI | достигнута: оба транспорта first-class (ADR-0021) + `@meerrec/cli` с WorkerPool (Спринт 11) |
-| M12: v1.0.0 | 25 | Публикация | достигнута: npm-пятёрка `@meerrec/*@1.0.0` в GitHub Packages (действующее зеркало; npmjs.org — целевой основной реестр, публикация готовится — [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)), тег `v1.0.0`, Rust-крейты — ассетами релиза, crates.io — non-goal v1.x ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)) — `docs/sprint-12/report.md` |
+| M12: v1.0.0 | 25 | Публикация | достигнута: npm-пятёрка `@meerrec/*@1.0.0` в GitHub Packages (действующее зеркало; npmjs.org — основной реестр, публикация выполнена (v1.2.0, десять пакетов) — [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)), тег `v1.0.0`, Rust-крейты — ассетами релиза, crates.io — non-goal v1.x ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)) — `docs/sprint-12/report.md` |
 | M13: LOWA спайк | — | Вердикт по H1–H7 (ADR-0023) | закрыта решением **no-go** (решающая тройка H1/H2/H4 — «нет»); числа и механизм — `docs/adr/0023-libreoffice-wasm-exact-backend.md` |
+| M14: v1.2.0 | — | Первый релиз в npmjs.org | достигнута: десять пакетов `@meerrec/*@1.2.0` в npmjs.org (основной реестр), GitHub Packages — зеркало, тег `v1.2.0`; Эпики 0–4 аудита: trait-слой, потоковый ZIP, отмена, PPTX, Strict, OTel, вынос AGPL, отмена non-goal'ов |
 
 ---
 
@@ -1328,7 +1329,7 @@ DOCX: 104 коммитируемые фикстуры (102 разбираютс�
 | 0023 | LibreOffice-WASM как «точный» бэкенд — no-go | No-go: решающая тройка H1/H2/H4 — «нет» (49,97 МиБ поставки, 14–28 с до готовности, ~2,2 ГБ памяти вкладки) | `docs/adr/0023-libreoffice-wasm-exact-backend.md` |
 | 0024 | x2t (ONLYOFFICE) как рисующий бэкенд — no-go | No-go: в wasm-сборке нет рисующего движка (sdkjs под V8 вырезан при сборке), рендер-цели дают код 80 | `docs/adr/0024-x2t-rendering-backend.md` |
 | 0025 | Граница раскладки XLSX — без отдельного крейта `xlsx-layout` | Раскладка остаётся в `crates/xlsx`; крейт не создаётся, границы ADR-0003/0007 подтверждены | `docs/adr/0025-xlsx-layout-boundary.md` |
-| 0026 | Дистрибутив Rust-крейтов: GitHub Packages + ассеты релиза, crates.io — non-goal | Пять npm-пакетов `@meerrec/*@1.0.0` — в GitHub Packages этого репозитория (действующее зеркало; npmjs.org — целевой основной реестр, публикация готовится — [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)); крейты — ассетами релиза `v1.0.0`; в crates.io в v1.x не публикуются | `docs/adr/0026-rust-crates-distribution.md` |
+| 0026 | Дистрибутив Rust-крейтов: GitHub Packages + ассеты релиза, crates.io — non-goal | Пять npm-пакетов `@meerrec/*@1.0.0` — в GitHub Packages этого репозитория (действующее зеркало; npmjs.org — основной реестр, публикация выполнена (v1.2.0, десять пакетов) — [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)); крейты — ассетами релиза `v1.0.0`; в crates.io в v1.x не публикуются | `docs/adr/0026-rust-crates-distribution.md` |
 | 0027 | Реестры npm: npmjs.org — основной, GitHub Packages — зеркало | npmjs.org — целевой основной публичный реестр, GitHub Packages — действующее зеркало; публикация npmjs первой; crates.io — за `PUBLISH_CRATES_IO`; первый publish токеном, OIDC — со следующего релиза; откат — `npm deprecate` | `docs/adr/0027-npmjs-primary-registry.md` |
 | 0028 | Типизированный wire-протокол — Rust как источник истины | Payload'ы — DTO в `core::wire`, TS генерируется `ts-rs` 10.1 примером `export_wire` (`pnpm gen:wire`); конверт ручной; дрейф и ошибки типов ловит CI | `docs/adr/0028-typed-wire-protocol.md` |
 | 0029 | Рендер на main-потоке без OffscreenCanvas | Гибрид: парсинг и сборка DisplayList — в воркере, painter — на main через `init_painter_main`; протокол `frame`/`frame-ack` с двумя `ArrayBuffer`, коалесцирование по rAF; `renderMode` (`auto`/`worker`/`main`); один main-вьюер на страницу | `docs/adr/0029-main-thread-render-backend.md` |
@@ -1390,7 +1391,7 @@ ADR 0002–0005 приняты 05.10.2026 (0002 пересмотрен на `skr
 - [x] ✅ Round-trip `Model → JSON → Model` lossless — serde-модель, обход всего корпуса `test-fixtures/docx` (104 файла, 101 разобранная фикстура; `crates/docx/tests/roundtrip.rs`).
 - [x] ✅ Writer в DOCX не реализован (ADR-0020) — non-goal v1, зафиксирован.
 - [x] ✅ Все ADR в `docs/adr/` — индекс актуален (включая ADR-0021–0027).
-- [x] ✅ Опубликовано под Apache-2.0: пять npm-пакетов `@meerrec/*` 1.0.0 — в GitHub Packages этого репозитория (действующее зеркало; npmjs.org — целевой основной реестр, публикация готовится — [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)), тег `v1.0.0`, ассеты релиза; Rust-крейты — ассетами релиза, публикация в crates.io — non-goal v1.x ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)).
+- [x] ✅ Опубликовано под Apache-2.0: десять пакетов `@meerrec/*@1.2.0` — в npmjs.org (основной реестр, установка без токена), GitHub Packages — действующее зеркало, тег `v1.2.0`, ассеты релиза; Rust-крейты — ассетами релиза, публикация в crates.io — non-goal v1.x ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)).
 
 ---
 

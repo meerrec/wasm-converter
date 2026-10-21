@@ -22,10 +22,12 @@
 Спринты 1–11 закрыты (сводка — [ROADMAP.md](ROADMAP.md) §7): разбор и
 раскладка обоих форматов, оба транспорта кадра first-class, просмотрщики,
 экспорт PDF/Markdown/HTML/текста, CLI с батч-конвертацией, оракул против
-LibreOffice, бенчмарки против JS-библиотек; версия v1.0.0 опубликована,
-спайк LibreOffice-WASM закрыт решением no-go. Фаза 1 архитектурного аудита
-реализована: подготовка npmjs.org ([ADR-0027](docs/adr/0027-npmjs-primary-registry.md);
-GitHub Packages — действующее зеркало, crates.io — non-goal,
+LibreOffice, бенчмарки против JS-библиотек; спайк LibreOffice-WASM закрыт
+решением no-go. Фазы 1–4 архитектурного аудита реализованы: публикация
+десяти пакетов `@meerrec/*@1.2.0` в npmjs.org — основной реестр, установка
+без токена ([ADR-0027](docs/adr/0027-npmjs-primary-registry.md); первая
+публикация запущена и ждёт валидного `NPM_TOKEN`; GitHub
+Packages — зеркало, crates.io — non-goal,
 [ADR-0026](docs/adr/0026-rust-crates-distribution.md)), wire-типы Rust → TS
 через ts-rs ([ADR-0028](docs/adr/0028-typed-wire-protocol.md)) и рендер на
 main-потоке без `OffscreenCanvas` ([ADR-0029](docs/adr/0029-main-thread-render-backend.md)).
@@ -60,35 +62,27 @@ GitHub Pages не отдаёт заголовки cross-origin isolation (COOP/C
 
 ### Установка
 
-Пакеты `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`,
-`@meerrec/core`, `@meerrec/cli` версии `1.0.0`. Целевой основной реестр —
-`registry.npmjs.org` (публикация готовится,
-[ADR-0027](docs/adr/0027-npmjs-primary-registry.md)); действующее зеркало —
-**GitHub Packages** этого репозитория. GitHub Packages требует авторизацию
-даже на чтение, поэтому до первой публикации в npmjs.org сначала — реестр и
-токен с правом `read:packages` в `~/.npmrc`:
-
-```ini
-# ~/.npmrc — <токен> это personal access token (classic) с read:packages
-@meerrec:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=<токен>
-```
+Десять пакетов `@meerrec/*` версии `1.2.0`: `core`, `wasm`, `wasm-docx`,
+`wasm-pdf`, `wasm-pptx`, `wasm-pptx-pdf`, `cli`, `react`, `vue`, `svelte`.
+Основной реестр — `registry.npmjs.org` ([ADR-0027](docs/adr/0027-npmjs-primary-registry.md));
+установка без токена станет доступна после первой публикации (ждёт валидного
+`NPM_TOKEN`); **GitHub Packages** — действующее зеркало (нужна
+авторизация и `~/.npmrc`):
 
 ```bash
 npm install @meerrec/core @meerrec/wasm \
-  @meerrec/wasm-docx @meerrec/wasm-pdf
-npm install -g @meerrec/cli --registry=https://npm.pkg.github.com
+  @meerrec/wasm-docx @meerrec/wasm-pdf \
+  @meerrec/wasm-pptx @meerrec/wasm-pptx-pdf
+npm install @meerrec/react   # обёртки: react | vue | svelte
+npm install -g @meerrec/cli
 ```
 
-После первой публикации в npmjs.org эти команды станут `npm install …` без
-токена и без `--registry`. Разовая альтернатива `~/.npmrc` —
-`npm install --registry=https://npm.pkg.github.com …` (токен всё равно нужен).
-Совсем без реестра — собранные тарболы в ассетах
-релиза [`v1.0.0`](https://github.com/meerrec/wasm-converter/releases/tag/v1.0.0)
-(`meerrec-*.tgz`, ставится как `npm install ./meerrec-core-1.0.0.tgz`).
+Тарболы — в ассетах
+релиза [`v1.2.0`](https://github.com/meerrec/wasm-converter/releases/tag/v1.2.0)
+(`meerrec-*.tgz`, ставится как `npm install ./meerrec-core-1.2.0.tgz`).
 
-`wasm-docx` и `wasm-pdf` — ленивые модули: воркер грузит их по URL при
-открытии `.docx` и при первом экспорте в PDF соответственно.
+`wasm-docx`, `wasm-pdf`, `wasm-pptx` и `wasm-pptx-pdf` — ленивые модули:
+воркер грузит их по URL при открытии документа и при первом экспорте в PDF.
 
 ### Просмотрщик XLSX
 
