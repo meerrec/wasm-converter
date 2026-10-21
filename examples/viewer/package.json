@@ -16,6 +16,8 @@
     "@meerrec/core": "workspace:*",
     "@meerrec/wasm-docx": "workspace:*",
     "@meerrec/wasm-pdf": "workspace:*",
+    "@meerrec/wasm-pptx": "workspace:*",
+    "@meerrec/wasm-pptx-pdf": "workspace:*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.18.4"

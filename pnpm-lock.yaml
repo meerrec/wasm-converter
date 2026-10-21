@@ -56,6 +56,12 @@ importers:
       '@meerrec/wasm-pdf':
         specifier: workspace:*
         version: link:../../packages/wasm-pdf
+      '@meerrec/wasm-pptx':
+        specifier: workspace:*
+        version: link:../../packages/wasm-pptx
+      '@meerrec/wasm-pptx-pdf':
+        specifier: workspace:*
+        version: link:../../packages/wasm-pptx-pdf
       react:
         specifier: ^19.0.0
         version: 19.3.0

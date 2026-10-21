@@ -196,46 +196,50 @@ const CHART =
     '</c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>';
 
 /** Сборка пакета: общий каркас + слайды и их relationships. */
-const deck = (name: string, slides: Part[], extra: Part[] = []): Part[] => {
-    const slideNames = slides.map(([part]) => part);
-    const slideTargets = slideNames.map((part) => part.replace('ppt/', ''));
-    const slideRelEntries = slideNames.map((part) => {
-        const number = part.match(/slide(\d+)\.xml/)![1]!;
-        return [part.replace('.xml', '.xml.rels').replace('slides/', 'slides/_rels/'), slideRels(number)] as Part;
-    });
-    return [
-        ['[Content_Types].xml', CONTENT_TYPES(extra.length > 0 ? CHART_TYPE : '')],
-        ['_rels/.rels', ROOT_RELS],
-        ['ppt/presentation.xml', PRESENTATION(slideNames.map((_, index) => `<p:sldId id="${256 + index}" r:id="rId${index + 2}"/>`).join(''))],
-        ['ppt/_rels/presentation.xml.rels', PRESENTATION_RELS(slideTargets)],
-        ['ppt/slideMasters/slideMaster1.xml', MASTER],
-        ['ppt/slideMasters/_rels/slideMaster1.xml.rels', MASTER_RELS],
-        ['ppt/theme/theme1.xml', THEME],
-        ['ppt/slideLayouts/slideLayout1.xml', LAYOUT],
-        ['ppt/slideLayouts/_rels/slideLayout1.xml.rels', LAYOUT_RELS],
-        ...slideRelEntries,
-        ...slides,
-        ...extra,
-    ];
+const deck = (
+  name: string,
+  slides: Part[],
+  extra: 'image' | 'chart' | null = null,
+  extraParts: Part[] = [],
+): Part[] => {
+  const slideNames = slides.map(([part]) => part);
+  const slideTargets = slideNames.map((part) => part.replace('ppt/', ''));
+  const slideRelEntries = slideNames.map((part) => {
+    const number = part.match(/slide(\d+)\.xml/)![1]!;
+    return [part.replace('.xml', '.xml.rels').replace('slides/', 'slides/_rels/'), slideRels(number, extra)] as Part;
+  });
+  return [
+    ['[Content_Types].xml', CONTENT_TYPES(extra === 'chart' ? CHART_TYPE : '')],
+    ['_rels/.rels', ROOT_RELS],
+    ['ppt/presentation.xml', PRESENTATION(slideNames.map((_, index) => `<p:sldId id="${256 + index}" r:id="rId${index + 2}"/>`).join(''))],
+    ['ppt/_rels/presentation.xml.rels', PRESENTATION_RELS(slideTargets)],
+    ['ppt/slideMasters/slideMaster1.xml', MASTER],
+    ['ppt/slideMasters/_rels/slideMaster1.xml.rels', MASTER_RELS],
+    ['ppt/theme/theme1.xml', THEME],
+    ['ppt/slideLayouts/slideLayout1.xml', LAYOUT],
+    ['ppt/slideLayouts/_rels/slideLayout1.xml.rels', LAYOUT_RELS],
+    ...slideRelEntries,
+    ...slides,
+    ...extraParts,
+  ];
 };
 
 /** Relationships слайда: лэйаут, картинка, диаграмма. */
-const slideRels = (number: string): string => {
-    const slide = parseInt(number, 10);
-    const entries = [
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>',
-    ];
-    if (slide === 3) {
-        entries.push(
-            '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/>',
-        );
-    }
-    if (slide === 4) {
-        entries.push(
-            '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/>',
-        );
-    }
-    return `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${entries.join('')}</Relationships>`;
+const slideRels = (number: string, extra: 'image' | 'chart' | null): string => {
+  const entries = [
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>',
+  ];
+  if (extra === 'image') {
+    entries.push(
+      '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/>',
+    );
+  }
+  if (extra === 'chart') {
+    entries.push(
+      '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/>',
+    );
+  }
+  return `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${entries.join('')}</Relationships>`;
 };
 
 /** Два слайда: титул + тело. Базовый сценарий просмотра и экспорта. */
@@ -264,7 +268,7 @@ const picture = (): Deck => ({
     parts: deck('images/picture.pptx', [
         ['ppt/slides/slide1.xml', SLIDE('Picture', TITLE_SHAPE(2, 'Image') +
             PICTURE_SHAPE(3, 'Picture 3', 'rId2', '<a:off x="2743200" y="2000250"/><a:ext cx="6705600" cy="3429000"/>'))],
-    ], [
+    ], 'image', [
         ['ppt/media/image1.png', pngBytes(320, 180, 7)],
     ]),
 });
@@ -275,7 +279,7 @@ const chart = (): Deck => ({
     parts: deck('charts/bar.pptx', [
         ['ppt/slides/slide1.xml', SLIDE('Chart', TITLE_SHAPE(2, 'Sales') +
             CHART_SHAPE(3, 'Chart 3', 'rId2', '<a:off x="1371600" y="2000250"/><a:ext cx="9448800" cy="3429000"/>'))],
-    ], [
+    ], 'chart', [
         ['ppt/charts/chart1.xml', CHART],
     ]),
 });

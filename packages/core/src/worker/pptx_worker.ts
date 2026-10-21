@@ -68,6 +68,11 @@ let relayLoop: ReturnType<typeof startRelayLoop> | null = null;
 let pending: RenderRequest | null = null;
 /** Сколько заняла сборка последнего кадра. */
 let buildMs = 0;
+/**
+ * Презентация разобрана (кадры можно собирать). Кадр, запрошенный до
+ * открытия, — не ошибка, а пустой ход: wasm-модуль ещё не держит слайдов.
+ */
+let opened = false;
 
 /**
  * Байты открытой презентации.
@@ -337,7 +342,7 @@ function growFrameBuffer(bytes: number): void {
 function buildFrame(): BuildOutcome {
   const req = pending;
   // Презентации ещё нет — собирать нечего; это не ошибка, а пустой ход.
-  if (!req) return 'idle';
+  if (!req || !opened) return 'idle';
   const target = frameTarget('pptx', req);
   // frameTarget отдаёт объединение: воркер PPTX принимает только свой вариант.
   if (target.kind !== 'pptx') return 'idle';
@@ -384,7 +389,7 @@ function buildBytes(target: { kind: 'pptx'; slide: number; viewport: ViewportWir
 function buildFrameMain(): RelayBuildOutcome {
   const req = pending;
   const buffers = relay;
-  if (!req || !buffers) return { kind: 'idle' };
+  if (!req || !opened || !buffers) return { kind: 'idle' };
   const target = frameTarget('pptx', req);
   // frameTarget отдаёт объединение: воркер PPTX принимает только свой вариант.
   if (target.kind !== 'pptx') return { kind: 'idle' };
@@ -567,7 +572,9 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         // Первое открытие платит за загрузку модуля; дальше он уже в памяти.
         const mod = await loadPptxWasm(urls);
         const slides = openPptx(mod, new Uint8Array(msg.bytes));
-        releaseDocument();
+        // `pptx_open` сам заменил прежнюю презентацию в wasm: закрывать её
+        // здесь значило бы стереть только что открытую.
+        opened = true;
         pending = null;
         // Байты остаются: их просят экспорт в PDF и текстовые выгрузки.
         sourceBytes = msg.bytes;
@@ -701,7 +708,8 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         // памяти равен пути через буфер.
         mod?.stream_append(entry.streamId, new Uint8Array(source));
         const slides = openPptxStream(mod!, entry.streamId);
-        releaseDocument();
+        // `stream_open_pptx` сам заменил прежнюю презентацию в wasm.
+        opened = true;
         pending = null;
         sourceBytes = source;
         await finishOpen(msg.id, { type: 'pptx-opened', id: msg.id, slides });
@@ -799,6 +807,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     }
     case 'close': {
       pending = null;
+      opened = false;
       sourceBytes = null;
       dropBitmaps();
       releaseDocument();
