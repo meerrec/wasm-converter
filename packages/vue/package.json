@@ -1,0 +1,52 @@
+{
+  "name": "@meerrec/vue",
+  "version": "1.0.0",
+  "description": "Vue-обёртки (composable и компонент) над просмотрщиками @meerrec/core.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meerrec/wasm-converter.git",
+    "directory": "packages/vue"
+  },
+  "homepage": "https://github.com/meerrec/wasm-converter#readme",
+  "bugs": {
+    "url": "https://github.com/meerrec/wasm-converter/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@meerrec/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "vue": "^3"
+  },
+  "devDependencies": {
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^26.1.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.4",
+    "vue": "^3.5.44"
+  }
+}
