@@ -84,7 +84,9 @@
 Сейчас к этому добавились `packages/cli`, `test-fixtures/docx` (`.docx` и
 парные `.json`-ожидания) и пустая пока заготовка `test-fixtures/corrupted`,
 а `test-fixtures/xlsx` — 116 книг и `oracle.json`; сверх планового дерева
-заведены `packages/{wasm-pdf,wasm-docx,browser-convert,eurooffice,x2t}`.
+заведены `packages/{wasm-pdf,wasm-docx}` (а `browser-convert`, `eurooffice` и
+`x2t` вынесены в [github.com/meerrec/eurooffice-demo](https://github.com/meerrec/eurooffice-demo),
+ADR-0038).
 Так и не появились `packages/{docx,xlsx,react}` и
 `examples/{batch-convert,worker-pool-demo}`.
 
@@ -998,7 +1000,7 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 4. Своя сборка writer-only из LO core на арендованной VM — ⬜ не выполнялась: на рабочей машине нет ресурсов под линковку (18 ГБ RAM против ≥ 64 ГБ), VM не арендовалась; процедура, пины emsdk и риски — `docs/sprint-13/build-log.md`.
 5. H6 против нативного оракула и работа в трёх движках — ✅ `docs/sprint-13/ssim.md` (mean SSIM 0,7797, min 0,5156; расхождение версионное — оракул 26.8.1.1 против сборки 24.2), `docs/sprint-13/engines.md` (Chromium, Firefox, WebKit; PDF из трёх движков различается только метаданными — 86–91 байт из 4 791 564).
 6. ADR-0023 с вердиктом по каждой гипотезе и оценкой интеграции — ✅ `docs/adr/0023-libreoffice-wasm-exact-backend.md`.
-7. Пакет `@meerrec/browser-convert` — конвертерная обвязка OOXML поверх `@meerrec/x2t` после no-go по рисованию (ADR-0024), аналог неопубликованного `@ranuts/converter` — ✅ `packages/browser-convert/README.md`, `docs/sprint-13/report.md`.
+7. Пакет `@meerrec/browser-convert` — конвертерная обвязка OOXML поверх `@meerrec/x2t` после no-go по рисованию (ADR-0024), аналог неопубликованного `@ranuts/converter` — ✅ `docs/sprint-13/report.md`; пакет вынесен в [github.com/meerrec/eurooffice-demo](https://github.com/meerrec/eurooffice-demo) (ADR-0038).
 
 **DoD:**
 
