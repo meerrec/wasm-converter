@@ -2,7 +2,7 @@
 name = "doc-converter-pdf"
 version.workspace = true
 edition.workspace = true
-description = "PDF export for XLSX sheets and DOCX documents"
+description = "PDF export for XLSX sheets, DOCX documents and PPTX slides"
 license.workspace = true
 # workspace-URL не совпадает с фактическим remote (meerrec/wasm-converter)
 repository = "https://github.com/meerrec/wasm-converter"
@@ -12,6 +12,7 @@ doc-converter-core   = { workspace = true }
 doc-converter-render = { workspace = true }
 doc-converter-docx   = { workspace = true }
 doc-converter-xlsx   = { workspace = true }
+doc-converter-pptx   = { workspace = true }
 serde                = { workspace = true }
 # Модель значений lopdf (`Object`, `Dictionary`, `Stream`) — опора своего
 # PDF-бэкенда (ADR-0022). default-фичи сняты (`chrono-clock`, `rayon` прод-пути

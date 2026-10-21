@@ -97,7 +97,7 @@ fn parse_archive(mut archive: Archive, cancelled: &Cell<bool>) -> Result<Present
     let size = slide_size(pres_dom);
     let mut theme = Theme::default();
     let master = read_master(
-        &pres_dom,
+        pres_dom,
         &pres_rels,
         &office_part,
         &mut archive,
@@ -313,7 +313,7 @@ fn read_master(
         }
     }
 
-    parse_master(&dom, theme)
+    parse_master(dom, theme)
 }
 
 /// Разобрать мастер: плейсхолдеры, стили уровней, фон.

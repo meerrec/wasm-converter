@@ -23,6 +23,7 @@ pub mod overlay;
 mod pagination;
 mod painter;
 mod pdf;
+mod pptx;
 mod styles;
 mod text;
 
@@ -47,6 +48,9 @@ pub(crate) enum PdfError {
     /// Раскладка DOCX не дала ни одной страницы: PDF без страниц невалиден.
     #[error("docx layout has no pages")]
     NoPages,
+    /// Раскладка PPTX не собралась.
+    #[error("pptx: {0}")]
+    Pptx(#[from] doc_converter_pptx::Error),
     /// Шрифт не разобран: битые байты или отказ подрезки.
     #[error("invalid font data: {0}")]
     Font(String),
@@ -80,6 +84,21 @@ impl PdfExporter {
     /// дала ни одной страницы или PDF не собрался.
     pub fn export_docx(&mut self, doc: &doc_converter_docx::Document) -> Result<Vec<u8>> {
         docx::export(doc, &self.opts)
+            .map_err(|err| doc_converter_core::Error::Export(format!("pdf: {err}")))
+    }
+
+    /// Экспортировать презентацию PPTX в PDF: слайд = страница.
+    ///
+    /// Страницы берутся готовыми у раскладки `doc-converter-pptx`: сколько
+    /// слайдов в презентации, столько страниц попадёт в PDF, и того же размера
+    /// (`p:sldSz`). Один шрифт на экран и PDF (Carlito из
+    /// `doc-converter-render`) — залог совпадения точек переноса (ADR-0007).
+    ///
+    /// # Errors
+    /// [`doc_converter_core::Error::Export`], если раскладка слайда не
+    /// собралась, в презентации нет слайдов или PDF не собрался.
+    pub fn export_pptx(&mut self, pres: &doc_converter_pptx::Presentation) -> Result<Vec<u8>> {
+        pptx::export(pres, &self.opts)
             .map_err(|err| doc_converter_core::Error::Export(format!("pdf: {err}")))
     }
 
