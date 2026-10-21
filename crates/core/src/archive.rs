@@ -118,7 +118,7 @@ impl Archive {
     pub fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
         self.inner
             .file_names()
-            .filter_map(|name| name.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|name| !self.symlinks.contains(name.as_ref()))
     }
 
@@ -408,11 +408,15 @@ mod tests {
         let mut a = Archive::open_with_limits(bytes, limits).unwrap();
 
         let err = a.read("word/document.xml").unwrap_err();
-        // Размер в ошибке — прочитанное, то есть лимит + 1: настоящий размер
-        // потока неизвестен, обрывать его чтение дольше незачем.
+        // zip 9 сам сверяет поток с заявленным размером и отвергает такой part
+        // раньше нашего счётчика; лимит `read` остаётся вторым рубежом на случай,
+        // если архивный слой пропустит враньё (ADR-0015). Оба отказа безопасны.
         assert!(
-            matches!(err, Error::ZipPartTooLarge { size: 1025, .. }),
-            "ожидали ZipPartTooLarge, получили {err:?}"
+            matches!(
+                err,
+                Error::ZipPartTooLarge { size: 1025, .. } | Error::Io(_)
+            ),
+            "ожидали ZipPartTooLarge или отказ zip 9, получили {err:?}"
         );
     }
 
