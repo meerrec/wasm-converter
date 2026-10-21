@@ -22,6 +22,16 @@ pub struct Painter2D {
     bitmaps: BitmapCache,
 }
 
+/// Реализация общего контракта painter'ов (ADR-0030): тот же метод, что у
+/// [`crate::canvas::OffscreenPainter`], — контракт един для worker- и
+/// main-пути, а T3.4 добавит третью реализацию поверх WebGL.
+impl crate::plugin::CanvasPainter for Painter2D {
+    fn paint_bytes(&mut self, bytes: &[u8]) -> Result<PaintStats, crate::plugin::PaintError> {
+        self.paint_bytes(bytes)
+            .map_err(|e| crate::plugin::PaintError(crate::plugin::js_error_string(&e)))
+    }
+}
+
 impl Painter2D {
     pub fn new(ctx: OffscreenCanvasRenderingContext2d) -> Self {
         Self {
