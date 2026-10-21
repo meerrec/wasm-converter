@@ -117,7 +117,7 @@ bash scripts/subset-fonts.sh   # пересборка подрезанных Car
 
 ## Важные файлы
 
-- `Cargo.toml` — workspace (8 крейтов, `crates/fuzz` исключён), MSRV 1.82, release-профиль `lto = "fat"`, `opt-level = "s"`, `panic = "abort"`; `rust-toolchain.toml` закрепляет 1.98.0.
+- `Cargo.toml` — workspace (8 крейтов, `crates/fuzz` исключён), MSRV 1.88, release-профиль `lto = "fat"`, `opt-level = "s"`, `panic = "abort"`; `rust-toolchain.toml` закрепляет 1.98.0.
 - `packages/core/src/protocol.ts` — источник истины протокола Main ↔ Worker.
 - `crates/render/src/display_list.rs` — бинарный формат кадра (`DL_VERSION`).
 - `.size-limit.mjs` — бюджеты бандлов и wasm-модулей (жёсткий гейт CI) и заодно сторож ленивости PDF/DOCX.
@@ -130,7 +130,7 @@ bash scripts/subset-fonts.sh   # пересборка подрезанных Car
 
 - **Node ≥ 20** (`engines`), **pnpm 9.12.0** (`packageManager`), **turbo 2.11.5** установлен при объявленном `^2.3.3`.
 - **Turborepo:** перед правкой `turbo.json` или turbo-команд читать бандленные доки именно установленной версии — `node -p "require.resolve('turbo/package.json')"`, дальше `docs/README.md` внутри пакета. Граф задач: `build → ^build` (`outputs: dist/**`), `test → build`, `typecheck → ^build`, `clean` без кэша; `packages/wasm*/turbo.json` переопределяют `build.outputs: []` — `pkg/` не кэшируется. Управляемый блок turbo в начале этого файла машинный: удалять его из коммитов нельзя.
-- **Rust:** 1.98.0 закреплён `rust-toolchain.toml` (совпадает с CI), MSRV — 1.82; `.cargo/config.toml` держит `incompatible-rust-versions = "fallback"`, чтобы резолвинг не вылезал за MSRV. `crates/fuzz` — свой workspace на nightly.
+- **Rust:** 1.98.0 закреплён `rust-toolchain.toml` (совпадает с CI), MSRV — 1.88 (поднят из-за `zip 9`, RUSTSEC-2026-0369); `.cargo/config.toml` держит `incompatible-rust-versions = "fallback"`, чтобы резолвинг не вылезал за MSRV. `crates/fuzz` — свой workspace на nightly.
 - **Системные инструменты по требованию шага:** `wasm-pack` — обязателен для `build:wasm`; `wasm-opt` — системный, шаг опционален (встроенный в wasm-pack отключён: rustc эмитит bulk-memory, который та версия не понимает); `chromedriver` — для браузерных wasm-тестов; `uv` — для `subset-fonts.sh`; `soffice`, `pdftoppm`, `pdfinfo`, `ffmpeg`, ImageMagick — для оракулов; `/usr/bin/time` — для memory-гейтов; `qpdf` и `pdftotext` — для части тестов PDF (без них они скипаются).
 - **Генерируемое не править:** `packages/*/pkg/` (wasm-pack), `docs/api/` (TypeDoc), `packages/core/src/generated/` (wire-типы из Rust через `pnpm gen:wire`, ADR-0028).
 - **Git LFS:** `packages/x2t/vendor/*` и `experiments/lowa-spike/**` — после клона нужен `git lfs pull`.

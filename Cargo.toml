@@ -20,7 +20,7 @@ version      = "1.0.0"
 edition      = "2021"
 license      = "Apache-2.0"
 repository   = "https://github.com/meerrec/wasm-converter"
-rust-version = "1.82"
+rust-version = "1.88"
 
 [workspace.dependencies]
 # ── internal ────────────────────────────────────────────────
@@ -42,7 +42,12 @@ console_error_panic_hook = "0.1"
 # 0.36 несёт RUSTSEC-2026-0194 и -0195 (DoS на разборе чужого файла);
 # безопасные версии — начиная с 0.41.
 quick-xml            = "0.41"
-zip                  = { version = "2", default-features = false, features = ["deflate"] }
+# zip 9 закрывает RUSTSEC-2026-0369 (extract() через symlink). Дефолтный `deflate`
+# тянет zopfli — компрессор, который нам не нужен: архивы только читаются, а бюджет
+# wasm это раздувает. zip объявляет flate2 без фич, поэтому фича zip —
+# только `deflate-flate2`, а бэкенд rust_backend (miniz_oxide) берётся из умолчаний
+# flate2 в workspace. zip 9 требует Rust 1.88 — MSRV поднят с 1.82.
+zip                  = { version = "9", default-features = false, features = ["deflate-flate2"] }
 serde                = { version = "1", features = ["derive"] }
 serde_json           = "1"
 thiserror            = "2"

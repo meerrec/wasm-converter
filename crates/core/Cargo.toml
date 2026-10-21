@@ -14,13 +14,18 @@ ts = ["dep:ts-rs"]
 
 [dependencies]
 zip        = { workspace = true }
+# Прямая зависимость только ради фичи: zip 9 объявляет flate2 с
+# `default-features = false`, и без rust_backend у flate2 нет декомпрессора.
+# miniz_oxide компактнее zlib-rs — это важно для бюджета wasm.
+flate2     = { version = "1.1", default-features = false, features = ["rust_backend"] }
 quick-xml  = { workspace = true }
 serde      = { workspace = true }
 thiserror  = { workspace = true }
 miette     = { workspace = true }
 chrono     = { workspace = true }
 smallvec   = { workspace = true }
-# 10.1 — последняя ветка с MSRV ниже 1.88 (11.x/12.x требуют 1.88, у нас 1.82).
+# 10.1 — сознательный пин проверенной ветки; MSRV проекта с zip 9 — 1.88,
+# апгрейд ts-rs — отдельной задачей.
 ts-rs      = { version = "10.1", optional = true, default-features = false, features = ["serde-compat"] }
 
 [[example]]
