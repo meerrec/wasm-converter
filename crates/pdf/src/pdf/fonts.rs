@@ -31,7 +31,7 @@ const FALLBACK_FACE_NAME: &str = "DocConverter";
 const TAG_ALPHABET: &[u8; 16] = b"ABCDEFGHIJKLMNOP";
 
 /// Подготовленный к записи шрифт: подрезанная программа и её PDF-метрики.
-pub(crate) struct PreparedFont {
+pub struct PreparedFont {
     /// Подрезанная программа TrueType — содержимое `FontFile2`.
     subset: Vec<u8>,
     /// Имя гарнитуры для `/BaseFont` и `/FontName` (без тега подмножества).

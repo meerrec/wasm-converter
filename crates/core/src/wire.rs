@@ -76,6 +76,19 @@ pub struct PageInfoWire {
     pub height: f32,
 }
 
+/// Описание слайда для интерфейса: индекс, имя (`p:cSld name`) и размеры в
+/// пикселях раскладки — по ним интерфейс показывает счётчик слайдов и строит
+/// навигацию, как по размерам страниц DOCX.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct SlideInfoWire {
+    pub index: usize,
+    pub name: String,
+    pub width: f32,
+    pub height: f32,
+}
+
 /// Картинка в том виде, в каком её видит интерфейс: id, MIME и размер.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

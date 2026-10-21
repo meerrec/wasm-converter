@@ -1,13 +1,15 @@
 // URL-ы воркеров и ленивых wasm-модулей. Здесь они собраны в одном месте,
-// потому что нужны страницам, а собираться должны один раз: чанки воркеров и
-// wasm-модулей общие для DOCX и XLSX.
+// потому что нужны страницам: у каждого формата свой воркер-бандл, а
+// wasm-модули DOCX/PDF общие.
 
 // Воркеры подключаются суффиксом `?worker&url`: только так Vite собирает их
 // отдельными чанками. Голый `new URL('./docx_worker.ts', import.meta.url)` он
 // считает обычным ассетом и инлайнит исходник в data-URL, где импорт
-// `@meerrec/core/worker` уже не разрешается, — воркер молча не стартует.
+// `@meerrec/core/xlsx-worker` (или `docx-worker`) уже не разрешается, — воркер
+// молча не стартует.
 import docxWorkerFileUrl from '../workers/docx_worker.ts?worker&url';
 import xlsxWorkerFileUrl from '../workers/xlsx_worker.ts?worker&url';
+import pptxWorkerFileUrl from '../workers/pptx_worker.ts?worker&url';
 import { getWasm, putWasm } from './doc_cache.js';
 
 /** URL собранного воркера DOCX — уходит в `createDocxViewer({ workerUrl })`. */
@@ -15,6 +17,9 @@ export const docxWorkerUrl = docxWorkerFileUrl;
 
 /** URL собранного воркера XLSX — уходит в `createXlsxViewer({ workerUrl })`. */
 export const xlsxWorkerUrl = xlsxWorkerFileUrl;
+
+/** URL собранного воркера PPTX — уходит в `createPptxViewer({ workerUrl })`. */
+export const pptxWorkerUrl = pptxWorkerFileUrl;
 
 /**
  * Корень сайта со слэшем на конце — на Pages это уровень выше страницы демо
@@ -57,6 +62,30 @@ export const pdfWasmBinaryUrl = new URL(
   import.meta.url,
 ).href;
 
+/** URL PPTX-модуля: воркер грузит его при открытии презентации. */
+export const pptxWasmModuleUrl = new URL(
+  '@meerrec/wasm-pptx/pkg/doc_converter_pptx_wasm.js',
+  import.meta.url,
+).href;
+
+/** URL wasm-бинарника PPTX-модуля: рядом с JS он не оказывается. */
+export const pptxWasmBinaryUrl = new URL(
+  '@meerrec/wasm-pptx/pkg/doc_converter_pptx_wasm_bg.wasm',
+  import.meta.url,
+).href;
+
+/** URL PPTX-PDF-модуля: воркер грузит его при первом экспорте в PDF. */
+export const pptxPdfWasmModuleUrl = new URL(
+  '@meerrec/wasm-pptx-pdf/pkg/doc_converter_pptx_pdf_wasm.js',
+  import.meta.url,
+).href;
+
+/** URL wasm-бинарника PPTX-PDF-модуля: рядом с JS он не оказывается. */
+export const pptxPdfWasmBinaryUrl = new URL(
+  '@meerrec/wasm-pptx-pdf/pkg/doc_converter_pptx_pdf_wasm_bg.wasm',
+  import.meta.url,
+).href;
+
 /** Пара URL-ов одного wasm-модуля: JS-обвязка и её бинарник. */
 export interface WasmUrls {
   /** URL JS-обвязки: его воркер импортирует динамически. */
@@ -77,6 +106,8 @@ const liveBlobUrls = new Set<string>();
 /** Blob-URL-ы, выданные последним резолвом: их и отзывают, когда модуль загружен. */
 let docxResolved: WasmUrls | null = null;
 let pdfResolved: WasmUrls | null = null;
+let pptxResolved: WasmUrls | null = null;
+let pptxPdfResolved: WasmUrls | null = null;
 
 /**
  * URL файла модуля для воркера: из кэша — blob-URL-ом, без кэша — сетевой адрес.
@@ -133,6 +164,32 @@ export async function resolvePdfWasm(): Promise<WasmUrls> {
 }
 
 /**
+ * URL-ы PPTX-модуля для воркера: прогретый кэш — blob-URL-ы, холодный — сеть.
+ * Зовётся при создании вьюера вместе с `resolvePptxPdfWasm`.
+ */
+export async function resolvePptxWasm(): Promise<WasmUrls> {
+  const [module, binary] = await Promise.all([
+    urlFromCache(pptxWasmModuleUrl, JS_MIME),
+    urlFromCache(pptxWasmBinaryUrl, WASM_MIME),
+  ]);
+  pptxResolved = { module, binary };
+  return pptxResolved;
+}
+
+/**
+ * URL-ы PPTX-PDF-модуля для воркера: прогретый кэш — blob-URL-ы, холодный —
+ * сеть. Грузит его воркер сам — при первом экспорте в PDF.
+ */
+export async function resolvePptxPdfWasm(): Promise<WasmUrls> {
+  const [module, binary] = await Promise.all([
+    urlFromCache(pptxPdfWasmModuleUrl, JS_MIME),
+    urlFromCache(pptxPdfWasmBinaryUrl, WASM_MIME),
+  ]);
+  pptxPdfResolved = { module, binary };
+  return pptxPdfResolved;
+}
+
+/**
  * Отозвать blob-URL-ы пары. Сетевые адреса в наборе не значатся, поэтому
  * холодный кэш отзыв просто пропускает.
  */
@@ -159,6 +216,18 @@ export function releasePdfWasmUrls(): void {
   pdfResolved = null;
 }
 
+/** Отозвать blob-URL-ы PPTX-модуля: загрузка — первое открытие презентации. */
+export function releasePptxWasmUrls(): void {
+  revokeResolved(pptxResolved);
+  pptxResolved = null;
+}
+
+/** Отозвать blob-URL-ы PPTX-PDF-модуля: загрузка — первый экспорт в PDF. */
+export function releasePptxPdfWasmUrls(): void {
+  revokeResolved(pptxPdfResolved);
+  pptxPdfResolved = null;
+}
+
 /**
  * Отозвать всё, что выдали резолверы. Нужно на уходе со страницы: воркер вместе
  * с ней уничтожается, и blob-URL-ы пережили бы его, оставшись в памяти вкладки
@@ -169,6 +238,8 @@ export function releaseAllWasmUrls(): void {
   liveBlobUrls.clear();
   docxResolved = null;
   pdfResolved = null;
+  pptxResolved = null;
+  pptxPdfResolved = null;
 }
 
 /**
@@ -197,6 +268,19 @@ async function warmOne(url: string): Promise<void> {
  */
 export async function warmDocxWasmCache(): Promise<void> {
   await Promise.all([warmOne(docxWasmModuleUrl), warmOne(docxWasmBinaryUrl)]);
+}
+
+/** Положить PPTX-модуль в кэш: после первого успешного открытия презентации. */
+export async function warmPptxWasmCache(): Promise<void> {
+  await Promise.all([warmOne(pptxWasmModuleUrl), warmOne(pptxWasmBinaryUrl)]);
+}
+
+/** Положить PPTX-PDF-модуль в кэш: после первого успешного экспорта в PDF. */
+export async function warmPptxPdfWasmCache(): Promise<void> {
+  await Promise.all([
+    warmOne(pptxPdfWasmModuleUrl),
+    warmOne(pptxPdfWasmBinaryUrl),
+  ]);
 }
 
 /**

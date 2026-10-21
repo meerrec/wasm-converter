@@ -174,7 +174,7 @@ export async function createViewer(
   }
 
   const worker = new Worker(
-    opts.workerUrl ?? new URL('../worker/worker.js', import.meta.url),
+    opts.workerUrl ?? new URL('../worker/xlsx_worker.js', import.meta.url),
     { type: 'module', name: 'doc-converter-renderer' },
   );
 

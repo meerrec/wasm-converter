@@ -45,7 +45,7 @@ const DPI: f32 = 72.0;
 
 /// Ошибка размещения изображения.
 #[derive(Debug, Clone, thiserror::Error)]
-pub(crate) enum DecodeError {
+pub enum DecodeError {
     /// Формат медиачасти не поддержан.
     #[error("unsupported image format {mime}: only PNG and JPEG are supported")]
     UnsupportedFormat {
@@ -68,7 +68,7 @@ pub(crate) enum DecodeError {
 
 /// Изображение к размещению на странице.
 #[derive(Debug, Clone)]
-pub(crate) struct Placement<'a> {
+pub struct Placement<'a> {
     /// Идентификатор media-части (`xl/media/image1.png`) — попадает в отчёт
     /// о пропуске, чтобы было видно, какую картинку потеряли. Дедупликация
     /// на него не опирается: ключ — байты, так что разные id с одинаковым
@@ -87,7 +87,7 @@ pub(crate) struct Placement<'a> {
 // о пропусках — предмет unit-тестов модуля.
 #[allow(dead_code)]
 #[derive(Debug)]
-pub(crate) struct Skipped {
+pub struct Skipped {
     /// Идентификатор media-части.
     pub id: String,
     /// Причина, по которой страница осталась без картинки.
@@ -96,7 +96,7 @@ pub(crate) struct Skipped {
 
 /// Результат [`place_all`]: операции уцелевших изображений и пропуски.
 #[derive(Debug, Default)]
-pub(crate) struct Batch {
+pub struct Batch {
     /// Операции для страницы, в порядке переданных изображений.
     pub ops: Vec<Op>,
     /// Изображения, которые разместить не удалось.
@@ -113,7 +113,7 @@ pub(crate) struct Batch {
 /// ничем не подтверждено, а отпечаток байтов честнее и склеивает одинаковые
 /// копии, разложенные по разным частям пакета.
 #[derive(Debug, Default)]
-pub(crate) struct Registry {
+pub struct Registry {
     /// Уникальные декодированные картинки в порядке первой встречи — порядок
     /// регистрации в сессии.
     images: Vec<DecodedImage>,
@@ -131,7 +131,7 @@ impl Registry {
     ///
     /// Битые и неподдержанные запоминаются с причиной: [`place_all`] отметит
     /// такие размещения в [`Batch::skipped`], не декодируя повторно.
-    pub(crate) fn collect(&mut self, placements: &[Placement<'_>]) {
+    pub fn collect(&mut self, placements: &[Placement<'_>]) {
         for placement in placements {
             if self.index_by_bytes.contains_key(placement.bytes)
                 || self.errors.contains_key(placement.bytes)
@@ -155,7 +155,7 @@ impl Registry {
     /// Декодированные картинки в порядке регистрации — аргументы
     /// [`crate::pdf::session::Session::add_image`].
     #[must_use]
-    pub(crate) fn decoded(&self) -> &[DecodedImage] {
+    pub fn decoded(&self) -> &[DecodedImage] {
         &self.images
     }
 
@@ -163,7 +163,7 @@ impl Registry {
     ///
     /// Имя отдаёт сессия («X0», «X1», …); вызов за пределами числа картинок
     /// игнорируется — рассинхрон порядка значил бы баг painter'а, а не битый PDF.
-    pub(crate) fn assign(&mut self, index: usize, name: XObjectId) {
+    pub fn assign(&mut self, index: usize, name: XObjectId) {
         if let Some(slot) = self.names.get_mut(index) {
             *slot = Some(name);
         }
@@ -172,7 +172,7 @@ impl Registry {
     /// Имя `XObject` по байтам; `None` — картинка не декодировалась или имя
     /// ещё не назначено.
     #[must_use]
-    pub(crate) fn name(&self, bytes: &[u8]) -> Option<&XObjectId> {
+    pub fn name(&self, bytes: &[u8]) -> Option<&XObjectId> {
         self.index_by_bytes
             .get(bytes)
             .and_then(|&index| self.names.get(index).and_then(Option::as_ref))
@@ -180,7 +180,7 @@ impl Registry {
 
     /// Причина пропуска по байтам, если картинка не декодировалась.
     #[must_use]
-    pub(crate) fn error(&self, bytes: &[u8]) -> Option<&DecodeError> {
+    pub fn error(&self, bytes: &[u8]) -> Option<&DecodeError> {
         self.errors.get(bytes)
     }
 }
@@ -192,7 +192,7 @@ impl Registry {
 /// остальным: причина ложится в [`Batch::skipped`], операции уцелевших — в
 /// [`Batch::ops`], так что одно битое вложение не роняет экспорт листа.
 #[must_use]
-pub(crate) fn place_all(registry: &Registry, placements: &[Placement<'_>]) -> Batch {
+pub fn place_all(registry: &Registry, placements: &[Placement<'_>]) -> Batch {
     let mut batch = Batch::default();
     for placement in placements {
         match place(registry, placement) {

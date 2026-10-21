@@ -25,20 +25,21 @@ export const toOptions = (config: RenderConfig): RenderOptionsWire => ({
 /**
  * Что рисовать в следующем кадре.
  *
- * Ветки различаются не только номером листа или зазором стопки, но и набором
- * аргументов былл-функции: у DOCX настроек показа нет — кадр стопки страниц от
- * них не зависит.
+ * Ветки различаются не только номером листа, слайда или зазором стопки, но и
+ * набором аргументов былл-функции: у DOCX настроек показа нет — кадр стопки
+ * страниц от них не зависит, — а кадр PPTX несёт один слайд целиком.
  */
 export type FrameTarget =
   | { kind: 'xlsx'; sheet: number; viewport: ViewportWire; options: RenderOptionsWire }
-  | { kind: 'docx'; gap: number; viewport: ViewportWire };
+  | { kind: 'docx'; gap: number; viewport: ViewportWire }
+  | { kind: 'pptx'; slide: number; viewport: ViewportWire };
 
 /**
  * Разобрать запрос кадра под формат открытого документа.
  *
  * @throws Error, если документ не открыт или в запросе нет поля его формата:
- * кадр лучше пропустить, чем нарисовать чужой лист или стопку, съехавшую
- * относительно прокрутки.
+ * кадр лучше пропустить, чем нарисовать чужой лист, стопку или слайд,
+ * съехавшие относительно прокрутки.
  */
 export function frameTarget(format: OpenFormat, req: RenderRequest): FrameTarget {
   if (format === null) throw new Error('render: no document is open');
@@ -46,6 +47,10 @@ export function frameTarget(format: OpenFormat, req: RenderRequest): FrameTarget
   if (format === 'docx') {
     if (req.gap === undefined) throw new Error('render: docx frame has no page gap');
     return { kind: 'docx', gap: req.gap, viewport };
+  }
+  if (format === 'pptx') {
+    if (req.slide === undefined) throw new Error('render: pptx frame has no slide');
+    return { kind: 'pptx', slide: req.slide, viewport };
   }
   return { kind: 'xlsx', sheet: req.sheet ?? 0, viewport, options: toOptions(req.config) };
 }

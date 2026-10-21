@@ -7,9 +7,10 @@ import { BootFallback } from './components/BootFallback.js';
 // а пользователь открывает формат за раз.
 const DocxPage = lazy(() => import('./pages/docx/DocxPage.js'));
 const XlsxPage = lazy(() => import('./pages/xlsx/XlsxPage.js'));
+const PptxPage = lazy(() => import('./pages/pptx/PptxPage.js'));
 
 /**
- * Маршруты примера: DOCX — на `/docx`, XLSX — на `/xlsx`.
+ * Маршруты примера: DOCX — на `/docx`, XLSX — на `/xlsx`, PPTX — на `/pptx`.
  */
 export default function App(): ReactElement {
   // Страница подгружается чанком, поэтому каждая обёрнута в `Suspense`: без
@@ -22,6 +23,7 @@ export default function App(): ReactElement {
       <Route path="/" element={<Navigate to="/docx" replace />} />
       <Route path="/docx" element={page(<DocxPage />)} />
       <Route path="/xlsx" element={page(<XlsxPage />)} />
+      <Route path="/pptx" element={page(<PptxPage />)} />
       {/* Незнакомый (или старый) адрес ведёт на DOCX — примера это не роняет. */}
       <Route path="*" element={<Navigate to="/docx" replace />} />
     </Routes>

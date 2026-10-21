@@ -9,8 +9,9 @@
   кадра целиком в Web Worker, основной поток получает готовый холст.
 - **Экспорт**: PDF (собственный PDF-бэкенд, [ADR-0022](docs/adr/0022-own-pdf-backend.md)),
   PNG, Markdown, HTML, текст.
-- **Node-CLI** `@meerrec/cli`: `convert` и `batch` на тех же
-  wasm-модулях, с пулом воркеров.
+- **CLI** `@meerrec/cli`: `convert` и `batch` на тех же wasm-модулях, с
+  пулом воркеров; работает под Node, Bun и Deno (см.
+  [`packages/cli/README.md`](packages/cli/README.md)).
 - Монорепозиторий: шесть Rust-крейтов (`core`, `render`, `xlsx`, `docx`,
   `pdf`, три wasm-модуля) и JS/TS-пакеты (`@meerrec/core`,
   `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`,
@@ -95,7 +96,7 @@ npm install -g @meerrec/cli --registry=https://npm.pkg.github.com
 
 ```ts
 // xlsx_worker.ts
-import '@meerrec/core/worker';
+import '@meerrec/core/xlsx-worker';
 ```
 
 ```ts
@@ -171,7 +172,7 @@ doc-converter batch ./in --out ./out --format pdf --workers 8 --scale 0.9
 
 `convert` принимает один файл (DOCX → pdf/md/html/txt, XLSX → pdf), `batch` —
 файлы, каталоги и glob-ы с прогрессом, рекурсивным обходом и пулом воркеров
-(`node:worker_threads`).
+(`node:worker_threads` в Node/Bun, веб-воркеры в Deno).
 
 ## Браузеры
 
@@ -263,7 +264,8 @@ round-trip < 1 мс на SAB против < 3 мс на буферах (RPC-сл
 
 | Ассет | Факт | Бюджет |
 |---|---|---|
-| `@meerrec/core` worker.js / index.js | 7,17 / 3,34 КБ | 550 / 200 КБ |
+| `@meerrec/core` xlsx-worker.js / docx-worker.js | 9,27 / 9,05 КБ | 550 / 550 КБ |
+| `@meerrec/core` pptx-worker.js / index.js | 8,36 / 11,22 КБ | 550 / 200 КБ |
 | `wasm (viewer)` — XLSX-просмотрщик | 464,2 КБ | 480 КБ |
 | `wasm (docx)` — ленивый модуль DOCX | 384,4 КБ | 400 КБ |
 | `wasm (pdf)` — ленивый модуль PDF | 1,01 МБ | 1,05 МБ |
@@ -284,9 +286,14 @@ printpdf на собственный бэкенд похудел на 31 % gzip.
   вынимается из потока.
 - **VML-фолбэки** (`mc:Fallback`) игнорируются — рисуется только `mc:Choice`
   ([ADR-0014](docs/adr/0014-alternate-content.md)).
+- **PPTX поддерживается**: просмотр слайдов, экспорт PDF (слайд = страница,
+  размер из `p:sldSz`), PNG и текстового конспекта (Markdown/HTML/text) —
+  [ADR-0033](docs/adr/0033-pptx-plugin.md).
 - **Strict OOXML (DOCX и XLSX) — поддерживается** наравне с Transitional
   ([ADR-0034](docs/adr/0034-strict-ooxml.md)).
-- **PPTX, ODF (`.odt`/`.ods`/`.odp`) и макрофайлы `.docm`** — в плане, пока не поддерживаются
+- **Макрофайлы `.docm` поддерживаются** как обычный DOCX, макросы не
+  читаются ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
+- **ODF (`.odt`/`.ods`/`.odp`)** — в плане
   ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
 - **XLSB, зашифрованные документы и бинарный `.doc`** — статус non-goal
   снят ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)), реализаций нет;

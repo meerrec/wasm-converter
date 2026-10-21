@@ -31,7 +31,8 @@ TypeScript** (сверен с публичным API `@meerrec/core`,
 
 | Ассет | Факт (gzip) | Бюджет |
 |---|---|---|
-| `@meerrec/core` worker.js / index.js | 7,17 / 3,34 КБ | 550 / 200 КБ |
+| `@meerrec/core` xlsx-worker.js / docx-worker.js | 9,27 / 9,05 КБ | 550 / 550 КБ |
+| `@meerrec/core` pptx-worker.js / index.js | 8,36 / 11,22 КБ | 550 / 200 КБ |
 | `wasm (viewer)` — XLSX-просмотрщик | 464,2 КБ | 480 КБ |
 | `wasm (docx)` — ленивый модуль DOCX | 384,4 КБ | 400 КБ |
 | `wasm (pdf)` — ленивый модуль PDF | 1,01 МБ | 1,05 МБ |

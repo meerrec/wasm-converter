@@ -11,7 +11,7 @@
 
 ```ts
 // xlsx_worker.ts — точка входа воркера
-import '@meerrec/core/worker';
+import '@meerrec/core/xlsx-worker';
 
 // main.ts
 import { createXlsxViewer } from '@meerrec/core';
@@ -31,7 +31,7 @@ export default defineConfig({
 **Под капотом.** Суффикс `?worker&url` — единственный способ получить
 отдельный чанк: голый `new URL('./xlsx_worker.ts', import.meta.url)` Vite
 считает обычным ассетом и инлайнит исходник в data-URL, где импорт
-`@meerrec/core/worker` уже не разрешается, и воркер молча не стартует.
+`@meerrec/core/xlsx-worker` уже не разрешается, и воркер молча не стартует.
 
 ---
 
@@ -192,8 +192,8 @@ Rust-painter'ом, поэтому на странице может жить то
 
 ```ts
 // У каждого вьюера свой воркер-файл и свой чанк:
-//   xlsx_worker.ts  → import '@meerrec/core/worker';
-//   docx_worker.ts  → import '@meerrec/core/worker';
+//   xlsx_worker.ts  → import '@meerrec/core/xlsx-worker';
+//   docx_worker.ts  → import '@meerrec/core/docx-worker';
 import docxWorkerUrl from '../workers/docx_worker.ts?worker&url';
 import xlsxWorkerUrl from '../workers/xlsx_worker.ts?worker&url';
 

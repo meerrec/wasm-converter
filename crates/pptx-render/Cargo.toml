@@ -1,0 +1,18 @@
+[package]
+name = "doc-converter-pptx-render"
+version.workspace = true
+edition.workspace = true
+description = "DisplayList frames and FormatPlugin for PPTX presentations"
+license.workspace = true
+# workspace-URL не совпадает с фактическим remote (meerrec/wasm-converter)
+repository = "https://github.com/meerrec/wasm-converter"
+
+[dependencies]
+doc-converter-core       = { workspace = true }
+doc-converter-pptx       = { workspace = true }
+doc-converter-pptx-layout = { workspace = true }
+doc-converter-render     = { workspace = true }
+
+[dev-dependencies]
+# Сквозные тесты собирают пакеты в памяти, как это делает PowerPoint.
+zip = { workspace = true }

@@ -37,6 +37,8 @@ frozenWidth: number, frozenHeight: number, };
 
 export type PageInfoWire = { width: number, height: number, };
 
+export type SlideInfoWire = { index: number, name: string, width: number, height: number, };
+
 export type ImageInfoWire = { 
 /**
  * id, которым помечены картинки листов и команды `Image` в кадре.

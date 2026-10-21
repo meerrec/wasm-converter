@@ -7,6 +7,11 @@
 //! `text_measure`). Обе стороны общие с canvas-путём, поэтому точки разрыва
 //! строк у экрана и в PDF совпадают по построению; граница зафиксирована в
 //! ADR-0007, отдельного крейта `layout-core` нет.
+//!
+//! Форматы вне этого крейта (PPTX, дальше ODF) пишут свои экспортёры поверх
+//! публичного постраничного бэкенда: модули `pdf` (сессия и операции),
+//! `fonts`, `layout`, `styles` и `chart` открыты наружу ровно в том объёме,
+//! который нужен `doc-converter-pptx-pdf` (ADR-0033).
 #![forbid(unsafe_code)]
 #![deny(clippy::pedantic)]
 
@@ -15,15 +20,15 @@ mod background;
 mod border;
 pub mod chart;
 mod docx;
-mod fonts;
+pub mod fonts;
 pub mod image;
-mod layout;
+pub mod layout;
 mod options;
 pub mod overlay;
 mod pagination;
 mod painter;
-mod pdf;
-mod styles;
+pub mod pdf;
+pub mod styles;
 mod text;
 
 pub use options::*;
@@ -33,8 +38,13 @@ use std::io::Write;
 use doc_converter_core::Result;
 
 /// Ошибка PDF-экспорта.
+///
+/// Публична, потому что постраничный бэкенд (`pdf::session` и операции)
+/// возвращает её наружу: экспортёры форматов вне этого крейта
+/// (`doc-converter-pptx-pdf`) обязаны её называть.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum PdfError {
+#[non_exhaustive]
+pub enum PdfError {
     /// Лист с таким индексом в книге не найден.
     #[error("sheet index {0} is out of range")]
     NoSuchSheet(usize),

@@ -5,17 +5,18 @@
 // `src` остаётся только для сборки приложения: спеки и хелперы видят тип
 // отсюда, а `declare global` написано ровно один раз — на весь набор.
 
-import type { DocxViewerHandle, XlsxViewerHandle } from '@meerrec/core';
+import type { DocxViewerHandle, PptxViewerHandle, XlsxViewerHandle } from '@meerrec/core';
 import type { Page } from '@playwright/test';
 
 /** Вид вьюера: какое приложение поднято маршрутом. */
-export type ViewerKind = 'docx' | 'xlsx';
+export type ViewerKind = 'docx' | 'xlsx' | 'pptx';
 
 declare global {
   interface Window {
     docConverter?:
       | { kind: 'docx'; viewer: DocxViewerHandle }
-      | { kind: 'xlsx'; viewer: XlsxViewerHandle };
+      | { kind: 'xlsx'; viewer: XlsxViewerHandle }
+      | { kind: 'pptx'; viewer: PptxViewerHandle };
   }
 }
 

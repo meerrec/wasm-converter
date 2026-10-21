@@ -22,11 +22,18 @@ import type {
   PdfOptionsWire,
   RenderOptionsWire,
   SheetInfoWire,
+  SlideInfoWire,
   ViewportWire,
 } from '../generated/wire.js';
 
 /** Тип ленивого DOCX-модуля берём у сгенерированных wasm-bindgen деклараций. */
 export type DocxWasm = typeof import('@meerrec/wasm-docx');
+
+/** Тип ленивого PPTX-модуля берём у сгенерированных wasm-bindgen деклараций. */
+export type PptxWasm = typeof import('@meerrec/wasm-pptx');
+
+/** Тип ленивого PPTX-PDF-модуля берём у сгенерированных wasm-bindgen деклараций. */
+export type PptxPdfWasm = typeof import('@meerrec/wasm-pptx-pdf');
 
 /** Тип ленивого PDF-модуля берём у сгенерированных wasm-bindgen деклараций. */
 export type PdfWasm = typeof import('@meerrec/wasm-pdf');
@@ -46,6 +53,14 @@ export const openXlsxStream = (streamId: number): SheetInfoWire[] =>
 /** Завершить поток DOCX: разобрать накопленный буфер, ответ — страницы. */
 export const openDocxStream = (mod: DocxWasm, streamId: number): PageInfoWire[] =>
   mod.stream_open_docx(streamId) as unknown as PageInfoWire[];
+
+/** Открыть презентацию PPTX: слайды с именами и размерами раскладки. */
+export const openPptx = (mod: PptxWasm, bytes: Uint8Array): SlideInfoWire[] =>
+  mod.pptx_open_bytes(bytes) as unknown as SlideInfoWire[];
+
+/** Завершить поток PPTX: разобрать накопленный буфер, ответ — слайды. */
+export const openPptxStream = (mod: PptxWasm, streamId: number): SlideInfoWire[] =>
+  mod.stream_open_pptx(streamId) as unknown as SlideInfoWire[];
 
 /** Список картинок: id, MIME и длина байтов. */
 export const images = (value: unknown): ImageInfoWire[] => value as unknown as ImageInfoWire[];
@@ -113,6 +128,25 @@ export const buildDocxSab = (
 ): BuildStatsWire =>
   buildStats(() => mod.docx_build_display_list_sab(sab, slotCapacity, viewport, gap));
 
+/** PPTX-кадр в буфер вызывающего. Модуль ленивый. */
+export const buildPptxInto = (
+  mod: PptxWasm,
+  out: Uint8Array,
+  slide: number,
+  viewport: ViewportWire,
+): BuildStatsWire =>
+  buildStats(() => mod.pptx_build_display_list_into(out, viewport, slide));
+
+/** PPTX-кадр в слот ring'а. Модуль ленивый. */
+export const buildPptxSab = (
+  mod: PptxWasm,
+  sab: SharedArrayBuffer,
+  slotCapacity: number,
+  slide: number,
+  viewport: ViewportWire,
+): BuildStatsWire =>
+  buildStats(() => mod.pptx_build_display_list_sab(sab, slotCapacity, viewport, slide));
+
 /** Painter: байты DisplayList (путь без SAB). */
 export const paintBytes = (frame: Uint8Array): PaintStatsWire =>
   paintStats(() => paint_display_list_bytes(frame));
@@ -142,3 +176,21 @@ export const exportDocxPdf = (
   bytes: Uint8Array,
   options: PdfOptionsWire,
 ): Uint8Array => mod.export_docx_pdf(bytes, options);
+
+/** Экспортировать презентацию PPTX в PDF. Модуль ленивый и свой у формата. */
+export const exportPptxPdf = (
+  mod: PptxPdfWasm,
+  bytes: Uint8Array,
+  options: PdfOptionsWire,
+): Uint8Array => mod.export_pptx_pdf(bytes, options);
+
+/** Экспортировать презентацию PPTX в текст: формат выбирает воркер. */
+export const exportPptxText = (
+  mod: PptxWasm,
+  bytes: Uint8Array,
+  format: 'markdown' | 'html' | 'text',
+): string => {
+  if (format === 'markdown') return mod.pptx_export_markdown(bytes);
+  if (format === 'html') return mod.pptx_export_html(bytes);
+  return mod.pptx_export_text(bytes);
+};

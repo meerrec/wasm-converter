@@ -38,8 +38,8 @@
 | 0030 | Trait-слой форматов | [`0030-format-plugin-traits.md`](0030-format-plugin-traits.md) |
 | 0031 | Потоковый ZIP и `ReadableStream`-вход | [`0031-streaming-zip.md`](0031-streaming-zip.md) |
 | 0032 | Отмена операций — кооперативный флаг и `AbortSignal` | [`0032-cancellation.md`](0032-cancellation.md) |
+| 0033 | PPTX-плагин — просмотр, PDF, PNG и текст по общему trait-слою | [`0033-pptx-plugin.md`](0033-pptx-plugin.md) |
 | 0034 | Strict OOXML — поддержка для DOCX и XLSX | [`0034-strict-ooxml.md`](0034-strict-ooxml.md) |
-| 0035 | WebGL-рендерер для больших XLSX | [`0035-webgl-renderer.md`](0035-webgl-renderer.md) |
 | 0037 | OpenTelemetry-инструментация — opt-in и только API | [`0037-opentelemetry.md`](0037-opentelemetry.md) |
 | 0038 | Вынос AGPL-части в `meerrec/eurooffice-demo` | [`0038-agpl-separation.md`](0038-agpl-separation.md) |
 | 0039 | Отмена non-goal'ов v1 | [`0039-cancel-v1-non-goals.md`](0039-cancel-v1-non-goals.md) |

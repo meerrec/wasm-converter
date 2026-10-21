@@ -12,7 +12,7 @@
 
 ```ts
 // xlsx_worker.ts — отдельный бандл воркера, одна строка
-import '@meerrec/core/worker';
+import '@meerrec/core/xlsx-worker';
 
 // main
 import { createXlsxViewer, type SheetInfo } from '@meerrec/core';

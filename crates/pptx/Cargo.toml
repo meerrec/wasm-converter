@@ -1,0 +1,18 @@
+[package]
+name = "doc-converter-pptx"
+version.workspace = true
+edition.workspace = true
+description = "PresentationML (PPTX) parsing and slide model"
+license.workspace = true
+# workspace-URL не совпадает с фактическим remote (meerrec/wasm-converter)
+repository = "https://github.com/meerrec/wasm-converter"
+
+[dependencies]
+doc-converter-core = { workspace = true }
+# Только общие типы модели: `render::chart::ChartData` (ADR-0011) и
+# `render::geometry::Rect` в `Frame::px`. Раскладки и DisplayList здесь нет —
+# они в pptx-layout/pptx-render.
+doc-converter-render = { workspace = true }
+serde              = { workspace = true }
+quick-xml          = { workspace = true }
+thiserror          = { workspace = true }

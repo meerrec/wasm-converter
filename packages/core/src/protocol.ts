@@ -8,10 +8,18 @@ import type {
   PaintStatsWire,
   PdfOptionsWire,
   SheetInfoWire,
+  SlideInfoWire,
 } from './generated/wire.js';
 
-/** Формат документа, который умеет открыть воркер. */
-export type DocFormat = 'xlsx' | 'docx';
+/**
+ * Формат документа.
+ *
+ * Диспетчеризация — по воркерам: `xlsx_worker` обслуживает только `xlsx`,
+ * `docx_worker` — только `docx`, `pptx_worker` — только `pptx`. Поле остаётся
+ * в конверте для совместимости: воркер принимает свой формат, а чужой
+ * отбрасывает ошибкой с кодом `open`, не переключая состояние.
+ */
+export type DocFormat = 'xlsx' | 'docx' | 'pptx';
 
 export interface Viewport { x: number; y: number; w: number; h: number; scale: number }
 
@@ -96,6 +104,13 @@ export type SheetInfo = SheetInfoWire;
 export type PageInfo = PageInfoWire;
 
 /**
+ * Слайд открытой презентации. Приходит из Rust: индекс, имя (`p:cSld name`)
+ * и размеры в пикселях раскладки, то есть до зума; по ним интерфейс строит
+ * навигацию по слайдам.
+ */
+export type SlideInfo = SlideInfoWire;
+
+/**
  * Картинка открытого документа: id, MIME-тип и длина байтов. Байты в список
  * не входят — их забирает `xlsx_image_bytes(id)` или `docx_image_bytes(id)`,
  * чтобы не копировать разом всю media. Тем же id помечены команды `Image`
@@ -132,6 +147,19 @@ export interface DocxModuleUrls {
   binary?: string | undefined;
 }
 
+/**
+ * Ленивый PPTX-модуль: URL его JS-модуля и wasm-бинаря.
+ *
+ * Оба приходят с main-потока: воркер собран бандлом, и относительный путь из
+ * него ничего не значит. Не задан — открытие `.pptx` вернёт внятную ошибку.
+ */
+export interface PptxModuleUrls {
+  /** JS-модуль `@meerrec/wasm-pptx`: воркер импортирует его при открытии `.pptx`. */
+  module: string;
+  /** Бинарь для `init()`; без него wasm-bindgen ищет его рядом с модулем. */
+  binary?: string | undefined;
+}
+
 export interface InitMsg {
   type: 'init';
   /**
@@ -150,6 +178,14 @@ export interface InitMsg {
   pdf?: PdfModuleUrls | undefined;
   /** Где лежит DOCX-модуль. Не задан — открыть документ не получится. */
   docx?: DocxModuleUrls | undefined;
+  /** Где лежит PPTX-модуль. Не задан — открыть презентацию не получится. */
+  pptx?: PptxModuleUrls | undefined;
+  /**
+   * Где лежит PPTX-PDF-модуль. Не задан — экспорт презентации в PDF ответит
+   * внятной ошибкой. Просмотрщик и экспортёр PPTX разнесены по модулям, как у
+   * DOCX (ADR-0033).
+   */
+  pptxPdf?: PdfModuleUrls | undefined;
   slotCapacity: number;
   /**
    * Транспорт кадра. `auto` (по умолчанию) — `sab`, если `SharedArrayBuffer`
@@ -223,6 +259,11 @@ export interface RenderRequest {
   /** Лист книги — поле кадра XLSX. */
   sheet?: number;
   /**
+   * Слайд презентации — поле кадра PPTX; у XLSX/DOCX не читается. Кадр
+   * презентации несёт один слайд целиком, а не стопку.
+   */
+  slide?: number;
+  /**
    * Зазор между страницами стопки в пикселях раскладки — поле кадра DOCX; у
    * XLSX не читается. Зазор тот же, что в разметке просмотрщика: по нему Rust
    * ставит страницы друг под другом, и разойдись эти два зазора — кадр поехал
@@ -238,8 +279,14 @@ export interface RenderRequest {
  *
  * `id` обязателен, хотя ответ на открытие и так один на запрос: ошибка
  * приходит общим тегом `error`, и без `id` main не отличил бы, какому из
- * параллельных открытий она адресована. Ответ `opened`/`docx-opened` несёт
- * тот же `id` — по нему просмотрщик находит свой ожидающий промис.
+ * параллельных открытий она адресована. Ответ `opened`/`docx-opened`/
+ * `pptx-opened` несёт тот же `id` — по нему просмотрщик находит свой
+ * ожидающий промис.
+ *
+ * `format` обязан совпадать с форматом воркера: диспетчеризация теперь
+ * по-воркерная, и чужой формат воркер отбрасывает ошибкой `open`, не трогая
+ * открытый документ. Поле остаётся в конверте для совместимости с
+ * просмотрщиками, которые всегда присылают свой формат.
  */
 export interface OpenMsg { type: 'open'; id: number; format: DocFormat; bytes: ArrayBuffer }
 
@@ -247,6 +294,9 @@ export interface OpenMsg { type: 'open'; id: number; format: DocFormat; bytes: A
  * Начать стримовое открытие (ADR-0031): воркер заводит буфер чанков под этим
  * id и грузит форматный модуль, как при обычном `open`. `totalSize` —
  * подсказка для прогресса (`onProgress`), необязателен.
+ *
+ * `format` — как у `open`: воркер принимает только свой формат, чужой
+ * отбрасывает ошибкой `open`.
  */
 export interface OpenStreamMsg {
   type: 'open-stream';
@@ -260,8 +310,9 @@ export interface AppendMsg { type: 'append'; id: number; bytes: ArrayBuffer }
 
 /**
  * Конец стрима: парсить накопленный буфер и отвечать как на `open`
- * (`opened`/`docx-opened`). `aborted` — читатель оборвал поток до конца
- * (ошибка чтения или отмена): воркер отвечает ошибкой «stream aborted».
+ * (`opened`/`docx-opened`/`pptx-opened`). `aborted` — читатель оборвал поток
+ * до конца (ошибка чтения или отмена): воркер отвечает ошибкой «stream
+ * aborted».
  */
 export interface EndStreamMsg { type: 'end-stream'; id: number; aborted?: boolean }
 export interface CloseMsg { type: 'close' }
@@ -326,6 +377,33 @@ export interface ExportDocxTextMsg {
   format: DocxTextFormat;
 }
 
+/**
+ * Экспорт открытой презентации PPTX в PDF. Считается в ленивом PDF-модуле: он
+ * разбирает презентацию сам, а байты получает те же, что пришли при открытии.
+ *
+ * Страницы PPTX — это слайды, поэтому `pageSize`, `orientation`, `margins`,
+ * `scale` и `sheetIndex` не читаются: размер страницы берётся из `p:sldSz`.
+ */
+export interface ExportPptxPdfMsg {
+  type: 'export-pptx-pdf';
+  id: number;
+  options: PdfOptions;
+}
+
+/** Формат текстовой выгрузки PPTX: какую из трёх функций модуля звать. */
+export type PptxTextFormat = 'markdown' | 'html' | 'text';
+
+/**
+ * Экспорт открытой презентации PPTX в текст: markdown, HTML или обычный текст —
+ * конспект из текстовых рамок слайдов. Считается в ленивом PPTX-модуле,
+ * который воркер загрузил ещё при открытии презентации.
+ */
+export interface ExportPptxTextMsg {
+  type: 'export-pptx-text';
+  id: number;
+  format: PptxTextFormat;
+}
+
 /** Гиперссылка под точкой: те же единицы, что у `hit-test`. */
 export interface HyperlinkAtMsg {
   type: 'hyperlink-at';
@@ -355,7 +433,9 @@ export type InMsg =
   | ExportPngMsg
   | ExportPdfMsg
   | ExportDocxPdfMsg
-  | ExportDocxTextMsg;
+  | ExportDocxTextMsg
+  | ExportPptxPdfMsg
+  | ExportPptxTextMsg;
 
 /**
  * Воркер инициализирован. `sab` в сообщении нет намеренно: ring живёт в
@@ -391,6 +471,13 @@ export interface OpenedMsg { type: 'opened'; id: number; sheets: SheetInfo[] }
  * сужаются, и ветка `opened` на main-стороне потеряла бы `sheets`.
  */
 export interface DocxOpenedMsg { type: 'docx-opened'; id: number; pages: PageInfo[] }
+/**
+ * Презентация разложена: слайды с именами и размерами.
+ *
+ * Тег свой, а не `docx-opened` с другим полем: сообщения с общим `type` в
+ * union не сужаются, и ветка на main-стороне потеряла бы `slides`.
+ */
+export interface PptxOpenedMsg { type: 'pptx-opened'; id: number; slides: SlideInfo[] }
 /** Ответ на `hit-test`: строка и столбец либо ничего, если точка мимо. */
 export interface HitMsg { type: 'hit'; id: number; cell: [number, number] | null }
 /** Ответ на `hyperlink-at`: ссылка под точкой либо ничего. */
@@ -405,6 +492,8 @@ export interface PngMsg { type: 'png'; id: number; bytes: Uint8Array }
 export interface PdfMsg { type: 'pdf'; id: number; bytes: Uint8Array }
 /** Текстовая выгрузка документа в том формате, что запросил клиент. */
 export interface DocxTextMsg { type: 'docx-text'; id: number; text: string }
+/** Текстовая выгрузка презентации в том формате, что запросил клиент. */
+export interface PptxTextMsg { type: 'pptx-text'; id: number; text: string }
 /**
  * Стадия, на которой воркер потерпел неудачу. Код отличает сбой инициализации,
  * после которого воркер бесполезен, от ошибки одного запроса, после которой
@@ -443,7 +532,9 @@ export type OutMsg =
   | PdfMsg
   | OpenedMsg
   | DocxOpenedMsg
+  | PptxOpenedMsg
   | HitMsg
   | HyperlinkMsg
   | DocxTextMsg
+  | PptxTextMsg
   | WorkerErrorMsg;

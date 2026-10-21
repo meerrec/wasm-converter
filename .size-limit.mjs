@@ -51,7 +51,30 @@ const svelteMeasure = (config) => ({
 });
 
 export default [
-  { path: 'packages/core/dist/worker.js', limit: '550 KB', gzip: true },
+  {
+    // Воркеры XLSX и DOCX разделены (направление «воркер на формат»,
+    // ADR-0030 §6): в каждом та же painter/SAB-обвязка и кадровый цикл,
+    // поэтому бюджет прежний — общий диспетчер по `DocFormat` больше не нужен.
+    name: 'core (xlsx-worker)',
+    path: 'packages/core/dist/xlsx_worker.js',
+    limit: '550 KB',
+    gzip: true,
+  },
+  {
+    name: 'core (docx-worker)',
+    path: 'packages/core/dist/docx_worker.js',
+    limit: '550 KB',
+    gzip: true,
+  },
+  {
+    // Воркер PPTX — отдельный бандл (направление «воркер на формат»,
+    // ADR-0030 §6): тот же бюджет, что у общего воркера — в нём те же
+    // painter/SAB-обвязка и кадровый цикл.
+    name: 'core (pptx-worker)',
+    path: 'packages/core/dist/pptx_worker.js',
+    limit: '550 KB',
+    gzip: true,
+  },
   { path: 'packages/core/dist/index.js',  limit: '200 KB', gzip: true },
   {
     // Бюджет поднят 300 → 480 КБ в Спринте 12: коммит b43a2de вшил четыре
@@ -73,6 +96,17 @@ export default [
     name: 'wasm (docx)',
     path: 'packages/wasm-docx/pkg/*.wasm',
     limit: '410 KB',
+    gzip: true,
+    modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
+  },
+  {
+    // Просмотрщик PPTX — второй ленивый воркер-модуль: бюджет как у docx
+    // (480 КБ — решение T3.1, ADR-0033). PDF-экспорта в модуле нет —
+    // `export_pptx_pdf` живёт в @meerrec/wasm-pdf, поэтому строка стережёт
+    // возврат PDF-кода в просмотрщик.
+    name: 'wasm (pptx)',
+    path: 'packages/wasm-pptx/pkg/*.wasm',
+    limit: '480 KB',
     gzip: true,
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },
@@ -109,5 +143,15 @@ export default [
     gzip: true,
     ignore: ['@meerrec/core'],
     modifyEsbuildConfig: svelteMeasure,
+    // Экспортёр PPTX в PDF — отдельный ленивый модуль (ADR-0033: просмотрщик
+    // и экспортёр разнесены, как у DOCX): полный стек PPTX+PDF (разбор,
+    // раскладка, шрифты, постраничный бэкенд) стоит ~782 КБ gzip. Лимит
+    // 800 КБ — решение владельца T3.1; строка стережёт возврат экспортёра в
+    // модуль просмотра и рост за счёт фич без пересмотра.
+    name: 'wasm (pptx-pdf)',
+    path: 'packages/wasm-pptx-pdf/pkg/*.wasm',
+    limit: '800 KB',
+    gzip: true,
+    modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },
 ];
