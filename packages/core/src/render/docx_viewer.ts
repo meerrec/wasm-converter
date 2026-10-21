@@ -13,6 +13,7 @@ import type {
   RenderMode,
   Viewport,
 } from '../protocol.js';
+import { armAbort } from './abort.js';
 import { exportPng } from './export_png.js';
 import { createMainFrameChain, type MainFrameChain } from './main_frame_chain.js';
 import {
@@ -23,6 +24,7 @@ import {
   resizeMainCanvas,
 } from './main_painter.js';
 import { resolveRenderMode } from './offscreen.js';
+import { pumpStream, type PumpOptions } from './open_stream.js';
 import { computeDpr } from './resize_observer.js';
 
 /** Что умеет открытый документ. */
@@ -43,8 +45,16 @@ export interface DocxViewerHandle {
   /** Зум: 1 — сто процентов. */
   readonly zoom: number;
 
-  /** Открыть документ. Байты передаются воркеру переводом владения. */
-  open(bytes: ArrayBuffer): Promise<PageInfo[]>;
+  /**
+   * Открыть документ. Байты передаются воркеру переводом владения; поток
+   * (`ReadableStream<Uint8Array>`) уезжает чанками — прогресс и отмена
+   * загрузки (ADR-0031). `signal` — отмена тяжёлой раскладки (ADR-0032):
+   * воркер остановит её между блоками тела.
+   */
+  open(
+    source: ArrayBuffer | ReadableStream<Uint8Array>,
+    opts?: { size?: number; signal?: AbortSignal },
+  ): Promise<PageInfo[]>;
   /** Показать страницу по номеру: прокрутка встаёт на её верх. */
   showPage(index: number): void;
   /** Задать зум и перерисовать. */
@@ -52,7 +62,7 @@ export interface DocxViewerHandle {
   /** Прокрутить так, чтобы точка раскладки оказалась в левом верхнем углу. */
   scrollTo(x: number, y: number): void;
   /** Текущий кадр картинкой PNG — им проверяют, что нарисовалось. */
-  exportPng(): Promise<Uint8Array>;
+  exportPng(opts?: { signal?: AbortSignal }): Promise<Uint8Array>;
   /**
    * Экспорт документа в PDF. Без настроек — страницы раскладки со своими
    * размерами и полями из `w:sectPr`.
@@ -61,13 +71,13 @@ export interface DocxViewerHandle {
    * `pageSize`, `orientation`, `margins`, `scale` и `sheetIndex` не влияют,
    * страницы берутся из документа.
    */
-  exportPdf(options?: PdfOptions): Promise<Uint8Array>;
+  exportPdf(options?: PdfOptions, opts?: { signal?: AbortSignal }): Promise<Uint8Array>;
   /** Экспорт документа в Markdown: заголовки, списки, таблицы, ссылки. */
-  exportMarkdown(): Promise<string>;
+  exportMarkdown(opts?: { signal?: AbortSignal }): Promise<string>;
   /** Экспорт документа в HTML — самостоятельную страницу со встроенными стилями. */
-  exportHtml(): Promise<string>;
+  exportHtml(opts?: { signal?: AbortSignal }): Promise<string>;
   /** Экспорт документа в обычный текст: содержимое без разметки. */
-  exportText(): Promise<string>;
+  exportText(opts?: { signal?: AbortSignal }): Promise<string>;
   /** Подписка на метрики кадров. */
   onTick(handler: (stats: PaintStats) => void): () => void;
   /** Остановить воркер и убрать за собой разметку. */
@@ -111,6 +121,12 @@ export interface DocxViewerOptions {
    * Rust ставит страницы стопкой, и стопка в кадре обязана совпасть с распоркой.
    */
   pageGap?: number;
+  /**
+   * Прогресс стримового открытия (ADR-0031): вызывается на каждый
+   * отправленный чанк. `total` — размер из `open(source, { size })`, если
+   * вызывающий его знает; путь байтов колбэк не трогает.
+   */
+  onProgress?: (loaded: number, total?: number) => void;
 }
 
 const DEFAULT_SLOT_CAPACITY = 1 << 20;
@@ -515,10 +531,24 @@ export async function createDocxViewer(
   resizeCanvas();
 
   /** Выгрузка в текст: форматов три, а путь один — какой из них, решает воркер. */
-  function exportText(format: DocxTextFormat): Promise<string> {
+  function exportText(
+    format: DocxTextFormat,
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<string> {
     const id = nextRequestId++;
     return new Promise<string>((resolve, reject) => {
-      pendingText.set(id, { resolve, reject });
+      const guard = armAbort(
+        opts.signal,
+        (msg) => worker.postMessage(msg),
+        id,
+        resolve,
+        reject,
+      );
+      if (!guard) {
+        reject(new Error('operation cancelled'));
+        return;
+      }
+      pendingText.set(id, guard);
       worker.postMessage({ type: 'export-docx-text', id, format } satisfies InMsg);
     });
   }
@@ -540,11 +570,54 @@ export async function createDocxViewer(
       return zoom;
     },
 
-    open(bytes: ArrayBuffer): Promise<PageInfo[]> {
+    open(
+      source: ArrayBuffer | ReadableStream<Uint8Array>,
+      opts: { size?: number; signal?: AbortSignal } = {},
+    ): Promise<PageInfo[]> {
       const id = nextRequestId++;
       return new Promise<PageInfo[]>((resolve, reject) => {
-        pendingOpen.set(id, { resolve, reject });
-        worker.postMessage({ type: 'open', id, format: 'docx', bytes } satisfies InMsg, [bytes]);
+        // Новое открытие отменяет предыдущее (ADR-0032): два параллельных open
+        // на один воркер не имеют смысла, а ответ старого повис бы в пустоте.
+        for (const stale of pendingOpen.keys()) {
+          worker.postMessage({ type: 'cancel', id: stale } satisfies InMsg);
+        }
+        const guard = armAbort(
+          opts.signal,
+          (msg) => worker.postMessage(msg),
+          id,
+          resolve,
+          reject,
+        );
+        if (!guard) {
+          reject(new Error('operation cancelled'));
+          return;
+        }
+        pendingOpen.set(id, guard);
+        if (source instanceof ArrayBuffer) {
+          worker.postMessage({ type: 'open', id, format: 'docx', bytes: source } satisfies InMsg, [
+            source,
+          ]);
+          return;
+        }
+        // Поток: чанки уезжают переводом владения, main не держит файл.
+        const pump: PumpOptions = {};
+        if (opts.size !== undefined) pump.size = opts.size;
+        if (options.onProgress) pump.onProgress = options.onProgress;
+        void pumpStream(
+          (msg, transfer) => worker.postMessage(msg, transfer ?? []),
+          id,
+          'docx',
+          source,
+          pump,
+        ).catch((e) => {
+          // Чтение потока упало (сеть, отмена): воркер обычно уже ответил
+          // ошибкой «stream aborted», но если ответа не было — реджектим здесь.
+          const pending = pendingOpen.get(id);
+          if (pending) {
+            pendingOpen.delete(id);
+            pending.reject(new Error(String(e)));
+          }
+        });
       });
     },
 
@@ -576,28 +649,53 @@ export async function createDocxViewer(
       onScroll();
     },
 
-    exportPng(): Promise<Uint8Array> {
+    exportPng(opts: { signal?: AbortSignal } = {}): Promise<Uint8Array> {
       // В main-режиме холст и painter здесь: снимок делается локально, без
       // лишнего круга через воркер.
       if (renderMode === 'main') return exportPng(canvas);
       const id = nextRequestId++;
       return new Promise<Uint8Array>((resolve, reject) => {
-        pendingPng.set(id, { resolve, reject });
+        const guard = armAbort(
+          opts.signal,
+          (msg) => worker.postMessage(msg),
+          id,
+          resolve,
+          reject,
+        );
+        if (!guard) {
+          reject(new Error('operation cancelled'));
+          return;
+        }
+        pendingPng.set(id, guard);
         worker.postMessage({ type: 'export-png', id } satisfies InMsg);
       });
     },
 
-    exportPdf(options: PdfOptions = {}): Promise<Uint8Array> {
+    exportPdf(
+      options: PdfOptions = {},
+      opts: { signal?: AbortSignal } = {},
+    ): Promise<Uint8Array> {
       const id = nextRequestId++;
       return new Promise<Uint8Array>((resolve, reject) => {
-        pendingPdf.set(id, { resolve, reject });
+        const guard = armAbort(
+          opts.signal,
+          (msg) => worker.postMessage(msg),
+          id,
+          resolve,
+          reject,
+        );
+        if (!guard) {
+          reject(new Error('operation cancelled'));
+          return;
+        }
+        pendingPdf.set(id, guard);
         worker.postMessage({ type: 'export-docx-pdf', id, options } satisfies InMsg);
       });
     },
 
-    exportMarkdown: () => exportText('markdown'),
-    exportHtml: () => exportText('html'),
-    exportText: () => exportText('text'),
+    exportMarkdown: (opts?: { signal?: AbortSignal }) => exportText('markdown', opts),
+    exportHtml: (opts?: { signal?: AbortSignal }) => exportText('html', opts),
+    exportText: (opts?: { signal?: AbortSignal }) => exportText('text', opts),
 
     onTick(handler: (stats: PaintStats) => void): () => void {
       tickHandlers.add(handler);
@@ -608,6 +706,11 @@ export async function createDocxViewer(
       destroyed = true;
       observer.disconnect();
       scroller.removeEventListener('scroll', onScroll);
+      // Отмена адресуется воркеру до его остановки (ADR-0032). Ответа на
+      // запросы уже не будет — их промисы реджектятся здесь же.
+      for (const id of pendingOpen.keys()) {
+        worker.postMessage({ type: 'cancel', id } satisfies InMsg);
+      }
       // Воркер остановлен: ответа на эти запросы уже не будет.
       const error = new Error('viewer destroyed');
       for (const p of pendingOpen.values()) p.reject(error);

@@ -12,6 +12,7 @@ import type {
   SheetInfo,
   Viewport,
 } from '../protocol.js';
+import { armAbort } from './abort.js';
 import { exportPng } from './export_png.js';
 import { createMainFrameChain, type MainFrameChain } from './main_frame_chain.js';
 import {
@@ -22,6 +23,7 @@ import {
   resizeMainCanvas,
 } from './main_painter.js';
 import { resolveRenderMode } from './offscreen.js';
+import { pumpStream, type PumpOptions } from './open_stream.js';
 import { computeDpr } from './resize_observer.js';
 
 /** Что умеет открытая книга. */
@@ -40,8 +42,16 @@ export interface XlsxViewerHandle {
   /** Зум: 1 — сто процентов. */
   readonly zoom: number;
 
-  /** Открыть книгу. Байты передаются воркеру переводом владения. */
-  open(bytes: ArrayBuffer): Promise<SheetInfo[]>;
+  /**
+   * Открыть книгу. Байты передаются воркеру переводом владения; поток
+   * (`ReadableStream<Uint8Array>`) уезжает чанками — прогресс и отмена
+   * загрузки (ADR-0031). `signal` — отмена тяжёлой операции (ADR-0032):
+   * воркер остановит её в ближайшей точке проверки.
+   */
+  open(
+    source: ArrayBuffer | ReadableStream<Uint8Array>,
+    opts?: { size?: number; signal?: AbortSignal },
+  ): Promise<SheetInfo[]>;
   /** Показать лист по номеру. */
   showSheet(index: number): void;
   /** Задать зум и перерисовать. */
@@ -59,13 +69,13 @@ export interface XlsxViewerHandle {
   /** Гиперссылка под точкой события мыши, в координатах страницы. */
   hyperlinkAt(clientX: number, clientY: number): Promise<HyperlinkInfo | null>;
   /** Текущий кадр картинкой PNG — им проверяют, что нарисовалось. */
-  exportPng(): Promise<Uint8Array>;
+  exportPng(opts?: { signal?: AbortSignal }): Promise<Uint8Array>;
   /**
    * Экспорт листа в PDF. Без настроек — весь текущий лист на A4.
    * `options.sheetIndex` перекрывает показанный лист, `options.allSheets` —
    * вся книга одним документом (листы подряд, закладка на каждый).
    */
-  exportPdf(options?: PdfOptions): Promise<Uint8Array>;
+  exportPdf(options?: PdfOptions, opts?: { signal?: AbortSignal }): Promise<Uint8Array>;
   /** Подписка на метрики кадров. */
   onTick(handler: (stats: PaintStats) => void): () => void;
   /** Остановить воркер и убрать за собой разметку. */
@@ -111,6 +121,12 @@ export interface XlsxViewerOptions {
    * ссылки колбэк не трогает.
    */
   onHyperlink?: (link: HyperlinkInfo) => void;
+  /**
+   * Прогресс стримового открытия (ADR-0031): вызывается на каждый
+   * отправленный чанк. `total` — размер из `open(source, { size })`, если
+   * вызывающий его знает; путь байтов колбэк не трогает.
+   */
+  onProgress?: (loaded: number, total?: number) => void;
 }
 
 const DEFAULT_SLOT_CAPACITY = 1 << 20;
@@ -479,11 +495,54 @@ export async function createXlsxViewer(
       return zoom;
     },
 
-    open(bytes: ArrayBuffer): Promise<SheetInfo[]> {
+    open(
+      source: ArrayBuffer | ReadableStream<Uint8Array>,
+      opts: { size?: number; signal?: AbortSignal } = {},
+    ): Promise<SheetInfo[]> {
       const id = nextRequestId++;
       return new Promise<SheetInfo[]>((resolve, reject) => {
-        pendingOpen.set(id, { resolve, reject });
-        worker.postMessage({ type: 'open', id, format: 'xlsx', bytes } satisfies InMsg, [bytes]);
+        // Новое открытие отменяет предыдущее (ADR-0032): два параллельных open
+        // на один воркер не имеют смысла, а ответ старого повис бы в пустоте.
+        for (const stale of pendingOpen.keys()) {
+          worker.postMessage({ type: 'cancel', id: stale } satisfies InMsg);
+        }
+        const guard = armAbort(
+          opts.signal,
+          (msg) => worker.postMessage(msg),
+          id,
+          resolve,
+          reject,
+        );
+        if (!guard) {
+          reject(new Error('operation cancelled'));
+          return;
+        }
+        pendingOpen.set(id, guard);
+        if (source instanceof ArrayBuffer) {
+          worker.postMessage({ type: 'open', id, format: 'xlsx', bytes: source } satisfies InMsg, [
+            source,
+          ]);
+          return;
+        }
+        // Поток: чанки уезжают переводом владения, main не держит файл.
+        const pump: PumpOptions = {};
+        if (opts.size !== undefined) pump.size = opts.size;
+        if (options.onProgress) pump.onProgress = options.onProgress;
+        void pumpStream(
+          (msg, transfer) => worker.postMessage(msg, transfer ?? []),
+          id,
+          'xlsx',
+          source,
+          pump,
+        ).catch((e) => {
+          // Чтение потока упало (сеть, отмена): воркер обычно уже ответил
+          // ошибкой «stream aborted», но если ответа не было — реджектим здесь.
+          const pending = pendingOpen.get(id);
+          if (pending) {
+            pendingOpen.delete(id);
+            pending.reject(new Error(String(e)));
+          }
+        });
       });
     },
 
@@ -525,22 +584,47 @@ export async function createXlsxViewer(
 
     hyperlinkAt,
 
-    exportPng(): Promise<Uint8Array> {
+    exportPng(opts: { signal?: AbortSignal } = {}): Promise<Uint8Array> {
       // В main-режиме холст и painter здесь: снимок делается локально, без
       // лишнего круга через воркер.
       if (renderMode === 'main') return exportPng(canvas);
       const id = nextRequestId++;
       return new Promise<Uint8Array>((resolve, reject) => {
-        pendingPng.set(id, { resolve, reject });
+        const guard = armAbort(
+          opts.signal,
+          (msg) => worker.postMessage(msg),
+          id,
+          resolve,
+          reject,
+        );
+        if (!guard) {
+          reject(new Error('operation cancelled'));
+          return;
+        }
+        pendingPng.set(id, guard);
         worker.postMessage({ type: 'export-png', id } satisfies InMsg);
       });
     },
 
-    exportPdf(options: PdfOptions = {}): Promise<Uint8Array> {
+    exportPdf(
+      options: PdfOptions = {},
+      opts: { signal?: AbortSignal } = {},
+    ): Promise<Uint8Array> {
       const id = nextRequestId++;
       const sheet = options.sheetIndex ?? sheetIndex;
       return new Promise<Uint8Array>((resolve, reject) => {
-        pendingPdf.set(id, { resolve, reject });
+        const guard = armAbort(
+          opts.signal,
+          (msg) => worker.postMessage(msg),
+          id,
+          resolve,
+          reject,
+        );
+        if (!guard) {
+          reject(new Error('operation cancelled'));
+          return;
+        }
+        pendingPdf.set(id, guard);
         worker.postMessage({
           type: 'export-pdf',
           id,
@@ -560,8 +644,12 @@ export async function createXlsxViewer(
       observer.disconnect();
       scroller.removeEventListener('scroll', onScroll);
       canvas.removeEventListener('click', onCanvasClick);
-      // Воркер сейчас остановим: ответа на эти запросы уже не будет, и без
-      // отказа их промисы повисли бы навсегда.
+      // Отмена адресуется воркеру до его остановки (ADR-0032): флаг остановит
+      // операцию в ближайшей точке проверки. Ответа на запросы уже не будет —
+      // их промисы реджектятся здесь же.
+      for (const id of pendingOpen.keys()) {
+        worker.postMessage({ type: 'cancel', id } satisfies InMsg);
+      }
       const error = new Error('viewer destroyed');
       for (const p of pendingOpen.values()) p.reject(error);
       pendingOpen.clear();
