@@ -72,7 +72,7 @@ async function toText(kind: InputKind, bytes: Uint8Array, format: OutputFormat):
 }
 
 /**
- * Опции для `PdfOptionsJs` wasm-модуля: только заданные ключи.
+ * Опции для `PdfOptionsWire` wasm-модуля: только заданные ключи.
  * Имена — camelCase, как в TS-интерфейсе просмотрщика.
  */
 function pdfOptionsForWasm(pdf: PdfCliOptions): Record<string, unknown> {
