@@ -5,6 +5,7 @@
 import {
   paint_display_list_bytes,
   paint_display_list_sab,
+  stream_open_xlsx,
   xlsx_build_display_list_into,
   xlsx_build_display_list_sab,
   xlsx_hit_test,
@@ -37,6 +38,14 @@ export const openXlsx = (bytes: Uint8Array): SheetInfoWire[] =>
 /** Открыть документ DOCX: размеры страниц раскладки. Модуль ленивый. */
 export const openDocx = (mod: DocxWasm, bytes: Uint8Array): PageInfoWire[] =>
   mod.docx_open_bytes(bytes) as unknown as PageInfoWire[];
+
+/** Завершить поток XLSX: разобрать накопленный буфер, ответ — список листов. */
+export const openXlsxStream = (streamId: number): SheetInfoWire[] =>
+  stream_open_xlsx(streamId) as unknown as SheetInfoWire[];
+
+/** Завершить поток DOCX: разобрать накопленный буфер, ответ — страницы. */
+export const openDocxStream = (mod: DocxWasm, streamId: number): PageInfoWire[] =>
+  mod.stream_open_docx(streamId) as unknown as PageInfoWire[];
 
 /** Список картинок: id, MIME и длина байтов. */
 export const images = (value: unknown): ImageInfoWire[] => value as unknown as ImageInfoWire[];

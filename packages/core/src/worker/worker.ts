@@ -7,6 +7,10 @@ import init, {
   register_bitmap,
   resize_canvas,
   sab_total_bytes,
+  set_cancel,
+  stream_append,
+  stream_free,
+  stream_new,
   xlsx_image_bytes,
   xlsx_images,
 } from '@meerrec/wasm';
@@ -40,7 +44,9 @@ import {
   hyperlinkAt,
   images,
   openDocx,
+  openDocxStream,
   openXlsx,
+  openXlsxStream,
   paintBytes,
   paintSab,
   type DocxWasm,
@@ -82,6 +88,39 @@ let buildMs = 0;
  * `open`.
  */
 let sourceBytes: ArrayBuffer | null = null;
+
+/** Накопленный поток открытия: чанки копятся до `end-stream` (ADR-0031). */
+interface OpenStream {
+  format: OpenFormat;
+  /**
+   * id буфера в wasm-модуле формата. У DOCX модуль грузится асинхронно,
+   * поэтому до его готовности здесь 0 — wasm-аппенды отложены до конца потока.
+   */
+  streamId: number;
+  /** Поколение битмапов на старте потока: если оно уехало — открытие устарело. */
+  gen: number;
+  /**
+   * Куда пишутся чанки, когда размер известен заранее (`open-stream` несёт
+   * `totalSize`): одна аллокация на весь вход, сборки второй копии в конце
+   * потока нет — пик памяти воркера равен пути через буфер (ADR-0031 §3).
+   */
+  target: Uint8Array | null;
+  /** Чанки пути без известного размера: соберутся в `sourceBytes` в конце. */
+  chunks: Uint8Array[];
+  /** Сколько байт уже приехало (оно же — смещение записи в `target`). */
+  received: number;
+  /** Загрузка DOCX-модуля; `null` у XLSX — основной модуль уже в памяти. */
+  moduleReady: Promise<DocxWasm> | null;
+}
+
+const openStreams = new Map<number, OpenStream>();
+
+/** Освободить буфер потока в wasm-модуле его формата (ADR-0031 §6). */
+function freeStream(entry: OpenStream): void {
+  if (entry.streamId === 0) return;
+  if (entry.format === 'docx') docxWasm?.stream_free(entry.streamId);
+  else stream_free(entry.streamId);
+}
 
 /** Откуда грузить PDF-модуль: заполняется на `init`, до него экспорта нет. */
 let pdfUrls: PdfModuleUrls | null = null;
@@ -184,6 +223,49 @@ function dropBitmaps(): void {
   }
   for (const id of bitmaps.keys()) drop_bitmap(id);
   bitmaps.clear();
+}
+
+/**
+ * Код ошибки открытия: wasm помечает кооперативную отмену префиксом
+ * `[cancelled]` (ADR-0032), всё остальное — обычная ошибка разбора.
+ */
+function openErrorCode(e: unknown): WorkerErrorCode {
+  return String(e).startsWith('[cancelled]') ? 'cancelled' : 'open';
+}
+
+/**
+ * Общий хвост открытия (оба пути — байты и поток, ADR-0031): снять картинки
+ * прежнего документа, дождаться картинок нового (к первому кадру они уже в
+ * painter'е), ответить и перерисовать. Отставшее открытие отвечает ошибкой:
+ * иначе его промис повис бы навсегда.
+ */
+async function finishOpen(id: number, format: OpenFormat, response: OutMsg): Promise<void> {
+  // Картинки прежнего документа больше не нужны, а id нового могут с ними совпасть.
+  dropBitmaps();
+  const gen = bitmapsGen;
+  const source: BitmapSource =
+    format === 'docx'
+      ? {
+          tag: 'docx',
+          list: () => images(docxWasm!.docx_images()),
+          bytes: (bid) => docxWasm!.docx_image_bytes(bid),
+        }
+      : {
+          tag: 'xlsx',
+          list: () => images(xlsx_images()),
+          bytes: (bid) => xlsx_image_bytes(bid),
+        };
+  // Ждём картинки до ответа открытия: к первому кадру они уже в painter'е.
+  await loadBitmaps(source, gen);
+  if (gen !== bitmapsGen) {
+    // Пока грузились картинки, документ сменили или закрыли: ответа этому
+    // открытию не будет.
+    postError('open superseded by a newer request', { id, code: 'open' });
+    return;
+  }
+  post(response);
+  // Пока декодировались картинки, мог прийти кадр — просим показать полный.
+  requestFrame();
 }
 
 /**
@@ -550,26 +632,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
           // разбирает документ сам) и текстовые выгрузки. Прежняя книга
           // отпускается здесь же.
           sourceBytes = msg.bytes;
-          // Картинки прежнего документа больше не нужны, а id нового могут с ними совпасть.
-          dropBitmaps();
-          const gen = bitmapsGen;
-          // Ждём картинки до `docx-opened`: к первому кадру они уже в painter'е.
-          await loadBitmaps(
-            {
-              tag: 'docx',
-              list: () => images(mod.docx_images()),
-              bytes: (id) => mod.docx_image_bytes(id),
-            },
-            gen,
-          );
-          if (gen !== bitmapsGen) {
-            // Пока грузились картинки, документ сменили или закрыли: ответа
-            // этому открытию не будет, и его промис повис бы без этой ошибки.
-            postError('open superseded by a newer request', { id: msg.id, code: 'open' });
-            break;
-          }
-          post({ type: 'docx-opened', id: msg.id, pages });
-          requestFrame();
+          await finishOpen(msg.id, 'docx', { type: 'docx-opened', id: msg.id, pages });
           break;
         }
         const sheets = openXlsx(new Uint8Array(msg.bytes));
@@ -580,29 +643,180 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         // PDF-модуль. Прежняя книга отпускается здесь же.
         sourceBytes = msg.bytes;
         pending = null;
-        // Картинки прежней книги больше не нужны, а id нового файла могут с ними совпасть.
-        dropBitmaps();
-        const gen = bitmapsGen;
-        // Ждём картинки до `opened`: к первому кадру они уже в painter'е.
-        await loadBitmaps(
-          {
-            tag: 'xlsx',
-            list: () => images(xlsx_images()),
-            bytes: (id) => xlsx_image_bytes(id),
-          },
-          gen,
-        );
-        if (gen !== bitmapsGen) {
-          // См. DOCX-ветку: отставшее открытие обязано завершиться ошибкой.
-          postError('open superseded by a newer request', { id: msg.id, code: 'open' });
-          break;
+        await finishOpen(msg.id, 'xlsx', { type: 'opened', id: msg.id, sheets });
+      } catch (e) {
+        postError(String(e), { id: msg.id, code: openErrorCode(e) });
+      }
+      break;
+    }
+    case 'open-stream': {
+      try {
+        // Запись в реестре появляется синхронно: сообщения воркера
+        // обрабатываются асинхронно, и append/end-stream могли бы обогнать
+        // await загрузки DOCX-модуля.
+        if (msg.format === 'docx') {
+          const urls = docxUrls;
+          if (!urls) {
+            postError('docx module is not configured: init has no docx urls', {
+              id: msg.id,
+              code: 'open',
+            });
+            break;
+          }
+          const entry: OpenStream = {
+            format: 'docx',
+            streamId: 0,
+            gen: bitmapsGen,
+            target: msg.totalSize ? new Uint8Array(msg.totalSize) : null,
+            chunks: [],
+            received: 0,
+            moduleReady: null,
+          };
+          openStreams.set(msg.id, entry);
+          entry.moduleReady = loadDocxWasm(urls).then((mod) => {
+            // id буфера выдаётся самой записи, а не через поиск по карте:
+            // end-stream к этому моменту запись уже мог удалить.
+            entry.streamId = mod.stream_new();
+            // Поток могли закрыть, пока грузился модуль: разбирать буфер некому.
+            if (!openStreams.has(msg.id)) {
+              mod.stream_free(entry.streamId);
+              entry.streamId = 0;
+            }
+            return mod;
+          });
+        } else {
+          openStreams.set(msg.id, {
+            format: 'xlsx',
+            streamId: stream_new(),
+            gen: bitmapsGen,
+            target: msg.totalSize ? new Uint8Array(msg.totalSize) : null,
+            chunks: [],
+            received: 0,
+            moduleReady: null,
+          });
         }
-        post({ type: 'opened', id: msg.id, sheets });
-        // Пока декодировались картинки, мог прийти кадр — просим показать полный.
-        requestFrame();
       } catch (e) {
         postError(String(e), { id: msg.id, code: 'open' });
       }
+      break;
+    }
+    case 'append': {
+      const entry = openStreams.get(msg.id);
+      // Поток отменён или уже разобран: чанки-сироты пропадают молча — ответ
+      // на такое открытие уже дан или не будет вовсе.
+      if (!entry) break;
+      try {
+        const bytes = new Uint8Array(msg.bytes);
+        if (entry.target) {
+          // Заявленный размер и факт обязаны совпасть: враньё content-length
+          // или обрыв сети ловятся здесь, а не при сборке.
+          if (entry.received + bytes.byteLength > entry.target.byteLength) {
+            openStreams.delete(msg.id);
+            freeStream(entry);
+            postError('stream exceeds declared size', { id: msg.id, code: 'open' });
+            break;
+          }
+          entry.target.set(bytes, entry.received);
+        } else {
+          entry.chunks.push(bytes);
+        }
+        entry.received += bytes.byteLength;
+        // В wasm байты не уезжают: единый append всего буфера случится в
+        // end-stream, когда модуль формата точно загружен.
+      } catch (e) {
+        postError(String(e), { id: msg.id, code: 'open' });
+        openStreams.delete(msg.id);
+      }
+      break;
+    }
+    case 'end-stream': {
+      const entry = openStreams.get(msg.id);
+      if (!entry) {
+        postError('end-stream: unknown stream', { id: msg.id, code: 'open' });
+        break;
+      }
+      try {
+        // Оборванный поток (читатель отменил) или пустой вход: открывать нечего.
+        if (msg.aborted || entry.received === 0) {
+          openStreams.delete(msg.id);
+          freeStream(entry);
+          postError('stream aborted', { id: msg.id, code: 'open' });
+          break;
+        }
+        // Пока качались чанки, могло открыться или закрыться что-то другое.
+        if (entry.gen !== bitmapsGen) {
+          openStreams.delete(msg.id);
+          freeStream(entry);
+          postError('open superseded by a newer request', { id: msg.id, code: 'open' });
+          break;
+        }
+        // Дожидаемся модуля формата; запись удаляется только после этого:
+        // closure загрузки проверяет карту, и раннее удаление выглядело бы
+        // как закрытие потока. Если поток закрыли во время ожидания —
+        // streamId останется нулём, а буфер уже освободил сам closure.
+        const mod = entry.moduleReady ? await entry.moduleReady : null;
+        if (entry.streamId === 0) {
+          postError('stream aborted', { id: msg.id, code: 'open' });
+          break;
+        }
+        openStreams.delete(msg.id);
+        // sourceBytes: при известном размере буфер уже заполнен (второй копии
+        // нет), иначе чанки собираются в контигуальный буфер — экспортам нужен
+        // один ArrayBuffer, а не список.
+        let source: ArrayBuffer;
+        if (entry.target) {
+          if (entry.received !== entry.target.byteLength) {
+            freeStream(entry);
+            postError('stream aborted', { id: msg.id, code: 'open' });
+            break;
+          }
+          source = entry.target.buffer as ArrayBuffer;
+        } else {
+          const joined = new Uint8Array(entry.received);
+          let offset = 0;
+          for (const chunk of entry.chunks) {
+            joined.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          entry.chunks.length = 0;
+          source = joined.buffer;
+        }
+        // Единый append всего буфера: порядок чанков не зависит от гонки
+        // загрузки модуля, копия в wasm живёт только на время парса — пик
+        // памяти равен пути через буфер.
+        const bytes = new Uint8Array(source);
+        if (mod) {
+          mod.stream_append(entry.streamId, bytes);
+        } else {
+          stream_append(entry.streamId, bytes);
+        }
+        if (entry.format === 'docx') {
+          const pages = openDocxStream(mod!, entry.streamId);
+          format = 'docx';
+          pending = null;
+          sourceBytes = source;
+          await finishOpen(msg.id, 'docx', { type: 'docx-opened', id: msg.id, pages });
+        } else {
+          const sheets = openXlsxStream(entry.streamId);
+          releaseDocument();
+          format = 'xlsx';
+          pending = null;
+          sourceBytes = source;
+          await finishOpen(msg.id, 'xlsx', { type: 'opened', id: msg.id, sheets });
+        }
+      } catch (e) {
+        postError(String(e), { id: msg.id, code: openErrorCode(e) });
+      }
+      break;
+    }
+    case 'cancel': {
+      // Кооперативная отмена (ADR-0032): флаг ставится в обоих модулях —
+      // формат запроса может ещё не быть активным. Ближайшая точка проверки
+      // завершит операцию ошибкой, воркер ответит кодом 'cancelled'. Флаг
+      // одноразовый: модуль гасит его сам после того, как заметил, поэтому
+      // отмена не достаётся следующей операции.
+      set_cancel(true);
+      docxWasm?.set_cancel(true);
       break;
     }
     case 'render': {
@@ -744,6 +958,9 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       sourceBytes = null;
       dropBitmaps();
       releaseDocument();
+      // Незавершённые потоки: буферы в wasm-модулях больше не нужны.
+      for (const entry of openStreams.values()) freeStream(entry);
+      openStreams.clear();
       break;
     }
   }

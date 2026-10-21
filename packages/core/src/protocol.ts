@@ -242,7 +242,37 @@ export interface RenderRequest {
  * тот же `id` — по нему просмотрщик находит свой ожидающий промис.
  */
 export interface OpenMsg { type: 'open'; id: number; format: DocFormat; bytes: ArrayBuffer }
+
+/**
+ * Начать стримовое открытие (ADR-0031): воркер заводит буфер чанков под этим
+ * id и грузит форматный модуль, как при обычном `open`. `totalSize` —
+ * подсказка для прогресса (`onProgress`), необязателен.
+ */
+export interface OpenStreamMsg {
+  type: 'open-stream';
+  id: number;
+  format: DocFormat;
+  totalSize?: number;
+}
+
+/** Очередной чанк стрима: перевод владения, копии нет. */
+export interface AppendMsg { type: 'append'; id: number; bytes: ArrayBuffer }
+
+/**
+ * Конец стрима: парсить накопленный буфер и отвечать как на `open`
+ * (`opened`/`docx-opened`). `aborted` — читатель оборвал поток до конца
+ * (ошибка чтения или отмена): воркер отвечает ошибкой «stream aborted».
+ */
+export interface EndStreamMsg { type: 'end-stream'; id: number; aborted?: boolean }
 export interface CloseMsg { type: 'close' }
+
+/**
+ * Отменить запрос (ADR-0032): воркер ставит кооперативный флаг отмены, и
+ * ближайшая точка проверки (блок раскладки DOCX, полоса кадра XLSX) завершит
+ * операцию ошибкой `cancelled`. Адресный — отменяется один запрос по `id`,
+ * остальные продолжают работать.
+ */
+export interface CancelMsg { type: 'cancel'; id: number }
 export interface RenderMsg { type: 'render'; req?: RenderRequest }
 
 /** Ячейка под точкой: координаты — физические пиксели холста. */
@@ -314,7 +344,11 @@ export type InMsg =
   | DropBitmapMsg
   | FrameAckMsg
   | OpenMsg
+  | OpenStreamMsg
+  | AppendMsg
+  | EndStreamMsg
   | CloseMsg
+  | CancelMsg
   | RenderMsg
   | HitTestMsg
   | HyperlinkAtMsg
@@ -376,7 +410,7 @@ export interface DocxTextMsg { type: 'docx-text'; id: number; text: string }
  * после которого воркер бесполезен, от ошибки одного запроса, после которой
  * остальные запросы продолжают работать.
  */
-export type WorkerErrorCode = 'init' | 'open' | 'export' | 'internal';
+export type WorkerErrorCode = 'init' | 'open' | 'export' | 'cancelled' | 'internal';
 
 /**
  * Ошибка воркера.
