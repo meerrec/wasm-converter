@@ -82,7 +82,12 @@ const initMsg = (): InMsg => ({
   slotCapacity: 1024,
 });
 
-const openMsg = (): InMsg => ({ type: 'open', format: 'docx', bytes: new ArrayBuffer(8) });
+const openMsg = (): InMsg => ({
+  type: 'open',
+  id: 1,
+  format: 'docx',
+  bytes: new ArrayBuffer(8),
+});
 
 /** Дать осесть микрозадачам: в них воркер отвечает и резолвятся промисы. */
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -150,7 +155,11 @@ describe('картинки документа DOCX', () => {
       7,
       expect.objectContaining({ id: 7, mime: 'image/jpeg' }),
     );
-    expect(posted).toContainEqual({ type: 'docx-opened', pages: docxGlobals().__docxStub?.pages });
+    expect(posted).toContainEqual({
+      type: 'docx-opened',
+      id: 1,
+      pages: docxGlobals().__docxStub?.pages,
+    });
   });
 
   it('пропускает битую картинку и открывает документ с остальными', async () => {
@@ -162,7 +171,11 @@ describe('картинки документа DOCX', () => {
 
     expect(wasm.register_bitmap).toHaveBeenCalledTimes(1);
     expect(wasm.register_bitmap).toHaveBeenCalledWith(7, expect.objectContaining({ id: 7 }));
-    expect(posted).toContainEqual({ type: 'docx-opened', pages: docxGlobals().__docxStub?.pages });
+    expect(posted).toContainEqual({
+      type: 'docx-opened',
+      id: 1,
+      pages: docxGlobals().__docxStub?.pages,
+    });
     expect(posted.some((msg) => msg.type === 'error')).toBe(false);
     expect(warn).toHaveBeenCalled();
   });

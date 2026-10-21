@@ -58,7 +58,12 @@ const initMsg = (): InMsg => ({
   slotCapacity: 1024,
 });
 
-const openMsg = (): InMsg => ({ type: 'open', format: 'xlsx', bytes: new ArrayBuffer(8) });
+const openMsg = (): InMsg => ({
+  type: 'open',
+  id: 1,
+  format: 'xlsx',
+  bytes: new ArrayBuffer(8),
+});
 
 /** Дать осесть микрозадачам: в них воркер отвечает и резолвятся промисы. */
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -115,7 +120,7 @@ describe('картинки книги', () => {
       7,
       expect.objectContaining({ id: 7, mime: 'image/jpeg' }),
     );
-    expect(posted).toContainEqual({ type: 'opened', sheets: [SHEET] });
+    expect(posted).toContainEqual({ type: 'opened', id: 1, sheets: [SHEET] });
   });
 
   it('пропускает битую картинку и открывает книгу с остальными', async () => {
@@ -129,7 +134,7 @@ describe('картинки книги', () => {
 
     expect(wasm.register_bitmap).toHaveBeenCalledTimes(1);
     expect(wasm.register_bitmap).toHaveBeenCalledWith(7, expect.objectContaining({ id: 7 }));
-    expect(posted).toContainEqual({ type: 'opened', sheets: [SHEET] });
+    expect(posted).toContainEqual({ type: 'opened', id: 1, sheets: [SHEET] });
     expect(posted.some((msg) => msg.type === 'error')).toBe(false);
     expect(warn).toHaveBeenCalled();
   });
