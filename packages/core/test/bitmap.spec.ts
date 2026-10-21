@@ -201,3 +201,20 @@ describe('чужой формат', () => {
     });
   });
 });
+
+describe('отмена открытия', () => {
+  it('префикс [cancelled] из wasm превращается в код cancelled', async () => {
+    wasm.xlsx_open.mockImplementationOnce(() => {
+      throw '[cancelled] раскладка прервана';
+    });
+
+    await handler({ data: openMsg() });
+
+    expect(posted).toContainEqual({
+      type: 'error',
+      message: '[cancelled] раскладка прервана',
+      id: 1,
+      code: 'cancelled',
+    });
+  });
+});
