@@ -1,3 +1,7 @@
+Вот то же объяснение в формате Markdown.
+
+---
+
 # Архитектурный аудит `meerrec/wasm-converter` (doc-converter)
 
 Документ описывает:
