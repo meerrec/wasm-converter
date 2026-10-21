@@ -34,5 +34,6 @@
 | 0026 | Дистрибутив Rust-крейтов: GitHub Packages + ассеты релиза, crates.io — non-goal | [`0026-rust-crates-distribution.md`](0026-rust-crates-distribution.md) |
 | 0027 | Реестры npm: npmjs.org — основной, GitHub Packages — зеркало | [`0027-npmjs-primary-registry.md`](0027-npmjs-primary-registry.md) |
 | 0028 | Типизированный wire-протокол — Rust как источник истины | [`0028-typed-wire-protocol.md`](0028-typed-wire-protocol.md) |
+| 0029 | Рендер на main-потоке без OffscreenCanvas | [`0029-main-thread-render-backend.md`](0029-main-thread-render-backend.md) |
 
 Сводка принятых решений по спринтам — `ROADMAP.md` §11.

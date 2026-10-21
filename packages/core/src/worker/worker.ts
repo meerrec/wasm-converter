@@ -25,6 +25,8 @@ import { exportPng } from '../render/export_png.js';
 import { frameTarget, toViewport, type FrameTarget, type OpenFormat } from './frame_args.js';
 import { registerPaintFonts } from './fonts.js';
 import { startFrameLoop, type BuildOutcome } from './frame_loop';
+import { FrameRelay } from './frame_relay.js';
+import { startRelayLoop, type RelayBuildOutcome } from './relay_loop.js';
 import { FramePool, pickTransport } from './transport.js';
 import {
   buildDocxInto,
@@ -48,14 +50,21 @@ import {
 type Ctx = OffscreenCanvasRenderingContext2D;
 
 let ctx: Ctx | null = null;
+/** Где рисуется кадр. Решается один раз на `init` и дальше не меняется. */
+let backend: 'worker' | 'main' = 'worker';
+/** `init` уже прошёл (успешно или нет): повторный — нарушение протокола. */
+let initialized = false;
 /** Транспорт кадра: выбирается на `init`, дальше не меняется. */
 let transport: FrameTransport = 'bytes';
 /** Ring SAB-пути; `null` на пути без SAB. */
 let sab: SharedArrayBuffer | null = null;
 /** Двойной буфер пути без SAB; `null` на SAB-пути. */
 let pool: FramePool | null = null;
+/** Двойной буфер main-режима: владение уезжает на main и возвращается ack'ом. */
+let relay: FrameRelay | null = null;
 let slotCapacity = 0;
 let loop: ReturnType<typeof startFrameLoop> | null = null;
+let relayLoop: ReturnType<typeof startRelayLoop> | null = null;
 /** Последний запрос на кадр: перерисовка идёт по нему, а не по сообщению. */
 let pending: RenderRequest | null = null;
 /** Формат открытого документа: по нему разбирается запрос кадра. */
@@ -167,6 +176,12 @@ let bitmapsGen = 0;
 /** Снять с painter'а все зарегистрированные картинки. */
 function dropBitmaps(): void {
   bitmapsGen++;
+  if (backend === 'main') {
+    // Id нового документа могут совпасть со старыми: main снимает весь набор
+    // разом, до того как приедут новые картинки.
+    post({ type: 'clear-bitmaps' });
+    return;
+  }
   for (const id of bitmaps.keys()) drop_bitmap(id);
   bitmaps.clear();
 }
@@ -210,8 +225,14 @@ async function loadBitmaps(source: BitmapSource, gen: number): Promise<void> {
           bmp.close();
           return;
         }
-        register_bitmap(id, bmp);
-        bitmaps.set(id, bmp);
+        if (backend === 'main') {
+          // В main-режиме painter живёт на main: картинка уезжает туда
+          // переводом владения, и после этого воркер её не удерживает.
+          post({ type: 'bitmap', id, bitmap: bmp }, [bmp]);
+        } else {
+          register_bitmap(id, bmp);
+          bitmaps.set(id, bmp);
+        }
       } catch (e) {
         console.warn(`[${source.tag}] image ${id} skipped:`, String(e));
       }
@@ -225,6 +246,7 @@ async function loadBitmaps(source: BitmapSource, gen: number): Promise<void> {
  * холста не привязаны, поэтому сразу возвращаем их в кэш.
  */
 function reregisterBitmaps(): void {
+  if (backend === 'main') return;
   for (const [id, bmp] of bitmaps) register_bitmap(id, bmp);
 }
 
@@ -323,6 +345,68 @@ function buildFrame(): BuildOutcome {
   return 'dropped';
 }
 
+/**
+ * main-режим: кадр пишется в свободный буфер релея, отправляет его цикл.
+ *
+ * `busy` — оба буфера в полёте, ждём `frame-ack`; `retry` — кадр не влез в
+ * буфер, ёмкость уже выросла и сборка повторяется. Занятость буферов сюда не
+ * попадает: `beginBuild` отдаёт только свободный.
+ */
+function buildFrameMain(): RelayBuildOutcome {
+  const req = pending;
+  if (!req || !format) return { kind: 'idle' };
+  const buffers = relay;
+  if (!buffers) return { kind: 'idle' };
+  const target = frameTarget(format, req);
+  const out = buffers.beginBuild();
+  if (!out) return { kind: 'busy' };
+  let stats: BuildStatsWire | null;
+  try {
+    if (target.kind === 'docx') {
+      const mod = docxWasm;
+      stats = mod ? buildDocxInto(mod, out, target.viewport, target.gap) : null;
+    } else {
+      stats = buildXlsxInto(out, target.sheet, target.viewport, target.options);
+    }
+  } catch (e) {
+    buffers.abort();
+    throw e;
+  }
+  // Модуля DOCX нет — собирать кадр нечем. Путь страховочный: открытие модуль
+  // уже загрузило.
+  if (!stats) {
+    buffers.abort();
+    return { kind: 'idle' };
+  }
+  if (!stats.written) {
+    buffers.abort();
+    if (stats.bytes > buffers.slotCapacity) {
+      buffers.grow(stats.bytes);
+      return { kind: 'retry' };
+    }
+    return { kind: 'busy' };
+  }
+  buffers.commit(stats.bytes);
+  const frame = buffers.takeFrame();
+  if (!frame) return { kind: 'busy' };
+  return {
+    kind: 'frame',
+    frame: {
+      slot: frame.slot,
+      bytes: frame.bytes,
+      len: frame.len,
+      cmds: stats.cmds,
+      buildMs: stats.buildMs,
+    },
+  };
+}
+
+/** Запросить кадр на перерисовку: какой цикл, решает режим. */
+function requestFrame(): void {
+  if (backend === 'main') relayLoop?.request();
+  else loop?.request();
+}
+
 /** Нарисовать самый свежий готовый кадр; промежуточные транспорт отпускает сам. */
 function paintFrame(): PaintStatsWire {
   if (transport === 'bytes') {
@@ -339,28 +423,61 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
   const msg = ev.data;
   switch (msg.type) {
     case 'init': {
-      if (ctx) {
+      if (initialized) {
         // Повторный init — нарушение протокола, а не сбой инициализации:
         // воркер уже работает, и терять его запросы из-за второго init нельзя.
         postError('worker already initialised', { code: 'internal' });
         return;
       }
+      // Занимаем воркер до `await`: два параллельных init иначе оба прошли бы
+      // проверку и подняли два painter'а в одном потоке.
+      initialized = true;
       try {
         await init(msg.wasmUrl);
+        backend = msg.backend ?? 'worker';
+        pdfUrls = msg.pdf ?? null;
+        docxUrls = msg.docx ?? null;
+        slotCapacity = msg.slotCapacity;
+
+        if (backend === 'main') {
+          // В main-режиме воркер только разбирает и собирает кадры: контекста
+          // у него нет, шрифты и painter живут на main, SAB не нужен.
+          if (msg.transport === 'sab') {
+            throw new Error(
+              "renderMode 'main' несовместим с transport 'sab': кадры едут буферами",
+            );
+          }
+          transport = 'bytes';
+          relay = new FrameRelay(slotCapacity);
+          post({
+            type: 'ready',
+            backend: 'main',
+            transport,
+            slotCapacity,
+            totalBytes: slotCapacity * 2,
+            crossOriginIsolated:
+              typeof crossOriginIsolated === 'boolean' ? crossOriginIsolated : false,
+          });
+          relayLoop = startRelayLoop({
+            build: buildFrameMain,
+            send: (frame) => post(frame, [frame.bytes]),
+          });
+          break;
+        }
+
         // Сабсеты Carlito — до первого кадра: Chromium запоминает промах по
         // строке `ctx.font` на всю сессию, и нарисованное подставленным лицом
         // осталось бы таким же и после регистрации. Иначе предпросмотр
         // разойдётся с PDF, куда встроены те же сабсеты.
         await registerPaintFonts({ font_bytes });
-        ctx = msg.canvas.getContext('2d', {
+        const canvas = msg.canvas;
+        if (!canvas) throw new Error('init: worker backend requires canvas');
+        ctx = canvas.getContext('2d', {
           alpha: true,
           desynchronized: true,
         }) as Ctx;
         if (!ctx) throw new Error('getContext("2d") returned null');
 
-        pdfUrls = msg.pdf ?? null;
-        docxUrls = msg.docx ?? null;
-        slotCapacity = msg.slotCapacity;
         // SAB — не transferable, шарится через structured clone; живёт он в
         // воркере, поэтому на main уезжает не он, а решение о транспорте.
         const shared = msg.transport === 'bytes' ? null : tryAllocSab(slotCapacity);
@@ -369,6 +486,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         if (transport === 'bytes') pool = new FramePool(slotCapacity);
         post({
           type: 'ready',
+          backend: 'worker',
           transport,
           slotCapacity,
           totalBytes: transport === 'sab' ? sab_total_bytes(slotCapacity) : slotCapacity * 2,
@@ -389,7 +507,8 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       break;
     }
     case 'resize': {
-      if (!ctx) return;
+      // В main-режиме размеры холста ставит main; воркеру тут делать нечего.
+      if (backend === 'main' || !ctx) return;
       resize_canvas(msg.cssW, msg.cssH, msg.dpr);
       reregisterBitmaps();
       if (pending) loop?.request();
@@ -401,6 +520,12 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     }
     case 'drop-bitmap': {
       drop_bitmap(msg.id);
+      break;
+    }
+    case 'frame-ack': {
+      // main вернул буфер после отрисовки (или сразу, если кадр вытеснен).
+      relay?.adopt(msg.slot, msg.buffer);
+      relayLoop?.ack();
       break;
     }
     case 'open': {
@@ -444,7 +569,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
             break;
           }
           post({ type: 'docx-opened', id: msg.id, pages });
-          loop?.request();
+          requestFrame();
           break;
         }
         const sheets = openXlsx(new Uint8Array(msg.bytes));
@@ -474,7 +599,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         }
         post({ type: 'opened', id: msg.id, sheets });
         // Пока декодировались картинки, мог прийти кадр — просим показать полный.
-        loop?.request();
+        requestFrame();
       } catch (e) {
         postError(String(e), { id: msg.id, code: 'open' });
       }
@@ -482,7 +607,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     }
     case 'render': {
       if (msg.req) pending = msg.req;
-      if (pending) loop?.request();
+      if (pending) requestFrame();
       break;
     }
     case 'hit-test': {
@@ -508,6 +633,15 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       break;
     }
     case 'export-png': {
+      if (backend === 'main') {
+        // Снимок делает main: холст и painter живут там же, гонять его через
+        // воркер значило бы копировать PNG лишний раз.
+        postError('export-png is handled on the main thread in main mode', {
+          id: msg.id,
+          code: 'export',
+        });
+        break;
+      }
       if (!ctx) {
         postError('export-png before init', { id: msg.id, code: 'export' });
         break;

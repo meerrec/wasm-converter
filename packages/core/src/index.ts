@@ -1,5 +1,6 @@
 export type {
   FrameTransport,
+  RenderMode,
   ReadyInfo,
   Viewport,
   RenderConfig,

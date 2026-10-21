@@ -6,9 +6,53 @@ import type {
   PaintStats,
   PdfOptions,
   ReadyInfo,
+  RenderMode,
   RenderRequest,
 } from '../protocol.js';
 import { attachResize, type RpcLike } from './resize_observer.js';
+
+/**
+ * Выбрать, где рисовать кадр.
+ *
+ * `auto` переходит на main молча для хоста, но с одним `console.warn`: тихая
+ * смена пути — это то, что потом ищут в отладчике. Явный `'worker'` без
+ * `transferControlToOffscreen` — ошибка инициализации, а не подмена, по той же
+ * причине, что и явный `sab` без заголовков (ADR-0021).
+ *
+ * `'main'` вместе с `transport: 'sab'` — ошибка конфигурации: в main-режиме
+ * кадр едет буфером на другой поток, SAB там не участвует.
+ *
+ * @throws Error, если запрошенный режим несовместим с окружением или
+ *   транспортом
+ */
+export function resolveRenderMode(
+  canvas: HTMLCanvasElement,
+  requested: RenderMode | undefined,
+  transport?: 'auto' | FrameTransport,
+): 'worker' | 'main' {
+  const canWorker = typeof canvas.transferControlToOffscreen === 'function';
+  if (requested === 'main') {
+    if (transport === 'sab') {
+      throw new Error(
+        "renderMode: 'main' несовместим с transport: 'sab' — в main-режиме кадры едут буферами",
+      );
+    }
+    return 'main';
+  }
+  if (requested === 'worker') {
+    if (!canWorker) {
+      throw new Error(
+        'этот браузер не поддерживает OffscreenCanvas (transferControlToOffscreen) — просмотрщик не запустится в режиме worker',
+      );
+    }
+    return 'worker';
+  }
+  if (canWorker) return 'worker';
+  console.warn(
+    '[doc-converter] OffscreenCanvas (transferControlToOffscreen) недоступен: рендер на main-потоке',
+  );
+  return 'main';
+}
 
 /**
  * Передаёт OffscreenCanvas воркеру ровно один раз.
@@ -17,6 +61,9 @@ import { attachResize, type RpcLike } from './resize_observer.js';
  * без COOP/COEP кадры поедут буферами, и просмотрщик от этого работать не
  * перестаёт. Воркер сам решает, каким транспортом везти кадры, и говорит об
  * этом в `ready`.
+ *
+ * @deprecated оставлен ради экспортируемых типов; просмотрщики
+ *   (`createXlsxViewer`/`createDocxViewer`) выбирают режим сами.
  */
 export function initOffscreen(
   canvas: HTMLCanvasElement,
@@ -36,6 +83,7 @@ export function initOffscreen(
       if (data?.type === 'ready' && data.transport) {
         worker.removeEventListener('message', onMsg);
         resolve({
+          backend: data.backend ?? 'worker',
           transport: data.transport,
           slotCapacity: data.slotCapacity ?? slotCapacity,
           totalBytes: data.totalBytes ?? 0,
@@ -54,12 +102,15 @@ export function initOffscreen(
   });
 }
 
+/** @deprecated используйте `XlsxViewerHandle`/`DocxViewerHandle`. */
 export interface ViewerHandle {
   /**
    * Каким путём воркер возит кадры. Интерфейсу это знать не нужно — оба пути
    * дают один и тот же кадр, — но для диагностики и тестов полезно.
    */
   readonly transport: FrameTransport;
+  /** Где рисуется кадр; у legacy-пути всегда `worker`. */
+  readonly renderMode: 'worker' | 'main';
   render(req: RenderRequest): Promise<void>;
   /** Фаза 4. */
   exportPdf(opts: PdfOptions): Promise<Uint8Array>;
@@ -70,6 +121,7 @@ export interface ViewerHandle {
   dispose(): void;
 }
 
+/** @deprecated используйте `XlsxViewerOptions`/`DocxViewerOptions`. */
 export interface ViewerOptions {
   workerUrl?: string | URL;
   /** Если true — не создавать ResizeObserver (для SSR / тестов). */
@@ -84,6 +136,11 @@ export interface ViewerOptions {
    * `sab` без заголовков — ошибка инициализации, а не тихая подмена.
    */
   transport?: 'auto' | FrameTransport;
+  /**
+   * Где рисовать. Legacy `createViewer` умеет только воркер-путь; `auto` и
+   * `worker` работают как раньше, явный `main` — ошибка.
+   */
+  renderMode?: 'auto' | 'worker' | 'main';
 }
 
 export function supportsOffscreen(): boolean {
@@ -107,6 +164,11 @@ export async function createViewer(
 ): Promise<ViewerHandle> {
   // Внятное сообщение вместо `Worker is not defined` в SSR и в тестах без DOM.
   assertFallbackAvailable();
+  if (opts.renderMode === 'main') {
+    throw new Error(
+      "createViewer: renderMode 'main' не поддержан legacy-фабрикой — используйте createXlsxViewer/createDocxViewer",
+    );
+  }
   if (!supportsOffscreen()) {
     throw new Error('OffscreenCanvas + transferControlToOffscreen not supported');
   }
@@ -169,6 +231,7 @@ export async function createViewer(
 
   return {
     transport: ready.transport,
+    renderMode: 'worker',
     render: (req) => {
       worker.postMessage({ type: 'render', req } satisfies InMsg);
       return Promise.resolve();

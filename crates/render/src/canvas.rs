@@ -50,6 +50,72 @@ impl OffscreenPainter {
         })
     }
 
+    /// Устанавливает painter поверх main-thread canvas-контекста,
+    /// пришедшего как `JsValue`.
+    ///
+    /// Контекст проверяется duck-типами, а не приведением типа: вызывающий
+    /// передаёт обычный `CanvasRenderingContext2d`, а painter работает с
+    /// `OffscreenCanvasRenderingContext2d`. Оба контекста реализуют общие
+    /// Canvas2D-миксины, painter трогает только их и `canvas.width/height`,
+    /// поэтому после успешной проверки `unchecked_into` безопасен. Enum или
+    /// generic над двумя контекстами отвергнут: он потребовал бы
+    /// диспетчеризации 20+ методов ради одного места вызова.
+    ///
+    /// # Errors
+    /// Если painter уже инициализирован, если у `ctx` нет свойства `canvas`
+    /// (или это не объект) либо если какая-то из функций, которые painter
+    /// вызывает, отсутствует.
+    pub fn install_js(ctx: JsValue) -> Result<(), JsValue> {
+        let canvas = js_sys::Reflect::get(&ctx, &JsValue::from_str("canvas"))
+            .map_err(|_| JsValue::from_str("painter: ctx is not a Canvas2D context"))?;
+        if !canvas.is_object() {
+            return Err(JsValue::from_str(
+                "painter: ctx is not a Canvas2D context (`canvas` is not an object)",
+            ));
+        }
+
+        // Ровно те члены, которые Painter2D и его помощники дёргают на ctx.
+        // Добавишь вызов в painter — добавь имя сюда, иначе main-режим
+        // упадёт на существующем объекте только в рантайме.
+        const REQUIRED_MEMBERS: &[&str] = &[
+            "fillRect",
+            "clearRect",
+            "fillText",
+            "measureText",
+            "drawImage",
+            "beginPath",
+            "fill",
+            "stroke",
+            "setTransform",
+            "save",
+            "restore",
+            "moveTo",
+            "lineTo",
+            "rect",
+            "arc",
+            "arcTo",
+            "closePath",
+            "clip",
+            "setLineDash",
+        ];
+        for name in REQUIRED_MEMBERS {
+            let member = js_sys::Reflect::get(&ctx, &JsValue::from_str(name)).map_err(|_| {
+                JsValue::from_str(&format!("painter: cannot read `{name}` from ctx"))
+            })?;
+            if !member.is_function() {
+                return Err(JsValue::from_str(&format!(
+                    "painter: ctx is not a Canvas2D context (`{name}` is not a function)"
+                )));
+            }
+        }
+
+        // Комментарий-обоснование выше: проверены и `canvas`, и все методы,
+        // которые painter зовёт; общие Canvas2D-миксины делают представление
+        // OffscreenCanvasRenderingContext2d корректным для обоих контекстов.
+        let ctx: OffscreenCanvasRenderingContext2d = ctx.unchecked_into();
+        Self::install(ctx)
+    }
+
     /// Снимает painter: воркер закрывает книгу или переинициализируется.
     pub fn dispose() {
         PAINTER.with(|slot| {
