@@ -1,5 +1,16 @@
 # @doc-converter/core
 
+## 1.1.0
+
+### Minor Changes
+
+- 3caea59: Фаза 1 архитектурного аудита: подготовка публикации в npmjs.org (ADR-0027), wire-типы Rust → TS через ts-rs (ADR-0028) и рендер на main-потоке без OffscreenCanvas (ADR-0029). Появились опция `renderMode`, адресные ошибки IPC с `id`/`code`, коррелированный `open` и экспорт `init_painter_main`; `Viewport` и остальной публичный API не изменились.
+
+### Patch Changes
+
+- Updated dependencies [3caea59]
+  - @meerrec/wasm@1.1.0
+
 ## 1.0.0
 
 ### Major Changes

@@ -1,5 +1,15 @@
 # @doc-converter/wasm-docx
 
+## 1.1.0
+
+### Minor Changes
+
+- Релиз v1.1.0: синхронный подъём версии с `@meerrec/core` — гейт
+  `release.yml` требует единую версию npm-пятёрки и крейта
+  `doc-converter-core`. Содержимое пакета: метаданные и README для
+  публикации в npmjs.org, пересборка биндингов против
+  doc-converter-core 1.1.0 (zip 9, wire-типы через ts-rs).
+
 ## 1.0.0
 
 ### Major Changes
