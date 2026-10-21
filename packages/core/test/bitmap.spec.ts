@@ -184,3 +184,20 @@ describe('картинки книги', () => {
     expect(wasm.drop_bitmap).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('чужой формат', () => {
+  it('документ DOCX воркер XLSX не открывает', async () => {
+    await handler({
+      data: { type: 'open', id: 9, format: 'docx', bytes: new ArrayBuffer(8) },
+    });
+
+    expect(wasm.xlsx_open).not.toHaveBeenCalled();
+    expect(wasm.xlsx_images).not.toHaveBeenCalled();
+    expect(posted).toContainEqual({
+      type: 'error',
+      message: "open: unsupported format 'docx'",
+      id: 9,
+      code: 'open',
+    });
+  });
+});
