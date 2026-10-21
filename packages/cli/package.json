@@ -1,8 +1,17 @@
 {
   "name": "@meerrec/cli",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Command-line converter: DOCX to PDF/Markdown/HTML/text, XLSX to PDF, with a worker pool for batch runs.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meerrec/wasm-converter.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/meerrec/wasm-converter#readme",
+  "bugs": {
+    "url": "https://github.com/meerrec/wasm-converter/issues"
+  },
   "type": "module",
   "bin": {
     "doc-converter": "./dist/cli.js"
@@ -18,7 +27,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "sideEffects": false,
   "engines": {

@@ -1,6 +1,9 @@
 # Рецепты: транспорты кадра
 
-Кадр собирается и рисуется в Web Worker'е (`OffscreenCanvas`), и у движка два
+Кадр собирается в Web Worker'е и рисуется либо там же (`OffscreenCanvas`),
+либо на main тем же Rust-painter'ом, когда браузер не умеет
+`transferControlToOffscreen` — это main-режим
+([ADR-0029](../adr/0029-main-thread-render-backend.md)). У движка два
 равноправных транспорта: `sab` — ring из двух слотов в `SharedArrayBuffer`,
 `bytes` — два `ArrayBuffer`, которые воркер заполняет по очереди. API, кадры
 и экспорт одинаковы на обоих путях; отличается транспорт и, вслед за ним,
@@ -174,6 +177,43 @@ viewer.onTick((stats: PaintStats) => {
 
 ---
 
+### <a id="tr-08"></a>Рецепт 8. Браузер без OffscreenCanvas: `renderMode`
+
+**Задача.** Запустить просмотрщик там, где `canvas.transferControlToOffscreen`
+нет (старый webview, урезанный embed), и понять, какой режим включился.
+
+```ts
+import { createXlsxViewer } from '@meerrec/core';
+
+const viewer = await createXlsxViewer(host, {
+  workerUrl,
+  // 'auto' — по умолчанию: worker при transferControlToOffscreen, иначе main.
+  renderMode: 'auto',
+});
+await viewer.open(bytes);
+
+console.log(viewer.renderMode); // 'worker' | 'main'
+console.log(viewer.transport);  // в main-режиме всегда 'bytes'
+```
+
+**Под капотом.** В main-режиме воркер не забирает canvas: он по-прежнему
+парсит файл и собирает DisplayList, но шлёт его на main сообщением `frame` в
+двух `ArrayBuffer`; main рисует тем же Rust-painter'ом (`init_painter_main`),
+коалесцирует кадры по `requestAnimationFrame` и возвращает буферы
+`frame-ack`. `tick` в этом режиме эмитит main. Явный `renderMode: 'worker'`
+без возможности — ошибка инициализации, `renderMode: 'main'` вместе с
+`transport: 'sab'` — ошибка конфигурации: SAB-кольцо живёт в воркере.
+История решения — [ADR-0029](../adr/0029-main-thread-render-backend.md).
+
+**Ограничение.** Main-режим — singleton: один вьюер на страницу. Второй
+`createXlsxViewer`/`createDocxViewer` без OffscreenCanvas отклоняется с
+ошибкой «main-режим: один вьюер на страницу». `exportPng` в этом режиме
+считается локально через `HTMLCanvasElement.toBlob`, `exportPdf` и текст —
+по-прежнему в воркере.
+
+---
+
 Ссылки: [ADR-0021](../adr/0021-frame-transports.md) — равноправие транспортов,
-[ADR-0004](../adr/0004-sab-acceleration.md) — SAB-ускорение,
+[ADR-0029](../adr/0029-main-thread-render-backend.md) — main-режим без
+OffscreenCanvas, [ADR-0004](../adr/0004-sab-acceleration.md) — SAB-ускорение,
 `docs/workers.md` — COOP/COEP и корневой service worker.

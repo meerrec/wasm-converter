@@ -7,14 +7,30 @@ license.workspace = true
 # workspace-URL не совпадает с фактическим remote (meerrec/wasm-converter)
 repository = "https://github.com/meerrec/wasm-converter"
 
+[features]
+# Генерация TS-типов wire-протокола (examples/export_wire.rs). В сборку
+# движка фича не входит: ts-rs нужен только генератору и проверкам.
+ts = ["dep:ts-rs"]
+
 [dependencies]
 zip        = { workspace = true }
+# Прямая зависимость только ради фичи: zip 9 объявляет flate2 с
+# `default-features = false`, и без rust_backend у flate2 нет декомпрессора.
+# miniz_oxide компактнее zlib-rs — это важно для бюджета wasm.
+flate2     = { version = "1.1", default-features = false, features = ["rust_backend"] }
 quick-xml  = { workspace = true }
 serde      = { workspace = true }
 thiserror  = { workspace = true }
 miette     = { workspace = true }
 chrono     = { workspace = true }
 smallvec   = { workspace = true }
+# 10.1 — сознательный пин проверенной ветки; MSRV проекта с zip 9 — 1.88,
+# апгрейд ts-rs — отдельной задачей.
+ts-rs      = { version = "10.1", optional = true, default-features = false, features = ["serde-compat"] }
+
+[[example]]
+name = "export_wire"
+required-features = ["ts"]
 
 # proptest тянет rand → getrandom, который не собирается под wasm32 без
 # `getrandom_backend="wasm_js"`; эти dev-зависимости нужны только нативным тестам.

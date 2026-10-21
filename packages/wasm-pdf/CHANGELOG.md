@@ -1,5 +1,15 @@
 # @doc-converter/wasm-pdf
 
+## 1.1.0
+
+### Minor Changes
+
+- Релиз v1.1.0: синхронный подъём версии с `@meerrec/core` — гейт
+  `release.yml` требует единую версию npm-пятёрки и крейта
+  `doc-converter-core`. Содержимое пакета: метаданные и README для
+  публикации в npmjs.org, пересборка с переработанным
+  `crates/pdf-wasm/src/lib.rs`.
+
 ## 1.0.0
 
 ### Major Changes

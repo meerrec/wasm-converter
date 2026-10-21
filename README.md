@@ -21,63 +21,51 @@
 Спринты 1–11 закрыты (сводка — [ROADMAP.md](ROADMAP.md) §7): разбор и
 раскладка обоих форматов, оба транспорта кадра first-class, просмотрщики,
 экспорт PDF/Markdown/HTML/текста, CLI с батч-конвертацией, оракул против
-LibreOffice, бенчмарки против JS-библиотек. Сейчас идёт **Спринт 12 — релиз
-v1.0.0** ([docs/sprint-12/plan.md](docs/sprint-12/plan.md)): релизная
-механика, публикация npm-пакетов в GitHub Packages (crates.io — non-goal,
-[ADR-0026](docs/adr/0026-rust-crates-distribution.md)), документация. Что работает — в
-разделе «Производительность», что осознанно не входит в v1 — в разделе
-«Ограничения v1».
+LibreOffice, бенчмарки против JS-библиотек; версия v1.0.0 опубликована,
+спайк LibreOffice-WASM закрыт решением no-go. Фаза 1 архитектурного аудита
+реализована: подготовка npmjs.org ([ADR-0027](docs/adr/0027-npmjs-primary-registry.md);
+GitHub Packages — действующее зеркало, crates.io — non-goal,
+[ADR-0026](docs/adr/0026-rust-crates-distribution.md)), wire-типы Rust → TS
+через ts-rs ([ADR-0028](docs/adr/0028-typed-wire-protocol.md)) и рендер на
+main-потоке без `OffscreenCanvas` ([ADR-0029](docs/adr/0029-main-thread-render-backend.md)).
+Что работает — в разделе «Производительность», что осознанно не входит в v1 — в
+разделе «Ограничения v1».
 
 ## Демо
 
-Корень <https://meerrec.github.io/wasm-converter/> — страница-указатель, а не
-приложение: там же лежит статика движка Euro-Office, которую открывает страница
-демо `#/eurooffice`. Само демо живёт в подкаталоге
-<https://meerrec.github.io/wasm-converter/viewer/> и это четыре страницы:
-«Слово» на `#/docx`, «ДваИксель» на `#/xlsx`, «Конвертер» на `#/convert` и
-«Euro-Office» на `#/eurooffice` (корень демо ведёт на `#/docx`). Публикуется
-workflow `Pages` при пуше в `main`.
+Демо просмотрщика живёт на
+<https://meerrec.github.io/wasm-converter/viewer/> и это две страницы:
+«Слово» на `#/docx` и «ДваИксель» на `#/xlsx` (корень демо ведёт на `#/docx`).
+Публикуется workflow `Pages` при пуше в `main`.
 
-Страница «Конвертер» работает на x2t-wasm (конвертер ONLYOFFICE) и переводит
-файлы внутри семейства — docx↔odt/rtf/txt, xlsx↔ods/csv; ~39 МБ артефактов
-грузятся лениво при первой конвертации. Подробности —
-[packages/browser-convert/README.md](packages/browser-convert/README.md).
-
-Страница «Euro-Office» — self-host движка Euro-Office (форк ONLYOFFICE)
-целиком в браузере: наша страница встраивает редактор iframe'ом и открывает
-файлы через Embed API **только для просмотра**. Файл читает родитель и передаёт
-его байтами, так что документ никуда не уезжает; взамен первый заход тянет
-~35 МиБ JS/WASM движка. Код проекта — Apache-2.0, движок — AGPL-3.0-only; тексты
-лицензий движка лежат в `/LICENSES/` опубликованного сайта.
+Страницы «Конвертер» (x2t-wasm, конвертер ONLYOFFICE) и «Euro-Office»
+(self-host движка Euro-Office, форк ONLYOFFICE, AGPL-3.0-only) вынесены вместе
+со всем, что грузит или собирает движок, в отдельный репозиторий
+[github.com/meerrec/eurooffice-demo](https://github.com/meerrec/eurooffice-demo)
+([ADR-0038](docs/adr/0038-agpl-separation.md)): монорепозиторий — чистый
+Apache-2.0, сайт движка собирается и публикуется там.
 
 GitHub Pages не отдаёт заголовки cross-origin isolation (COOP/COEP), поэтому их
 ставит единственный service worker сайта — наш `sw.js` в корне; вендоренного
-`coi-serviceworker.js` в демо больше нет. В корне он потому, что навигацию
-вложенного кадра обслуживает воркер, контролирующий родителя: воркер в области
-`/viewer/` навигацию `editor.html` не увидел бы, и кадр редактора остался бы без
-COEP — а изолированная страница демо такой кадр не впускает. COEP он ставит всем
-ответам (его требует и воркер-скрипт в своём собственном ответе — без этого у
-движка не поднимается конвертер x2t), COOP — только документам; кэшей воркер не
-держит (на `activate` сносит кэши прежних версий сайта). Регистрируют его
-страница демо и корневая страница-указатель, лишь пока изоляции нет, и только
-если браузер умеет встраивать кадр в изолированную страницу — сегодня это
-Chromium (проверку спрашивают и страницы, и сам воркер: движок регистрирует его
-мимо них); на первом заходе демо перезагружается один раз. Firefox и Safari
-остаются без изоляции вовсе: вьюер едет на `bytes`-транспорте (ADR-0021), и
-`#/eurooffice` там рабочий — неизолированный родитель кадр не проверяет. На
-браузере с поддержкой, но без воркера, вьюер тоже уходит на `bytes`, а вот
-`#/eurooffice`
-не заработает — редактор не встраивается.
+`coi-serviceworker.js` в демо больше нет. COEP он ставит всем ответам (его
+требует и воркер-скрипт в своём собственном ответе), COOP — только документам;
+кэшей воркер не держит (на `activate` сносит кэши прежних версий сайта).
+Регистрирует его страница демо, лишь пока изоляции нет, и только если браузер
+умеет встраивать кадр в изолированную страницу — сегодня это Chromium; на
+первом заходе демо перезагружается один раз. Firefox и Safari остаются без
+изоляции вовсе: вьюер едет на `bytes`-транспорте (ADR-0021) — штатный путь.
 
 ## Быстрый старт
 
 ### Установка
 
-Пакеты опубликованы в **GitHub Packages** этого репозитория — не в
-`registry.npmjs.org`: `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`,
-`@meerrec/core`, `@meerrec/cli`, версия `1.0.0`. GitHub Packages требует
-авторизацию даже на чтение, поэтому сначала — реестр и токен с правом
-`read:packages` в `~/.npmrc`:
+Пакеты `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`,
+`@meerrec/core`, `@meerrec/cli` версии `1.0.0`. Целевой основной реестр —
+`registry.npmjs.org` (публикация готовится,
+[ADR-0027](docs/adr/0027-npmjs-primary-registry.md)); действующее зеркало —
+**GitHub Packages** этого репозитория. GitHub Packages требует авторизацию
+даже на чтение, поэтому до первой публикации в npmjs.org сначала — реестр и
+токен с правом `read:packages` в `~/.npmrc`:
 
 ```ini
 # ~/.npmrc — <токен> это personal access token (classic) с read:packages
@@ -91,8 +79,10 @@ npm install @meerrec/core @meerrec/wasm \
 npm install -g @meerrec/cli --registry=https://npm.pkg.github.com
 ```
 
-Разовая альтернатива `~/.npmrc` — `npm install --registry=https://npm.pkg.github.com …`
-(токен всё равно нужен). Совсем без реестра — собранные тарболы в ассетах
+После первой публикации в npmjs.org эти команды станут `npm install …` без
+токена и без `--registry`. Разовая альтернатива `~/.npmrc` —
+`npm install --registry=https://npm.pkg.github.com …` (токен всё равно нужен).
+Совсем без реестра — собранные тарболы в ассетах
 релиза [`v1.0.0`](https://github.com/meerrec/wasm-converter/releases/tag/v1.0.0)
 (`meerrec-*.tgz`, ставится как `npm install ./meerrec-core-1.0.0.tgz`).
 
@@ -185,10 +175,15 @@ doc-converter batch ./in --out ./out --format pdf --workers 8 --scale 0.9
 
 ## Браузеры
 
-Chrome 90+, Firefox 105+, Safari 16.4+ — по доступности `OffscreenCanvas`
-(проверяется экспортом `supportsOffscreen()`; просмотрщик требует его —
-main-thread fallback в v1 не реализован). Работа без COOP/COEP — штатный
-путь, см. ниже.
+Chrome 90+, Firefox 105+, Safari 16.4+ — если браузер умеет `OffscreenCanvas`
+(проверяется экспортом `supportsOffscreen()`), это путь по умолчанию: canvas
+уезжает в worker, и кадр рисуется там. Без `transferControlToOffscreen` вьюер
+не падает, а автоматически переходит в main-режим: парсинг и сборка
+DisplayList остаются в worker, а рисует main тем же Rust-painter'ом. Режим
+задаётся опцией `renderMode: 'auto' | 'worker' | 'main'` (по умолчанию
+`auto`); явный `'worker'` без возможности — ошибка инициализации. В
+main-режиме — один вьюер на страницу. Работа без COOP/COEP — штатный путь,
+см. ниже.
 
 ## Встраивание: COOP/COEP и SharedArrayBuffer
 
@@ -225,6 +220,18 @@ Cross-Origin-Embedder-Policy: require-corp
 скорости. По замерам Спринта 11 ([ROADMAP.md](ROADMAP.md) §9): RPC
 round-trip < 1 мс на SAB против < 3 мс на буферах (RPC-слой с тех пор удалён
 как неиспользуемый); сборка кадра без деградации (transferables).
+
+Изоляцию дают двумя способами — на сам транспорт это влияет только тем,
+доступен ли он:
+
+- **GitHub Pages + service worker** (текущее демо): заголовки ставит `sw.js`,
+  изоляцию получает Chromium, Firefox и Safari остаются на `bytes`. Патч
+  зависим от вложенных кадров: воркер должен контролировать родителя.
+- **Native COOP/COEP** (рекомендуется для продакшена): заголовки отдаёт сам
+  хостинг, service worker для изоляции не нужен, изоляция есть во всех
+  браузерах с поддержкой COOP/COEP. Пример конфига для Cloudflare Pages —
+  [`demo/cloudflare/_headers`](demo/cloudflare/_headers), порядок подключения
+  и проверки — [`demo/cloudflare/README.md`](demo/cloudflare/README.md).
 
 ## Производительность
 
@@ -277,11 +284,12 @@ printpdf на собственный бэкенд похудел на 31 % gzip.
   вынимается из потока.
 - **VML-фолбэки** (`mc:Fallback`) игнорируются — рисуется только `mc:Choice`
   ([ADR-0014](docs/adr/0014-alternate-content.md)).
-- **PPTX и XLSB** не поддерживаются.
-- **Strict OOXML** не поддерживается — только Transitional
-  ([ADR-0017](docs/adr/0017-strict-vs-transitional.md)).
-- **Макрофайлы `.docm`** не поддерживаются; зашифрованные DOCX и `.doc` —
-  фатальная ошибка ([ADR-0016](docs/adr/0016-docx-error-policy.md)).
+- **PPTX, Strict OOXML, ODF (`.odt`/`.ods`/`.odp`) и макрофайлы `.docm`** — в плане, пока не поддерживаются
+  ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
+- **XLSB, зашифрованные документы и бинарный `.doc`** — статус non-goal
+  снят ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)), реализаций нет;
+  открытие зашифрованных DOCX и `.doc` — фатальная ошибка
+  ([ADR-0016](docs/adr/0016-docx-error-policy.md)).
 
 ## Лицензия
 

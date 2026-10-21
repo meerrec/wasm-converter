@@ -8,9 +8,22 @@ import type {
   PdfOptions,
   ReadyInfo,
   RenderConfig,
+  RenderMode,
   SheetInfo,
   Viewport,
 } from '../protocol.js';
+import { armAbort } from './abort.js';
+import { exportPng } from './export_png.js';
+import { createMainFrameChain, type MainFrameChain } from './main_frame_chain.js';
+import {
+  disposeMainPainter,
+  dropMainBitmap,
+  initMainPainter,
+  registerMainBitmap,
+  resizeMainCanvas,
+} from './main_painter.js';
+import { resolveRenderMode } from './offscreen.js';
+import { pumpStream, type PumpOptions } from './open_stream.js';
 import { computeDpr } from './resize_observer.js';
 
 /** Что умеет открытая книга. */
@@ -20,6 +33,8 @@ export interface XlsxViewerHandle {
    * иначе буферы. Функциональность от этого не зависит — поле для диагностики.
    */
   readonly transport: FrameTransport;
+  /** Где рисуется кадр: в воркере или на main-потоке. */
+  readonly renderMode: 'worker' | 'main';
   /** Имена и размеры листов, как их видит рендер. */
   readonly sheets: SheetInfo[];
   /** Номер показанного листа. */
@@ -27,8 +42,16 @@ export interface XlsxViewerHandle {
   /** Зум: 1 — сто процентов. */
   readonly zoom: number;
 
-  /** Открыть книгу. Байты передаются воркеру переводом владения. */
-  open(bytes: ArrayBuffer): Promise<SheetInfo[]>;
+  /**
+   * Открыть книгу. Байты передаются воркеру переводом владения; поток
+   * (`ReadableStream<Uint8Array>`) уезжает чанками — прогресс и отмена
+   * загрузки (ADR-0031). `signal` — отмена тяжёлой операции (ADR-0032):
+   * воркер остановит её в ближайшей точке проверки.
+   */
+  open(
+    source: ArrayBuffer | ReadableStream<Uint8Array>,
+    opts?: { size?: number; signal?: AbortSignal },
+  ): Promise<SheetInfo[]>;
   /** Показать лист по номеру. */
   showSheet(index: number): void;
   /** Задать зум и перерисовать. */
@@ -46,13 +69,13 @@ export interface XlsxViewerHandle {
   /** Гиперссылка под точкой события мыши, в координатах страницы. */
   hyperlinkAt(clientX: number, clientY: number): Promise<HyperlinkInfo | null>;
   /** Текущий кадр картинкой PNG — им проверяют, что нарисовалось. */
-  exportPng(): Promise<Uint8Array>;
+  exportPng(opts?: { signal?: AbortSignal }): Promise<Uint8Array>;
   /**
    * Экспорт листа в PDF. Без настроек — весь текущий лист на A4.
    * `options.sheetIndex` перекрывает показанный лист, `options.allSheets` —
    * вся книга одним документом (листы подряд, закладка на каждый).
    */
-  exportPdf(options?: PdfOptions): Promise<Uint8Array>;
+  exportPdf(options?: PdfOptions, opts?: { signal?: AbortSignal }): Promise<Uint8Array>;
   /** Подписка на метрики кадров. */
   onTick(handler: (stats: PaintStats) => void): () => void;
   /** Остановить воркер и убрать за собой разметку. */
@@ -77,6 +100,13 @@ export interface XlsxViewerOptions {
    * `sab` без заголовков — ошибка инициализации, а не тихая подмена.
    */
   transport?: 'auto' | FrameTransport;
+  /**
+   * Где рисовать кадр. `auto` (по умолчанию) — воркер, если холст можно отдать
+   * ему через `transferControlToOffscreen`, иначе main-поток. Явный `worker`
+   * без этой возможности — ошибка инициализации; `main` вместе с
+   * `transport: 'sab'` — ошибка конфигурации.
+   */
+  renderMode?: RenderMode;
   /** Начальный зум. */
   zoom?: number;
   showGrid?: boolean;
@@ -91,6 +121,12 @@ export interface XlsxViewerOptions {
    * ссылки колбэк не трогает.
    */
   onHyperlink?: (link: HyperlinkInfo) => void;
+  /**
+   * Прогресс стримового открытия (ADR-0031): вызывается на каждый
+   * отправленный чанк. `total` — размер из `open(source, { size })`, если
+   * вызывающий его знает; путь байтов колбэк не трогает.
+   */
+  onProgress?: (loaded: number, total?: number) => void;
 }
 
 const DEFAULT_SLOT_CAPACITY = 1 << 20;
@@ -117,15 +153,10 @@ export async function createXlsxViewer(
   scroller.append(spacer, canvas);
   host.append(scroller);
 
-  // Проверяем ровно ту возможность, которой пользуемся: глобального
-  // `OffscreenCanvas` может не быть и там, где холст отдаётся воркеру. Без неё
-  // сообщение должно быть внятным, а не `transferControlToOffscreen is not a
-  // function` из недр разметки.
-  if (typeof canvas.transferControlToOffscreen !== 'function') {
-    throw new Error(
-      'этот браузер не поддерживает OffscreenCanvas (transferControlToOffscreen) — просмотрщик не запустится',
-    );
-  }
+  // Режим решает, уедет ли холст в воркер. Проверяем ровно ту возможность,
+  // которой пользуемся: глобального `OffscreenCanvas` может не быть и там, где
+  // холст отдаётся воркеру, а main-режиму он не нужен вовсе.
+  const renderMode = resolveRenderMode(canvas, options.renderMode, options.transport);
 
   const worker = new Worker(
     options.workerUrl ?? new URL('../worker/worker.js', import.meta.url),
@@ -133,6 +164,9 @@ export async function createXlsxViewer(
   );
 
   const slotCapacity = options.slotCapacity ?? DEFAULT_SLOT_CAPACITY;
+  /** Битмапы main-режима: main перерегистрирует их после resize. */
+  const mainBitmaps = new Map<number, ImageBitmap>();
+  let mainChain: MainFrameChain | null = null;
   const tickHandlers = new Set<(stats: PaintStats) => void>();
   let sheets: SheetInfo[] = [];
   let sheetIndex = 0;
@@ -146,12 +180,34 @@ export async function createXlsxViewer(
   const pendingOpen = new Map<number, { resolve: (s: SheetInfo[]) => void; reject: (e: Error) => void }>();
   const pendingHit = new Map<number, { resolve: (c: [number, number] | null) => void }>();
   const pendingHyperlink = new Map<number, { resolve: (link: HyperlinkInfo | null) => void }>();
-  const pendingPng = new Map<number, (bytes: Uint8Array) => void>();
+  const pendingPng = new Map<
+    number,
+    { resolve: (bytes: Uint8Array) => void; reject: (e: Error) => void }
+  >();
   const pendingPdf = new Map<
     number,
     { resolve: (bytes: Uint8Array) => void; reject: (e: Error) => void }
   >();
   let nextRequestId = 1;
+
+  // main-режим: painter поднимается до воркера и до первого кадра. Если
+  // инициализация не удалась, воркер не должен остаться висеть.
+  if (renderMode === 'main') {
+    const ctx2d = canvas.getContext('2d');
+    if (!ctx2d) {
+      worker.terminate();
+      throw new Error('getContext("2d") returned null');
+    }
+    try {
+      await initMainPainter(ctx2d, options.wasmUrl);
+    } catch (e) {
+      worker.terminate();
+      throw e;
+    }
+    mainChain = createMainFrameChain(worker, (stats) => {
+      for (const handler of tickHandlers) handler(stats);
+    });
+  }
 
   worker.addEventListener('message', (ev: MessageEvent<OutMsg>) => {
     const msg = ev.data;
@@ -159,13 +215,37 @@ export async function createXlsxViewer(
       case 'tick':
         for (const handler of tickHandlers) handler(msg.stats);
         break;
-      case 'opened':
+      case 'frame':
+        // main-режим: воркер собрал DisplayList, рисуем и возвращаем буфер.
+        mainChain?.handle(msg);
+        break;
+      case 'bitmap': {
+        registerMainBitmap(msg.id, msg.bitmap);
+        mainBitmaps.set(msg.id, msg.bitmap);
+        break;
+      }
+      case 'drop-bitmap': {
+        dropMainBitmap(msg.id);
+        mainBitmaps.delete(msg.id);
+        break;
+      }
+      case 'clear-bitmaps': {
+        for (const id of mainBitmaps.keys()) dropMainBitmap(id);
+        mainBitmaps.clear();
+        break;
+      }
+      case 'opened': {
         sheets = msg.sheets;
-        for (const p of pendingOpen.values()) p.resolve(msg.sheets);
-        pendingOpen.clear();
+        // Ответ адресный: разрешаем ровно тот промис, чей id эхом вернул воркер.
+        const pending = pendingOpen.get(msg.id);
+        if (pending) {
+          pendingOpen.delete(msg.id);
+          pending.resolve(msg.sheets);
+        }
         applySheetSize();
         schedule();
         break;
+      }
       case 'hit': {
         pendingHit.get(msg.id)?.resolve(msg.cell);
         pendingHit.delete(msg.id);
@@ -177,7 +257,7 @@ export async function createXlsxViewer(
         break;
       }
       case 'png': {
-        pendingPng.get(msg.id)?.(msg.bytes);
+        pendingPng.get(msg.id)?.resolve(msg.bytes);
         pendingPng.delete(msg.id);
         break;
       }
@@ -186,49 +266,88 @@ export async function createXlsxViewer(
         pendingPdf.delete(msg.id);
         break;
       }
-      case 'error':
-        for (const p of pendingOpen.values()) p.reject(new Error(msg.message));
+      case 'error': {
+        const error = new Error(msg.message);
+        console.error('[xlsx]', msg.code ? `${msg.code}: ${msg.message}` : msg.message);
+        if (msg.id !== undefined) {
+          // Ошибка адресная: отклоняем только свой запрос, соседние ждут
+          // своих ответов — их ошибка не касается.
+          const open = pendingOpen.get(msg.id);
+          if (open) {
+            pendingOpen.delete(msg.id);
+            open.reject(error);
+          }
+          const png = pendingPng.get(msg.id);
+          if (png) {
+            pendingPng.delete(msg.id);
+            png.reject(error);
+          }
+          const pdf = pendingPdf.get(msg.id);
+          if (pdf) {
+            pendingPdf.delete(msg.id);
+            pdf.reject(error);
+          }
+          break;
+        }
+        // Ошибки без id — сбой воркера целиком (init): ответа не будет ни на
+        // один запрос, поэтому отклоняем всё ожидающее.
+        for (const p of pendingOpen.values()) p.reject(error);
         pendingOpen.clear();
-        // У ошибки нет id: отклоняем все экспорты — незавершённый повис бы навсегда.
-        for (const p of pendingPdf.values()) p.reject(new Error(msg.message));
+        for (const p of pendingPng.values()) p.reject(error);
+        pendingPng.clear();
+        for (const p of pendingPdf.values()) p.reject(error);
         pendingPdf.clear();
-        console.error('[xlsx]', msg.message);
         break;
+      }
       default:
         break;
     }
   });
 
-  const ready = await new Promise<ReadyInfo>((resolve, reject) => {
-    const onMessage = (ev: MessageEvent) => {
-      const data = ev.data as { type?: string; message?: string } & Partial<ReadyInfo>;
-      if (data?.type === 'ready') {
-        worker.removeEventListener('message', onMessage);
-        resolve({
-          transport: data.transport ?? 'bytes',
-          slotCapacity: data.slotCapacity ?? slotCapacity,
-          totalBytes: data.totalBytes ?? 0,
-          crossOriginIsolated: data.crossOriginIsolated ?? false,
-        });
-      } else if (data?.type === 'error') {
-        worker.removeEventListener('message', onMessage);
-        reject(new Error(data.message ?? 'worker init error'));
-      }
-    };
-    worker.addEventListener('message', onMessage);
-    const off = canvas.transferControlToOffscreen();
-    worker.postMessage(
-      {
+  let ready: ReadyInfo;
+  try {
+    ready = await new Promise<ReadyInfo>((resolve, reject) => {
+      const onMessage = (ev: MessageEvent) => {
+        const data = ev.data as { type?: string; message?: string } & Partial<ReadyInfo>;
+        if (data?.type === 'ready') {
+          worker.removeEventListener('message', onMessage);
+          resolve({
+            backend: data.backend ?? 'worker',
+            transport: data.transport ?? 'bytes',
+            slotCapacity: data.slotCapacity ?? slotCapacity,
+            totalBytes: data.totalBytes ?? 0,
+            crossOriginIsolated: data.crossOriginIsolated ?? false,
+          });
+        } else if (data?.type === 'error') {
+          worker.removeEventListener('message', onMessage);
+          reject(new Error(data.message ?? 'worker init error'));
+        }
+      };
+      worker.addEventListener('message', onMessage);
+      const init = {
         type: 'init',
-        canvas: off,
+        backend: renderMode,
         wasmUrl: options.wasmUrl,
         pdf: options.pdfWasm,
         slotCapacity,
         transport: options.transport,
-      } satisfies InMsg,
-      [off],
-    );
-  });
+      } satisfies InMsg;
+      if (renderMode === 'worker') {
+        // Холст уезжает воркеру ровно один раз; в main-режиме он остаётся здесь.
+        const off = canvas.transferControlToOffscreen();
+        worker.postMessage({ ...init, canvas: off } satisfies InMsg, [off]);
+      } else {
+        worker.postMessage(init);
+      }
+    });
+  } catch (e) {
+    // Воркер не поднялся — он не нужен, а painter в main-режиме singleton
+    // страницы: без освобождения следующий вьюер не смог бы инициализироваться.
+    worker.terminate();
+    mainChain?.destroy();
+    if (renderMode === 'main') disposeMainPainter();
+    throw e;
+  }
 
   /** Размер листа в пикселях экрана: зум растягивает раскладку. */
   function applySheetSize(): void {
@@ -245,6 +364,16 @@ export async function createXlsxViewer(
     dpr = computeDpr(cssW, cssH, devicePixelRatio);
     canvas.style.width = `${cssW}px`;
     canvas.style.height = `${cssH}px`;
+    if (renderMode === 'main') {
+      // Размеры ставит main: холст здесь же, воркеру о них знать нечего.
+      // Установка width/height сбрасывает 2D-контекст, поэтому painter
+      // пересчитывает его сам, а картинки возвращаются в кэш после этого.
+      canvas.width = Math.max(1, Math.round(cssW * dpr));
+      canvas.height = Math.max(1, Math.round(cssH * dpr));
+      resizeMainCanvas(cssW, cssH, dpr);
+      for (const [id, bmp] of mainBitmaps) registerMainBitmap(id, bmp);
+      return;
+    }
     worker.postMessage({ type: 'resize', cssW, cssH, dpr } satisfies InMsg);
   }
 
@@ -354,6 +483,7 @@ export async function createXlsxViewer(
 
   return {
     transport: ready.transport,
+    renderMode,
 
     get sheets() {
       return sheets;
@@ -365,11 +495,54 @@ export async function createXlsxViewer(
       return zoom;
     },
 
-    open(bytes: ArrayBuffer): Promise<SheetInfo[]> {
+    open(
+      source: ArrayBuffer | ReadableStream<Uint8Array>,
+      opts: { size?: number; signal?: AbortSignal } = {},
+    ): Promise<SheetInfo[]> {
       const id = nextRequestId++;
       return new Promise<SheetInfo[]>((resolve, reject) => {
-        pendingOpen.set(id, { resolve, reject });
-        worker.postMessage({ type: 'open', format: 'xlsx', bytes } satisfies InMsg, [bytes]);
+        // Новое открытие отменяет предыдущее (ADR-0032): два параллельных open
+        // на один воркер не имеют смысла, а ответ старого повис бы в пустоте.
+        for (const stale of pendingOpen.keys()) {
+          worker.postMessage({ type: 'cancel', id: stale } satisfies InMsg);
+        }
+        const guard = armAbort(
+          opts.signal,
+          (msg) => worker.postMessage(msg),
+          id,
+          resolve,
+          reject,
+        );
+        if (!guard) {
+          reject(new Error('operation cancelled'));
+          return;
+        }
+        pendingOpen.set(id, guard);
+        if (source instanceof ArrayBuffer) {
+          worker.postMessage({ type: 'open', id, format: 'xlsx', bytes: source } satisfies InMsg, [
+            source,
+          ]);
+          return;
+        }
+        // Поток: чанки уезжают переводом владения, main не держит файл.
+        const pump: PumpOptions = {};
+        if (opts.size !== undefined) pump.size = opts.size;
+        if (options.onProgress) pump.onProgress = options.onProgress;
+        void pumpStream(
+          (msg, transfer) => worker.postMessage(msg, transfer ?? []),
+          id,
+          'xlsx',
+          source,
+          pump,
+        ).catch((e) => {
+          // Чтение потока упало (сеть, отмена): воркер обычно уже ответил
+          // ошибкой «stream aborted», но если ответа не было — реджектим здесь.
+          const pending = pendingOpen.get(id);
+          if (pending) {
+            pendingOpen.delete(id);
+            pending.reject(new Error(String(e)));
+          }
+        });
       });
     },
 
@@ -411,19 +584,47 @@ export async function createXlsxViewer(
 
     hyperlinkAt,
 
-    exportPng(): Promise<Uint8Array> {
+    exportPng(opts: { signal?: AbortSignal } = {}): Promise<Uint8Array> {
+      // В main-режиме холст и painter здесь: снимок делается локально, без
+      // лишнего круга через воркер.
+      if (renderMode === 'main') return exportPng(canvas);
       const id = nextRequestId++;
-      return new Promise<Uint8Array>((resolve) => {
-        pendingPng.set(id, resolve);
+      return new Promise<Uint8Array>((resolve, reject) => {
+        const guard = armAbort(
+          opts.signal,
+          (msg) => worker.postMessage(msg),
+          id,
+          resolve,
+          reject,
+        );
+        if (!guard) {
+          reject(new Error('operation cancelled'));
+          return;
+        }
+        pendingPng.set(id, guard);
         worker.postMessage({ type: 'export-png', id } satisfies InMsg);
       });
     },
 
-    exportPdf(options: PdfOptions = {}): Promise<Uint8Array> {
+    exportPdf(
+      options: PdfOptions = {},
+      opts: { signal?: AbortSignal } = {},
+    ): Promise<Uint8Array> {
       const id = nextRequestId++;
       const sheet = options.sheetIndex ?? sheetIndex;
       return new Promise<Uint8Array>((resolve, reject) => {
-        pendingPdf.set(id, { resolve, reject });
+        const guard = armAbort(
+          opts.signal,
+          (msg) => worker.postMessage(msg),
+          id,
+          resolve,
+          reject,
+        );
+        if (!guard) {
+          reject(new Error('operation cancelled'));
+          return;
+        }
+        pendingPdf.set(id, guard);
         worker.postMessage({
           type: 'export-pdf',
           id,
@@ -443,8 +644,29 @@ export async function createXlsxViewer(
       observer.disconnect();
       scroller.removeEventListener('scroll', onScroll);
       canvas.removeEventListener('click', onCanvasClick);
+      // Отмена адресуется воркеру до его остановки (ADR-0032): флаг остановит
+      // операцию в ближайшей точке проверки. Ответа на запросы уже не будет —
+      // их промисы реджектятся здесь же.
+      for (const id of pendingOpen.keys()) {
+        worker.postMessage({ type: 'cancel', id } satisfies InMsg);
+      }
+      const error = new Error('viewer destroyed');
+      for (const p of pendingOpen.values()) p.reject(error);
+      pendingOpen.clear();
+      for (const p of pendingPng.values()) p.reject(error);
+      pendingPng.clear();
+      for (const p of pendingPdf.values()) p.reject(error);
+      pendingPdf.clear();
+      // Сначала цикл кадров: он вернёт воркеру вытесненный буфер, пока тот
+      // ещё жив. Затем singleton painter'а освобождается для страницы.
+      mainChain?.destroy();
       worker.postMessage({ type: 'close' } satisfies InMsg);
       worker.terminate();
+      if (renderMode === 'main') {
+        for (const id of mainBitmaps.keys()) dropMainBitmap(id);
+        mainBitmaps.clear();
+        disposeMainPainter();
+      }
       scroller.remove();
     },
   };

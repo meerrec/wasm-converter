@@ -1,6 +1,6 @@
 [package]
 name = "doc-converter-wasm"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 description = "wasm-bindgen entry point for the doc-converter viewer"
 license = "Apache-2.0"
@@ -10,6 +10,7 @@ repository = "https://github.com/meerrec/wasm-converter"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+doc-converter-core = { workspace = true }
 doc-converter-render = { workspace = true }
 doc-converter-xlsx = { workspace = true }
 wasm-bindgen = "0.2"
@@ -19,6 +20,7 @@ serde-wasm-bindgen = "0.6"
 web-sys = { version = "0.3", features = [
   "OffscreenCanvas",
   "OffscreenCanvasRenderingContext2d",
+  "CanvasRenderingContext2d",
   "ImageBitmap",
   "console",
 ] }
@@ -26,8 +28,17 @@ web-sys = { version = "0.3", features = [
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 # `ImageData` нужен только `get_image_data` в тестах: пиксели читают
-# регрессию кэша стилей. В релизной сборке фича не участвует.
-web-sys = { version = "0.3", features = ["ImageData"] }
+# регрессию кэша стилей и main-thread fallback. `Document`/`Window`/
+# `HtmlCanvasElement`/`CanvasRenderingContext2d` — для теста, который создаёт
+# настоящий `<canvas>` и ставит painter на его контекст. В релизной сборке
+# эти фичи dev-зависимости не участвуют.
+web-sys = { version = "0.3", features = [
+  "CanvasRenderingContext2d",
+  "Document",
+  "HtmlCanvasElement",
+  "ImageData",
+  "Window",
+] }
 
 # rustc эмитит bulk-memory, а bundled wasm-opt в wasm-pack его не понимает.
 # Оптимизацию делает scripts/build-wasm.sh системным wasm-opt, если он есть.

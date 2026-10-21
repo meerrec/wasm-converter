@@ -12,6 +12,8 @@
 //! своим `PushClip`, поэтому содержимое не выползает за его границы.
 
 use std::cell::RefCell;
+// Алиас: имя `Cell` занято ячейкой листа из модели.
+use std::cell::Cell as CancelCell;
 
 use doc_converter_render::display_list::{
     Color, DisplayList, DrawCommand, LineStyle, TextAlign, TextBaseline,
@@ -30,6 +32,7 @@ use crate::model::{
 };
 use crate::numfmt;
 use crate::Workbook;
+use crate::XlsxError;
 
 /// Ширина полосы заголовков строк, пиксели раскладки.
 pub const ROW_HEADER_WIDTH: f32 = 44.0;
@@ -298,14 +301,20 @@ impl Region {
 /// Собрать лист в `DisplayList`.
 ///
 /// Координаты — физические пиксели canvas; `viewport.scale` уже включает и зум,
-/// и плотность пикселей экрана.
+/// и плотность пикселей экрана. Флаг `cancelled` проверяется между полосами
+/// видимых строк (ADR-0032): плотный лист отменяется на первой же полосе после
+/// взведения.
+///
+/// # Errors
+/// [`XlsxError::Cancelled`] — флаг взведён между полосами.
 pub fn build(
     book: &Workbook,
     sheet: &Sheet,
     viewport: Viewport,
     options: &PaintOptions,
     out: &mut DisplayList,
-) {
+    cancelled: &CancelCell<bool>,
+) -> Result<(), XlsxError> {
     let Geometry {
         layout,
         scale,
@@ -341,23 +350,19 @@ pub fn build(
     let (first_col, last_col) = layout.columns_in(view_left, view_left + scroll_w);
     let (first_row, last_row) = layout.rows_in(view_top, view_top + scroll_h);
 
-    // Квадранты окна. Закреплённых нет — квадрант один, иначе ячейки
-    // закреплённой части нарисовались бы дважды.
-    let mut regions: Vec<((u32, u32), (u32, u32))> = Vec::with_capacity(4);
-    if frozen_rows > 0 && frozen_cols > 0 {
-        regions.push(((0, frozen_rows - 1), (0, frozen_cols - 1)));
-    }
-    if frozen_rows > 0 {
-        regions.push(((0, frozen_rows - 1), (first_col, last_col)));
-    }
-    if frozen_cols > 0 {
-        regions.push(((first_row, last_row), (0, frozen_cols - 1)));
-    }
-    regions.push(((first_row, last_row), (first_col, last_col)));
+    let regions = visible_regions(
+        (frozen_rows, frozen_cols),
+        (first_row, last_row),
+        (first_col, last_col),
+    );
 
     for (rows, cols) in regions {
         if rows.0 > rows.1 || cols.0 > cols.1 {
             continue;
+        }
+        // Отмена между полосами: проверка дешевле полосы из тысяч ячеек.
+        if cancelled.get() {
+            return Err(XlsxError::Cancelled);
         }
         let (layout_x, screen_x) = if cols.0 < frozen_cols {
             (0.0, header_w)
@@ -419,6 +424,34 @@ pub fn build(
             out,
         );
     }
+
+    Ok(())
+}
+
+/// Квадранты окна, которые нужно нарисовать, в порядке отрисовки.
+///
+/// Закреплённых нет — квадрант один, иначе ячейки закреплённой части
+/// нарисовались бы дважды.
+fn visible_regions(
+    frozen: (u32, u32),
+    rows: (u32, u32),
+    cols: (u32, u32),
+) -> Vec<((u32, u32), (u32, u32))> {
+    let (frozen_rows, frozen_cols) = frozen;
+    let (first_row, last_row) = rows;
+    let (first_col, last_col) = cols;
+    let mut regions: Vec<((u32, u32), (u32, u32))> = Vec::with_capacity(4);
+    if frozen_rows > 0 && frozen_cols > 0 {
+        regions.push(((0, frozen_rows - 1), (0, frozen_cols - 1)));
+    }
+    if frozen_rows > 0 {
+        regions.push(((0, frozen_rows - 1), (first_col, last_col)));
+    }
+    if frozen_cols > 0 {
+        regions.push(((first_row, last_row), (0, frozen_cols - 1)));
+    }
+    regions.push(((first_row, last_row), (first_col, last_col)));
+    regions
 }
 
 /// Фон, заливки, сетка, границы и текст одного квадранта.
@@ -1838,7 +1871,15 @@ mod tests {
 
     fn painted(book: &Workbook, viewport: Viewport, options: &PaintOptions) -> DisplayList {
         let mut dl = DisplayList::new();
-        build(book, &book.sheets()[0], viewport, options, &mut dl);
+        build(
+            book,
+            &book.sheets()[0],
+            viewport,
+            options,
+            &mut dl,
+            &CancelCell::new(false),
+        )
+        .expect("кадр собирается");
         dl
     }
 
@@ -1920,6 +1961,25 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_flag_stops_frame_between_bands() {
+        // Флаг отмены, взведённый до сборки, обязан оборвать кадр на первой
+        // же полосе (ADR-0032) — детерминированно, без гонки.
+        let book = book_with(numbers(), StyleTable::default());
+        let mut dl = DisplayList::new();
+        let cancelled = CancelCell::new(true);
+        let err = build(
+            &book,
+            &book.sheets()[0],
+            Viewport::default(),
+            &PaintOptions::default(),
+            &mut dl,
+            &cancelled,
+        )
+        .expect_err("взведённый флаг отменяет сборку кадра");
+        assert!(matches!(err, XlsxError::Cancelled), "ошибка: {err:?}");
+    }
+
+    #[test]
     fn repeated_build_does_not_pile_up() {
         let book = book_with(numbers(), StyleTable::default());
         let mut dl = DisplayList::new();
@@ -1930,7 +1990,9 @@ mod tests {
             Viewport::default(),
             &PaintOptions::default(),
             &mut dl,
-        );
+            &CancelCell::new(false),
+        )
+        .expect("кадр собирается");
         let once = dl.len();
         build(
             &book,
@@ -1938,7 +2000,9 @@ mod tests {
             Viewport::default(),
             &PaintOptions::default(),
             &mut dl,
-        );
+            &CancelCell::new(false),
+        )
+        .expect("кадр собирается");
 
         assert_eq!(dl.len(), once, "кадр собрался поверх предыдущего");
     }

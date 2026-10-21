@@ -79,7 +79,15 @@ fn conditional_formatting(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(kind), &(), |b, ()| {
             let mut dl = DisplayList::new();
             b.iter(|| {
-                paint_sheet(black_box(&book), sheet, viewport, &options, &mut dl);
+                paint_sheet(
+                    black_box(&book),
+                    sheet,
+                    viewport,
+                    &options,
+                    &mut dl,
+                    &std::cell::Cell::new(false),
+                )
+                .expect("кадр собирается");
                 dl.len()
             });
         });

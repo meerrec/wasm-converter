@@ -1,5 +1,14 @@
-// Wire-протокол Main ↔ Worker. Источник истины — этот файл;
-// Rust-сторона описывает только payload (JSON / SAB), не конверт.
+// Wire-протокол Main ↔ Worker. Конверт (`InMsg`/`OutMsg`) — источник истины
+// здесь; payload'ы описаны в Rust (`crates/core/src/wire.rs`) и сгенерированы
+// в `generated/wire.ts` (ADR-0028). Руками payload'ы не правятся.
+import type {
+  HyperlinkInfoWire,
+  ImageInfoWire,
+  PageInfoWire,
+  PaintStatsWire,
+  PdfOptionsWire,
+  SheetInfoWire,
+} from './generated/wire.js';
 
 /** Формат документа, который умеет открыть воркер. */
 export type DocFormat = 'xlsx' | 'docx';
@@ -18,29 +27,20 @@ export type TextPos = { kind: 'text'; page: number; offset: number };
 export type HitResult = CellRef | TextPos;
 
 /**
- * Гиперссылка под точкой. Источник — Rust `HyperlinkInfo`.
+ * Гиперссылка под точкой. Источник — Rust `HyperlinkInfoWire`.
  *
  * `target` — адрес перехода; `display` и `tooltip` — подпись и подсказка, как
  * их объявил файл, либо `null`, если их нет.
  */
-export interface HyperlinkInfo {
-  target: string;
-  display: string | null;
-  tooltip: string | null;
-}
+export type HyperlinkInfo = HyperlinkInfoWire;
 
-export interface PdfOptions {
-  pageSize?: 'A4' | 'A3' | 'Letter' | 'Legal';
-  orientation?: 'portrait' | 'landscape';
-  margins?: { top: number; right: number; bottom: number; left: number };
-  scale?: number;
-  sheetIndex?: number;
+export type PdfOptions = PdfOptionsWire & {
   /**
    * Экспортировать всю книгу одним PDF: листы идут подряд, закладка — на
    * каждый. `sheetIndex` в этом режиме не участвует — он выбирает один лист.
    */
   allSheets?: boolean;
-}
+};
 
 /**
  * Чем кадр едет от сборщика к painter'у. Для хоста пути неразличимы: тот же
@@ -53,9 +53,23 @@ export interface PdfOptions {
  */
 export type FrameTransport = 'sab' | 'bytes';
 
-/** Метрики одного кадра painter'а. Источник — Rust `PaintStats`. */
-export interface PaintStats {
-  cmds: number;
+/**
+ * Где рисуется кадр.
+ *
+ * - `auto` (по умолчанию) — воркер, если холст можно отдать ему через
+ *   `transferControlToOffscreen`, иначе main-поток;
+ * - `worker` — только воркер: без `transferControlToOffscreen` это ошибка
+ *   инициализации, а не тихий переход на main;
+ * - `main` — разбор и сборка DisplayList остаются в воркере, а painter
+ *   работает на main с обычным `CanvasRenderingContext2d`.
+ */
+export type RenderMode = 'auto' | 'worker' | 'main';
+
+/**
+ * Метрики одного кадра painter'а. Источник — Rust `PaintStatsWire`;
+ * `frameId` присваивает воркер, `buildMs` есть только у документов.
+ */
+export interface PaintStats extends PaintStatsWire {
   /**
    * Кадр, который просили нарисовать, не нарисован. Что именно случилось,
    * зависит от транспорта: на `sab` ring был полон и промежуточный кадр
@@ -63,7 +77,6 @@ export interface PaintStats {
    * кадр хосту не показывали, следующий покажут.
    */
   dropped: boolean;
-  paintMs: number;
   frameId: number;
   /** Сколько заняла сборка DisplayList. Есть только у документов. */
   buildMs?: number;
@@ -73,27 +86,14 @@ export interface PaintStats {
  * Лист открытой книги. Приходит из Rust: размеры — в пикселях раскладки,
  * то есть до зума.
  */
-export interface SheetInfo {
-  name: string;
-  index: number;
-  hidden: boolean;
-  width: number;
-  height: number;
-  frozenCols: number;
-  frozenRows: number;
-  frozenWidth: number;
-  frozenHeight: number;
-}
+export type SheetInfo = SheetInfoWire;
 
 /**
  * Страница открытого документа. Приходит из Rust: размеры — в пикселях
  * раскладки, то есть до зума; по ним интерфейс строит прокрутку страницы, как
  * по размерам листа.
  */
-export interface PageInfo {
-  width: number;
-  height: number;
-}
+export type PageInfo = PageInfoWire;
 
 /**
  * Картинка открытого документа: id, MIME-тип и длина байтов. Байты в список
@@ -101,11 +101,7 @@ export interface PageInfo {
  * чтобы не копировать разом всю media. Тем же id помечены команды `Image`
  * в кадре.
  */
-export interface ImageInfo {
-  id: number;
-  mime: string;
-  byteLength: number;
-}
+export type ImageInfo = ImageInfoWire;
 
 // ── Фаза 2: прямой протокол Main ↔ Worker ───────────────────
 // Paint-путь намеренно без request/response, чтобы кадр не ждал ответа.
@@ -138,7 +134,16 @@ export interface DocxModuleUrls {
 
 export interface InitMsg {
   type: 'init';
-  canvas: OffscreenCanvas;
+  /**
+   * Холст для воркер-пути. В main-режиме не передаётся: painter рисует на
+   * main, а воркеру холст не нужен вовсе.
+   */
+  canvas?: OffscreenCanvas;
+  /**
+   * Где рисовать. Без значения — `worker`: так вёл себя протокол до
+   * появления main-режима.
+   */
+  backend?: 'worker' | 'main';
   /** Без значения wasm-bindgen резолвит .wasm относительно своего модуля. */
   wasmUrl?: string | undefined;
   /** Где лежит PDF-модуль. Не задан — экспорт ответит ошибкой. */
@@ -158,6 +163,50 @@ export interface InitMsg {
 export interface ResizeMsg { type: 'resize'; cssW: number; cssH: number; dpr: number }
 export interface BitmapMsg { type: 'bitmap'; id: number; bitmap: ImageBitmap }
 export interface DropBitmapMsg { type: 'drop-bitmap'; id: number }
+
+/**
+ * Снять в main-режиме все картинки прежнего документа. Воркер шлёт его при
+ * открытии нового документа и при закрытии: набор id меняется целиком, а
+ * поштучные `drop-bitmap` на каждый id были бы лишним трафиком.
+ */
+export interface ClearBitmapsMsg { type: 'clear-bitmaps' }
+
+/**
+ * Готовый кадр для main-режима. Байты DisplayList едут переводом владения;
+ * main рисует их тем же Rust-painter'ом и возвращает буфер сообщением
+ * `frame-ack`, чтобы воркеру было куда собирать следующий кадр.
+ *
+ * `cmds`/`buildMs` — статистика сборки, `dropped` — были ли пропущены
+ * запросы на кадр, пока оба буфера находились в полёте.
+ */
+export interface FrameMsg {
+  type: 'frame';
+  frameId: number;
+  /**
+   * Слот релея, из которого взят буфер. Идентичность самого `ArrayBuffer`
+   * через `postMessage` не переживает: на другом конце это новый объект, и
+   * воркер узнаёт свой буфер только по номеру слота.
+   */
+  slot: number;
+  /** Буфер DisplayList; `len` — сколько байт в нём занято. */
+  bytes: ArrayBuffer;
+  len: number;
+  cmds: number;
+  buildMs: number;
+  dropped: boolean;
+}
+
+/**
+ * Буфер кадра вернулся на main-потоке после отрисовки (или сразу, если кадр
+ * вытеснен более свежим). Перевод владения — чтобы воркер не аллоцировал
+ * буфер заново на каждый кадр.
+ */
+export interface FrameAckMsg {
+  type: 'frame-ack';
+  /** Слот, к которому относится `buffer`; см. `FrameMsg.slot`. */
+  slot: number;
+  buffer: ArrayBuffer;
+}
 
 /**
  * Полезная нагрузка `render`.
@@ -184,9 +233,46 @@ export interface RenderRequest {
   config: RenderConfig;
 }
 
-/** Открыть книгу или документ. Байты передаются переводом владения. */
-export interface OpenMsg { type: 'open'; format: DocFormat; bytes: ArrayBuffer }
+/**
+ * Открыть книгу или документ. Байты передаются переводом владения.
+ *
+ * `id` обязателен, хотя ответ на открытие и так один на запрос: ошибка
+ * приходит общим тегом `error`, и без `id` main не отличил бы, какому из
+ * параллельных открытий она адресована. Ответ `opened`/`docx-opened` несёт
+ * тот же `id` — по нему просмотрщик находит свой ожидающий промис.
+ */
+export interface OpenMsg { type: 'open'; id: number; format: DocFormat; bytes: ArrayBuffer }
+
+/**
+ * Начать стримовое открытие (ADR-0031): воркер заводит буфер чанков под этим
+ * id и грузит форматный модуль, как при обычном `open`. `totalSize` —
+ * подсказка для прогресса (`onProgress`), необязателен.
+ */
+export interface OpenStreamMsg {
+  type: 'open-stream';
+  id: number;
+  format: DocFormat;
+  totalSize?: number;
+}
+
+/** Очередной чанк стрима: перевод владения, копии нет. */
+export interface AppendMsg { type: 'append'; id: number; bytes: ArrayBuffer }
+
+/**
+ * Конец стрима: парсить накопленный буфер и отвечать как на `open`
+ * (`opened`/`docx-opened`). `aborted` — читатель оборвал поток до конца
+ * (ошибка чтения или отмена): воркер отвечает ошибкой «stream aborted».
+ */
+export interface EndStreamMsg { type: 'end-stream'; id: number; aborted?: boolean }
 export interface CloseMsg { type: 'close' }
+
+/**
+ * Отменить запрос (ADR-0032): воркер ставит кооперативный флаг отмены, и
+ * ближайшая точка проверки (блок раскладки DOCX, полоса кадра XLSX) завершит
+ * операцию ошибкой `cancelled`. Адресный — отменяется один запрос по `id`,
+ * остальные продолжают работать.
+ */
+export interface CancelMsg { type: 'cancel'; id: number }
 export interface RenderMsg { type: 'render'; req?: RenderRequest }
 
 /** Ячейка под точкой: координаты — физические пиксели холста. */
@@ -256,8 +342,13 @@ export type InMsg =
   | ResizeMsg
   | BitmapMsg
   | DropBitmapMsg
+  | FrameAckMsg
   | OpenMsg
+  | OpenStreamMsg
+  | AppendMsg
+  | EndStreamMsg
   | CloseMsg
+  | CancelMsg
   | RenderMsg
   | HitTestMsg
   | HyperlinkAtMsg
@@ -273,7 +364,9 @@ export type InMsg =
  */
 export interface ReadyMsg {
   type: 'ready';
-  /** Каким путём поедут кадры. */
+  /** Где рисуется кадр: в воркере или на main. */
+  backend: 'worker' | 'main';
+  /** Каким путём поедут кадры. У main-режима всегда `bytes`. */
   transport: FrameTransport;
   /** Размер одного слота: у `sab` — слота ring'а, у `bytes` — буфера. */
   slotCapacity: number;
@@ -286,15 +379,18 @@ export interface ReadyMsg {
 /** `ReadyMsg` без тега: то, что просмотрщик знает о воркере после `init`. */
 export type ReadyInfo = Omit<ReadyMsg, 'type'>;
 export interface TickMsg { type: 'tick'; stats: PaintStats }
-/** Книга разобрана: листы и их размеры. */
-export interface OpenedMsg { type: 'opened'; sheets: SheetInfo[] }
+/**
+ * Книга разобрана: листы и их размеры. `id` — id запроса `open`: по нему
+ * просмотрщик разрешает именно свой промис, а не все ожидающие открытия.
+ */
+export interface OpenedMsg { type: 'opened'; id: number; sheets: SheetInfo[] }
 /**
  * Документ разложен: размеры страниц.
  *
  * Тег свой, а не `opened` с другим полем: сообщения с общим `type` в union не
  * сужаются, и ветка `opened` на main-стороне потеряла бы `sheets`.
  */
-export interface DocxOpenedMsg { type: 'docx-opened'; pages: PageInfo[] }
+export interface DocxOpenedMsg { type: 'docx-opened'; id: number; pages: PageInfo[] }
 /** Ответ на `hit-test`: строка и столбец либо ничего, если точка мимо. */
 export interface HitMsg { type: 'hit'; id: number; cell: [number, number] | null }
 /** Ответ на `hyperlink-at`: ссылка под точкой либо ничего. */
@@ -309,11 +405,40 @@ export interface PngMsg { type: 'png'; id: number; bytes: Uint8Array }
 export interface PdfMsg { type: 'pdf'; id: number; bytes: Uint8Array }
 /** Текстовая выгрузка документа в том формате, что запросил клиент. */
 export interface DocxTextMsg { type: 'docx-text'; id: number; text: string }
-export interface WorkerErrorMsg { type: 'error'; message: string }
+/**
+ * Стадия, на которой воркер потерпел неудачу. Код отличает сбой инициализации,
+ * после которого воркер бесполезен, от ошибки одного запроса, после которой
+ * остальные запросы продолжают работать.
+ */
+export type WorkerErrorCode = 'init' | 'open' | 'export' | 'cancelled' | 'internal';
+
+/**
+ * Ошибка воркера.
+ *
+ * `id` — запрос, который её вызвал: по нему просмотрщик отклоняет только свой
+ * промис, не трогая параллельные. Ошибки без `id` — сбой воркера целиком
+ * (инициализация, повторный `init`): ответа не будет ни на один запрос, и
+ * просмотрщик отклоняет все ожидающие.
+ */
+export interface WorkerErrorMsg {
+  type: 'error';
+  message: string;
+  /** id запроса, если ошибка адресная. */
+  id?: number;
+  /**
+   * Стадия сбоя: `init` — воркер не поднялся, `open`/`export` — один запрос,
+   * `internal` — нарушение протокола (например, повторный `init`).
+   */
+  code?: WorkerErrorCode;
+}
 
 export type OutMsg =
   | ReadyMsg
   | TickMsg
+  | BitmapMsg
+  | DropBitmapMsg
+  | ClearBitmapsMsg
+  | FrameMsg
   | PngMsg
   | PdfMsg
   | OpenedMsg

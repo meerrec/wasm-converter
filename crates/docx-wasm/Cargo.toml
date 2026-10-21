@@ -13,6 +13,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+doc-converter-core = { workspace = true }
 doc-converter-docx = { workspace = true }
 doc-converter-render = { workspace = true }
 wasm-bindgen = "0.2"

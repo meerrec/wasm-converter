@@ -8,8 +8,10 @@ name: Release
 #    `cargo publish --dry-run`. Это гейт DoD «cargo publish --dry-run зелёный».
 #
 # 2. `publish` — по тегу v* (или вручную из main) реально публикует
-#    npm-пакеты и крейты и режет GitHub Release. Тег ставится на main
-#    (trunk-based): с другой ветки джоба молча пропускается.
+#    npm-пакеты: npmjs.org — основной реестр (ADR-0027), GitHub Packages —
+#    зеркало; crates.io — по выключателю `PUBLISH_CRATES_IO`. В конце режется
+#    GitHub Release. Тег ставится на main (trunk-based): с другой ветки джоба
+#    молча пропускается.
 
 on:
   push:
@@ -113,6 +115,14 @@ jobs:
                   || { echo "::error::@meerrec/$pkg: в тарболе нет dist/ — пакет уехал бы без сборки"; printf '%s\n' "$files"; exit 1; }
                 ;;
             esac
+            # Текст лицензии и README обязаны быть в каждом тарболе: без них
+            # пакет в реестре нарушает Apache-2.0 и остаётся без инструкции
+            # по установке. npm кладёт оба файла и сам, но `files[]` в
+            # package.json перечисляет их явно — проверяем фактический состав.
+            printf '%s\n' "$files" | grep -qx 'LICENSE' \
+              || { echo "::error::@meerrec/$pkg: в тарболе нет LICENSE"; printf '%s\n' "$files"; exit 1; }
+            printf '%s\n' "$files" | grep -qx 'README.md' \
+              || { echo "::error::@meerrec/$pkg: в тарболе нет README.md"; printf '%s\n' "$files"; exit 1; }
             echo "OK: @meerrec/$pkg — файлов в тарболе: $(printf '%s\n' "$files" | grep -c .)"
           done
 
@@ -183,7 +193,7 @@ jobs:
           done
 
   publish:
-    name: Publish to npm and crates.io
+    name: Publish to npmjs.org, GitHub Packages and crates.io
     # Публикация — только из тега v* или вручную из main (trunk-based).
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
@@ -211,10 +221,11 @@ jobs:
 
       # registry-url + scope + NODE_AUTH_TOKEN: setup-node кладёт в ~/.npmrc
       # и реестр, и токен (в лог он не попадает), откуда их читает `pnpm
-      # publish`. Целевой реестр — GitHub Packages этого репозитория: там скоуп
-      # обязан совпадать с владельцем (`@meerrec`), поэтому токен — штатный
-      # GITHUB_TOKEN с правом `packages: write`. registry.npmjs.org подключается
-      # отдельным шагом и только по явному выключателю `PUBLISH_TO_NPMJS`.
+      # publish`. Этот реестр — GitHub Packages, действующее зеркало; основной
+      # реестр npmjs.org включается переменной `PUBLISH_TO_NPMJS` (ADR-0027).
+      # Скоуп @meerrec обязан совпадать с владельцем (`@meerrec`) в обоих
+      # реестрах, поэтому npm-шаги явно переключают `@meerrec:registry`:
+      # скоуп-реестр в ~/.npmrc важнее флага `--registry`.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -246,7 +257,14 @@ jobs:
             echo "workflow_dispatch: тега нет, сверку с тегом пропускаем; версии npm и крейтов сверяет шаг после changeset version"
             exit 0
           fi
-          pending=$(find .changeset -maxdepth 1 -name '*.md' ! -name 'README.md' | wc -l | tr -d ' ')
+          # Пустой changeset (frontmatter `---\n---` без объявлений релизов)
+          # не планирует публикацию: его оставляет push-гейт `changeset
+          # status`, чтобы релизный коммит (версии подняты, changesets
+          # применены) не был красным до появления тега. Тег-гейт такие
+          # файлы не считает — иначе релизный коммит пришлось бы доводить
+          # вторым коммитом-удалением с красным dry-run (прецедент v1.0.0:
+          # `1a1a251` удалял хвостовой changeset отдельным коммитом).
+          pending=$(grep -lE "^['\"]" .changeset/*.md 2>/dev/null | wc -l | tr -d ' ')
           if [ "$pending" -ne 0 ]; then
             echo "::error::дерево тега $GITHUB_REF_NAME содержит нерелизнутых changesets: $pending — это не релизный коммит, changeset version увёл бы публикацию вперёд тега"
             exit 1
@@ -262,6 +280,25 @@ jobs:
           fi
           echo "OK: тег $GITHUB_REF_NAME совпадает с npm-пакетами и крейтом doc-converter-core ($version)"
 
+      # Предпосылки npmjs.org проверяются ДО `changeset version`: иначе релиз
+      # прошёл бы половину пути и упал на публикации из-за внешней настройки.
+      # setup-node настроил `@meerrec:registry` на GitHub Packages, а скоуп-реестр
+      # важнее флага `--registry` — здесь явно переключаем скоуп на npmjs.org,
+      # чтобы последующий publish действительно ушёл в основной реестр.
+      - name: npmjs preflight (организация @meerrec и токен)
+        if: vars.PUBLISH_TO_NPMJS == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          npm config set @meerrec:registry https://registry.npmjs.org/
+          npm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
+          if ! npm whoami --registry=https://registry.npmjs.org/; then
+            echo "::error::npmjs preflight не прошёл. Проверьте внешние предпосылки: организация @meerrec создана на npmjs.org, а секрет NPM_TOKEN — granular/automation token с правом publish в неё и обходом 2FA."
+            exit 1
+          fi
+          echo "OK: токен npmjs.org действителен, @meerrec:registry переключён на registry.npmjs.org"
+
       # Версии npm-пакетов: если в .changeset есть нерелизнутые changesets —
       # применяем их (versions + CHANGELOG.md). Если их нет, версии уже
       # подняты релизным коммитом тега — берём из package.json как есть.
@@ -273,7 +310,10 @@ jobs:
         if: github.ref_type != 'tag'
         run: |
           set -euo pipefail
-          pending=$(find .changeset -maxdepth 1 -name '*.md' ! -name 'README.md' | wc -l | tr -d ' ')
+          # Пустые changesets (без объявлений релизов) версии не двигают —
+          # их `changeset version` лишь удалил бы; считать релизными только
+          # файлы с объявлениями (frontmatter со строкой `'@scope/pkg': …`).
+          pending=$(grep -lE "^['\"]" .changeset/*.md 2>/dev/null | wc -l | tr -d ' ')
           if [ "$pending" -eq 0 ]; then
             echo "Нерелизнутых changesets нет — версии npm-пакетов берём из package.json тега"
             exit 0
@@ -305,14 +345,20 @@ jobs:
 
       - run: pnpm turbo run build --filter='./packages/*'
 
-      # Целевой реестр — GitHub Packages этого репозитория. Скоуп пакета обязан
-      # совпадать с владельцем (`@meerrec`), иначе реестр отвергает публикацию.
-      - name: npm publish в GitHub Packages (по зависимостям)
+      # npmjs.org — основной реестр (ADR-0027), поэтому публикуем сюда первым:
+      # GitHub Packages остаётся зеркалом и догоняет уже существующие версии.
+      # setup-node указал `@meerrec:registry` на GitHub Packages, а скоуп-реестр
+      # важнее флага `--registry` — поэтому скоуп переключаем явно. Шаг строгий:
+      # включённый `PUBLISH_TO_NPMJS` означает, что предпосылки (организация
+      # `@meerrec`, `NPM_TOKEN`) проверены preflight-шагом выше.
+      - name: npm publish в registry.npmjs.org (основной реестр)
+        if: vars.PUBLISH_TO_NPMJS == 'true'
         env:
-          # Токен GitHub Packages; право publish выдано в `permissions` джобы.
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          npm config set @meerrec:registry https://registry.npmjs.org/
+          npm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
           publish_pkg() {
             local pkg=$1
             local version published
@@ -323,16 +369,16 @@ jobs:
             # переопубликовать старую версию всё равно нельзя, и проверка по
             # одной последней версии пропустила бы такой случай до жёсткой
             # ошибки публикации.
-            published=$(npm view "@meerrec/$pkg" versions --json --registry=https://npm.pkg.github.com 2>/dev/null || true)
+            published=$(npm view "@meerrec/$pkg" versions --json --registry=https://registry.npmjs.org/ 2>/dev/null || true)
             if [ -n "$published" ] &&
                printf '%s' "$published" | jq -e --arg v "$version" 'if type == "array" then . else [.] end | index($v)' >/dev/null; then
-              echo "@meerrec/$pkg@$version уже в GitHub Packages — пропускаем"
+              echo "@meerrec/$pkg@$version уже в npmjs — пропускаем"
               return
             fi
             # --no-git-checks: после `changeset version` дерево грязное
             # (версии, CHANGELOG, удалённые changesets) — публикации не мешает.
             # workspace:* pnpm при упаковке заменяет на конкретные версии.
-            ( cd "packages/$pkg" && pnpm publish --no-git-checks --registry=https://npm.pkg.github.com --access public )
+            ( cd "packages/$pkg" && pnpm publish --no-git-checks --registry=https://registry.npmjs.org/ --access public )
           }
           # Порядок — по зависимостям: сначала wasm-биндинги (их импортируют
           # core и cli), затем core, затем cli.
@@ -342,32 +388,28 @@ jobs:
           publish_pkg core
           publish_pkg cli
 
-      # Публикация в registry.npmjs.org — за явным выключателем и по умолчанию
-      # выключена: в npm нет ни скоупа `@doc-converter`, ни организации
-      # `@meerrec`, поэтому публикация оттуда вернула бы 404 на PUT. Выключение
-      # `continue-on-error` тут принципиально: включённый шаг обязан быть
-      # строгим. Включение — репозиторная переменная `PUBLISH_TO_NPMJS=true`
-      # плюс секрет `NPM_TOKEN` с правом публикации в скоуп `@meerrec`.
-      - name: npm publish в registry.npmjs.org (выключено по умолчанию)
-        if: vars.PUBLISH_TO_NPMJS == 'true'
+      # GitHub Packages — действующее зеркало npmjs.org (ADR-0027). После
+      # npmjs-шага `@meerrec:registry` в ~/.npmrc смотрит на registry.npmjs.org;
+      # явно возвращаем скоуп на GitHub Packages, иначе публикация ушла бы не
+      # в тот реестр. Право publish выдано в `permissions` джобы.
+      - name: npm publish в GitHub Packages (зеркало)
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Токен GitHub Packages; право publish выдано в `permissions` джобы.
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # setup-node настроил ~/.npmrc на GitHub Packages; для npmjs.org
-          # дописываем его токен в тот же userconfig.
-          npm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
+          npm config set @meerrec:registry https://npm.pkg.github.com/
           publish_pkg() {
             local pkg=$1
             local version published
             version=$(node -p "require('./packages/$pkg/package.json').version")
-            published=$(npm view "@meerrec/$pkg" versions --json --registry=https://registry.npmjs.org/ 2>/dev/null || true)
+            published=$(npm view "@meerrec/$pkg" versions --json --registry=https://npm.pkg.github.com 2>/dev/null || true)
             if [ -n "$published" ] &&
                printf '%s' "$published" | jq -e --arg v "$version" 'if type == "array" then . else [.] end | index($v)' >/dev/null; then
-              echo "@meerrec/$pkg@$version уже в npmjs — пропускаем"
+              echo "@meerrec/$pkg@$version уже в GitHub Packages — пропускаем"
               return
             fi
-            ( cd "packages/$pkg" && pnpm publish --no-git-checks --registry=https://registry.npmjs.org/ --access public )
+            ( cd "packages/$pkg" && pnpm publish --no-git-checks --registry=https://npm.pkg.github.com --access public )
           }
           publish_pkg wasm
           publish_pkg wasm-docx
@@ -375,7 +417,12 @@ jobs:
           publish_pkg core
           publish_pkg cli
 
+      # crates.io — за отдельным выключателем: публикация в crates.io — non-goal
+      # v1.x (ADR-0026), и отсутствие валидного `CARGO_REGISTRY_TOKEN` не должно
+      # валить релиз уже после успешной публикации npm-пакетов. Включается
+      # репозиторной переменной `PUBLISH_CRATES_IO=true`.
       - name: crates.io publish (по зависимостям)
+        if: vars.PUBLISH_CRATES_IO == 'true'
         env:
           # Стандартная переменная cargo для токена реестра; --token не
           # передаём — секрет только через env.

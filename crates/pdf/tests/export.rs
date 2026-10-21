@@ -487,7 +487,9 @@ fn canvas_lines(book: &doc_converter_xlsx::Workbook) -> Vec<String> {
         viewport,
         &options,
         &mut display_list,
-    );
+        &std::cell::Cell::new(false),
+    )
+    .expect("кадр собирается");
 
     (0..display_list.len())
         .filter_map(|index| display_list.cmd(index))

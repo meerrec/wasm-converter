@@ -5,14 +5,19 @@
 //! ring'а, минуя JS: гонять сотни килобайт команд через `postMessage` значило
 //! бы платить за копирование на каждом кадре.
 
+use std::cell::Cell;
 use std::cell::RefCell;
 
+use doc_converter_core::wire::{
+    BuildStatsWire, HyperlinkInfoWire, ImageInfoWire, RenderOptionsWire, SheetInfoWire,
+    ViewportWire,
+};
 use doc_converter_render::display_list::DisplayList;
 use doc_converter_render::sab::SabRing;
 use doc_converter_xlsx::paint::{self, PaintOptions};
 use doc_converter_xlsx::Viewport;
 use doc_converter_xlsx::Workbook;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 thread_local! {
@@ -23,75 +28,18 @@ thread_local! {
     /// Байты кадра: сериализация тоже переиспользует буфер — на кадр глубиной
     /// в сотни килобайт `to_bytes()` был бы лишней аллокацией и копией.
     static SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// Флаг отмены тяжёлой операции (ADR-0032): взводит сообщение `cancel`.
+    static CANCEL: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Окно — то, что приходит из воркера.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ViewportJs {
-    #[serde(default)]
-    scroll_x: f32,
-    #[serde(default)]
-    scroll_y: f32,
-    width: f32,
-    height: f32,
-    #[serde(default = "one")]
-    scale: f32,
-}
-
-/// Настройки рисования. Поля необязательны: интерфейс может прислать только
-/// то, что меняет, а остальное остаётся как в Excel.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OptionsJs {
-    #[serde(default = "yes")]
-    show_grid: bool,
-    #[serde(default = "yes")]
-    show_headers: bool,
-    /// Тёмное оформление; `false` — светлое, как в Excel.
-    #[serde(default)]
-    dark: bool,
-}
-
-fn one() -> f32 {
-    1.0
-}
-
-fn yes() -> bool {
-    true
-}
-
-/// Описание листа для интерфейса: имя, размеры и закрепления.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SheetInfo {
-    name: String,
-    index: usize,
-    hidden: bool,
-    /// Размер листа в пикселях раскладки — им распоряжается полоса прокрутки.
-    width: f32,
-    height: f32,
-    frozen_cols: u32,
-    frozen_rows: u32,
-    /// Ширина и высота закреплённой части.
-    frozen_width: f32,
-    frozen_height: f32,
-}
-
-/// Что вышло из попытки собрать кадр.
+/// Взвести или снять флаг кооперативной отмены (ADR-0032).
 ///
-/// Общая форма для обоих форматов: и XLSX, и DOCX отдают её интерфейсу.
-/// Копия для DOCX живёт в `crates/docx-wasm` — модуль там самодостаточен.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildStats {
-    /// Кадр уложился в буфер. `false` — либо не было свободного слота ring'а,
-    /// либо буфер вызывающего меньше кадра (`bytes` скажет, насколько).
-    written: bool,
-    cmds: u32,
-    /// Размер кадра в байтах. По нему воркер понимает, что буфер мал, и растит его.
-    bytes: u32,
-    build_ms: f64,
+/// Сборка кадра проверяет его между полосами видимых строк. Флаг одноразовый:
+/// операция, которая его заметила, гасит его сама, — иначе отмена, пришедшая
+/// после операции, ждала бы следующую.
+#[wasm_bindgen]
+pub fn set_cancel(flag: bool) {
+    CANCEL.with(|cancel| cancel.set(flag));
 }
 
 /// Ошибка разбора — сообщением для человека: показывать её будет интерфейс.
@@ -105,15 +53,22 @@ pub(crate) fn to_js(error: impl std::fmt::Display) -> JsValue {
 /// Если байты не OOXML-пакет или какая-то из частей не разбирается.
 #[wasm_bindgen]
 pub fn xlsx_open(bytes: Vec<u8>) -> Result<JsValue, JsValue> {
+    CANCEL.with(|cancel| cancel.set(false));
     let book = doc_converter_xlsx::open(bytes).map_err(to_js)?;
-    let sheets: Vec<SheetInfo> = book
+    install_book(book)
+}
+
+/// Ставит готовую книгу в `DOC` и сериализует ответ открытия — общий хвост
+/// `xlsx_open` и `stream_open_xlsx` (ADR-0031).
+pub(crate) fn install_book(book: doc_converter_xlsx::Workbook) -> Result<JsValue, JsValue> {
+    let sheets: Vec<SheetInfoWire> = book
         .sheets()
         .iter()
         .enumerate()
         .map(|(index, sheet)| {
             let layout = doc_converter_xlsx::SheetLayout::new(sheet);
             let pane = sheet.view.pane.filter(|pane| !pane.is_empty());
-            SheetInfo {
+            SheetInfoWire {
                 name: sheet.meta.name.clone(),
                 index,
                 hidden: sheet.meta.state != doc_converter_xlsx::SheetState::Visible,
@@ -134,6 +89,7 @@ pub fn xlsx_open(bytes: Vec<u8>) -> Result<JsValue, JsValue> {
 /// Закрыть книгу и освободить память.
 #[wasm_bindgen]
 pub fn xlsx_close() {
+    CANCEL.with(|cancel| cancel.set(false));
     DOC.with(|doc| *doc.borrow_mut() = None);
     FRAME.with(|frame| frame.borrow_mut().clear());
 }
@@ -145,24 +101,11 @@ pub fn xlsx_is_open() -> bool {
 }
 
 /// Картинка книги в том виде, в каком её видит интерфейс: id, MIME и размер.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImageInfo {
-    /// id, которым помечены картинки листов и команды `Image` в кадре.
-    id: u32,
-    /// MIME-тип байтов — интерфейс собирает из них `Blob`.
-    mime: String,
-    /// Длина байтов в [`xlsx_image_bytes`].
-    byte_length: u32,
-}
-
-impl ImageInfo {
-    fn of(image: &doc_converter_xlsx::WorkbookImage) -> Self {
-        Self {
-            id: image.id,
-            mime: image.mime.clone(),
-            byte_length: u32::try_from(image.bytes.len()).unwrap_or(u32::MAX),
-        }
+fn image_info(image: &doc_converter_xlsx::WorkbookImage) -> ImageInfoWire {
+    ImageInfoWire {
+        id: image.id,
+        mime: image.mime.clone(),
+        byte_length: u32::try_from(image.bytes.len()).unwrap_or(u32::MAX),
     }
 }
 
@@ -178,7 +121,7 @@ pub fn xlsx_images() -> Result<JsValue, JsValue> {
     DOC.with(|doc| {
         let doc = doc.borrow();
         let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
-        let images: Vec<ImageInfo> = book.images().iter().map(ImageInfo::of).collect();
+        let images: Vec<ImageInfoWire> = book.images().iter().map(image_info).collect();
         serde_wasm_bindgen::to_value(&images).map_err(to_js)
     })
 }
@@ -204,7 +147,7 @@ pub fn xlsx_image_bytes(id: u32) -> Result<js_sys::Uint8Array, JsValue> {
 
 /// Перевести окно из JS в представление рендера. Форма окна общая с DOCX.
 pub(crate) fn viewport_of(value: JsValue) -> Result<Viewport, JsValue> {
-    let js: ViewportJs = serde_wasm_bindgen::from_value(value).map_err(to_js)?;
+    let js: ViewportWire = serde_wasm_bindgen::from_value(value).map_err(to_js)?;
     Ok(Viewport::new(
         js.scroll_x,
         js.scroll_y,
@@ -215,7 +158,7 @@ pub(crate) fn viewport_of(value: JsValue) -> Result<Viewport, JsValue> {
 }
 
 fn options_of(value: JsValue) -> Result<PaintOptions, JsValue> {
-    let js: OptionsJs = serde_wasm_bindgen::from_value(value).map_err(to_js)?;
+    let js: RenderOptionsWire = serde_wasm_bindgen::from_value(value).map_err(to_js)?;
     Ok(PaintOptions {
         show_grid: js.show_grid,
         show_headers: js.show_headers,
@@ -237,9 +180,9 @@ fn with_frame_bytes(
     viewport: Viewport,
     options: PaintOptions,
     write: impl FnOnce(&[u8]) -> Result<bool, JsValue>,
-) -> Result<BuildStats, JsValue> {
+) -> Result<BuildStatsWire, JsValue> {
     let started = now();
-    DOC.with(|doc| -> Result<BuildStats, JsValue> {
+    DOC.with(|doc| -> Result<BuildStatsWire, JsValue> {
         let doc = doc.borrow();
         let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
         let sheet = book
@@ -249,14 +192,26 @@ fn with_frame_bytes(
 
         FRAME.with(|frame| {
             let mut frame = frame.borrow_mut();
-            paint::build(book, sheet, viewport, &options, &mut frame);
+            let built = CANCEL.with(|cancelled| {
+                paint::build(book, sheet, viewport, &options, &mut frame, cancelled)
+            });
+            // Флаг одноразовый (ADR-0032): попытка сборки его гасит — иначе
+            // отменённый кадр отменял бы и следующий.
+            CANCEL.with(|cancelled| cancelled.set(false));
+            built.map_err(|e| {
+                if matches!(e, doc_converter_xlsx::XlsxError::Cancelled) {
+                    JsValue::from_str("[cancelled] operation cancelled")
+                } else {
+                    to_js(e)
+                }
+            })?;
             let cmds = u32::try_from(frame.len()).unwrap_or(u32::MAX);
 
             SCRATCH.with(|scratch| {
                 let mut scratch = scratch.borrow_mut();
                 frame.to_bytes_into(&mut scratch);
                 let bytes = u32::try_from(scratch.len()).unwrap_or(u32::MAX);
-                Ok(BuildStats {
+                Ok(BuildStatsWire {
                     written: write(&scratch)?,
                     cmds,
                     bytes,
@@ -366,28 +321,14 @@ pub fn xlsx_hit_test(sheet: usize, viewport: JsValue, x: f32, y: f32) -> Result<
     })
 }
 
-/// Гиперссылка в том виде, в каком её видит интерфейс.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HyperlinkInfo {
-    /// Адрес перехода: URL, почта, путь к файлу или ссылка внутри книги.
-    target: String,
-    /// Подпись, которую показывает Excel (`display`).
-    display: Option<String>,
-    /// Всплывающая подсказка (`tooltip`).
-    tooltip: Option<String>,
-}
-
-impl HyperlinkInfo {
-    /// Описание ссылки для интерфейса; `None` — цель не разрешилась
-    /// (`HyperlinkTarget::Broken`), переходить некуда.
-    fn of(link: &doc_converter_xlsx::Hyperlink) -> Option<Self> {
-        Some(Self {
-            target: link.target.address()?.to_owned(),
-            display: link.display.clone(),
-            tooltip: link.tooltip.clone(),
-        })
-    }
+/// Описание ссылки для интерфейса; `None` — цель не разрешилась
+/// (`HyperlinkTarget::Broken`), переходить некуда.
+fn hyperlink_info(link: &doc_converter_xlsx::Hyperlink) -> Option<HyperlinkInfoWire> {
+    Some(HyperlinkInfoWire {
+        target: link.target.address()?.to_owned(),
+        display: link.display.clone(),
+        tooltip: link.tooltip.clone(),
+    })
 }
 
 /// Гиперссылка под точкой окна: `target`, `display`, `tooltip` или `null`.
@@ -416,7 +357,7 @@ pub fn xlsx_hyperlink_at(
             .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
         let link = sheet
             .hyperlink_at(paint::hit_test(sheet, viewport, x, y))
-            .and_then(HyperlinkInfo::of);
+            .and_then(hyperlink_info);
         // `None` уезжает в JS как `null`: отсутствие ссылки — не ошибка.
         let serializer = serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true);
         link.serialize(&serializer).map_err(to_js)

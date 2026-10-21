@@ -135,7 +135,9 @@ fn chart_reaches_the_frame_as_a_command() {
         Viewport::default(),
         &PaintOptions::default(),
         &mut dl,
-    );
+        &std::cell::Cell::new(false),
+    )
+    .expect("кадр собирается");
 
     let chart = (0..dl.len()).find_map(|i| match dl.cmd(i) {
         Some(DrawCommand::Chart { x, y, w, h, data }) => Some((*x, *y, *w, *h, *data)),

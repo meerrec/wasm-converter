@@ -11,6 +11,7 @@ use doc_converter_render::{
     font::{FontId, FontRegistry},
     text_measure,
 };
+use std::cell::Cell;
 
 use crate::layout::cascade::StyleCache;
 use crate::layout::fields::{resolve_paragraph, FieldPass};
@@ -385,7 +386,27 @@ pub fn layout_document(
     options: &LayoutOptions,
     fonts: &mut FontRegistry,
 ) -> Result<PageLayout, LayoutError> {
-    let (mut layout, pass) = layout_pass(document, options, fonts, None);
+    // Отмена по умолчанию не взведена: вызывающий без флага платит только за
+    // чтение `Cell` — вариант для существующих потребителей (pdf, тесты).
+    layout_document_with_cancel(document, options, fonts, &Cell::new(false))
+}
+
+/// Разложить документ по страницам с кооперативной отменой (ADR-0032).
+///
+/// Флаг проверяется между блоками тела: документ из десятков тысяч блоков
+/// отменяется на первом же блоке после взведения — граница мельче страницы,
+/// а проверка дешевле страничной (чтение `Cell<bool>`).
+///
+/// # Errors
+/// [`LayoutError::Cancelled`] — флаг взведён; в остальном как у
+/// [`layout_document`].
+pub fn layout_document_with_cancel(
+    document: &Document,
+    options: &LayoutOptions,
+    fonts: &mut FontRegistry,
+    cancelled: &Cell<bool>,
+) -> Result<PageLayout, LayoutError> {
+    let (mut layout, pass) = layout_pass(document, options, fonts, None, cancelled)?;
     if !pass.saw_num_pages() {
         return Ok(layout);
     }
@@ -397,7 +418,7 @@ pub fn layout_document(
     // изменилось и его надо посчитать заново.
     let mut num_pages = page_count(&layout);
     for _ in 1..FIELD_PASSES {
-        let (next, _) = layout_pass(document, options, fonts, Some(num_pages));
+        let (next, _) = layout_pass(document, options, fonts, Some(num_pages), cancelled)?;
         let counted = page_count(&next);
         layout = next;
         if counted == num_pages {
@@ -426,15 +447,17 @@ fn page_count(layout: &PageLayout) -> u32 {
 /// Один проход раскладки: `num_pages` — число страниц из прошлого прохода
 /// (`None` — их ещё не считали).
 ///
-/// Проход безошибочный: `LayoutError` остаётся в публичной сигнатуре ради
-/// потребителей, а падать раскладке нечем — неизвестные поля и битые
-/// колонтитулы она пропускает.
+/// Проход безошибочный кроме отмены: `LayoutError` остаётся в публичной
+/// сигнатуре ради потребителей, а падать раскладке нечем — неизвестные поля и
+/// битые колонтитулы она пропускает. [`LayoutError::Cancelled`] возвращается,
+/// когда флаг `cancelled` взведён между блоками (ADR-0032).
 fn layout_pass(
     document: &Document,
     options: &LayoutOptions,
     fonts: &mut FontRegistry,
     num_pages: Option<u32>,
-) -> (PageLayout, FieldPass) {
+    cancelled: &Cell<bool>,
+) -> Result<(PageLayout, FieldPass), LayoutError> {
     let mut pass = FieldPass::new(num_pages);
     let mut placed_floats: Vec<crate::layout::float::FloatElement> = Vec::new();
     // Анкоры, которым не хватило места на их странице: очередь переживает
@@ -455,6 +478,11 @@ fn layout_pass(
     let mut section_index = 0usize;
 
     for block in &document.body.items {
+        // Отмена проверяется между блоками: документ из десятков тысяч блоков
+        // отменяется на первом же после взведения флага (ADR-0032).
+        if cancelled.get() {
+            return Err(LayoutError::Cancelled);
+        }
         if let BlockItem::SectPr(_sect_pr) = block {
             // Блочный `w:sectPr` закрывает последнюю секцию и описывает её
             // свойства, а не разрывает документ: новой секции за ним нет,
@@ -505,14 +533,14 @@ fn layout_pass(
 
     let total_height = pages.iter().map(|page| page.height).sum();
 
-    (
+    Ok((
         PageLayout {
             pages,
             chrome,
             total_height,
         },
         pass,
-    )
+    ))
 }
 
 /// Разложить один блок потока в текущую страницу пагинатора.
@@ -1573,6 +1601,9 @@ pub enum LayoutError {
     PageOverflow,
     /// Неизвестная секция.
     UnknownSection,
+    /// Операция отменена вызывающим (ADR-0032): кооперативный флаг взведён
+    /// между блоками раскладки, состояние движка цело.
+    Cancelled,
 }
 
 impl std::fmt::Display for LayoutError {
@@ -1581,6 +1612,7 @@ impl std::fmt::Display for LayoutError {
             LayoutError::TextMeasurementFailed => write!(f, "Failed to measure text"),
             LayoutError::PageOverflow => write!(f, "Page overflow"),
             LayoutError::UnknownSection => write!(f, "Unknown section"),
+            LayoutError::Cancelled => write!(f, "Operation cancelled"),
         }
     }
 }
@@ -1825,6 +1857,35 @@ mod tests {
     /// 39.0625 px = 585.9 twips; целый ряд выше — 586 twips, в нём строки
     /// помещаются впритык, третья — уже нет.
     const TWO_LINE_PAGE_TWIPS: i32 = 586;
+
+    #[test]
+    fn cancelled_flag_stops_layout_between_blocks() {
+        // Флаг отмены, взведённый до раскладки, обязан оборвать её на первом
+        // же блоке (ADR-0032) — детерминированно, без гонки.
+        let document = document_with_text("Hello, DOCX layout");
+        let mut fonts = FontRegistry::new(64);
+
+        let cancelled = Cell::new(true);
+        let err = layout_document_with_cancel(
+            &document,
+            &LayoutOptions::default(),
+            &mut fonts,
+            &cancelled,
+        )
+        .expect_err("взведённый флаг отменяет раскладку");
+        assert!(matches!(err, LayoutError::Cancelled), "ошибка: {err:?}");
+
+        // Снятый флаг не мешает: тот же документ раскладывается как обычно.
+        cancelled.set(false);
+        let layout = layout_document_with_cancel(
+            &document,
+            &LayoutOptions::default(),
+            &mut fonts,
+            &cancelled,
+        )
+        .expect("после снятия флага раскладка проходит");
+        assert_eq!(layout.pages.len(), 1);
+    }
 
     /// Блокер S1.1: абзац с текстом обязан попасть на страницу внутри полей.
     // Координаты копируются из полей страницы без арифметики — сравнение точное.

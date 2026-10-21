@@ -73,7 +73,7 @@ beforeEach(async () => {
 
   await handler({ data: initMsg() });
   // Кадр собирается под формат открытого документа: до `open` воркер его не берёт.
-  await handler({ data: { type: 'open', format: 'xlsx', bytes: new ArrayBuffer(8) } });
+  await handler({ data: { type: 'open', id: 1, format: 'xlsx', bytes: new ArrayBuffer(8) } });
 });
 
 afterEach(() => {

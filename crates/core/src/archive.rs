@@ -1,13 +1,24 @@
 //! Read-only OOXML (ZIP) package.
+use std::borrow::Cow;
 use std::collections::HashSet;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Seek};
 
+use crate::chunk_reader::SegmentedBuffer;
 use crate::error::{Error, Result};
 use crate::warning::{ParseWarning, WarningKind};
 use crate::zip_limits::ZipLimits;
 
+/// `Read + Seek` одним трейтом: в trait-объекте вторая не-auto-черта недопустима
+/// (E0225), поэтому пара сворачивается в supertrait с бланкетной реализацией.
+trait ReadSeek: Read + Seek {}
+impl<T: Read + Seek + ?Sized> ReadSeek for T {}
+
 pub struct Archive {
-    inner: zip::ZipArchive<Cursor<Vec<u8>>>,
+    // Трейт-объект, а не generic: `Archive<R>` протащил бы lifetime/тип через
+    // всех потребителей (`xlsx`/`docx` держат `&mut Archive` по всему парсу)
+    // ради одного варианта источника. Чтение идёт через vtable — цена копейки
+    // рядом с распаковкой deflate.
+    inner: zip::ZipArchive<Box<dyn ReadSeek + 'static>>,
     limits: ZipLimits,
     /// Части-symlink: игнорируются (ADR-0015 §3), наружу не видны.
     symlinks: HashSet<String>,
@@ -27,7 +38,7 @@ impl Archive {
     /// нарушает лимиты ADR-0015; [`Error::Zip`] — байты не являются корректным
     /// ZIP-архивом.
     pub fn new(bytes: Vec<u8>) -> Result<Self> {
-        Self::open_with_limits(bytes, ZipLimits::default())
+        Self::open(Cursor::new(bytes), ZipLimits::default())
     }
 
     /// Открывает OOXML-пакет из байтов ZIP с заданными лимитами.
@@ -42,7 +53,35 @@ impl Archive {
     /// нарушает лимиты; [`Error::Zip`] — байты не являются корректным
     /// ZIP-архивом.
     pub fn open_with_limits(bytes: Vec<u8>, limits: ZipLimits) -> Result<Self> {
-        let mut inner = zip::ZipArchive::new(Cursor::new(bytes))?;
+        Self::open(Cursor::new(bytes), limits)
+    }
+
+    /// Открывает OOXML-пакет из потокового буфера чанков (ADR-0031) с
+    /// лимитами по умолчанию.
+    ///
+    /// Буфер переходит во владение архива: парс одноразовый, а заимствование
+    /// потребовало бы lifetime в [`Archive`] и во всех его потребителях.
+    /// Лимиты проверяются так же, как у [`Archive::new`].
+    ///
+    /// # Errors
+    /// Тот же набор, что у [`Archive::open_with_limits`].
+    pub fn from_segmented(buf: SegmentedBuffer) -> Result<Self> {
+        Self::from_segmented_with_limits(buf, ZipLimits::default())
+    }
+
+    /// Открывает OOXML-пакет из потокового буфера чанков с заданными лимитами.
+    ///
+    /// # Errors
+    /// Тот же набор, что у [`Archive::open_with_limits`].
+    pub fn from_segmented_with_limits(buf: SegmentedBuffer, limits: ZipLimits) -> Result<Self> {
+        Self::open(buf, limits)
+    }
+
+    /// Общее открытие: читатель может быть и `Cursor<Vec<u8>>` (путь байтов),
+    /// и [`SegmentedBuffer`] (путь стрима, ADR-0031).
+    fn open<R: Read + Seek + 'static>(reader: R, limits: ZipLimits) -> Result<Self> {
+        let reader: Box<dyn ReadSeek> = Box::new(reader);
+        let mut inner = zip::ZipArchive::new(reader)?;
         limits.check_parts(inner.len())?;
 
         let mut symlinks = HashSet::new();
@@ -51,7 +90,7 @@ impl Archive {
 
         for index in 0..inner.len() {
             let file = inner.by_index(index)?;
-            let name = file.name().to_string();
+            let name = file.name()?.into_owned();
             limits.check_name(&name)?;
 
             // Symlink в OOXML-пакете не бывает легитимным: его содержимое —
@@ -108,15 +147,22 @@ impl Archive {
         self.len() == 0
     }
 
-    pub fn names(&self) -> impl Iterator<Item = &str> {
+    /// Имена частей без symlink'ов.
+    ///
+    /// `file_names()` в zip 9 отдаёт `Result`: имя декодируется из UTF-8/Cp437 и
+    /// может не декодироваться. Такая запись уже отвергнута при открытии
+    /// (`open_with_limits` зовёт `name()?` на каждой части), поэтому здесь
+    /// остаются только корректные имена.
+    pub fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
         self.inner
             .file_names()
-            .filter(|name| !self.symlinks.contains(*name))
+            .filter_map(std::result::Result::ok)
+            .filter(|name| !self.symlinks.contains(name.as_ref()))
     }
 
     #[must_use]
     pub fn contains(&self, name: &str) -> bool {
-        !self.symlinks.contains(name) && self.inner.file_names().any(|n| n == name)
+        !self.symlinks.contains(name) && self.inner.file_names().any(|n| n.is_ok_and(|c| c == name))
     }
 
     /// Читает part целиком, соблюдая лимиты при распаковке.
@@ -280,6 +326,39 @@ mod tests {
     }
 
     #[test]
+    fn segmented_buffer_opens_the_same_package() {
+        // Тот же пакет, разрезанный на чанки по 7 байт: путь стрима (ADR-0031)
+        // обязан читать части так же, как путь байтов.
+        let bytes = make_zip(&[
+            ("[Content_Types].xml", b"<Types/>"),
+            ("_rels/.rels", b"<Relationships/>"),
+            ("word/document.xml", b"<w:document/>"),
+        ]);
+        let mut buf = SegmentedBuffer::new();
+        for chunk in bytes.chunks(7) {
+            buf.append(chunk);
+        }
+        let mut a = Archive::from_segmented(buf).unwrap();
+        a.validate_ooxml().unwrap();
+        assert_eq!(a.read_string("word/document.xml").unwrap(), "<w:document/>");
+    }
+
+    #[test]
+    fn segmented_archive_respects_limits() {
+        // Лимиты из ADR-0015 действуют и на потоковом пути: размер части
+        // сверяется по центральному каталогу уже при открытии.
+        let bytes = make_zip(&[("a.xml", b"abc")]);
+        let mut buf = SegmentedBuffer::new();
+        buf.append(&bytes);
+        let limits = ZipLimits {
+            per_part_uncompressed: 2,
+            ..ZipLimits::default()
+        };
+        let err = open_err(Archive::from_segmented_with_limits(buf, limits));
+        assert!(matches!(err, Error::ZipPartTooLarge { .. }));
+    }
+
+    #[test]
     fn missing_part_is_error() {
         let bytes = make_zip(&[("a.xml", b"")]);
         let mut a = Archive::new(bytes).unwrap();
@@ -400,11 +479,15 @@ mod tests {
         let mut a = Archive::open_with_limits(bytes, limits).unwrap();
 
         let err = a.read("word/document.xml").unwrap_err();
-        // Размер в ошибке — прочитанное, то есть лимит + 1: настоящий размер
-        // потока неизвестен, обрывать его чтение дольше незачем.
+        // zip 9 сам сверяет поток с заявленным размером и отвергает такой part
+        // раньше нашего счётчика; лимит `read` остаётся вторым рубежом на случай,
+        // если архивный слой пропустит враньё (ADR-0015). Оба отказа безопасны.
         assert!(
-            matches!(err, Error::ZipPartTooLarge { size: 1025, .. }),
-            "ожидали ZipPartTooLarge, получили {err:?}"
+            matches!(
+                err,
+                Error::ZipPartTooLarge { size: 1025, .. } | Error::Io(_)
+            ),
+            "ожидали ZipPartTooLarge или отказ zip 9, получили {err:?}"
         );
     }
 

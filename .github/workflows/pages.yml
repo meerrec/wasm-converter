@@ -24,12 +24,7 @@ jobs:
     name: Build site
     runs-on: ubuntu-latest
     steps:
-      # Артефакты x2t (packages/x2t/vendor) лежат в Git LFS: без их выкачки
-      # демо в /viewer/ увезёт в dist пойнтеры (~130 Б), и страница конвертера
-      # молча потеряет работоспособность.
       - uses: actions/checkout@v4
-        with:
-          lfs: true
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -54,58 +49,29 @@ jobs:
       # pkg/ всех трёх wasm-модулей генерируется wasm-pack; в репозитории его нет.
       - run: bash scripts/build-wasm.sh
 
-      # Пакеты собираются по одному и вручную: пример импортирует core и
-      # browser-convert из dist/, которого в репозитории нет, — Vite резолвит
-      # их оттуда.
+      # Пакеты собираются по одному и вручную: пример импортирует core из
+      # dist/, которого в репозитории нет, — Vite резолвит его оттуда.
       - run: pnpm -F @meerrec/core build
 
-      - run: pnpm -F @meerrec/browser-convert... build
-
-      # Клиент Embed API, которым демо загружает self-host движка Euro-Office:
-      # его exports смотрят в dist/.
-      - run: pnpm -F @meerrec/eurooffice build
-
-      # Тарболы частей движка (~290 МиБ) и зеркало каталога шрифтов кэшируются
-      # в build/eurooffice/.cache. Восстановление экономит десятки минут и
-      # снимает нагрузку с GitHub API: у раннера лимит 60 запросов в час на IP,
-      # а зеркало ходит в API за списком файлов. Ключ — только хеш assemble.mjs,
-      # без restore-keys: скрипт и есть описание того, что лежит в кэше, так что
-      # частично устаревший кэш тут опаснее промаха. Сохранение каталога делает
-      # сам actions/cache в конце джобы — отдельного шага save не нужно.
-      - uses: actions/cache@v4
-        with:
-          path: build/eurooffice/.cache
-          key: eurooffice-parts-${{ hashFiles('scripts/eurooffice/assemble.mjs') }}
-
-      # Сайт движка собирается в build/eurooffice/site. Режим `copy` (а не
-      # дефолтный brotli) обязателен: GitHub Pages не отдаёт Content-Encoding: br,
-      # поэтому под именем x2t.wasm.br в артефакт должны уехать несжатые байты;
-      # к тому же сжатие в CI — это 2–4 потерянные минуты.
-      - run: EUROOFFICE_X2T_BR=copy node scripts/eurooffice/assemble.mjs
-
-      # Демо переехало в подкаталог /viewer/: корень сайта теперь занимает
-      # движок. Turborepo здесь не используется намеренно — в strict-режиме он
+      # Turborepo здесь не используется намеренно — в strict-режиме он
       # не пробрасывает незадекларированные env-переменные, а VITE_BASE как раз
-      # такая. Страницы демо: `/#/docx` («Слово»), `/#/xlsx` («ДваИксель»),
-      # `/#/convert` («Конвертер»); корень демо ведёт на `/#/docx`.
+      # такая. Страницы демо: `/#/docx` («Слово»), `/#/xlsx` («ДваИксель»);
+      # корень демо ведёт на `/#/docx`.
       - run: pnpm -F @meerrec/example-viewer build
         env:
           VITE_BASE: /${{ github.event.repository.name }}/viewer/
 
-      # Компоновка публикуемого каталога: `.pages/` — двухуровневый сайт, в
-      # корне движок Euro-Office, в /viewer/ — демо. Скрипт же чистит вендорный
-      # лендинг, кладёт x2t.wasm.br plain-байтами (см. режим `copy` выше) и
-      # прогоняет гейты артефакта — бывшие шаги «check x2t assets» и «check coi
-      # service worker» живут теперь здесь, чтобы публикуемое проверял ровно тот
-      # код, что его и собирает.
-      #
-      # Обход COOP/COEP на Pages — наш корневой sw.js (scripts/pages/): он сам
-      # ставит заголовки изоляции навигациям, им же подменена вендорная заглушка
-      # движка — две регистрации в одном корневом scope вытесняли бы друг друга.
+      # Компоновка публикуемого каталога: демо — в /viewer/, корневой sw.js —
+      # в корне (только корневая область видит навигации /viewer/ и ставит им
+      # заголовки изоляции). Обход COOP/COEP на Pages — этот самый sw.js
+      # (scripts/pages/): он сам ставит заголовки изоляции навигациям.
       # С заголовками поднимается SharedArrayBuffer и транспорт `sab`.
       # Без них вьюер не ломается: автовыбор уходит в first-class путь `bytes`
       # (ADR-0021), проверено дым-прогоном S2.3 (docs/sprint-12/demo.md).
-      - run: node scripts/pages/stage.mjs --out .pages
+      - run: |
+          mkdir -p .pages/viewer
+          cp -R examples/viewer/dist/. .pages/viewer/
+          cp scripts/pages/sw.js .pages/sw.js
 
       - uses: actions/configure-pages@v5
 

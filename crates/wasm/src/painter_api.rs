@@ -3,6 +3,7 @@
 //! Логика живёт в `render::canvas` (ADR-0003); здесь только wasm-bindgen-обвязка
 //! и сериализация статистики.
 
+use doc_converter_core::wire::PaintStatsWire;
 use doc_converter_render::canvas::OffscreenPainter;
 use doc_converter_render::painter::PaintStats;
 use wasm_bindgen::prelude::*;
@@ -14,27 +15,21 @@ pub fn init_painter(ctx: OffscreenCanvasRenderingContext2d) -> Result<(), JsValu
     OffscreenPainter::install(ctx)
 }
 
+/// Инициализирует painter поверх main-thread canvas.
+///
+/// Типизированный [`init_painter`] остаётся для worker-пути: там контекст —
+/// `OffscreenCanvasRenderingContext2d`. `init_painter_main` нужен main-режиму,
+/// где документ рисуется в обычный `<canvas>`: `ctx.into()` конвертирует
+/// typed handle в `JsValue`, а форму контекста проверяет
+/// `OffscreenPainter::install_js` (duck-типизация общих Canvas2D-методов).
+#[wasm_bindgen]
+pub fn init_painter_main(ctx: web_sys::CanvasRenderingContext2d) -> Result<(), JsValue> {
+    OffscreenPainter::install_js(ctx.into())
+}
+
 #[wasm_bindgen]
 pub fn dispose_painter() {
     OffscreenPainter::dispose();
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PaintStatsJs {
-    cmds: u32,
-    dropped: bool,
-    paint_ms: f64,
-}
-
-impl From<PaintStats> for PaintStatsJs {
-    fn from(s: PaintStats) -> Self {
-        Self {
-            cmds: s.cmds,
-            dropped: s.dropped,
-            paint_ms: s.paint_ms,
-        }
-    }
 }
 
 /// Прямой путь: байты DL копируются в Rust Vec (fallback).
@@ -74,6 +69,10 @@ pub fn resize_canvas(css_w: f32, css_h: f32, dpr: f32) -> Result<(), JsValue> {
 }
 
 fn to_stats(stats: PaintStats) -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(&PaintStatsJs::from(stats))
-        .map_err(|e| JsValue::from_str(&format!("serialize: {e}")))
+    serde_wasm_bindgen::to_value(&PaintStatsWire {
+        cmds: stats.cmds,
+        dropped: stats.dropped,
+        paint_ms: stats.paint_ms,
+    })
+    .map_err(|e| JsValue::from_str(&format!("serialize: {e}")))
 }
