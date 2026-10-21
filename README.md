@@ -289,11 +289,12 @@ printpdf на собственный бэкенд похудел на 31 % gzip.
   вынимается из потока.
 - **VML-фолбэки** (`mc:Fallback`) игнорируются — рисуется только `mc:Choice`
   ([ADR-0014](docs/adr/0014-alternate-content.md)).
-- **PPTX и XLSB** не поддерживаются.
-- **Strict OOXML** не поддерживается — только Transitional
-  ([ADR-0017](docs/adr/0017-strict-vs-transitional.md)).
-- **Макрофайлы `.docm`** не поддерживаются; зашифрованные DOCX и `.doc` —
-  фатальная ошибка ([ADR-0016](docs/adr/0016-docx-error-policy.md)).
+- **PPTX, Strict OOXML, ODF (`.odt`/`.ods`/`.odp`) и макрофайлы `.docm`** — в плане, пока не поддерживаются
+  ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
+- **XLSB, зашифрованные документы и бинарный `.doc`** — статус non-goal
+  снят ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)), реализаций нет;
+  открытие зашифрованных DOCX и `.doc` — фатальная ошибка
+  ([ADR-0016](docs/adr/0016-docx-error-policy.md)).
 
 ## Лицензия
 
