@@ -5,6 +5,7 @@ members = [
     "crates/render",
     "crates/docx",
     "crates/xlsx",
+    "crates/pptx",
     "crates/pdf",
     "crates/pdf-wasm",
     "crates/docx-wasm",
@@ -28,6 +29,7 @@ doc-converter-core   = { path = "crates/core",   version = "1.0.0" }
 doc-converter-render = { path = "crates/render", version = "1.0.0" }
 doc-converter-docx   = { path = "crates/docx",   version = "1.0.0" }
 doc-converter-xlsx   = { path = "crates/xlsx",   version = "1.0.0" }
+doc-converter-pptx   = { path = "crates/pptx",   version = "1.0.0" }
 doc-converter-pdf    = { path = "crates/pdf",    version = "1.0.0" }
 
 # ── external ────────────────────────────────────────────────
