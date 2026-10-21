@@ -153,12 +153,16 @@ interface Entry {
 /**
  * Собрать все `.docx` под `dir`; ключ — путь относительно `dir` без расширения.
  * Порядок задаёт вызывающий сортировкой, а не файловая система.
+ *
+ * Каталог `strict` пропускается: это Strict-подмножество (ADR-0034), а mammoth
+ * читает только Transitional — в оракуле ему места нет.
  */
 function discover(dir: string, prefix: string, out: string[]): void {
   for (const name of readdirSync(dir)) {
     const full = path.join(dir, name);
     const nested = prefix === '' ? name : `${prefix}/${name}`;
     if (statSync(full).isDirectory()) {
+      if (name === 'strict') continue;
       discover(full, nested, out);
     } else if (name.endsWith('.docx')) {
       out.push(nested.slice(0, -'.docx'.length));

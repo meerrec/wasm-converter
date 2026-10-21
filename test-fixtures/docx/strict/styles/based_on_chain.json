@@ -1,0 +1,48 @@
+{
+  "metadata": {
+    "name": "styles/based_on_chain",
+    "category": "styles",
+    "description": "Цепочка basedOn из трёх уровней: Heading3 → Heading2 → Heading1 → Normal",
+    "docTitle": "Цепочка basedOn из трёх уровней: Heading3 → Heading2 → Heading1 → Normal",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Заголовок конца цепочки",
+        "style": "Heading3"
+      }
+    ],
+    "tables": [],
+    "images": [],
+    "styles": [
+      {
+        "id": "Normal",
+        "type": "paragraph",
+        "default": true
+      },
+      {
+        "id": "Heading1",
+        "type": "paragraph",
+        "basedOn": "Normal",
+        "bold": true,
+        "color": "2F5496"
+      },
+      {
+        "id": "Heading2",
+        "type": "paragraph",
+        "basedOn": "Heading1",
+        "color": "2F5496"
+      },
+      {
+        "id": "Heading3",
+        "type": "paragraph",
+        "basedOn": "Heading2",
+        "italic": true
+      }
+    ]
+  }
+}

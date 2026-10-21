@@ -49,9 +49,19 @@ pub enum Error {
     #[error("legacy binary .doc is not supported")]
     LegacyFormat,
 
-    /// Strict OOXML не поддержан: модель описывает Transitional (ADR-0017).
-    #[error("Strict OOXML is not supported (ADR-0017); save as Transitional")]
-    StrictNotSupported,
+    /// Namespace корня `word/document.xml` не Transitional и не Strict.
+    ///
+    /// Поддержаны оба варианта OOXML (ADR-0034); всё остальное — либо не
+    /// OOXML, либо вариант, которого не существует.
+    #[error(
+        "unsupported OOXML namespace `{namespace}` in `{part}`; expected Transitional or Strict"
+    )]
+    UnknownVariant {
+        /// Часть, по корню которой определялся вариант.
+        part: String,
+        /// Namespace, который объявил корневой элемент.
+        namespace: String,
+    },
 
     /// Предупреждений стало больше допустимого — их список оборван, разбор
     /// останавливается (ADR-0016 §6).

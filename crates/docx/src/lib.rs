@@ -33,6 +33,9 @@ mod settings;
 mod styles;
 mod xml;
 
+/// Namespace'ы Transitional и Strict и определение варианта OOXML (ADR-0034).
+pub mod ns;
+
 pub use error::{Error, Result};
 // Поимённо, а не `pub use model::*`: `model` реэкспортирует свои модули, и
 // глоб затенял бы `model::numbering`/`model::settings` приватными модулями

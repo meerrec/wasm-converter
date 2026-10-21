@@ -284,7 +284,9 @@ printpdf на собственный бэкенд похудел на 31 % gzip.
   вынимается из потока.
 - **VML-фолбэки** (`mc:Fallback`) игнорируются — рисуется только `mc:Choice`
   ([ADR-0014](docs/adr/0014-alternate-content.md)).
-- **PPTX, Strict OOXML, ODF (`.odt`/`.ods`/`.odp`) и макрофайлы `.docm`** — в плане, пока не поддерживаются
+- **Strict OOXML (DOCX и XLSX) — поддерживается** наравне с Transitional
+  ([ADR-0034](docs/adr/0034-strict-ooxml.md)).
+- **PPTX, ODF (`.odt`/`.ods`/`.odp`) и макрофайлы `.docm`** — в плане, пока не поддерживаются
   ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
 - **XLSB, зашифрованные документы и бинарный `.doc`** — статус non-goal
   снят ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)), реализаций нет;
