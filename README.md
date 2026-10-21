@@ -23,7 +23,9 @@
 экспорт PDF/Markdown/HTML/текста, CLI с батч-конвертацией, оракул против
 LibreOffice, бенчмарки против JS-библиотек. Сейчас идёт **Спринт 12 — релиз
 v1.0.0** ([docs/sprint-12/plan.md](docs/sprint-12/plan.md)): релизная
-механика, публикация npm-пакетов в GitHub Packages (crates.io — non-goal,
+механика, публикация npm-пакетов (npmjs.org — целевой основной реестр,
+публикация готовится, [ADR-0027](docs/adr/0027-npmjs-primary-registry.md);
+GitHub Packages — действующее зеркало; crates.io — non-goal,
 [ADR-0026](docs/adr/0026-rust-crates-distribution.md)), документация. Что работает — в
 разделе «Производительность», что осознанно не входит в v1 — в разделе
 «Ограничения v1».
@@ -73,11 +75,13 @@ Chromium (проверку спрашивают и страницы, и сам �
 
 ### Установка
 
-Пакеты опубликованы в **GitHub Packages** этого репозитория — не в
-`registry.npmjs.org`: `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`,
-`@meerrec/core`, `@meerrec/cli`, версия `1.0.0`. GitHub Packages требует
-авторизацию даже на чтение, поэтому сначала — реестр и токен с правом
-`read:packages` в `~/.npmrc`:
+Пакеты `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`,
+`@meerrec/core`, `@meerrec/cli` версии `1.0.0`. Целевой основной реестр —
+`registry.npmjs.org` (публикация готовится,
+[ADR-0027](docs/adr/0027-npmjs-primary-registry.md)); действующее зеркало —
+**GitHub Packages** этого репозитория. GitHub Packages требует авторизацию
+даже на чтение, поэтому до первой публикации в npmjs.org сначала — реестр и
+токен с правом `read:packages` в `~/.npmrc`:
 
 ```ini
 # ~/.npmrc — <токен> это personal access token (classic) с read:packages
@@ -91,8 +95,10 @@ npm install @meerrec/core @meerrec/wasm \
 npm install -g @meerrec/cli --registry=https://npm.pkg.github.com
 ```
 
-Разовая альтернатива `~/.npmrc` — `npm install --registry=https://npm.pkg.github.com …`
-(токен всё равно нужен). Совсем без реестра — собранные тарболы в ассетах
+После первой публикации в npmjs.org эти команды станут `npm install …` без
+токена и без `--registry`. Разовая альтернатива `~/.npmrc` —
+`npm install --registry=https://npm.pkg.github.com …` (токен всё равно нужен).
+Совсем без реестра — собранные тарболы в ассетах
 релиза [`v1.0.0`](https://github.com/meerrec/wasm-converter/releases/tag/v1.0.0)
 (`meerrec-*.tgz`, ставится как `npm install ./meerrec-core-1.0.0.tgz`).
 
