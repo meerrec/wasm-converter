@@ -21,14 +21,15 @@
 Спринты 1–11 закрыты (сводка — [ROADMAP.md](ROADMAP.md) §7): разбор и
 раскладка обоих форматов, оба транспорта кадра first-class, просмотрщики,
 экспорт PDF/Markdown/HTML/текста, CLI с батч-конвертацией, оракул против
-LibreOffice, бенчмарки против JS-библиотек. Сейчас идёт **Спринт 12 — релиз
-v1.0.0** ([docs/sprint-12/plan.md](docs/sprint-12/plan.md)): релизная
-механика, публикация npm-пакетов (npmjs.org — целевой основной реестр,
-публикация готовится, [ADR-0027](docs/adr/0027-npmjs-primary-registry.md);
-GitHub Packages — действующее зеркало; crates.io — non-goal,
-[ADR-0026](docs/adr/0026-rust-crates-distribution.md)), документация. Что работает — в
-разделе «Производительность», что осознанно не входит в v1 — в разделе
-«Ограничения v1».
+LibreOffice, бенчмарки против JS-библиотек; версия v1.0.0 опубликована,
+спайк LibreOffice-WASM закрыт решением no-go. Фаза 1 архитектурного аудита
+реализована: подготовка npmjs.org ([ADR-0027](docs/adr/0027-npmjs-primary-registry.md);
+GitHub Packages — действующее зеркало, crates.io — non-goal,
+[ADR-0026](docs/adr/0026-rust-crates-distribution.md)), wire-типы Rust → TS
+через ts-rs ([ADR-0028](docs/adr/0028-typed-wire-protocol.md)) и рендер на
+main-потоке без `OffscreenCanvas` ([ADR-0029](docs/adr/0029-main-thread-render-backend.md)).
+Что работает — в разделе «Производительность», что осознанно не входит в v1 — в
+разделе «Ограничения v1».
 
 ## Демо
 
