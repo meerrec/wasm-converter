@@ -6,6 +6,7 @@ export type {
   RenderConfig,
   PdfModuleUrls,
   DocxModuleUrls,
+  PptxModuleUrls,
   PdfOptions,
   HitResult,
   CellRef,
@@ -13,6 +14,7 @@ export type {
   PaintStats,
   SheetInfo,
   PageInfo,
+  SlideInfo,
   HyperlinkInfo,
 } from './protocol.js';
 
@@ -34,5 +36,11 @@ export {
   type DocxViewerHandle,
   type DocxViewerOptions,
 } from './render/docx_viewer.js';
+
+export {
+  createPptxViewer,
+  type PptxViewerHandle,
+  type PptxViewerOptions,
+} from './render/pptx_viewer.js';
 
 export const VERSION = '0.1.0';

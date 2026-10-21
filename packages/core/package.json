@@ -25,6 +25,10 @@
     "./worker": {
       "types": "./dist/worker.d.ts",
       "import": "./dist/worker.js"
+    },
+    "./pptx-worker": {
+      "types": "./dist/pptx_worker.d.ts",
+      "import": "./dist/pptx_worker.js"
     }
   },
   "files": [
@@ -34,7 +38,9 @@
   ],
   "sideEffects": [
     "./dist/worker.js",
-    "./dist/worker.cjs"
+    "./dist/worker.cjs",
+    "./dist/pptx_worker.js",
+    "./dist/pptx_worker.cjs"
   ],
   "scripts": {
     "build": "tsup",
@@ -49,6 +55,7 @@
   "devDependencies": {
     "@meerrec/wasm-docx": "workspace:*",
     "@meerrec/wasm-pdf": "workspace:*",
+    "@meerrec/wasm-pptx": "workspace:*",
     "tsup": "^8.3.5",
     "vitest": "^2.1.4",
     "typescript": "^5.6.3"

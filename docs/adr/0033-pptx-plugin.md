@@ -39,9 +39,8 @@
    переходы в скоуп не входят.
 2. **Новый крейт `crates/pptx`** — модель, разбор, раскладка, рендер,
    текстовый экспорт и плагин. Крейт зависит только от `doc-converter-core` и
-   `doc-converter-render`: PDF собирается в `crates/pptx-wasm` через общий
-   DisplayList-экспорт `crates/pdf`, поэтому нативный разбор не тянет PDF и
-   его шрифты.
+   `doc-converter-render`: PDF живёт в `crates/pdf/src/pptx/` (по образцу
+   `crates/pdf/src/docx/`), поэтому нативный разбор не тянет PDF и его шрифты.
 3. **Модель `Presentation`.** Слайды (`p:sld`), размер (`p:sldSz`), шейпы
    `p:sp` (текст из `a:p`/`a:r`/`a:t`, свойства `a:rPr`/`a:defRPr`),
    `p:pic` (media-часть по `r:embed`), `p:graphicFrame` с диаграммой
@@ -68,31 +67,50 @@
    `build_display_list` — первый слайд от начала координат. Конкретные кадры
    собирает `pptx::render` из wasm-модуля, как DOCX.
 7. **Ленивый wasm-модуль `crates/pptx-wasm`** (по образцу `crates/docx-wasm`):
-   `pptx_open`/`pptx_close`/`pptx_is_open`/`pptx_slide_count`,
+   `pptx_open`/`pptx_close`/`pptx_is_open`,
    `pptx_images`/`pptx_image_bytes`,
-   `pptx_build_display_list(_sab/_into)`, `export_pptx_pdf`,
-   `export_pptx_text`. Пакет `@meerrec/wasm-pptx` генерируется wasm-pack'ом,
-   в основной бандл не входит; бюджет — 480 КБ gzip.
-8. **Диспетчеризация — на TS-стороне.** `DocFormat` получает `'pptx'`,
-   `InitMsg` — `PptxModuleUrls`; воркер грузит модуль лениво в ветке `open`
-   по формату. Wasm-роутера нет.
-9. **PDF — через общий экспорт DisplayList.** `crates/pdf` получает
-   `PdfExporter::export_display_list(pages, bitmaps)`: каждая страница —
-   размер в пикселях раскладки и байты DisplayList. Это единственная новая
-   точка PDF-крейта; `doc-converter-pdf` не зависит от `doc-converter-pptx`,
-   а слайд не пересчитывается второй раз.
+   `pptx_build_display_list(_sab/_into)`, `pptx_export_markdown`/
+   `pptx_export_html`/`pptx_export_text`. Пакет `@meerrec/wasm-pptx`
+   генерируется wasm-pack'ом, в основной бандл не входит; бюджет — 480 КБ
+   gzip. Просмотрщик и экспортёр PPTX разнесены по модулям, как у DOCX:
+   PDF-экспорт НЕ входит в pptx-wasm — `export_pptx_pdf` экспортирует
+   `crates/pdf-wasm` (по образцу `export_docx_pdf`), а PDF-раскладка живёт в
+   `crates/pdf/src/pptx/`.
+8. **Отдельный воркер на формат (направление ADR-0030 §6, PPTX — первый).**
+   PPTX обслуживает собственный воркер
+   `packages/core/src/worker/pptx_worker.ts`: `init`/`ready`, `open` и
+   `open-stream`/`append`/`end-stream` с ленивой загрузкой pptx-модуля,
+   кадровый цикл с painter/SAB как у общего воркера, `export-png`,
+   `export-pptx-pdf` через ленивый pdf-модуль (`export_pptx_pdf`),
+   `export-pptx-text`, `close`, `cancel`. Общий
+   `packages/core/src/worker/worker.ts` pptx-веток не получает и не меняется.
+   `DocFormat` протокола получает `'pptx'`, `InitMsg` — `PptxModuleUrls`;
+   читает их pptx-воркер. Сборка — отдельный entry `pptx_worker.js` в
+   tsup-конфиге `packages/core`; фабрика `createPptxViewer` создаёт свой
+   Worker на этот бандл (дефолтный `workerUrl` —
+   `new URL('../worker/pptx_worker.js', import.meta.url)`). Wasm-роутера нет.
+9. **PDF — постраничный бэкенд слайдов.** `crates/pdf` получает модуль
+   `pptx/` и `PdfExporter::export_pptx(&Presentation)`: слайд = страница,
+   размер страницы из `p:sldSz`, метрики и переносы — те же, что у
+   canvas-пути (Carlito, `render::text_measure`); диаграммы рисует общий
+   `pdf::chart`, картинки — общий реестр `XObject`'ов (`pdf::image`).
+   `doc-converter-pdf` зависит от `doc-converter-pptx` (направление —
+   как у DOCX/XLSX).
 10. **Отмена — кооперативная (ADR-0032).** Разбор проверяет флаг между
     слайдами; wasm-модуль сбрасывает его в начале операции, как DOCX.
 
 ## Последствия
 
-- PPTX не появляется в основном модуле: бюджет `wasm (viewer)` не растёт,
-  гейт «нет `docx_*` в viewer» расширяется до `pptx_*`.
-- `crates/pdf` учится рисовать произвольный DisplayList — это переиспользуемо
-  для будущих форматов (ODF) и не создаёт второй раскладки.
+- PPTX не появляется в основном модуле и в общем воркере: бюджет
+  `wasm (viewer)` не растёт, гейт «нет `docx_*` в viewer» расширяется до
+  `pptx_*`; воркер PPTX — отдельный бандл `pptx_worker.js` со своей строкой
+  бюджета.
+- `crates/pdf` получает постраничный бэкенд слайдов: размер модуля
+  `@meerrec/wasm-pdf` остаётся в бюджете (добавляется один экспорт
+  `export_pptx_pdf`), а `@meerrec/wasm-pptx` не тянет PDF и его шрифты.
 - Ограничения первой версии: автоподбор кегля, анимации, заметки и
-  трёхмерные эффекты не рисуются; скругления `Rect` в PDF пока рисуются
-  прямыми углами (canvas — радиусом).
+  трёхмерные эффекты не рисуются; скругления `Rect` в PDF рисуются
+  полигоном с аппроксимацией дуг (canvas — радиусом).
 - Оракул — LibreOffice Impress (`soffice --convert-to pdf`, SSIM ≥ 0.95);
   независимого дифференциального эталона для слайдов нет, поэтому SSIM-оракул
   остаётся единственным гейтом (решение задачи T3.1).

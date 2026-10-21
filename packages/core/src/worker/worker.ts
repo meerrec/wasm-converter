@@ -380,6 +380,11 @@ function growFrameBuffer(bytes: number): void {
 function buildBytes(target: FrameTarget): BuildStatsWire | null {
   const buffers = pool;
   if (!buffers) return null;
+  if (target.kind === 'pptx') {
+    // Презентации живут в своём воркере (`pptx_worker`): в общем воркере
+    // формата pptx не бывает, и ветка страхует сужение типа.
+    return null;
+  }
   const out = buffers.beginBuild();
   let stats: BuildStatsWire | undefined;
   if (target.kind === 'docx') {
@@ -404,6 +409,11 @@ function buildSab(target: FrameTarget): BuildStatsWire | null {
   if (target.kind === 'docx') {
     const mod = docxWasm;
     return mod ? buildDocxSab(mod, shared, slotCapacity, target.viewport, target.gap) : null;
+  }
+  if (target.kind === 'pptx') {
+    // Презентации живут в своём воркере (`pptx_worker`): в общем воркере
+    // формата pptx не бывает, и ветка страхует сужение типа.
+    return null;
   }
   return buildXlsxSab(shared, slotCapacity, target.sheet, target.viewport, target.options);
 }
@@ -436,10 +446,14 @@ function buildFrame(): BuildOutcome {
  */
 function buildFrameMain(): RelayBuildOutcome {
   const req = pending;
-  if (!req || !format) return { kind: 'idle' };
   const buffers = relay;
-  if (!buffers) return { kind: 'idle' };
+  if (!req || !buffers) return { kind: 'idle' };
   const target = frameTarget(format, req);
+  if (target.kind === 'pptx') {
+    // Презентации живут в своём воркере (`pptx_worker`): в общем воркере
+    // формата pptx не бывает, и ветка страхует сужение типа.
+    return { kind: 'idle' };
+  }
   const out = buffers.beginBuild();
   if (!out) return { kind: 'busy' };
   let stats: BuildStatsWire | null;
