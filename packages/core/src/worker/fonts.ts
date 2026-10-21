@@ -37,7 +37,9 @@ const FACES: readonly {
 ];
 
 /**
- * Зарегистрировать сабсеты Carlito в `self.fonts` области воркера.
+ * Зарегистрировать сабсеты Carlito в `self.fonts` воркера либо в
+ * `document.fonts`, если функция зовётся на main-потоке. У `Window` свойства
+ * `fonts` нет — набор шрифтов документа живёт в `document.fonts`.
  *
  * Возвращает `true`, только если все четыре лица добавлены и разобраны:
  * тогда `ctx.font = "…px Carlito"` разрешается в настоящий сабсет, а ширины
@@ -63,10 +65,13 @@ export async function registerPaintFonts(mod: FontBytesSource): Promise<boolean>
     FontFace?: typeof FontFace;
   };
   const FaceCtor = scope.FontFace;
-  const fonts = scope.fonts;
+  // В воркере — `self.fonts`, на main — `document.fonts`: у `Window` свойства
+  // `fonts` нет, и без второй ветки main-режим всегда рисовал бы подстановкой.
+  const fonts =
+    scope.fonts ?? (typeof document === 'undefined' ? undefined : document.fonts);
   if (!FaceCtor || !fonts) {
     console.warn(
-      '[fonts] FontFace/self.fonts недоступны: предпросмотр рисует текст подстановкой браузера',
+      '[fonts] FontFace/fonts недоступны: предпросмотр рисует текст подстановкой браузера',
     );
     return false;
   }

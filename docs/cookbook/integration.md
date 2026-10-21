@@ -155,23 +155,34 @@ async function mount(): Promise<void> {
 
 ### <a id="in-06"></a>Рецепт 6. supportsOffscreen и проверка окружения
 
-**Задача.** Не рисовать кнопки, которые всё равно не заведутся.
+**Задача.** Узнать, будет ли доступен worker-путь, и предупредить о переходе
+на main-режим.
 
 ```ts
 import { supportsOffscreen } from '@meerrec/core';
 
-// Chrome 90+, Firefox 96+, Safari 16.4+ (README «Браузеры»).
+// Chrome 90+, Firefox 105+, Safari 16.4+ (README «Браузеры»).
+// Без OffscreenCanvas вьюер не падает: он сам перейдёт в main-режим
+// (парсинг всё равно в воркере), но стоит предупредить пользователя.
 if (!supportsOffscreen()) {
-  showBanner('Браузер слишком старый: нужен OffscreenCanvas + transferControlToOffscreen');
-} else {
-  void mount();
+  showBanner('OffscreenCanvas нет: рендер на main-потоке, один вьюер на страницу');
 }
+void mount();
 ```
 
 **Под капотом.** `supportsOffscreen` проверяет ровно ту возможность,
 которой пользуется движок, а `assertFallbackAvailable` даёт внятное
 «doc-converter requires a browser-like environment» вместо `Worker is not
 defined` в SSR и тестах без DOM.
+
+Отсутствие `transferControlToOffscreen` — больше не ошибка: с
+`renderMode: 'auto'` (по умолчанию) вьюер сам переходит в main-режим —
+парсинг и сборка DisplayList остаются в воркере, а рисует main тем же
+Rust-painter'ом, поэтому на странице может жить только один main-вьюер.
+Явный `renderMode: 'worker'` без возможности даёт внятную ошибку
+инициализации — `supportsOffscreen()` по-прежнему годится для такой
+предварительной проверки; подробнее —
+[transports.md](transports.md#tr-08).
 
 ---
 

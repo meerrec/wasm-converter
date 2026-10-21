@@ -54,6 +54,18 @@ export type PdfOptions = PdfOptionsWire & {
 export type FrameTransport = 'sab' | 'bytes';
 
 /**
+ * Где рисуется кадр.
+ *
+ * - `auto` (по умолчанию) — воркер, если холст можно отдать ему через
+ *   `transferControlToOffscreen`, иначе main-поток;
+ * - `worker` — только воркер: без `transferControlToOffscreen` это ошибка
+ *   инициализации, а не тихий переход на main;
+ * - `main` — разбор и сборка DisplayList остаются в воркере, а painter
+ *   работает на main с обычным `CanvasRenderingContext2d`.
+ */
+export type RenderMode = 'auto' | 'worker' | 'main';
+
+/**
  * Метрики одного кадра painter'а. Источник — Rust `PaintStatsWire`;
  * `frameId` присваивает воркер, `buildMs` есть только у документов.
  */
@@ -122,7 +134,16 @@ export interface DocxModuleUrls {
 
 export interface InitMsg {
   type: 'init';
-  canvas: OffscreenCanvas;
+  /**
+   * Холст для воркер-пути. В main-режиме не передаётся: painter рисует на
+   * main, а воркеру холст не нужен вовсе.
+   */
+  canvas?: OffscreenCanvas;
+  /**
+   * Где рисовать. Без значения — `worker`: так вёл себя протокол до
+   * появления main-режима.
+   */
+  backend?: 'worker' | 'main';
   /** Без значения wasm-bindgen резолвит .wasm относительно своего модуля. */
   wasmUrl?: string | undefined;
   /** Где лежит PDF-модуль. Не задан — экспорт ответит ошибкой. */
@@ -142,6 +163,50 @@ export interface InitMsg {
 export interface ResizeMsg { type: 'resize'; cssW: number; cssH: number; dpr: number }
 export interface BitmapMsg { type: 'bitmap'; id: number; bitmap: ImageBitmap }
 export interface DropBitmapMsg { type: 'drop-bitmap'; id: number }
+
+/**
+ * Снять в main-режиме все картинки прежнего документа. Воркер шлёт его при
+ * открытии нового документа и при закрытии: набор id меняется целиком, а
+ * поштучные `drop-bitmap` на каждый id были бы лишним трафиком.
+ */
+export interface ClearBitmapsMsg { type: 'clear-bitmaps' }
+
+/**
+ * Готовый кадр для main-режима. Байты DisplayList едут переводом владения;
+ * main рисует их тем же Rust-painter'ом и возвращает буфер сообщением
+ * `frame-ack`, чтобы воркеру было куда собирать следующий кадр.
+ *
+ * `cmds`/`buildMs` — статистика сборки, `dropped` — были ли пропущены
+ * запросы на кадр, пока оба буфера находились в полёте.
+ */
+export interface FrameMsg {
+  type: 'frame';
+  frameId: number;
+  /**
+   * Слот релея, из которого взят буфер. Идентичность самого `ArrayBuffer`
+   * через `postMessage` не переживает: на другом конце это новый объект, и
+   * воркер узнаёт свой буфер только по номеру слота.
+   */
+  slot: number;
+  /** Буфер DisplayList; `len` — сколько байт в нём занято. */
+  bytes: ArrayBuffer;
+  len: number;
+  cmds: number;
+  buildMs: number;
+  dropped: boolean;
+}
+
+/**
+ * Буфер кадра вернулся на main-потоке после отрисовки (или сразу, если кадр
+ * вытеснен более свежим). Перевод владения — чтобы воркер не аллоцировал
+ * буфер заново на каждый кадр.
+ */
+export interface FrameAckMsg {
+  type: 'frame-ack';
+  /** Слот, к которому относится `buffer`; см. `FrameMsg.slot`. */
+  slot: number;
+  buffer: ArrayBuffer;
+}
 
 /**
  * Полезная нагрузка `render`.
@@ -247,6 +312,7 @@ export type InMsg =
   | ResizeMsg
   | BitmapMsg
   | DropBitmapMsg
+  | FrameAckMsg
   | OpenMsg
   | CloseMsg
   | RenderMsg
@@ -264,7 +330,9 @@ export type InMsg =
  */
 export interface ReadyMsg {
   type: 'ready';
-  /** Каким путём поедут кадры. */
+  /** Где рисуется кадр: в воркере или на main. */
+  backend: 'worker' | 'main';
+  /** Каким путём поедут кадры. У main-режима всегда `bytes`. */
   transport: FrameTransport;
   /** Размер одного слота: у `sab` — слота ring'а, у `bytes` — буфера. */
   slotCapacity: number;
@@ -333,6 +401,10 @@ export interface WorkerErrorMsg {
 export type OutMsg =
   | ReadyMsg
   | TickMsg
+  | BitmapMsg
+  | DropBitmapMsg
+  | ClearBitmapsMsg
+  | FrameMsg
   | PngMsg
   | PdfMsg
   | OpenedMsg

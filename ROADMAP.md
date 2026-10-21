@@ -1313,6 +1313,7 @@ DOCX: 104 коммитируемые фикстуры (101 разбираетс�
 | 0026 | Дистрибутив Rust-крейтов: GitHub Packages + ассеты релиза, crates.io — non-goal | Пять npm-пакетов `@meerrec/*@1.0.0` — в GitHub Packages этого репозитория (действующее зеркало; npmjs.org — целевой основной реестр, публикация готовится — [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)); крейты — ассетами релиза `v1.0.0`; в crates.io в v1.x не публикуются | `docs/adr/0026-rust-crates-distribution.md` |
 | 0027 | Реестры npm: npmjs.org — основной, GitHub Packages — зеркало | npmjs.org — целевой основной публичный реестр, GitHub Packages — действующее зеркало; публикация npmjs первой; crates.io — за `PUBLISH_CRATES_IO`; первый publish токеном, OIDC — со следующего релиза; откат — `npm deprecate` | `docs/adr/0027-npmjs-primary-registry.md` |
 | 0028 | Типизированный wire-протокол — Rust как источник истины | Payload'ы — DTO в `core::wire`, TS генерируется `ts-rs` 10.1 примером `export_wire` (`pnpm gen:wire`); конверт ручной; дрейф и ошибки типов ловит CI | `docs/adr/0028-typed-wire-protocol.md` |
+| 0029 | Рендер на main-потоке без OffscreenCanvas | Гибрид: парсинг и сборка DisplayList — в воркере, painter — на main через `init_painter_main`; протокол `frame`/`frame-ack` с двумя `ArrayBuffer`, коалесцирование по rAF; `renderMode` (`auto`/`worker`/`main`); один main-вьюер на страницу | `docs/adr/0029-main-thread-render-backend.md` |
 
 ADR 0002–0005 приняты 05.10.2026 (0002 пересмотрен на `skrifa`). Реализация
 0002, 0003 и 0005 — Спринт 5.5, 0004 — Спринт 11. ADR-0006 — чужая работа про

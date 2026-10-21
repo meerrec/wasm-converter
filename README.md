@@ -191,10 +191,15 @@ doc-converter batch ./in --out ./out --format pdf --workers 8 --scale 0.9
 
 ## Браузеры
 
-Chrome 90+, Firefox 105+, Safari 16.4+ — по доступности `OffscreenCanvas`
-(проверяется экспортом `supportsOffscreen()`; просмотрщик требует его —
-main-thread fallback в v1 не реализован). Работа без COOP/COEP — штатный
-путь, см. ниже.
+Chrome 90+, Firefox 105+, Safari 16.4+ — если браузер умеет `OffscreenCanvas`
+(проверяется экспортом `supportsOffscreen()`), это путь по умолчанию: canvas
+уезжает в worker, и кадр рисуется там. Без `transferControlToOffscreen` вьюер
+не падает, а автоматически переходит в main-режим: парсинг и сборка
+DisplayList остаются в worker, а рисует main тем же Rust-painter'ом. Режим
+задаётся опцией `renderMode: 'auto' | 'worker' | 'main'` (по умолчанию
+`auto`); явный `'worker'` без возможности — ошибка инициализации. В
+main-режиме — один вьюер на страницу. Работа без COOP/COEP — штатный путь,
+см. ниже.
 
 ## Встраивание: COOP/COEP и SharedArrayBuffer
 

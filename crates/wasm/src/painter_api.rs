@@ -15,6 +15,18 @@ pub fn init_painter(ctx: OffscreenCanvasRenderingContext2d) -> Result<(), JsValu
     OffscreenPainter::install(ctx)
 }
 
+/// Инициализирует painter поверх main-thread canvas.
+///
+/// Типизированный [`init_painter`] остаётся для worker-пути: там контекст —
+/// `OffscreenCanvasRenderingContext2d`. `init_painter_main` нужен main-режиму,
+/// где документ рисуется в обычный `<canvas>`: `ctx.into()` конвертирует
+/// typed handle в `JsValue`, а форму контекста проверяет
+/// `OffscreenPainter::install_js` (duck-типизация общих Canvas2D-методов).
+#[wasm_bindgen]
+pub fn init_painter_main(ctx: web_sys::CanvasRenderingContext2d) -> Result<(), JsValue> {
+    OffscreenPainter::install_js(ctx.into())
+}
+
 #[wasm_bindgen]
 pub fn dispose_painter() {
     OffscreenPainter::dispose();

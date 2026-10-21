@@ -8,9 +8,20 @@ import type {
   PdfOptions,
   ReadyInfo,
   RenderConfig,
+  RenderMode,
   SheetInfo,
   Viewport,
 } from '../protocol.js';
+import { exportPng } from './export_png.js';
+import { createMainFrameChain, type MainFrameChain } from './main_frame_chain.js';
+import {
+  disposeMainPainter,
+  dropMainBitmap,
+  initMainPainter,
+  registerMainBitmap,
+  resizeMainCanvas,
+} from './main_painter.js';
+import { resolveRenderMode } from './offscreen.js';
 import { computeDpr } from './resize_observer.js';
 
 /** Что умеет открытая книга. */
@@ -20,6 +31,8 @@ export interface XlsxViewerHandle {
    * иначе буферы. Функциональность от этого не зависит — поле для диагностики.
    */
   readonly transport: FrameTransport;
+  /** Где рисуется кадр: в воркере или на main-потоке. */
+  readonly renderMode: 'worker' | 'main';
   /** Имена и размеры листов, как их видит рендер. */
   readonly sheets: SheetInfo[];
   /** Номер показанного листа. */
@@ -77,6 +90,13 @@ export interface XlsxViewerOptions {
    * `sab` без заголовков — ошибка инициализации, а не тихая подмена.
    */
   transport?: 'auto' | FrameTransport;
+  /**
+   * Где рисовать кадр. `auto` (по умолчанию) — воркер, если холст можно отдать
+   * ему через `transferControlToOffscreen`, иначе main-поток. Явный `worker`
+   * без этой возможности — ошибка инициализации; `main` вместе с
+   * `transport: 'sab'` — ошибка конфигурации.
+   */
+  renderMode?: RenderMode;
   /** Начальный зум. */
   zoom?: number;
   showGrid?: boolean;
@@ -117,15 +137,10 @@ export async function createXlsxViewer(
   scroller.append(spacer, canvas);
   host.append(scroller);
 
-  // Проверяем ровно ту возможность, которой пользуемся: глобального
-  // `OffscreenCanvas` может не быть и там, где холст отдаётся воркеру. Без неё
-  // сообщение должно быть внятным, а не `transferControlToOffscreen is not a
-  // function` из недр разметки.
-  if (typeof canvas.transferControlToOffscreen !== 'function') {
-    throw new Error(
-      'этот браузер не поддерживает OffscreenCanvas (transferControlToOffscreen) — просмотрщик не запустится',
-    );
-  }
+  // Режим решает, уедет ли холст в воркер. Проверяем ровно ту возможность,
+  // которой пользуемся: глобального `OffscreenCanvas` может не быть и там, где
+  // холст отдаётся воркеру, а main-режиму он не нужен вовсе.
+  const renderMode = resolveRenderMode(canvas, options.renderMode, options.transport);
 
   const worker = new Worker(
     options.workerUrl ?? new URL('../worker/worker.js', import.meta.url),
@@ -133,6 +148,9 @@ export async function createXlsxViewer(
   );
 
   const slotCapacity = options.slotCapacity ?? DEFAULT_SLOT_CAPACITY;
+  /** Битмапы main-режима: main перерегистрирует их после resize. */
+  const mainBitmaps = new Map<number, ImageBitmap>();
+  let mainChain: MainFrameChain | null = null;
   const tickHandlers = new Set<(stats: PaintStats) => void>();
   let sheets: SheetInfo[] = [];
   let sheetIndex = 0;
@@ -156,12 +174,50 @@ export async function createXlsxViewer(
   >();
   let nextRequestId = 1;
 
+  // main-режим: painter поднимается до воркера и до первого кадра. Если
+  // инициализация не удалась, воркер не должен остаться висеть.
+  if (renderMode === 'main') {
+    const ctx2d = canvas.getContext('2d');
+    if (!ctx2d) {
+      worker.terminate();
+      throw new Error('getContext("2d") returned null');
+    }
+    try {
+      await initMainPainter(ctx2d, options.wasmUrl);
+    } catch (e) {
+      worker.terminate();
+      throw e;
+    }
+    mainChain = createMainFrameChain(worker, (stats) => {
+      for (const handler of tickHandlers) handler(stats);
+    });
+  }
+
   worker.addEventListener('message', (ev: MessageEvent<OutMsg>) => {
     const msg = ev.data;
     switch (msg.type) {
       case 'tick':
         for (const handler of tickHandlers) handler(msg.stats);
         break;
+      case 'frame':
+        // main-режим: воркер собрал DisplayList, рисуем и возвращаем буфер.
+        mainChain?.handle(msg);
+        break;
+      case 'bitmap': {
+        registerMainBitmap(msg.id, msg.bitmap);
+        mainBitmaps.set(msg.id, msg.bitmap);
+        break;
+      }
+      case 'drop-bitmap': {
+        dropMainBitmap(msg.id);
+        mainBitmaps.delete(msg.id);
+        break;
+      }
+      case 'clear-bitmaps': {
+        for (const id of mainBitmaps.keys()) dropMainBitmap(id);
+        mainBitmaps.clear();
+        break;
+      }
       case 'opened': {
         sheets = msg.sheets;
         // Ответ адресный: разрешаем ровно тот промис, чей id эхом вернул воркер.
@@ -232,36 +288,50 @@ export async function createXlsxViewer(
     }
   });
 
-  const ready = await new Promise<ReadyInfo>((resolve, reject) => {
-    const onMessage = (ev: MessageEvent) => {
-      const data = ev.data as { type?: string; message?: string } & Partial<ReadyInfo>;
-      if (data?.type === 'ready') {
-        worker.removeEventListener('message', onMessage);
-        resolve({
-          transport: data.transport ?? 'bytes',
-          slotCapacity: data.slotCapacity ?? slotCapacity,
-          totalBytes: data.totalBytes ?? 0,
-          crossOriginIsolated: data.crossOriginIsolated ?? false,
-        });
-      } else if (data?.type === 'error') {
-        worker.removeEventListener('message', onMessage);
-        reject(new Error(data.message ?? 'worker init error'));
-      }
-    };
-    worker.addEventListener('message', onMessage);
-    const off = canvas.transferControlToOffscreen();
-    worker.postMessage(
-      {
+  let ready: ReadyInfo;
+  try {
+    ready = await new Promise<ReadyInfo>((resolve, reject) => {
+      const onMessage = (ev: MessageEvent) => {
+        const data = ev.data as { type?: string; message?: string } & Partial<ReadyInfo>;
+        if (data?.type === 'ready') {
+          worker.removeEventListener('message', onMessage);
+          resolve({
+            backend: data.backend ?? 'worker',
+            transport: data.transport ?? 'bytes',
+            slotCapacity: data.slotCapacity ?? slotCapacity,
+            totalBytes: data.totalBytes ?? 0,
+            crossOriginIsolated: data.crossOriginIsolated ?? false,
+          });
+        } else if (data?.type === 'error') {
+          worker.removeEventListener('message', onMessage);
+          reject(new Error(data.message ?? 'worker init error'));
+        }
+      };
+      worker.addEventListener('message', onMessage);
+      const init = {
         type: 'init',
-        canvas: off,
+        backend: renderMode,
         wasmUrl: options.wasmUrl,
         pdf: options.pdfWasm,
         slotCapacity,
         transport: options.transport,
-      } satisfies InMsg,
-      [off],
-    );
-  });
+      } satisfies InMsg;
+      if (renderMode === 'worker') {
+        // Холст уезжает воркеру ровно один раз; в main-режиме он остаётся здесь.
+        const off = canvas.transferControlToOffscreen();
+        worker.postMessage({ ...init, canvas: off } satisfies InMsg, [off]);
+      } else {
+        worker.postMessage(init);
+      }
+    });
+  } catch (e) {
+    // Воркер не поднялся — он не нужен, а painter в main-режиме singleton
+    // страницы: без освобождения следующий вьюер не смог бы инициализироваться.
+    worker.terminate();
+    mainChain?.destroy();
+    if (renderMode === 'main') disposeMainPainter();
+    throw e;
+  }
 
   /** Размер листа в пикселях экрана: зум растягивает раскладку. */
   function applySheetSize(): void {
@@ -278,6 +348,16 @@ export async function createXlsxViewer(
     dpr = computeDpr(cssW, cssH, devicePixelRatio);
     canvas.style.width = `${cssW}px`;
     canvas.style.height = `${cssH}px`;
+    if (renderMode === 'main') {
+      // Размеры ставит main: холст здесь же, воркеру о них знать нечего.
+      // Установка width/height сбрасывает 2D-контекст, поэтому painter
+      // пересчитывает его сам, а картинки возвращаются в кэш после этого.
+      canvas.width = Math.max(1, Math.round(cssW * dpr));
+      canvas.height = Math.max(1, Math.round(cssH * dpr));
+      resizeMainCanvas(cssW, cssH, dpr);
+      for (const [id, bmp] of mainBitmaps) registerMainBitmap(id, bmp);
+      return;
+    }
     worker.postMessage({ type: 'resize', cssW, cssH, dpr } satisfies InMsg);
   }
 
@@ -387,6 +467,7 @@ export async function createXlsxViewer(
 
   return {
     transport: ready.transport,
+    renderMode,
 
     get sheets() {
       return sheets;
@@ -445,6 +526,9 @@ export async function createXlsxViewer(
     hyperlinkAt,
 
     exportPng(): Promise<Uint8Array> {
+      // В main-режиме холст и painter здесь: снимок делается локально, без
+      // лишнего круга через воркер.
+      if (renderMode === 'main') return exportPng(canvas);
       const id = nextRequestId++;
       return new Promise<Uint8Array>((resolve, reject) => {
         pendingPng.set(id, { resolve, reject });
@@ -485,8 +569,16 @@ export async function createXlsxViewer(
       pendingPng.clear();
       for (const p of pendingPdf.values()) p.reject(error);
       pendingPdf.clear();
+      // Сначала цикл кадров: он вернёт воркеру вытесненный буфер, пока тот
+      // ещё жив. Затем singleton painter'а освобождается для страницы.
+      mainChain?.destroy();
       worker.postMessage({ type: 'close' } satisfies InMsg);
       worker.terminate();
+      if (renderMode === 'main') {
+        for (const id of mainBitmaps.keys()) dropMainBitmap(id);
+        mainBitmaps.clear();
+        disposeMainPainter();
+      }
       scroller.remove();
     },
   };
