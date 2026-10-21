@@ -26,6 +26,7 @@ import {
 import { resolveRenderMode } from './offscreen.js';
 import { pumpStream, type PumpOptions } from './open_stream.js';
 import { computeDpr } from './resize_observer.js';
+import { endSpan, setSpanAttribute, startSpan, type SpanAttributes } from '../telemetry.js';
 
 /** Что умеет открытый документ. */
 export interface DocxViewerHandle {
@@ -570,55 +571,72 @@ export async function createDocxViewer(
       return zoom;
     },
 
-    open(
+    async open(
       source: ArrayBuffer | ReadableStream<Uint8Array>,
       opts: { size?: number; signal?: AbortSignal } = {},
     ): Promise<PageInfo[]> {
-      const id = nextRequestId++;
-      return new Promise<PageInfo[]>((resolve, reject) => {
-        // Новое открытие отменяет предыдущее (ADR-0032): два параллельных open
-        // на один воркер не имеют смысла, а ответ старого повис бы в пустоте.
-        for (const stale of pendingOpen.keys()) {
-          worker.postMessage({ type: 'cancel', id: stale } satisfies InMsg);
-        }
-        const guard = armAbort(
-          opts.signal,
-          (msg) => worker.postMessage(msg),
-          id,
-          resolve,
-          reject,
-        );
-        if (!guard) {
-          reject(new Error('operation cancelled'));
-          return;
-        }
-        pendingOpen.set(id, guard);
-        if (source instanceof ArrayBuffer) {
-          worker.postMessage({ type: 'open', id, format: 'docx', bytes: source } satisfies InMsg, [
-            source,
-          ]);
-          return;
-        }
-        // Поток: чанки уезжают переводом владения, main не держит файл.
-        const pump: PumpOptions = {};
-        if (opts.size !== undefined) pump.size = opts.size;
-        if (options.onProgress) pump.onProgress = options.onProgress;
-        void pumpStream(
-          (msg, transfer) => worker.postMessage(msg, transfer ?? []),
-          id,
-          'docx',
-          source,
-          pump,
-        ).catch((e) => {
-          // Чтение потока упало (сеть, отмена): воркер обычно уже ответил
-          // ошибкой «stream aborted», но если ответа не было — реджектим здесь.
-          const pending = pendingOpen.get(id);
-          if (pending) {
-            pendingOpen.delete(id);
-            pending.reject(new Error(String(e)));
+      // Спан один на вызов, не на кадр (ADR-0037); атрибуты — только формат,
+      // размер входа и число страниц, без байтов документа.
+      const attrs: SpanAttributes = { format: 'docx' };
+      if (source instanceof ArrayBuffer) attrs.bytes = source.byteLength;
+      else if (opts.size !== undefined) attrs.bytes = opts.size;
+      const span = startSpan('viewer.open', attrs);
+      let failed: unknown;
+      try {
+        const id = nextRequestId++;
+        const result = await new Promise<PageInfo[]>((resolve, reject) => {
+          // Новое открытие отменяет предыдущее (ADR-0032): два параллельных open
+          // на один воркер не имеют смысла, а ответ старого повис бы в пустоте.
+          for (const stale of pendingOpen.keys()) {
+            worker.postMessage({ type: 'cancel', id: stale } satisfies InMsg);
           }
+          const guard = armAbort(
+            opts.signal,
+            (msg) => worker.postMessage(msg),
+            id,
+            resolve,
+            reject,
+          );
+          if (!guard) {
+            reject(new Error('operation cancelled'));
+            return;
+          }
+          pendingOpen.set(id, guard);
+          if (source instanceof ArrayBuffer) {
+            worker.postMessage(
+              { type: 'open', id, format: 'docx', bytes: source } satisfies InMsg,
+              [source],
+            );
+            return;
+          }
+          // Поток: чанки уезжают переводом владения, main не держит файл.
+          const pump: PumpOptions = {};
+          if (opts.size !== undefined) pump.size = opts.size;
+          if (options.onProgress) pump.onProgress = options.onProgress;
+          void pumpStream(
+            (msg, transfer) => worker.postMessage(msg, transfer ?? []),
+            id,
+            'docx',
+            source,
+            pump,
+          ).catch((e) => {
+            // Чтение потока упало (сеть, отмена): воркер обычно уже ответил
+            // ошибкой «stream aborted», но если ответа не было — реджектим здесь.
+            const pending = pendingOpen.get(id);
+            if (pending) {
+              pendingOpen.delete(id);
+              pending.reject(new Error(String(e)));
+            }
+          });
         });
-      });
+        setSpanAttribute(span, 'pageCount', result.length);
+        return result;
+      } catch (e) {
+        failed = e;
+        throw e;
+      } finally {
+        endSpan(span, failed);
+      }
     },
 
     showPage(index: number): void {
@@ -649,48 +667,76 @@ export async function createDocxViewer(
       onScroll();
     },
 
-    exportPng(opts: { signal?: AbortSignal } = {}): Promise<Uint8Array> {
-      // В main-режиме холст и painter здесь: снимок делается локально, без
-      // лишнего круга через воркер.
-      if (renderMode === 'main') return exportPng(canvas);
-      const id = nextRequestId++;
-      return new Promise<Uint8Array>((resolve, reject) => {
-        const guard = armAbort(
-          opts.signal,
-          (msg) => worker.postMessage(msg),
-          id,
-          resolve,
-          reject,
-        );
-        if (!guard) {
-          reject(new Error('operation cancelled'));
-          return;
+    async exportPng(opts: { signal?: AbortSignal } = {}): Promise<Uint8Array> {
+      // Спан один на вызов (ADR-0037); `bytes` — размер результата, не данных.
+      const span = startSpan('viewer.export', { format: 'docx', kind: 'png' });
+      let failed: unknown;
+      try {
+        let bytes: Uint8Array;
+        if (renderMode === 'main') {
+          // В main-режиме холст и painter здесь: снимок делается локально, без
+          // лишнего круга через воркер.
+          bytes = await exportPng(canvas);
+        } else {
+          const id = nextRequestId++;
+          bytes = await new Promise<Uint8Array>((resolve, reject) => {
+            const guard = armAbort(
+              opts.signal,
+              (msg) => worker.postMessage(msg),
+              id,
+              resolve,
+              reject,
+            );
+            if (!guard) {
+              reject(new Error('operation cancelled'));
+              return;
+            }
+            pendingPng.set(id, guard);
+            worker.postMessage({ type: 'export-png', id } satisfies InMsg);
+          });
         }
-        pendingPng.set(id, guard);
-        worker.postMessage({ type: 'export-png', id } satisfies InMsg);
-      });
+        setSpanAttribute(span, 'bytes', bytes.byteLength);
+        return bytes;
+      } catch (e) {
+        failed = e;
+        throw e;
+      } finally {
+        endSpan(span, failed);
+      }
     },
 
-    exportPdf(
+    async exportPdf(
       options: PdfOptions = {},
       opts: { signal?: AbortSignal } = {},
     ): Promise<Uint8Array> {
-      const id = nextRequestId++;
-      return new Promise<Uint8Array>((resolve, reject) => {
-        const guard = armAbort(
-          opts.signal,
-          (msg) => worker.postMessage(msg),
-          id,
-          resolve,
-          reject,
-        );
-        if (!guard) {
-          reject(new Error('operation cancelled'));
-          return;
-        }
-        pendingPdf.set(id, guard);
-        worker.postMessage({ type: 'export-docx-pdf', id, options } satisfies InMsg);
-      });
+      // Спан один на вызов (ADR-0037); `bytes` — размер результата, не данных.
+      const span = startSpan('viewer.export', { format: 'docx', kind: 'pdf' });
+      let failed: unknown;
+      try {
+        const id = nextRequestId++;
+        const bytes = await new Promise<Uint8Array>((resolve, reject) => {
+          const guard = armAbort(
+            opts.signal,
+            (msg) => worker.postMessage(msg),
+            id,
+            resolve,
+            reject,
+          );
+          if (!guard) {
+            reject(new Error('operation cancelled'));
+            return;
+          }
+          pendingPdf.set(id, guard);
+          worker.postMessage({ type: 'export-docx-pdf', id, options } satisfies InMsg);
+        });
+        setSpanAttribute(span, 'bytes', bytes.byteLength);
+        return bytes;
+      } catch (e) {
+        failed = e;
+        throw e;
+      } finally {
+        endSpan(span, failed);
+      }
     },
 
     exportMarkdown: (opts?: { signal?: AbortSignal }) => exportText('markdown', opts),
