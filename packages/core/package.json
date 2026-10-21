@@ -3,6 +3,15 @@
   "version": "1.0.0",
   "description": "Core primitives: worker protocol, OffscreenCanvas glue, DisplayList transport.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meerrec/wasm-converter.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/meerrec/wasm-converter#readme",
+  "bugs": {
+    "url": "https://github.com/meerrec/wasm-converter/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -20,7 +29,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "sideEffects": [
     "./dist/worker.js",

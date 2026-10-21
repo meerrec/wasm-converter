@@ -8,8 +8,11 @@
 
 ## Установка
 
-Пакет живёт в **GitHub Packages** этого репозитория (`@meerrec/wasm-docx@1.0.0`),
-а не в `registry.npmjs.org`: реестр и токен с правом `read:packages` — в `~/.npmrc`:
+Пакет опубликован в **GitHub Packages** этого репозитория
+(`@meerrec/wasm-docx@1.0.0`) — действующем зеркале; целевой основной реестр —
+`registry.npmjs.org` (публикация готовится,
+[ADR-0027](https://github.com/meerrec/wasm-converter/blob/main/docs/adr/0027-npmjs-primary-registry.md)).
+Реестр и токен с правом `read:packages` — в `~/.npmrc`:
 
 ```ini
 # ~/.npmrc — <токен> это personal access token (classic) с read:packages
