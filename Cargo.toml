@@ -9,6 +9,7 @@ members = [
     "crates/pdf",
     "crates/pdf-wasm",
     "crates/docx-wasm",
+    "crates/pptx-wasm",
     "crates/wasm",
 ]
 # crates/fuzz — свой workspace (nightly + sanitizer), ему нужен отдельный

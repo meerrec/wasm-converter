@@ -505,6 +505,7 @@ dependencies = [
  "doc-converter-core",
  "doc-converter-docx",
  "doc-converter-pdf",
+ "doc-converter-pptx",
  "doc-converter-xlsx",
  "js-sys",
  "serde",
@@ -522,6 +523,21 @@ dependencies = [
  "quick-xml",
  "serde",
  "thiserror",
+ "zip",
+]
+
+[[package]]
+name = "doc-converter-pptx-wasm"
+version = "1.1.0"
+dependencies = [
+ "doc-converter-core",
+ "doc-converter-pptx",
+ "doc-converter-render",
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
  "zip",
 ]
 

@@ -115,3 +115,22 @@ pub fn export_docx_pdf(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValu
     let mut exporter = PdfExporter::new(options);
     exporter.export_docx(&document).map_err(to_js)
 }
+
+/// Экспортировать презентацию PPTX в PDF: слайд = страница, размер страницы
+/// из `p:sldSz`. Презентация приходит байтами OOXML и разбирается здесь же: у
+/// модуля нет общего с просмотрщиком состояния.
+///
+/// Опции принимаются для симметрии протокола с XLSX/DOCX, но не читаются:
+/// размер, поля, ориентация и масштаб страницы задаёт сама презентация
+/// (`p:sldSz`), а метаданных в модели PPTX нет. Действует `compress`.
+///
+/// # Errors
+/// Если байты не OOXML-пакет, `ppt/presentation.xml` не разбирается, в
+/// презентации нет слайдов или PDF не собрался.
+#[wasm_bindgen]
+pub fn export_pptx_pdf(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValue> {
+    let options = parse_options(options)?;
+    let presentation = doc_converter_pptx::open(bytes.to_vec()).map_err(to_js)?;
+    let mut exporter = PdfExporter::new(options);
+    exporter.export_pptx(&presentation).map_err(to_js)
+}
