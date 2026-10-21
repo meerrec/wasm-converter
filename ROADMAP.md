@@ -38,7 +38,7 @@
 - Парсинга и чтения DOCX (WordprocessingML) и XLSX (SpreadsheetML).
 - Рендеринга на `OffscreenCanvas` внутри `Web Worker`.
 - Экспорта в PDF (ручная отрисовка собственным PDF-бэкендом, ADR-0022), PNG, Markdown, HTML, CSV.
-- Работы в браузере (Chrome 90+, Firefox 105+, Safari 16.4+) и Node.js (batch-CLI).
+- Работы в браузере (Chrome 90+, Firefox 105+, Safari 16.4+) и в Node.js, Bun, Deno (batch-CLI).
   Firefox 105+ — реальный порог по `OffscreenCanvas`; fallback на main-thread
   не реализован (см. §3.3 п. 6).
 
@@ -844,7 +844,8 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 - VML — только `mc:Choice`, `mc:Fallback` игнорируется.
 - TOC — поле парсится, содержимое не генерируется.
 - Уравнения OMML, SmartArt, embedded OLE — `Unknown`.
-- Encrypted DOCX, `.docm`, `.doc` — ошибка; non-goal-статус снят ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)), реализаций нет.
+- Encrypted DOCX и `.doc` — ошибка; non-goal-статус снят ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)), реализаций нет.
+- `.docm` — открывается как обычный DOCX, макрос-часть не читается ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
 - Writer в DOCX — ADR-0020.
 - Command API, undo/redo, diff/patch — ADR-0018.
 - Резолвинг каскада стилей — Спринт 9.
@@ -1228,7 +1229,9 @@ migration guides ×2 (`docs/migration-from-{mammoth,exceljs}.md`).
 Differential vs mammoth введён: 83 кандидата из 104 фикстур, **81 совпадение**,
 2 non-goal, **0 неклассифицированных расхождений**; гейт —
 `crates/docx/tests/differential.rs` (`match / (кандидаты − non-goal) ≥ 0.95`).
-DOCX: 104 коммитируемые фикстуры (101 разбирается, 3 фатальные по замыслу),
+DOCX: 104 коммитируемые фикстуры (102 разбираются, 2 фатальные по замыслу —
+`broken/truncated_zip`, `broken/no_document_xml`; `.docm` с ADR-0039 открывается,
+макрос-часть не читается),
 ещё 5 «больших» (11–15 МиБ) генерируются по
 требованию в gitignored `target/fixtures/docx-large/`. TS: 86 тестов vitest
 в `@meerrec/core`.

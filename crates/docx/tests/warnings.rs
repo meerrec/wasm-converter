@@ -50,11 +50,18 @@ fn truncated_zip_is_a_container_error() {
 }
 
 #[test]
-fn macro_enabled_document_is_rejected() {
-    let err = parse("broken/macro_enabled.docx").expect_err("макросный документ — non-goal v1");
+fn macro_enabled_document_opens_without_macros() {
+    // `.docm` больше не фатален (ADR-0039): пакет разбирается как обычный DOCX,
+    // макрос-часть в модель не попадает, предупреждений нет.
+    let document = parsed("broken/macro_enabled.docx");
     assert!(
-        matches!(err, Error::MacroEnabledDocument),
-        "получено {err:?}"
+        document.warnings().is_empty(),
+        "предупреждения на макросном документе: {:?}",
+        kinds(&document)
+    );
+    assert!(
+        !document.body.items.is_empty(),
+        "тело макросного документа разбирается"
     );
 }
 

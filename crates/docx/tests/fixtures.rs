@@ -203,7 +203,6 @@ fn fatal_matches(error: &Error, fatal: &str) -> bool {
     match fatal {
         "Zip" => matches!(error, Error::Core(CoreError::Zip(_))),
         "MissingDocumentXml" => matches!(error, Error::MissingDocumentXml),
-        "MacroEnabledDocument" => matches!(error, Error::MacroEnabledDocument),
         _ => false,
     }
 }

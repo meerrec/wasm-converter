@@ -41,10 +41,6 @@ pub enum Error {
     #[error("encrypted OOXML documents are not supported")]
     EncryptedDocument,
 
-    /// Документ с макросами: `.docm` вместо `.docx`.
-    #[error("macro-enabled documents (.docm) are not supported")]
-    MacroEnabledDocument,
-
     /// Старый бинарный формат `.doc` — не OOXML.
     #[error("legacy binary .doc is not supported")]
     LegacyFormat,

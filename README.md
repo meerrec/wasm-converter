@@ -9,8 +9,9 @@
   кадра целиком в Web Worker, основной поток получает готовый холст.
 - **Экспорт**: PDF (собственный PDF-бэкенд, [ADR-0022](docs/adr/0022-own-pdf-backend.md)),
   PNG, Markdown, HTML, текст.
-- **Node-CLI** `@meerrec/cli`: `convert` и `batch` на тех же
-  wasm-модулях, с пулом воркеров.
+- **CLI** `@meerrec/cli`: `convert` и `batch` на тех же wasm-модулях, с
+  пулом воркеров; работает под Node, Bun и Deno (см.
+  [`packages/cli/README.md`](packages/cli/README.md)).
 - Монорепозиторий: шесть Rust-крейтов (`core`, `render`, `xlsx`, `docx`,
   `pdf`, три wasm-модуля) и JS/TS-пакеты (`@meerrec/core`,
   `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`,
@@ -171,7 +172,7 @@ doc-converter batch ./in --out ./out --format pdf --workers 8 --scale 0.9
 
 `convert` принимает один файл (DOCX → pdf/md/html/txt, XLSX → pdf), `batch` —
 файлы, каталоги и glob-ы с прогрессом, рекурсивным обходом и пулом воркеров
-(`node:worker_threads`).
+(`node:worker_threads` в Node/Bun, веб-воркеры в Deno).
 
 ## Браузеры
 
@@ -284,7 +285,10 @@ printpdf на собственный бэкенд похудел на 31 % gzip.
   вынимается из потока.
 - **VML-фолбэки** (`mc:Fallback`) игнорируются — рисуется только `mc:Choice`
   ([ADR-0014](docs/adr/0014-alternate-content.md)).
-- **PPTX, Strict OOXML, ODF (`.odt`/`.ods`/`.odp`) и макрофайлы `.docm`** — в плане, пока не поддерживаются
+- **PPTX, Strict OOXML и ODF (`.odt`/`.ods`/`.odp`)** — в плане, пока не
+  поддерживаются ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
+- **Макрофайлы `.docm`** поддерживаются как обычные DOCX: макрос-часть
+  (`word/vbaProject.bin`) не читается
   ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
 - **XLSB, зашифрованные документы и бинарный `.doc`** — статус non-goal
   снят ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)), реализаций нет;
