@@ -4,31 +4,20 @@ import init, {
   drop_bitmap,
   font_bytes,
   init_painter,
-  paint_display_list_bytes,
-  paint_display_list_sab,
   register_bitmap,
   resize_canvas,
   sab_total_bytes,
-  xlsx_build_display_list_into,
-  xlsx_build_display_list_sab,
-  xlsx_hit_test,
-  xlsx_hyperlink_at,
   xlsx_image_bytes,
   xlsx_images,
-  xlsx_open,
 } from '@meerrec/wasm';
+import type { BuildStatsWire, ImageInfoWire, PaintStatsWire } from '../generated/wire.js';
 import type {
   DocxModuleUrls,
   FrameTransport,
-  HyperlinkInfo,
-  ImageInfo,
   InMsg,
   OutMsg,
-  PageInfo,
-  PaintStats,
   PdfModuleUrls,
   RenderRequest,
-  SheetInfo,
   WorkerErrorCode,
   WorkerErrorMsg,
 } from '../protocol.js';
@@ -37,27 +26,26 @@ import { frameTarget, toViewport, type FrameTarget, type OpenFormat } from './fr
 import { registerPaintFonts } from './fonts.js';
 import { startFrameLoop, type BuildOutcome } from './frame_loop';
 import { FramePool, pickTransport } from './transport.js';
+import {
+  buildDocxInto,
+  buildDocxSab,
+  buildXlsxInto,
+  buildXlsxSab,
+  exportDocxPdf,
+  exportPdf,
+  exportPdfBook,
+  hitTest,
+  hyperlinkAt,
+  images,
+  openDocx,
+  openXlsx,
+  paintBytes,
+  paintSab,
+  type DocxWasm,
+  type PdfWasm,
+} from './wasm_typed.js';
 
 type Ctx = OffscreenCanvasRenderingContext2D;
-
-/** Тип ленивого модуля берём у сгенерированных wasm-bindgen деклараций. */
-type PdfWasm = typeof import('@meerrec/wasm-pdf');
-
-/**
- * Что такое `BuildStats` из Rust: сколько вышло из попытки собрать кадр.
- *
- * `bytes` — размер кадра; он нужен, когда кадр не влез в буфер: по нему видно,
- * насколько буфер мал.
- */
-interface BuildStatsJs {
-  written: boolean;
-  cmds: number;
-  bytes: number;
-  buildMs: number;
-}
-
-/** Что такое `PaintStats` из Rust: метрики отрисовки без номера кадра. */
-type PaintStatsJs = Omit<PaintStats, 'frameId'>;
 
 let ctx: Ctx | null = null;
 /** Транспорт кадра: выбирается на `init`, дальше не меняется. */
@@ -114,9 +102,6 @@ async function loadPdfWasm(urls: PdfModuleUrls): Promise<PdfWasm> {
     throw e;
   }
 }
-
-/** Тип ленивого DOCX-модуля берём у сгенерированных wasm-bindgen деклараций. */
-type DocxWasm = typeof import('@meerrec/wasm-docx');
 
 /** Откуда грузить DOCX-модуль: заполняется на `init`, до него экспорта нет. */
 let docxUrls: DocxModuleUrls | null = null;
@@ -195,7 +180,7 @@ interface BitmapSource {
   /** Метка источника в предупреждениях: `[xlsx]` или `[docx]`. */
   tag: string;
   /** Список картинок: id, MIME и длина байтов. */
-  list: () => ImageInfo[];
+  list: () => ImageInfoWire[];
   /** Байты одной картинки; ошибка здесь пропускает только её. */
   bytes: (id: number) => Uint8Array;
 }
@@ -205,15 +190,15 @@ interface BitmapSource {
  * одной картинки не мешает остальным и не роняет открытие документа.
  */
 async function loadBitmaps(source: BitmapSource, gen: number): Promise<void> {
-  let images: ImageInfo[];
+  let list: ImageInfoWire[];
   try {
-    images = source.list();
+    list = source.list();
   } catch (e) {
     console.warn(`[${source.tag}] image list:`, String(e));
     return;
   }
   await Promise.all(
-    images.map(async ({ id, mime }) => {
+    list.map(async ({ id, mime }) => {
       try {
         const bytes = source.bytes(id);
         // Байты приходят копией из памяти wasm: буфер целиком принадлежит
@@ -288,15 +273,17 @@ function growFrameBuffer(bytes: number): void {
 }
 
 /** Путь без SAB: кадр пишется в готовый буфер пула. */
-function buildBytes(target: FrameTarget): BuildStatsJs | null {
+function buildBytes(target: FrameTarget): BuildStatsWire | null {
   const buffers = pool;
   if (!buffers) return null;
   const out = buffers.beginBuild();
-  const stats = (
-    target.kind === 'docx'
-      ? docxWasm?.docx_build_display_list_into(out, target.viewport, target.gap)
-      : xlsx_build_display_list_into(out, target.sheet, target.viewport, target.options)
-  ) as BuildStatsJs | undefined;
+  let stats: BuildStatsWire | undefined;
+  if (target.kind === 'docx') {
+    const mod = docxWasm;
+    stats = mod ? buildDocxInto(mod, out, target.viewport, target.gap) : undefined;
+  } else {
+    stats = buildXlsxInto(out, target.sheet, target.viewport, target.options);
+  }
   if (!stats) {
     buffers.abortBuild();
     return null;
@@ -307,21 +294,14 @@ function buildBytes(target: FrameTarget): BuildStatsJs | null {
 }
 
 /** SAB-путь: кадр пишется прямо в слот ring'а. */
-function buildSab(target: FrameTarget): BuildStatsJs | null {
+function buildSab(target: FrameTarget): BuildStatsWire | null {
   const shared = sab;
   if (!shared) return null;
-  const stats = (
-    target.kind === 'docx'
-      ? docxWasm?.docx_build_display_list_sab(shared, slotCapacity, target.viewport, target.gap)
-      : xlsx_build_display_list_sab(
-          shared,
-          slotCapacity,
-          target.sheet,
-          target.viewport,
-          target.options,
-        )
-  ) as BuildStatsJs | undefined;
-  return stats ?? null;
+  if (target.kind === 'docx') {
+    const mod = docxWasm;
+    return mod ? buildDocxSab(mod, shared, slotCapacity, target.viewport, target.gap) : null;
+  }
+  return buildXlsxSab(shared, slotCapacity, target.sheet, target.viewport, target.options);
 }
 
 /** Собрать кадр в свободный буфер выбранного транспорта. */
@@ -344,15 +324,15 @@ function buildFrame(): BuildOutcome {
 }
 
 /** Нарисовать самый свежий готовый кадр; промежуточные транспорт отпускает сам. */
-function paintFrame(): PaintStatsJs {
+function paintFrame(): PaintStatsWire {
   if (transport === 'bytes') {
     const frame = pool?.takeLatest();
     if (!frame) return { cmds: 0, dropped: true, paintMs: 0 };
-    return paint_display_list_bytes(frame) as PaintStatsJs;
+    return paintBytes(frame);
   }
   const shared = sab;
   if (!shared) return { cmds: 0, dropped: true, paintMs: 0 };
-  return paint_display_list_sab(shared, slotCapacity) as PaintStatsJs;
+  return paintSab(shared, slotCapacity);
 }
 
 self.onmessage = async (ev: MessageEvent<InMsg>) => {
@@ -438,7 +418,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
           }
           // Первое открытие платит за загрузку модуля; дальше он уже в памяти.
           const mod = await loadDocxWasm(urls);
-          const pages = mod.docx_open_bytes(new Uint8Array(msg.bytes)) as PageInfo[];
+          const pages = openDocx(mod, new Uint8Array(msg.bytes));
           format = 'docx';
           pending = null;
           // Байты документа остаются: их просят экспорт в PDF (тамошний модуль
@@ -452,7 +432,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
           await loadBitmaps(
             {
               tag: 'docx',
-              list: () => mod.docx_images() as ImageInfo[],
+              list: () => images(mod.docx_images()),
               bytes: (id) => mod.docx_image_bytes(id),
             },
             gen,
@@ -467,7 +447,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
           loop?.request();
           break;
         }
-        const sheets = xlsx_open(new Uint8Array(msg.bytes)) as SheetInfo[];
+        const sheets = openXlsx(new Uint8Array(msg.bytes));
         // Раскладку прежнего документа отпускаем: книга займёт место в wasm.
         releaseDocument();
         format = 'xlsx';
@@ -482,8 +462,8 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         await loadBitmaps(
           {
             tag: 'xlsx',
-            list: () => xlsx_images() as ImageInfo[],
-            bytes: (id) => xlsx_image_bytes(id) as Uint8Array,
+            list: () => images(xlsx_images()),
+            bytes: (id) => xlsx_image_bytes(id),
           },
           gen,
         );
@@ -508,8 +488,8 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     case 'hit-test': {
       try {
         const viewport = toViewport(msg.viewport);
-        const cell = xlsx_hit_test(msg.sheet, viewport, msg.x, msg.y) as [number, number];
-        post({ type: 'hit', id: msg.id, cell: cell ?? null });
+        const cell = hitTest(msg.sheet, viewport, msg.x, msg.y);
+        post({ type: 'hit', id: msg.id, cell });
       } catch {
         // Точка вне книги — не ошибка, а отсутствие ответа.
         post({ type: 'hit', id: msg.id, cell: null });
@@ -519,8 +499,8 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
     case 'hyperlink-at': {
       try {
         const viewport = toViewport(msg.viewport);
-        const link = xlsx_hyperlink_at(msg.sheet, viewport, msg.x, msg.y) as HyperlinkInfo | null;
-        post({ type: 'hyperlink', id: msg.id, link: link ?? null });
+        const link = hyperlinkAt(msg.sheet, viewport, msg.x, msg.y);
+        post({ type: 'hyperlink', id: msg.id, link });
       } catch {
         // Книги нет или точка описана неверно — ответ пустой, а не ошибка.
         post({ type: 'hyperlink', id: msg.id, link: null });
@@ -559,8 +539,8 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         // Первый клик платит за загрузку модуля; дальше он уже в памяти.
         const mod = await loadPdfWasm(urls);
         const bytes = msg.options.allSheets
-          ? mod.export_pdf_book(new Uint8Array(source), msg.options)
-          : mod.export_pdf(new Uint8Array(source), msg.sheet, msg.options);
+          ? exportPdfBook(mod, new Uint8Array(source), msg.options)
+          : exportPdf(mod, new Uint8Array(source), msg.sheet, msg.options);
         post({ type: 'pdf', id: msg.id, bytes }, [bytes.buffer]);
       } catch (e) {
         // Ошибка экспорта — ответ, а не падение воркера: книга остаётся открытой.
@@ -586,7 +566,7 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       try {
         // Первый клик платит за загрузку модуля; дальше он уже в памяти.
         const mod = await loadPdfWasm(urls);
-        const bytes = mod.export_docx_pdf(new Uint8Array(source), msg.options);
+        const bytes = exportDocxPdf(mod, new Uint8Array(source), msg.options);
         post({ type: 'pdf', id: msg.id, bytes }, [bytes.buffer]);
       } catch (e) {
         // Ошибка экспорта — ответ, а не падение воркера: документ остаётся открытым.

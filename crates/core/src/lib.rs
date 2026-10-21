@@ -13,6 +13,7 @@ pub mod error;
 pub mod node_id;
 pub mod rels;
 pub mod warning;
+pub mod wire;
 pub mod xml;
 pub mod zip_limits;
 

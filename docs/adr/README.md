@@ -33,5 +33,6 @@
 | 0025 | Граница раскладки XLSX — без отдельного крейта `xlsx-layout` | [`0025-xlsx-layout-boundary.md`](0025-xlsx-layout-boundary.md) |
 | 0026 | Дистрибутив Rust-крейтов: GitHub Packages + ассеты релиза, crates.io — non-goal | [`0026-rust-crates-distribution.md`](0026-rust-crates-distribution.md) |
 | 0027 | Реестры npm: npmjs.org — основной, GitHub Packages — зеркало | [`0027-npmjs-primary-registry.md`](0027-npmjs-primary-registry.md) |
+| 0028 | Типизированный wire-протокол — Rust как источник истины | [`0028-typed-wire-protocol.md`](0028-typed-wire-protocol.md) |
 
 Сводка принятых решений по спринтам — `ROADMAP.md` §11.

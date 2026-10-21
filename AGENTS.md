@@ -75,6 +75,7 @@ JS/TS:
 ```bash
 pnpm install
 pnpm build:wasm                        # ОБЯЗАТЕЛЬНО до typecheck/test: core типизируется против сгенерированных pkg/*.d.ts
+pnpm gen:wire                          # перегенерировать wire-типы Rust → TS (packages/core/src/generated/wire.ts)
 pnpm turbo run typecheck test build    # то же, что гоняет CI
 pnpm -F @meerrec/core test                                     # vitest
 pnpm -F @meerrec/core exec vitest run test/tick.spec.ts        # один файл
@@ -131,7 +132,7 @@ bash scripts/subset-fonts.sh   # пересборка подрезанных Car
 - **Turborepo:** перед правкой `turbo.json` или turbo-команд читать бандленные доки именно установленной версии — `node -p "require.resolve('turbo/package.json')"`, дальше `docs/README.md` внутри пакета. Граф задач: `build → ^build` (`outputs: dist/**`), `test → build`, `typecheck → ^build`, `clean` без кэша; `packages/wasm*/turbo.json` переопределяют `build.outputs: []` — `pkg/` не кэшируется. Управляемый блок turbo в начале этого файла машинный: удалять его из коммитов нельзя.
 - **Rust:** 1.98.0 закреплён `rust-toolchain.toml` (совпадает с CI), MSRV — 1.82; `.cargo/config.toml` держит `incompatible-rust-versions = "fallback"`, чтобы резолвинг не вылезал за MSRV. `crates/fuzz` — свой workspace на nightly.
 - **Системные инструменты по требованию шага:** `wasm-pack` — обязателен для `build:wasm`; `wasm-opt` — системный, шаг опционален (встроенный в wasm-pack отключён: rustc эмитит bulk-memory, который та версия не понимает); `chromedriver` — для браузерных wasm-тестов; `uv` — для `subset-fonts.sh`; `soffice`, `pdftoppm`, `pdfinfo`, `ffmpeg`, ImageMagick — для оракулов; `/usr/bin/time` — для memory-гейтов; `qpdf` и `pdftotext` — для части тестов PDF (без них они скипаются).
-- **Генерируемое не править:** `packages/*/pkg/` (wasm-pack), `docs/api/` (TypeDoc).
+- **Генерируемое не править:** `packages/*/pkg/` (wasm-pack), `docs/api/` (TypeDoc), `packages/core/src/generated/` (wire-типы из Rust через `pnpm gen:wire`, ADR-0028).
 - **Git LFS:** `packages/x2t/vendor/*` и `experiments/lowa-spike/**` — после клона нужен `git lfs pull`.
 
 ## Тестирование и контроль качества

@@ -13,6 +13,7 @@
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean && cargo clean",
     "build:wasm": "bash scripts/build-wasm.sh",
+    "gen:wire": "cargo run -p doc-converter-core --features ts --example export_wire",
     "cli": "node packages/cli/dist/cli.js",
     "bench:js": "node scripts/bench-js.mjs",
     "gen:fixtures": "node scripts/gen-fixtures.ts",

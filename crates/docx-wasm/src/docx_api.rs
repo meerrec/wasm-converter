@@ -7,18 +7,18 @@
 //! воркер однопоточный и обслуживает одно окно, а команды кадра уезжают прямо
 //! в слот ring'а, минуя `postMessage`.
 //!
-//! Форма статистики сборки и разбор окна — общие с форматом кадра, но копия
-//! локальная: модуль не должен зависеть от XLSX-моста.
+//! Форма статистики сборки и разбор окна — общие с XLSX: payload'ы живут в
+//! `doc_converter_core::wire` и генерируются в TS из одного источника.
 
 use std::cell::RefCell;
 
+use doc_converter_core::wire::{BuildStatsWire, ImageInfoWire, PageInfoWire, ViewportWire};
 use doc_converter_docx::layout::layout_document;
 use doc_converter_docx::{Document, LayoutOptions, MediaPart, PageLayout};
 use doc_converter_render::display_list::DisplayList;
 use doc_converter_render::font::FontRegistry;
 use doc_converter_render::sab::SabRing;
 use doc_converter_render::viewport::Viewport;
-use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 /// Размер LRU-кэша метрик шрифта.
@@ -52,15 +52,6 @@ struct OpenDoc {
     layout: PageLayout,
 }
 
-/// Описание страницы для интерфейса: размеры в пикселях раскладки — по ним
-/// интерфейс строит прокрутку, как по размерам листа XLSX.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PageInfo {
-    width: f32,
-    height: f32,
-}
-
 /// Открыть документ из байтов: разобрать, разложить по страницам, запомнить.
 ///
 /// Раскладка (`LayoutOptions::default()`) считается здесь и один раз: ширина
@@ -77,10 +68,10 @@ pub fn docx_open(bytes: Vec<u8>) -> Result<JsValue, JsValue> {
     let mut fonts = FontRegistry::new(FONT_CACHE);
     let layout =
         layout_document(&document, &LayoutOptions::default(), &mut fonts).map_err(to_js)?;
-    let pages: Vec<PageInfo> = layout
+    let pages: Vec<PageInfoWire> = layout
         .pages
         .iter()
-        .map(|page| PageInfo {
+        .map(|page| PageInfoWire {
             width: page.width,
             height: page.height,
         })
@@ -110,24 +101,11 @@ pub fn docx_is_open() -> bool {
 }
 
 /// Картинка документа в том виде, в каком её видит интерфейс: id, MIME и размер.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImageInfo {
-    /// id, которым помечены команды `Image` в кадре.
-    id: u32,
-    /// MIME-тип байтов — интерфейс собирает из них `Blob`.
-    mime: String,
-    /// Длина байтов в [`docx_image_bytes`].
-    byte_length: u32,
-}
-
-impl ImageInfo {
-    fn of(part: &MediaPart) -> Self {
-        Self {
-            id: part.id,
-            mime: part.mime.clone(),
-            byte_length: u32::try_from(part.bytes.len()).unwrap_or(u32::MAX),
-        }
+fn image_info(part: &MediaPart) -> ImageInfoWire {
+    ImageInfoWire {
+        id: part.id,
+        mime: part.mime.clone(),
+        byte_length: u32::try_from(part.bytes.len()).unwrap_or(u32::MAX),
     }
 }
 
@@ -144,7 +122,7 @@ pub fn docx_images() -> Result<JsValue, JsValue> {
     DOC.with(|doc| {
         let doc = doc.borrow();
         let open = doc.as_ref().ok_or_else(|| to_js("no document is open"))?;
-        let images: Vec<ImageInfo> = open.document.media().iter().map(ImageInfo::of).collect();
+        let images: Vec<ImageInfoWire> = open.document.media().iter().map(image_info).collect();
         serde_wasm_bindgen::to_value(&images).map_err(to_js)
     })
 }
@@ -183,9 +161,9 @@ fn with_frame_bytes(
     viewport: Viewport,
     gap: f32,
     write: impl FnOnce(&[u8]) -> Result<bool, JsValue>,
-) -> Result<BuildStats, JsValue> {
+) -> Result<BuildStatsWire, JsValue> {
     let started = js_sys::Date::now();
-    DOC.with(|doc| -> Result<BuildStats, JsValue> {
+    DOC.with(|doc| -> Result<BuildStatsWire, JsValue> {
         let doc = doc.borrow();
         let open = doc.as_ref().ok_or_else(|| to_js("no document is open"))?;
 
@@ -198,12 +176,12 @@ fn with_frame_bytes(
                 let mut scratch = scratch.borrow_mut();
                 frame.to_bytes_into(&mut scratch);
                 let bytes = u32::try_from(scratch.len()).unwrap_or(u32::MAX);
-                Ok(BuildStats::new(
-                    write(&scratch)?,
+                Ok(BuildStatsWire {
+                    written: write(&scratch)?,
                     cmds,
                     bytes,
-                    js_sys::Date::now() - started,
-                ))
+                    build_ms: js_sys::Date::now() - started,
+                })
             })
         })
     })
@@ -292,33 +270,6 @@ pub fn docx_open_bytes(bytes: js_sys::Uint8Array) -> Result<JsValue, JsValue> {
     docx_open(bytes.to_vec())
 }
 
-/// Что вышло из попытки собрать кадр.
-///
-/// Форма общая с XLSX-мостом, но копия локальная: модуль не должен зависеть
-/// от чужого крейта ради одной структуры.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BuildStats {
-    /// Кадр уложился в буфер: слот ring'а или буфер вызывающего.
-    written: bool,
-    cmds: u32,
-    /// Размер кадра в байтах: по нему воркер понимает, что буфер мал, и растит его.
-    bytes: u32,
-    build_ms: f64,
-}
-
-impl BuildStats {
-    /// Заполняется `docx_build_display_list_sab` и `docx_build_display_list_into`.
-    fn new(written: bool, cmds: u32, bytes: u32, build_ms: f64) -> Self {
-        Self {
-            written,
-            cmds,
-            bytes,
-            build_ms,
-        }
-    }
-}
-
 /// Ошибка разбора — сообщением для человека: показывать её будет интерфейс.
 ///
 /// Общая с [`crate::export_api`]: у обоих путей ошибки одного вида.
@@ -326,30 +277,12 @@ pub(crate) fn to_js(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 
-/// Окно — то, что приходит из воркера.
+/// Перевести окно из JS в представление рендера.
 ///
 /// У DOCX `scrollY` отсчитывается от верха стопки страниц, а не от верха
 /// текущей: страницы стоят друг под другом, и кадр несёт те из них, что видны.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ViewportJs {
-    #[serde(default)]
-    scroll_x: f32,
-    #[serde(default)]
-    scroll_y: f32,
-    width: f32,
-    height: f32,
-    #[serde(default = "one")]
-    scale: f32,
-}
-
-fn one() -> f32 {
-    1.0
-}
-
-/// Перевести окно из JS в представление рендера.
 fn viewport_of(value: JsValue) -> Result<Viewport, JsValue> {
-    let js: ViewportJs = serde_wasm_bindgen::from_value(value).map_err(to_js)?;
+    let js: ViewportWire = serde_wasm_bindgen::from_value(value).map_err(to_js)?;
     Ok(Viewport::new(
         js.scroll_x,
         js.scroll_y,

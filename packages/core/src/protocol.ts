@@ -1,5 +1,14 @@
-// Wire-протокол Main ↔ Worker. Источник истины — этот файл;
-// Rust-сторона описывает только payload (JSON / SAB), не конверт.
+// Wire-протокол Main ↔ Worker. Конверт (`InMsg`/`OutMsg`) — источник истины
+// здесь; payload'ы описаны в Rust (`crates/core/src/wire.rs`) и сгенерированы
+// в `generated/wire.ts` (ADR-0028). Руками payload'ы не правятся.
+import type {
+  HyperlinkInfoWire,
+  ImageInfoWire,
+  PageInfoWire,
+  PaintStatsWire,
+  PdfOptionsWire,
+  SheetInfoWire,
+} from './generated/wire.js';
 
 /** Формат документа, который умеет открыть воркер. */
 export type DocFormat = 'xlsx' | 'docx';
@@ -18,29 +27,20 @@ export type TextPos = { kind: 'text'; page: number; offset: number };
 export type HitResult = CellRef | TextPos;
 
 /**
- * Гиперссылка под точкой. Источник — Rust `HyperlinkInfo`.
+ * Гиперссылка под точкой. Источник — Rust `HyperlinkInfoWire`.
  *
  * `target` — адрес перехода; `display` и `tooltip` — подпись и подсказка, как
  * их объявил файл, либо `null`, если их нет.
  */
-export interface HyperlinkInfo {
-  target: string;
-  display: string | null;
-  tooltip: string | null;
-}
+export type HyperlinkInfo = HyperlinkInfoWire;
 
-export interface PdfOptions {
-  pageSize?: 'A4' | 'A3' | 'Letter' | 'Legal';
-  orientation?: 'portrait' | 'landscape';
-  margins?: { top: number; right: number; bottom: number; left: number };
-  scale?: number;
-  sheetIndex?: number;
+export type PdfOptions = PdfOptionsWire & {
   /**
    * Экспортировать всю книгу одним PDF: листы идут подряд, закладка — на
    * каждый. `sheetIndex` в этом режиме не участвует — он выбирает один лист.
    */
   allSheets?: boolean;
-}
+};
 
 /**
  * Чем кадр едет от сборщика к painter'у. Для хоста пути неразличимы: тот же
@@ -53,9 +53,11 @@ export interface PdfOptions {
  */
 export type FrameTransport = 'sab' | 'bytes';
 
-/** Метрики одного кадра painter'а. Источник — Rust `PaintStats`. */
-export interface PaintStats {
-  cmds: number;
+/**
+ * Метрики одного кадра painter'а. Источник — Rust `PaintStatsWire`;
+ * `frameId` присваивает воркер, `buildMs` есть только у документов.
+ */
+export interface PaintStats extends PaintStatsWire {
   /**
    * Кадр, который просили нарисовать, не нарисован. Что именно случилось,
    * зависит от транспорта: на `sab` ring был полон и промежуточный кадр
@@ -63,7 +65,6 @@ export interface PaintStats {
    * кадр хосту не показывали, следующий покажут.
    */
   dropped: boolean;
-  paintMs: number;
   frameId: number;
   /** Сколько заняла сборка DisplayList. Есть только у документов. */
   buildMs?: number;
@@ -73,27 +74,14 @@ export interface PaintStats {
  * Лист открытой книги. Приходит из Rust: размеры — в пикселях раскладки,
  * то есть до зума.
  */
-export interface SheetInfo {
-  name: string;
-  index: number;
-  hidden: boolean;
-  width: number;
-  height: number;
-  frozenCols: number;
-  frozenRows: number;
-  frozenWidth: number;
-  frozenHeight: number;
-}
+export type SheetInfo = SheetInfoWire;
 
 /**
  * Страница открытого документа. Приходит из Rust: размеры — в пикселях
  * раскладки, то есть до зума; по ним интерфейс строит прокрутку страницы, как
  * по размерам листа.
  */
-export interface PageInfo {
-  width: number;
-  height: number;
-}
+export type PageInfo = PageInfoWire;
 
 /**
  * Картинка открытого документа: id, MIME-тип и длина байтов. Байты в список
@@ -101,11 +89,7 @@ export interface PageInfo {
  * чтобы не копировать разом всю media. Тем же id помечены команды `Image`
  * в кадре.
  */
-export interface ImageInfo {
-  id: number;
-  mime: string;
-  byteLength: number;
-}
+export type ImageInfo = ImageInfoWire;
 
 // ── Фаза 2: прямой протокол Main ↔ Worker ───────────────────
 // Paint-путь намеренно без request/response, чтобы кадр не ждал ответа.
