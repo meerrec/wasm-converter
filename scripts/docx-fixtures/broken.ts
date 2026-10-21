@@ -1,5 +1,5 @@
-// Битые пакеты по ADR-0016. Фатальные случаи (ZIP, отсутствие document.xml,
-// макросы) возвращают `Err` — в сайдкар кладётся `meta.fatal` с вариантом
+// Битые пакеты по ADR-0016. Фатальные случаи (ZIP, отсутствие document.xml)
+// возвращают `Err` — в сайдкар кладётся `meta.fatal` с вариантом
 // `ParseError`, модель не строится, счётчики нулевые. Восстановимые случаи дают
 // warning и частичную модель, поэтому счётчики у них настоящие.
 //
@@ -116,18 +116,23 @@ const noDocumentXml: FixtureSpec = {
     parts: omit(packageParts({ body: body(p('Never parsed')) }), ['word/document.xml']),
 };
 
+/** Байты фиктивной макрос-части: парсер её не читает, в модель она не попадает. */
+const VBA_PROJECT = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0x00, 0x00]);
+
 const macroEnabled: FixtureSpec = {
     name: 'broken/macro_enabled',
-    description: 'Макросный документ (.docm) с расширением .docx — non-goal v1',
-    expectedParagraphs: 0,
+    description: 'Макросный документ (.docm): макрос-часть игнорируется, документ открывается',
+    expectedParagraphs: 1,
     expectedTables: 0,
     expectedImages: 0,
     expectedWarnings: [],
-    meta: { fatal: 'MacroEnabledDocument' },
-    parts: packageParts({
-        body: body(p('Macro-enabled document')),
-        contentTypes: MACRO_CONTENT_TYPES,
-    }),
+    parts: [
+        ...packageParts({
+            body: body(p('Macro-enabled document')),
+            contentTypes: MACRO_CONTENT_TYPES,
+        }),
+        ['word/vbaProject.bin', VBA_PROJECT],
+    ],
 };
 
 /** Шесть фикстур категории `broken`. */

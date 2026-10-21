@@ -1,0 +1,13 @@
+[package]
+name = "doc-converter-pptx-layout"
+version.workspace = true
+edition.workspace = true
+description = "Fixed-size slide layout for PPTX presentations"
+license.workspace = true
+# workspace-URL не совпадает с фактическим remote (meerrec/wasm-converter)
+repository = "https://github.com/meerrec/wasm-converter"
+
+[dependencies]
+doc-converter-core   = { workspace = true }
+doc-converter-pptx   = { workspace = true }
+doc-converter-render = { workspace = true }

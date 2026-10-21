@@ -27,7 +27,7 @@ const PRODUCER: &str = "doc-converter";
 
 /// Сессия постраничной записи: `begin` — глобальные объекты, `write_page` на
 /// каждую страницу, `finish` — хвост и xref.
-pub(crate) struct Session<'w, W: Write> {
+pub struct Session<'w, W: Write> {
     writer: StreamWriter<&'w mut W>,
     /// Реестр идентификаторов и место сборки объектов шрифтов и картинок
     /// ([`fonts::write_font`], [`image::write_image`]): всё, что сюда попало,
@@ -77,11 +77,7 @@ impl<'w, W: Write> Session<'w, W> {
     /// # Errors
     ///
     /// Ошибка записи в приёмник.
-    pub(crate) fn begin(
-        writer: &'w mut W,
-        page_count: usize,
-        compress: bool,
-    ) -> Result<Self, PdfError> {
+    pub fn begin(writer: &'w mut W, page_count: usize, compress: bool) -> Result<Self, PdfError> {
         let mut doc = Document::with_version("1.3");
         let mut writer = StreamWriter::new(writer, compress);
         writer.begin(&doc.version, &doc.binary_mark)?;
@@ -118,7 +114,7 @@ impl<'w, W: Write> Session<'w, W> {
     }
 
     /// Заголовок документа в `/Info` (до `finish`).
-    pub(crate) fn set_title(&mut self, title: &str) {
+    pub fn set_title(&mut self, title: &str) {
         self.title = Some(title.to_owned());
     }
 
@@ -129,7 +125,7 @@ impl<'w, W: Write> Session<'w, W> {
     /// `Title` так же): свойства документа бывают кириллическими, а
     /// `PDFDocEncoding` их не покрывает. Задаются все значения, включая пустые:
     /// так же печатал поля вендоренный бэкенд.
-    pub(crate) fn set_info(&mut self, entries: &[(String, String)]) {
+    pub fn set_info(&mut self, entries: &[(String, String)]) {
         self.info = entries.to_vec();
     }
 
@@ -141,11 +137,7 @@ impl<'w, W: Write> Session<'w, W> {
     /// [`PdfError::Font`], если байты не разбираются как TrueType, `subsetter`
     /// отказал на таблицах, или шрифт добавляется после первой страницы:
     /// словарь `/Font` уже записан, и поздний шрифт молча выпал бы из файла.
-    pub(crate) fn add_font(
-        &mut self,
-        bytes: &[u8],
-        used: &BTreeSet<char>,
-    ) -> Result<String, PdfError> {
+    pub fn add_font(&mut self, bytes: &[u8], used: &BTreeSet<char>) -> Result<String, PdfError> {
         if self.fonts_written {
             return Err(PdfError::Font(String::from(
                 "font added after the first page was written",
@@ -163,7 +155,7 @@ impl<'w, W: Write> Session<'w, W> {
 
     /// Подготовленные шрифты по имени ресурса («F0», …) — для `translate`.
     #[must_use]
-    pub(crate) fn prepared_fonts(&self) -> &BTreeMap<String, fonts::PreparedFont> {
+    pub fn prepared_fonts(&self) -> &BTreeMap<String, fonts::PreparedFont> {
         &self.prepared
     }
 
@@ -175,7 +167,7 @@ impl<'w, W: Write> Session<'w, W> {
     /// [`PdfError::Image`], если изображение добавляется после первой
     /// страницы: словарь `/XObject` уже записан, и поздняя картинка молча
     /// выпала бы из файла.
-    pub(crate) fn add_image(&mut self, img: &image::DecodedImage) -> Result<String, PdfError> {
+    pub fn add_image(&mut self, img: &image::DecodedImage) -> Result<String, PdfError> {
         if self.written > 0 {
             return Err(PdfError::Image(String::from(
                 "image added after the first page was written",
@@ -227,7 +219,7 @@ impl<'w, W: Write> Session<'w, W> {
     /// Возвращает `None` вне диапазона `page_count` из [`Session::begin`]:
     /// id резервируются только на это количество страниц.
     #[must_use]
-    pub(crate) fn page_ref(&self, index: usize) -> Option<ObjectId> {
+    pub fn page_ref(&self, index: usize) -> Option<ObjectId> {
         self.page_ids.get(index).copied()
     }
 
@@ -239,7 +231,7 @@ impl<'w, W: Write> Session<'w, W> {
     ///
     /// Ошибка записи в приёмник; [`PdfError::Io`] с
     /// [`io::ErrorKind::InvalidInput`], если вызвана больше `page_count` раз.
-    pub(crate) fn write_page(
+    pub fn write_page(
         &mut self,
         content: &[u8],
         media_box: [f32; 4],
@@ -294,7 +286,7 @@ impl<'w, W: Write> Session<'w, W> {
     ///
     /// [`PdfError::Io`] с [`io::ErrorKind::InvalidInput`], если какой-то
     /// индекс вне диапазона `page_count` из [`Session::begin`].
-    pub(crate) fn set_outline(&mut self, entries: &[(String, usize)]) -> Result<(), PdfError> {
+    pub fn set_outline(&mut self, entries: &[(String, usize)]) -> Result<(), PdfError> {
         for (index, (_, page)) in entries.iter().enumerate() {
             if *page >= self.page_ids.len() {
                 return Err(PdfError::Io(io::Error::new(
@@ -315,7 +307,7 @@ impl<'w, W: Write> Session<'w, W> {
     /// # Errors
     ///
     /// Ошибка записи или flush приёмника.
-    pub(crate) fn finish(mut self) -> Result<(), PdfError> {
+    pub fn finish(mut self) -> Result<(), PdfError> {
         self.flush_fonts()?;
         self.flush_resource_dicts()?;
 

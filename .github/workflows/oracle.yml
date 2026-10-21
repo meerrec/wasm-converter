@@ -23,13 +23,18 @@ on:
     paths:
       - 'scripts/oracle-ssim.sh'
       - 'scripts/oracle-docx-pages.sh'
+      - 'scripts/oracle-pptx.sh'
       - 'scripts/gen-fixtures.ts'
       - 'scripts/generate_docx_fixtures.ts'
+      - 'scripts/generate_pptx_fixtures.ts'
       - 'test-fixtures/**'
       - '.github/workflows/oracle.yml'
       - 'crates/pdf/**'
       - 'crates/xlsx/**'
       - 'crates/docx/**'
+      - 'crates/pptx/**'
+      - 'crates/pptx-layout/**'
+      - 'crates/pptx-pdf/**'
 
 jobs:
   ssim:
@@ -144,3 +149,35 @@ jobs:
         with:
           name: oracle-docx-report
           path: oracle-out-docx/report.md
+
+  pptx:
+    name: LibreOffice Impress SSIM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-oracle
+
+      - name: system tools
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libreoffice-impress fonts-crosextra-carlito poppler-utils ffmpeg imagemagick unzip
+
+      - name: build export example
+        run: cargo build --release -p doc-converter-pptx-pdf --example export
+
+      - name: compare with LibreOffice
+        run: bash scripts/oracle-pptx.sh target/release/examples/export test-fixtures/pptx oracle-out-pptx
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: oracle-pptx-report
+          path: oracle-out-pptx
+          if-no-files-found: ignore

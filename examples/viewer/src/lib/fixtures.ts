@@ -1,7 +1,7 @@
 import { getDocument, putDocument } from './doc_cache.js';
 
 /** Виды фикстур: у каждого свой корень в `/fixtures`. */
-export type FixtureKind = 'docx' | 'xlsx';
+export type FixtureKind = 'docx' | 'xlsx' | 'pptx';
 
 /** Ключ фикстуры в кэше документов: вид и имя через те же разделители, что в пути. */
 function fixtureKey(kind: FixtureKind, name: string): string {

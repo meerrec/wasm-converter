@@ -19,6 +19,7 @@
     "gen:fixtures": "node scripts/gen-fixtures.ts",
     "gen:docx-fixtures": "npx tsx scripts/generate_docx_fixtures.ts",
     "gen:docx-fixtures:large": "npx tsx scripts/generate_docx_fixtures.ts --large",
+    "gen:pptx-fixtures": "npx tsx scripts/generate_pptx_fixtures.ts",
     "diff:mammoth": "npx tsx scripts/diff-mammoth.ts --update-oracle",
     "docs:api": "typedoc",
     "size-limit": "size-limit",

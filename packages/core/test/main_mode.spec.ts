@@ -117,7 +117,7 @@ beforeEach(async () => {
   decode = vi.fn(async () => ({ close: vi.fn() }) as unknown as ImageBitmap);
   vi.stubGlobal('createImageBitmap', decode);
 
-  await import('../src/worker/worker.js');
+  await import('../src/worker/xlsx_worker.js');
   const onmessage = selfStub.onmessage;
   if (!onmessage) throw new Error('worker did not subscribe to messages');
   handler = onmessage;

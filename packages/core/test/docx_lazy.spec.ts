@@ -115,7 +115,7 @@ async function startWorker(withDocx = true): Promise<void> {
   // Пропущенный кадр воркер логирует — для теста это ожидаемый ход событий.
   vi.spyOn(console, 'error').mockImplementation(() => {});
 
-  await import('../src/worker/worker.js');
+  await import('../src/worker/docx_worker.js');
   const onmessage = selfStub.onmessage;
   if (!onmessage) throw new Error('worker did not subscribe to messages');
   handler = onmessage;
@@ -166,7 +166,7 @@ describe('ленивая загрузка DOCX-модуля', () => {
     expect(stubCalls('docx_open_bytes')).toHaveLength(2);
   });
 
-  it('открытие и кадр XLSX заглушку не трогают', async () => {
+  it('чужой формат XLSX отклоняется и заглушку не трогает', async () => {
     await startWorker();
     await handler({ data: openMsg('xlsx') });
     await handler({ data: renderMsg({ sheet: 0 }) });
@@ -174,7 +174,13 @@ describe('ленивая загрузка DOCX-модуля', () => {
     expect(docxStub()).toBeUndefined();
     expect(stubCalls('docx_open_bytes')).toHaveLength(0);
     expect(stubCalls('docx_build_display_list_sab')).toHaveLength(0);
-    expect(wasm.xlsx_build_display_list_sab).toHaveBeenCalledTimes(1);
+    expect(wasm.xlsx_build_display_list_sab).not.toHaveBeenCalled();
+    expect(posted).toContainEqual({
+      type: 'error',
+      message: "open: unsupported format 'xlsx'",
+      id: 1,
+      code: 'open',
+    });
   });
 
   it('без docx в init открытие отвечает ошибкой, а не падением', async () => {

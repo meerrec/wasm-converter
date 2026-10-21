@@ -40,9 +40,6 @@ const CFB_MAGIC: [u8; 8] = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 /// у `.doc` — `WordDocument`.
 const ENCRYPTION_STREAMS: [&str; 2] = ["EncryptionInfo", "EncryptedPackage"];
 
-/// Content type главной части `.docm`: макросы в v1 — non-goal (ADR-0016 §2).
-const MACRO_ENABLED_MAIN: &[u8] = b"application/vnd.ms-word.document.macroEnabled.main+xml";
-
 /// Префикс namespace'ов Strict OOXML (ADR-0017).
 const STRICT_PREFIX: &[u8] = b"http://purl.oclc.org/ooxml/";
 
@@ -736,10 +733,12 @@ fn has_style(styles: &StyleTable, style: &StyleId) -> bool {
 /// заимствованные байты (fuzz, тесты, бенчи). Если буфер отдаётся во владение,
 /// дешевле [`parse_docx_owned`] — здесь архив начинает с копии.
 ///
+/// Макрофайлы `.docm` разбираются как обычные DOCX: макрос-часть
+/// (`word/vbaProject.bin`) в модель не попадает (ADR-0039).
+///
 /// # Errors
 /// [`Error::EncryptedDocument`] — зашифрованный OOXML; [`Error::LegacyFormat`] —
-/// бинарный `.doc`; [`Error::MacroEnabledDocument`] — `.docm`;
-/// [`Error::StrictNotSupported`] — Strict OOXML (ADR-0017);
+/// бинарный `.doc`; [`Error::StrictNotSupported`] — Strict OOXML (ADR-0017);
 /// [`Error::MissingPart`] — нет `[Content_Types].xml`;
 /// [`Error::MissingDocumentXml`] — нет главной части; [`Error::XmlFatal`] /
 /// [`Error::Malformed`] — часть не читается; [`Error::Core`] — распаковка и
@@ -764,8 +763,8 @@ pub fn parse_docx(bytes: &[u8], limits: ZipLimits) -> Result<Document> {
 ///
 /// # Errors
 /// Тот же набор, что у [`parse_docx`]: [`Error::EncryptedDocument`],
-/// [`Error::LegacyFormat`], [`Error::MacroEnabledDocument`],
-/// [`Error::StrictNotSupported`] — ранние отказы по сигнатуре пакета;
+/// [`Error::LegacyFormat`], [`Error::StrictNotSupported`] — ранние отказы по
+/// сигнатуре пакета;
 /// [`Error::MissingPart`] / [`Error::MissingDocumentXml`] — нет обязательной
 /// части; [`Error::XmlFatal`] / [`Error::Malformed`] — часть не читается;
 /// [`Error::Core`] — распаковка и лимиты ZIP (ADR-0015);
@@ -785,8 +784,8 @@ pub fn parse_docx_owned(bytes: Vec<u8>, limits: ZipLimits) -> Result<Document> {
 ///
 /// # Errors
 /// Тот же набор, что у [`parse_docx`]: [`Error::EncryptedDocument`],
-/// [`Error::LegacyFormat`], [`Error::MacroEnabledDocument`],
-/// [`Error::StrictNotSupported`] — ранние отказы по сигнатуре пакета;
+/// [`Error::LegacyFormat`], [`Error::StrictNotSupported`] — ранние отказы по
+/// сигнатуре пакета;
 /// [`Error::MissingPart`] / [`Error::MissingDocumentXml`] — нет обязательной
 /// части; [`Error::XmlFatal`] / [`Error::Malformed`] — часть не читается;
 /// [`Error::Core`] — распаковка и лимиты ZIP (ADR-0015);
@@ -809,9 +808,6 @@ fn parse_archive(mut archive: Archive) -> Result<Document> {
         return Err(Error::MissingPart(CONTENT_TYPES.to_owned()));
     }
     let content_types = read_part(&mut archive, CONTENT_TYPES)?;
-    if contains(&content_types, MACRO_ENABLED_MAIN) {
-        return Err(Error::MacroEnabledDocument);
-    }
     ensure_transitional(&content_types)?;
 
     let root_rels = root_rels(&mut archive, &mut ctx)?;
@@ -990,6 +986,8 @@ mod tests {
     const DOCUMENT_XML: &[u8] = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Hello, World!</w:t></w:r></w:p></w:body></w:document>"#;
     const EMPTY_RELS_XML: &[u8] =
         br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#;
+    /// Content types `.docm`: главная часть — `macroEnabled.main+xml`.
+    const MACRO_CONTENT_TYPES_XML: &[u8] = br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.ms-word.document.macroEnabled.main+xml"/></Types>"#;
 
     /// Байты фикстуры из `test-fixtures/docx`.
     fn fixture(relative: &str) -> Vec<u8> {
@@ -1094,9 +1092,47 @@ mod tests {
     }
 
     #[test]
-    fn macro_enabled_document_is_rejected() {
-        let err = parse_fixture("broken/macro_enabled.docx").expect_err("`.docm` — non-goal v1");
-        assert!(matches!(err, Error::MacroEnabledDocument), "{err}");
+    fn macro_enabled_document_opens() {
+        let document = parse_fixture("broken/macro_enabled.docx")
+            .expect("`.docm` открывается как обычный DOCX");
+
+        assert_eq!(paragraph_count(&document.body), 1);
+        assert_eq!(
+            paragraph_text(first_paragraph(&document.body)),
+            "Macro-enabled document"
+        );
+    }
+
+    /// Пакет с `word/vbaProject.bin` и macroEnabled content type открывается как
+    /// обычный DOCX: макрос-часть в модель не попадает (в модели нет поля под
+    /// неё), JSON round-trip переживает модель целиком.
+    #[test]
+    fn package_with_vba_project_opens_without_macros() {
+        let bytes = zip(
+            &[
+                ("[Content_Types].xml", MACRO_CONTENT_TYPES_XML),
+                ("_rels/.rels", ROOT_RELS_XML),
+                ("word/document.xml", DOCUMENT_XML),
+                ("word/_rels/document.xml.rels", EMPTY_RELS_XML),
+                ("word/vbaProject.bin", b"macro bytes"),
+            ],
+            &[],
+        );
+
+        let document = parse_docx(&bytes, ZipLimits::default())
+            .expect("макрос-часть игнорируется, документ разбирается");
+        assert_eq!(
+            paragraph_text(first_paragraph(&document.body)),
+            "Hello, World!"
+        );
+
+        let json = serde_json::to_string(&document).unwrap();
+        assert!(
+            !json.to_ascii_lowercase().contains("vbaproject"),
+            "макрос-часть не должна попадать в модель: {json}"
+        );
+        let decoded: Document = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, document, "JSON round-trip потерял данные");
     }
 
     #[test]

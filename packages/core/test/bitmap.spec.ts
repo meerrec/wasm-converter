@@ -92,7 +92,7 @@ beforeEach(async () => {
   });
   vi.stubGlobal('createImageBitmap', decode);
 
-  await import('../src/worker/worker.js');
+  await import('../src/worker/xlsx_worker.js');
   const onmessage = selfStub.onmessage;
   if (!onmessage) throw new Error('worker did not subscribe to messages');
   handler = onmessage;
@@ -182,5 +182,39 @@ describe('картинки книги', () => {
     expect(wasm.drop_bitmap).toHaveBeenCalledWith(3);
     expect(wasm.drop_bitmap).toHaveBeenCalledWith(7);
     expect(wasm.drop_bitmap).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('чужой формат', () => {
+  it('документ DOCX воркер XLSX не открывает', async () => {
+    await handler({
+      data: { type: 'open', id: 9, format: 'docx', bytes: new ArrayBuffer(8) },
+    });
+
+    expect(wasm.xlsx_open).not.toHaveBeenCalled();
+    expect(wasm.xlsx_images).not.toHaveBeenCalled();
+    expect(posted).toContainEqual({
+      type: 'error',
+      message: "open: unsupported format 'docx'",
+      id: 9,
+      code: 'open',
+    });
+  });
+});
+
+describe('отмена открытия', () => {
+  it('префикс [cancelled] из wasm превращается в код cancelled', async () => {
+    wasm.xlsx_open.mockImplementationOnce(() => {
+      throw '[cancelled] раскладка прервана';
+    });
+
+    await handler({ data: openMsg() });
+
+    expect(posted).toContainEqual({
+      type: 'error',
+      message: '[cancelled] раскладка прервана',
+      id: 1,
+      code: 'cancelled',
+    });
   });
 });

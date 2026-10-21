@@ -12,7 +12,7 @@
 
 ```ts
 // docx_worker.ts — свой воркер для документов, одна строка
-import '@meerrec/core/worker';
+import '@meerrec/core/docx-worker';
 
 // main
 import { createDocxViewer, type PageInfo } from '@meerrec/core';

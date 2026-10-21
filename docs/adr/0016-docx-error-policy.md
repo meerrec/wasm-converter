@@ -42,8 +42,11 @@ pub struct Document {
 | `ParseError::MissingDocumentXml` | Нет `word/document.xml` |
 | `ParseError::XmlFatal` | XML-парсер не может продолжить (невалидная кодировка, обрыв потока) |
 | `ParseError::EncryptedDocument` | Файл зашифрован |
-| `ParseError::MacroEnabledDocument` | `.docm` (non-goal v1) |
 | `ParseError::LegacyFormat` | `.doc` (бинарный, non-goal v1) |
+
+> Изменено ADR-0039 (T3.5): `.docm` больше не фатален — пакет разбирается как
+> обычный DOCX, макрос-часть (`word/vbaProject.bin`) в модель не попадает.
+> Вариант `ParseError::MacroEnabledDocument` удалён из публичного API.
 
 #### Восстановимые (warning + продолжаем)
 

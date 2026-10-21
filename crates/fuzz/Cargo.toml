@@ -11,6 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 doc-converter-core = { path = "../core" }
 doc-converter-docx = { path = "../docx" }
+doc-converter-pptx = { path = "../pptx" }
 doc-converter-xlsx = { path = "../xlsx" }
 # Мусорные байты подставляются в часть валидного пакета DOCX, для чего цели
 # собирают ZIP в памяти. Записи кладутся `Stored`, но deflate-бэкенд включён: он
@@ -75,6 +76,13 @@ bench = false
 [[bin]]
 name = "docx_styles"
 path = "fuzz_targets/docx_styles.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pptx_presentation"
+path = "fuzz_targets/pptx_presentation.rs"
 test = false
 doc = false
 bench = false

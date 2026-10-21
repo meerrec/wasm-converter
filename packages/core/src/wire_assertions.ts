@@ -14,6 +14,7 @@ import type {
   PdfOptionsWire,
   RenderOptionsWire,
   SheetInfoWire,
+  SlideInfoWire,
   ViewportWire,
 } from './generated/wire.js';
 import type {
@@ -23,6 +24,7 @@ import type {
   PaintStats,
   PdfOptions,
   SheetInfo,
+  SlideInfo,
   Viewport,
 } from './protocol.js';
 import type { toOptions, toViewport } from './worker/frame_args.js';
@@ -35,6 +37,7 @@ type Assert<T extends true> = T;
 // Публичные алиасы обязаны совпадать с порождёнными типами.
 type _SheetInfo = Assert<Equals<SheetInfo, SheetInfoWire>>;
 type _PageInfo = Assert<Equals<PageInfo, PageInfoWire>>;
+type _SlideInfo = Assert<Equals<SlideInfo, SlideInfoWire>>;
 type _ImageInfo = Assert<Equals<ImageInfo, ImageInfoWire>>;
 type _HyperlinkInfo = Assert<Equals<HyperlinkInfo, HyperlinkInfoWire>>;
 

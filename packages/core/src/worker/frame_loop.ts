@@ -19,6 +19,14 @@ export interface FrameLoopCallbacks {
   onTick(stats: PaintStats): void;
 }
 
+/** Управление циклом кадров: запрос перерисовки и остановка. */
+export interface FrameLoop {
+  /** Запросить кадр: сборка случится одна на микрозадачу. */
+  request(): void;
+  /** Остановить цикл. */
+  stop(): void;
+}
+
 /**
  * Конвейер кадров: сборка и отрисовка — разные шаги, а не один.
  *
@@ -32,10 +40,7 @@ export interface FrameLoopCallbacks {
  * Запросы коалесцируются: сколько бы раз ни позвали `request()`, сборка
  * случится одна на микрозадачу, отрисовка — одна на кадр экрана.
  */
-export function startFrameLoop(cb: FrameLoopCallbacks): {
-  request(): void;
-  stop(): void;
-} {
+export function startFrameLoop(cb: FrameLoopCallbacks): FrameLoop {
   let stopped = false;
   /** Есть состояние, которого нет ни в одном готовом кадре. */
   let dirty = false;
