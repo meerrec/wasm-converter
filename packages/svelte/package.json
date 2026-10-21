@@ -1,0 +1,53 @@
+{
+  "name": "@meerrec/svelte",
+  "version": "1.0.0",
+  "description": "Svelte-обёртки (компонент и store) над просмотрщиками @meerrec/core.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meerrec/wasm-converter.git",
+    "directory": "packages/svelte"
+  },
+  "homepage": "https://github.com/meerrec/wasm-converter#readme",
+  "bugs": {
+    "url": "https://github.com/meerrec/wasm-converter/issues"
+  },
+  "type": "module",
+  "svelte": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "svelte": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "svelte-package -i src/lib -o dist",
+    "test": "vitest run",
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@meerrec/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "svelte": "^4 || ^5"
+  },
+  "devDependencies": {
+    "@sveltejs/package": "^2.4.1",
+    "@sveltejs/vite-plugin-svelte": "^4.0.4",
+    "@testing-library/svelte": "^5.4.2",
+    "jsdom": "^26.1.0",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.7",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.4"
+  }
+}
