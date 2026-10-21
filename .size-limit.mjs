@@ -67,9 +67,12 @@ export default [
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },
   {
+    // Бюджет поднят 400 → 410 КБ в T4 (эпик «Индустриализация»): Strict OOXML
+    // (ADR-0034) добавил детект варианта и таблицы namespace'ов — на CI модуль
+    // вырос до 400,57 КБ gzip (+567 Б). Запас ~2,4 % — как у соседних строк.
     name: 'wasm (docx)',
     path: 'packages/wasm-docx/pkg/*.wasm',
-    limit: '400 KB',
+    limit: '410 KB',
     gzip: true,
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },
