@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "name": "images/inline",
+    "category": "images",
+    "description": "Inline-рисунок в абзаце",
+    "docTitle": "Inline-рисунок в абзаце",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 1,
+    "expectedWarnings": []
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": ""
+      }
+    ],
+    "images": [
+      {
+        "relId": "rIdImg1",
+        "file": "inline.png",
+        "kind": "inline",
+        "cx": 914400,
+        "cy": 685800
+      }
+    ]
+  }
+}

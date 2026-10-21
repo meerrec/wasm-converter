@@ -7,13 +7,19 @@
  * помечается неудачной, а место занимает новый воркер, пока есть работа.
  */
 
-import { Worker } from 'node:worker_threads';
+import { createRequire } from 'node:module';
+import type * as NodeWorkerThreads from 'node:worker_threads';
 
 import type { ConvertJob, ConvertResult } from './convert.js';
 import { CliError } from './errors.js';
 import type { WorkerRequest, WorkerResponse } from './worker-protocol.js';
 
-/** Часть API `worker_threads.Worker`, которой пользуется пул (в тестах — двойник). */
+/**
+ * Часть API воркера, которой пользуется пул (в тестах — двойник).
+ *
+ * Модуль не знает о транспорте: `node:worker_threads`, веб-воркер Deno или
+ * заглушка теста прячутся за этим интерфейсом.
+ */
 export interface WorkerLike {
   postMessage(message: WorkerRequest): void;
   on(event: 'message', listener: (message: WorkerResponse) => void): void;
@@ -43,7 +49,7 @@ export class WorkerPool {
 
   constructor(
     readonly size: number,
-    factory: WorkerFactory = defaultWorkerFactory,
+    factory: WorkerFactory = nodeWorkerFactory,
   ) {
     if (size < 1) throw new CliError('worker pool needs at least one worker');
     // Запас на замену: воркер, падающий на старте, не должен крутить пул вечно.
@@ -156,6 +162,17 @@ export class WorkerPool {
   }
 }
 
-function defaultWorkerFactory(): WorkerLike {
-  return new Worker(new URL('./worker.js', import.meta.url)) as unknown as WorkerLike;
+/**
+ * Умолчание для программного API: `new WorkerPool(size)` как раньше.
+ *
+ * `node:worker_threads` подгружается `require`-ом только при вызове: Deno
+ * всегда передаёт свою фабрику из `runtime-deno`, поэтому модуль воркеров
+ * Node в его граф не попадает. `node:module` есть во всех трёх рантаймах.
+ */
+function nodeWorkerFactory(): WorkerLike {
+  const require = createRequire(import.meta.url);
+  const workerThreads = require('node:worker_threads') as typeof NodeWorkerThreads;
+  return new workerThreads.Worker(new URL('./worker.js', import.meta.url)) as unknown as WorkerLike;
 }
+
+

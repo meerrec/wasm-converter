@@ -41,6 +41,20 @@ pub enum XlsxError {
     /// между полосами сборки кадра, состояние движка цело.
     #[error("operation cancelled")]
     Cancelled,
+
+    /// Namespace корня `xl/workbook.xml` не Transitional и не Strict.
+    ///
+    /// Поддержаны оба варианта OOXML (ADR-0034); всё остальное — либо не
+    /// OOXML, либо вариант, которого не существует.
+    #[error(
+        "unsupported OOXML namespace `{namespace}` in `{part}`; expected Transitional or Strict"
+    )]
+    UnknownVariant {
+        /// Часть, по корню которой определялся вариант.
+        part: String,
+        /// Namespace, который объявил корневой элемент.
+        namespace: String,
+    },
 }
 
 impl XlsxError {

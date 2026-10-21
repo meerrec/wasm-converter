@@ -12,8 +12,8 @@ import { convertFile, type ConvertJob } from './convert.js';
 import { CliError } from './errors.js';
 import { expandInputs } from './expand.js';
 import { assertSupported, formatFromPath, inputKind, withExtension } from './formats.js';
-import { WorkerPool } from './pool.js';
 import { formatBytes, ProgressReporter } from './progress.js';
+import { loadRuntime, type CliRuntime } from './runtime.js';
 
 /** Код возврата: 0 — всё сошлось, 1 — файл(ы) не сконвертировались, 2 — ошибка вызова. */
 export async function run(argv: readonly string[], streams: { stdout: NodeJS.WriteStream; stderr: NodeJS.WriteStream } = {
@@ -21,7 +21,8 @@ export async function run(argv: readonly string[], streams: { stdout: NodeJS.Wri
   stderr: process.stderr,
 }): Promise<number> {
   try {
-    const command = parseArgs(argv);
+    const runtime = await loadRuntime();
+    const command = parseArgs(argv, runtime);
     switch (command.kind) {
       case 'help':
         streams.stdout.write(USAGE);
@@ -32,7 +33,7 @@ export async function run(argv: readonly string[], streams: { stdout: NodeJS.Wri
       case 'convert':
         return await runConvert(command, streams.stderr);
       case 'batch':
-        return await runBatch(command, streams.stderr);
+        return await runBatch(command, streams.stderr, runtime);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -65,21 +66,21 @@ async function runConvert(command: ConvertCommand, stderr: NodeJS.WriteStream): 
   return 0;
 }
 
-async function runBatch(command: BatchCommand, stderr: NodeJS.WriteStream): Promise<number> {
+async function runBatch(command: BatchCommand, stderr: NodeJS.WriteStream, runtime: CliRuntime): Promise<number> {
   const inputs = await expandInputs(command.inputs);
   const jobs = await planJobs(inputs, command);
 
   await mkdir(command.outDir, { recursive: true });
 
   const progress = new ProgressReporter(jobs.length, { stream: stderr, quiet: command.quiet });
-  const pool = new WorkerPool(command.workers);
+  const pool = runtime.createPool(new URL('./worker.js', import.meta.url).href, command.workers);
   const started = Date.now();
 
   try {
     await Promise.all(
       jobs.map(async (job) => {
         try {
-          const result = await pool.run(job);
+          const result = await pool.submit(job);
           progress.report({ ok: true, name: basename(job.input), detail: `${formatBytes(result.bytes)}, ${result.ms} ms` });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

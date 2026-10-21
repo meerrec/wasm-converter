@@ -288,11 +288,12 @@ printpdf на собственный бэкенд похудел на 31 % gzip.
   ([ADR-0014](docs/adr/0014-alternate-content.md)).
 - **PPTX поддерживается**: просмотр слайдов, экспорт PDF (слайд = страница,
   размер из `p:sldSz`), PNG и текстового конспекта (Markdown/HTML/text) —
-  паритет с DOCX/XLSX ([ADR-0033](docs/adr/0033-pptx-plugin.md)). Strict OOXML
-  и ODF (`.odt`/`.ods`/`.odp`) — в плане, пока не поддерживаются
-  ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
-- **Макрофайлы `.docm`** поддерживаются как обычные DOCX: макрос-часть
-  (`word/vbaProject.bin`) не читается
+  [ADR-0033](docs/adr/0033-pptx-plugin.md).
+- **Strict OOXML (DOCX и XLSX) — поддерживается** наравне с Transitional
+  ([ADR-0034](docs/adr/0034-strict-ooxml.md)).
+- **Макрофайлы `.docm` поддерживаются** как обычный DOCX, макросы не
+  читаются ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
+- **ODF (`.odt`/`.ods`/`.odp`)** — в плане
   ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
 - **XLSB, зашифрованные документы и бинарный `.doc`** — статус non-goal
   снят ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)), реализаций нет;

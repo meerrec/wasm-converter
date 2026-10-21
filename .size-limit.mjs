@@ -7,6 +7,49 @@
 // хотя он тоже ленивый: DOCX — второй просмотрщик, и по решению спринта
 // (ROADMAP §9) его строка стережёт и рост модуля, и возврат его кода в
 // основной бандл.
+// Обёртки фреймворков (T4.1/T4.2): бюджет считает только код обёртки —
+// @meerrec/core, react, vue и svelte — зависимости потребителя, у каждой из
+// них своя строка бюджета или чужой пакет. `ignore` отдаёт их esbuild как
+// external.
+//
+// @meerrec/svelte публикует исходник `.svelte` (peer svelte ^4 || ^5 —
+// потребитель компилирует своей версией), поэтому esbuild мерит его через
+// onLoad-хук: он компилирует компонент компилятором svelte из node_modules
+// пакета, а рантайм svelte и esm-env помечает external.
+import { createRequire } from 'node:module';
+import { readFile } from 'node:fs/promises';
+
+const svelteRequire = createRequire(
+  new URL('./packages/svelte/package.json', import.meta.url),
+);
+
+const svelteMeasure = (config) => ({
+  ...config,
+  plugins: [
+    ...(config.plugins ?? []),
+    {
+      name: 'svelte-measure',
+      setup(build) {
+        build.onResolve({ filter: /^(svelte|esm-env)(\/|$)/ }, (args) => ({
+          path: args.path,
+          external: true,
+        }));
+        build.onLoad({ filter: /\.svelte$/ }, async (args) => {
+          // svelte/compiler — UMD-бандл: require отдаёт экспорты напрямую.
+          const { compile } = svelteRequire('svelte/compiler');
+          const source = await readFile(args.path, 'utf8');
+          const { js } = compile(source, {
+            filename: args.path,
+            generate: 'client',
+            runes: false,
+          });
+          return { contents: js.code, loader: 'js' };
+        });
+      },
+    },
+  ],
+});
+
 export default [
   {
     // Воркеры XLSX и DOCX разделены (направление «воркер на формат»,
@@ -47,9 +90,12 @@ export default [
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },
   {
+    // Бюджет поднят 400 → 410 КБ в T4 (эпик «Индустриализация»): Strict OOXML
+    // (ADR-0034) добавил детект варианта и таблицы namespace'ов — на CI модуль
+    // вырос до 400,57 КБ gzip (+567 Б). Запас ~2,4 % — как у соседних строк.
     name: 'wasm (docx)',
     path: 'packages/wasm-docx/pkg/*.wasm',
-    limit: '400 KB',
+    limit: '410 KB',
     gzip: true,
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },
@@ -75,6 +121,28 @@ export default [
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },
   {
+    // 25 КБ по плану T4.1 (ROADMAP §9 задаёт бюджет react; единый лимит для
+    // тонких обёрток — решение T4.2).
+    name: '@meerrec/react',
+    path: 'packages/react/dist/index.js',
+    limit: '25 KB',
+    gzip: true,
+    ignore: ['react', 'react-dom', 'react/jsx-runtime', '@meerrec/core'],
+  },
+  {
+    name: '@meerrec/vue',
+    path: 'packages/vue/dist/index.js',
+    limit: '25 KB',
+    gzip: true,
+    ignore: ['vue', '@meerrec/core'],
+  },
+  {
+    name: '@meerrec/svelte',
+    path: 'packages/svelte/dist/index.js',
+    limit: '25 KB',
+    gzip: true,
+    ignore: ['@meerrec/core'],
+    modifyEsbuildConfig: svelteMeasure,
     // Экспортёр PPTX в PDF — отдельный ленивый модуль (ADR-0033: просмотрщик
     // и экспортёр разнесены, как у DOCX): полный стек PPTX+PDF (разбор,
     // раскладка, шрифты, постраничный бэкенд) стоит ~782 КБ gzip. Лимит

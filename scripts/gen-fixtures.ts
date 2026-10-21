@@ -10,6 +10,7 @@
 //
 //     node scripts/gen-fixtures.ts
 //     node scripts/gen-fixtures.ts --check
+//     node scripts/gen-fixtures.ts --strict --out <dir>   # те же фикстуры с purl-namespace'ами
 //
 // `--check` собирает фикстуры заново в стороне и сверяет байты с
 // репозиторием: генератор обязан быть идемпотентным, и проверка — то, чем
@@ -1473,6 +1474,29 @@ interface ZipEntry {
   data: Buffer;
 }
 
+/**
+ * Transitional → Strict: пары namespace'ов, которые переписываются в
+ * `--strict`-прогоне (ADR-0034). Namespace пакета (`package/2006/…`) и
+ * content types у обоих вариантов одни и те же и не трогаются.
+ */
+const STRICT_NS: ReadonlyArray<readonly [string, string]> = [
+    ['http://schemas.openxmlformats.org/spreadsheetml/2006/main', 'http://purl.oclc.org/ooxml/spreadsheetml/main'],
+    ['http://schemas.openxmlformats.org/drawingml/2006/main', 'http://purl.oclc.org/ooxml/drawingml/main'],
+    ['http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing', 'http://purl.oclc.org/ooxml/drawingml/spreadsheetDrawing'],
+    ['http://schemas.openxmlformats.org/drawingml/2006/chart', 'http://purl.oclc.org/ooxml/drawingml/chart'],
+    ['http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'http://purl.oclc.org/ooxml/officeDocument/relationships'],
+];
+
+/** Переписать namespace'ы XML-части пакета на Strict; бинарные части не трогаются. */
+const toStrictEntry = (entry: ZipEntry): ZipEntry => {
+    if (!entry.name.endsWith('.xml') && !entry.name.endsWith('.rels')) return entry;
+    let data = entry.data.toString('utf8');
+    for (const [from, to] of STRICT_NS) {
+        data = data.replaceAll(from, to);
+    }
+    return { name: entry.name, data: Buffer.from(data, 'utf8') };
+};
+
 /** Записи zip: имена и распакованное содержимое, в порядке файла. */
 function unzip(zip: Buffer): ZipEntry[] {
   let end = zip.length - 22;
@@ -2202,7 +2226,7 @@ function freshWorkbook(): ExcelJS.Workbook {
 }
 
 /** Записать книгу фикстуры: пакет пересобирается с фиксированной датой zip. */
-async function writeFixture(fixture: Fixture, dir: string): Promise<string> {
+async function writeFixture(fixture: Fixture, dir: string, strict: boolean): Promise<string> {
   const wb = freshWorkbook();
   fixture.build(wb);
 
@@ -2210,7 +2234,9 @@ async function writeFixture(fixture: Fixture, dir: string): Promise<string> {
   await wb.xlsx.writeFile(file);
   // archiver ставит в заголовки zip момент записи — пересобираем пакет с
   // фиксированной датой (zipEntries), иначе байты плывут от запуска к запуску.
-  await writeFile(file, zipEntries(unzip(await readFile(file))));
+  // В `--strict`-прогоне XML-части заодно переписываются на purl-namespace'ы.
+  const entries = unzip(await readFile(file));
+  await writeFile(file, zipEntries(strict ? entries.map(toStrictEntry) : entries));
   await fixture.after?.(file);
   // Бумага — последней: after-хуки перезаписывают пакет сами, а LibreOffice
   // читает с диска именно итоговый файл.
@@ -2218,16 +2244,28 @@ async function writeFixture(fixture: Fixture, dir: string): Promise<string> {
   return file;
 }
 
-/** Собрать фикстуры репозитория в `dir`; вернуть байты эталона. */
-async function writeRepoFixtures(dir: string): Promise<Buffer> {
+/**
+ * Собрать фикстуры репозитория в `dir`.
+ *
+ * Обычный прогон возвращает байты эталона; `--strict`-прогон эталон не пишет —
+ * exceljs Strict-пакеты не читает, и сравнивать его с ним не с чем.
+ */
+async function writeRepoFixtures(dir: string, strict: boolean): Promise<Buffer | null> {
   if (new Set(FIXTURES.map((f) => f.name)).size !== FIXTURES.length) {
     throw new Error('имена фикстур повторяются');
   }
   await mkdir(dir, { recursive: true });
 
+  if (strict) {
+    for (const fixture of FIXTURES) {
+      await writeFixture(fixture, dir, true);
+    }
+    return null;
+  }
+
   const files: Json = {};
   for (const fixture of FIXTURES) {
-    const file = await writeFixture(fixture, dir);
+    const file = await writeFixture(fixture, dir, false);
     const bytes = await readFile(file);
     files[`${fixture.name}.xlsx`] = await oracleFor(fixture.oraclePatch?.(bytes) ?? bytes);
   }
@@ -2244,7 +2282,7 @@ async function writeRepoFixtures(dir: string): Promise<Buffer> {
 async function check(): Promise<void> {
   const dir = path.join(HEAVY_DIR, 'check');
   await rm(dir, { recursive: true, force: true });
-  await writeFile(path.join(dir, 'oracle.json'), await writeRepoFixtures(dir));
+  await writeFile(path.join(dir, 'oracle.json'), await writeRepoFixtures(dir, false));
 
   const drift: string[] = [];
   for (const name of [...FIXTURES.map((f) => `${f.name}.xlsx`), 'oracle.json']) {
@@ -2263,17 +2301,35 @@ async function check(): Promise<void> {
 
 async function main(): Promise<void> {
   if (process.argv.includes('--check')) {
+    if (process.argv.includes('--strict') || process.argv.includes('--out')) {
+      throw new Error('--check не сочетается с --strict/--out');
+    }
     await check();
     return;
   }
 
-  const oracle = await writeRepoFixtures(OUT_DIR);
+  const strict = process.argv.includes('--strict');
+  const outAt = process.argv.indexOf('--out');
+  const rawOut = outAt === -1 ? undefined : process.argv[outAt + 1];
+  if (!strict && outAt !== -1) {
+    throw new Error('--out работает только вместе с --strict');
+  }
+  if (strict && (rawOut === undefined || rawOut.startsWith('-'))) {
+    throw new Error('--strict требует --out <dir>: коммитируемые фикстуры остаются Transitional');
+  }
+  const outDir = strict ? path.resolve(ROOT, rawOut!) : OUT_DIR;
+
+  const oracle = await writeRepoFixtures(outDir, strict);
+  if (strict) {
+    console.log(`strict-фикстур: ${FIXTURES.length} → ${path.relative(ROOT, outDir)}`);
+    return;
+  }
 
   // Тяжёлые книги: без эталона и вне git — их ценность в размере, а не в разборе.
   await mkdir(HEAVY_DIR, { recursive: true });
   const heavy: string[] = [];
   for (const fixture of HEAVY_FIXTURES) {
-    heavy.push(path.relative(ROOT, await writeFixture(fixture, HEAVY_DIR)));
+    heavy.push(path.relative(ROOT, await writeFixture(fixture, HEAVY_DIR, false)));
   }
 
   await writeFile(ORACLE, oracle);

@@ -17,6 +17,7 @@ use quick_xml::events::Event;
 
 use crate::context::ParseCtx;
 use crate::error::{Error, Result};
+use crate::ns;
 use crate::model::{
     BlockItem, Body, Document, Footnote, HeaderFooter, Inline, MediaPart, NoteKind, NumberingTable,
     Paragraph, PartRef, Relationships, Settings, StyleId, StyleTable, Table,
@@ -39,9 +40,6 @@ const CFB_MAGIC: [u8; 8] = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 /// потоков — у шифрованного пакета это `EncryptionInfo` и `EncryptedPackage`,
 /// у `.doc` — `WordDocument`.
 const ENCRYPTION_STREAMS: [&str; 2] = ["EncryptionInfo", "EncryptedPackage"];
-
-/// Префикс namespace'ов Strict OOXML (ADR-0017).
-const STRICT_PREFIX: &[u8] = b"http://purl.oclc.org/ooxml/";
 
 /// Сколько байт части просматривается в поисках признака формата.
 ///
@@ -76,21 +74,6 @@ fn reject_ole_window(window: &[u8]) -> Result<()> {
         return Err(Error::EncryptedDocument);
     }
     Err(Error::LegacyFormat)
-}
-
-/// Проверяет, что часть не Strict OOXML.
-///
-/// У Strict другие namespace'ы (ADR-0017 §2), и модель Transitional описала бы
-/// такой документ молча и неверно — пустой заготовкой; отказ с понятным
-/// сообщением честнее.
-///
-/// # Errors
-/// [`Error::StrictNotSupported`] — в начале части namespace Strict.
-fn ensure_transitional(bytes: &[u8]) -> Result<()> {
-    if contains(scan_window(bytes), STRICT_PREFIX) {
-        return Err(Error::StrictNotSupported);
-    }
-    Ok(())
 }
 
 /// Начало части — столько байт, сколько нужно поиску признака формата.
@@ -738,7 +721,8 @@ fn has_style(styles: &StyleTable, style: &StyleId) -> bool {
 ///
 /// # Errors
 /// [`Error::EncryptedDocument`] — зашифрованный OOXML; [`Error::LegacyFormat`] —
-/// бинарный `.doc`; [`Error::StrictNotSupported`] — Strict OOXML (ADR-0017);
+/// бинарный `.doc`; [`Error::UnknownVariant`] — namespace главной части не
+/// OOXML (ADR-0034);
 /// [`Error::MissingPart`] — нет `[Content_Types].xml`;
 /// [`Error::MissingDocumentXml`] — нет главной части; [`Error::XmlFatal`] /
 /// [`Error::Malformed`] — часть не читается; [`Error::Core`] — распаковка и
@@ -763,7 +747,7 @@ pub fn parse_docx(bytes: &[u8], limits: ZipLimits) -> Result<Document> {
 ///
 /// # Errors
 /// Тот же набор, что у [`parse_docx`]: [`Error::EncryptedDocument`],
-/// [`Error::LegacyFormat`], [`Error::StrictNotSupported`] — ранние отказы по
+/// [`Error::LegacyFormat`], [`Error::UnknownVariant`] — ранние отказы по
 /// сигнатуре пакета;
 /// [`Error::MissingPart`] / [`Error::MissingDocumentXml`] — нет обязательной
 /// части; [`Error::XmlFatal`] / [`Error::Malformed`] — часть не читается;
@@ -784,7 +768,7 @@ pub fn parse_docx_owned(bytes: Vec<u8>, limits: ZipLimits) -> Result<Document> {
 ///
 /// # Errors
 /// Тот же набор, что у [`parse_docx`]: [`Error::EncryptedDocument`],
-/// [`Error::LegacyFormat`], [`Error::StrictNotSupported`] — ранние отказы по
+/// [`Error::LegacyFormat`], [`Error::UnknownVariant`] — ранние отказы по
 /// сигнатуре пакета;
 /// [`Error::MissingPart`] / [`Error::MissingDocumentXml`] — нет обязательной
 /// части; [`Error::XmlFatal`] / [`Error::Malformed`] — часть не читается;
@@ -808,7 +792,6 @@ fn parse_archive(mut archive: Archive) -> Result<Document> {
         return Err(Error::MissingPart(CONTENT_TYPES.to_owned()));
     }
     let content_types = read_part(&mut archive, CONTENT_TYPES)?;
-    ensure_transitional(&content_types)?;
 
     let root_rels = root_rels(&mut archive, &mut ctx)?;
     let document_part = main_part(&root_rels);
@@ -817,7 +800,9 @@ fn parse_archive(mut archive: Archive) -> Result<Document> {
     }
 
     let body_xml = read_part(&mut archive, &document_part)?;
-    ensure_transitional(&body_xml)?;
+    // Вариант OOXML — по namespace корня главной части (ADR-0034); парсеры
+    // частей сравнивают локальные имена, и таблица варианта им не нужна.
+    ns::detect(&body_xml, &document_part)?;
     let rels = rels::load(&mut archive, &document_part, &mut ctx)?;
 
     let tables = parse_tables(&mut archive, &rels, &document_part, &mut ctx)?;
@@ -1414,22 +1399,52 @@ mod tests {
         assert!(matches!(err, Error::LegacyFormat), "{err}");
     }
 
+    /// Strict-пакет: те же части, но namespace'ы и типы связей — Strict
+    /// (ADR-0034). Контентная модель от Transitional не отличается.
+    const STRICT_DOCUMENT_XML: &[u8] = br#"<w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body><w:p><w:r><w:t>Strict!</w:t></w:r></w:p></w:body></w:document>"#;
+    const STRICT_ROOT_RELS_XML: &[u8] = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+
     #[test]
-    fn strict_package_is_rejected() {
-        let strict = br#"<w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body/></w:document>"#;
+    fn strict_package_opens() {
         let bytes = zip(
             &[
                 ("[Content_Types].xml", CONTENT_TYPES_XML),
-                ("_rels/.rels", ROOT_RELS_XML),
-                ("word/document.xml", strict),
+                ("_rels/.rels", STRICT_ROOT_RELS_XML),
+                ("word/document.xml", STRICT_DOCUMENT_XML),
             ],
             &[],
         );
 
-        let err =
-            parse_docx(&bytes, ZipLimits::default()).expect_err("Strict — non-goal (ADR-0017)");
+        let document = parse_docx(&bytes, ZipLimits::default()).expect("Strict-пакет открывается");
 
-        assert!(matches!(err, Error::StrictNotSupported), "{err}");
+        assert_eq!(paragraph_text(first_paragraph(&document.body)), "Strict!");
+
+        // JSON-круг: модель Strict-пакета не отличается от Transitional и
+        // сериализуется без потерь.
+        let json = serde_json::to_string(&document).unwrap();
+        let decoded: Document = serde_json::from_str(&json).expect("JSON разбирается обратно");
+        assert_eq!(decoded, document);
+        assert_eq!(serde_json::to_string(&decoded).unwrap(), json);
+    }
+
+    #[test]
+    fn unknown_variant_is_rejected() {
+        let unknown = br#"<w:document xmlns:w="http://example.com/wordprocessingml/main"><w:body/></w:document>"#;
+        let bytes = zip(
+            &[
+                ("[Content_Types].xml", CONTENT_TYPES_XML),
+                ("_rels/.rels", ROOT_RELS_XML),
+                ("word/document.xml", unknown),
+            ],
+            &[],
+        );
+
+        let err = parse_docx(&bytes, ZipLimits::default()).expect_err("незнакомый namespace");
+
+        assert!(
+            matches!(&err, Error::UnknownVariant { namespace, .. } if namespace == "http://example.com/wordprocessingml/main"),
+            "{err}"
+        );
     }
 
     #[test]

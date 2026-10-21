@@ -215,6 +215,10 @@ fn oracle_path() -> PathBuf {
 
 /// Все `.docx` под каталогом фикстур: ключ — путь относительно каталога без
 /// расширения (`basic/hello`), как в оракуле. Образец — `tests/fixtures.rs`.
+///
+/// Каталог `strict/` пропускается: это Strict-подмножество (ADR-0034), а
+/// эталон mammoth читает только Transitional — сравнивать там нечего, и
+/// strict-фикстуры сверяются своими сайдкарами и LibreOffice-оракулом.
 fn discover(dir: &Path, prefix: &str, out: &mut BTreeMap<String, PathBuf>) {
     let entries =
         fs::read_dir(dir).unwrap_or_else(|e| panic!("{} не читается: {e}", dir.display()));
@@ -226,6 +230,9 @@ fn discover(dir: &Path, prefix: &str, out: &mut BTreeMap<String, PathBuf>) {
             .to_string_lossy()
             .into_owned();
         if path.is_dir() {
+            if name == "strict" {
+                continue;
+            }
             discover(&path, &join(prefix, &name), out);
         } else if path.extension().is_some_and(|ext| ext == "docx") {
             let stem = path

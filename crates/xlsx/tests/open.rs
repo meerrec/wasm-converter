@@ -4,6 +4,7 @@
 //! ровно те части, которые нужны каталогу листов и их содержимому.
 
 use std::io::{Cursor, Write};
+use std::path::Path;
 
 use doc_converter_xlsx::cellref::CellRef;
 use doc_converter_xlsx::{
@@ -156,6 +157,97 @@ fn package_with_workbook() -> Vec<u8> {
         ("xl/worksheets/sheet2.xml", SHEET2),
         ("xl/worksheets/_rels/sheet1.xml.rels", SHEET1_RELS),
     ])
+}
+
+/// Transitional → Strict: те же части, но с purl-namespace'ами (ADR-0034).
+///
+/// Namespace пакета (`package/2006/…`) и content types у обоих вариантов одни
+/// и те же и не трогаются.
+fn strict_package() -> Vec<u8> {
+    const PAIRS: [(&str, &str); 2] = [
+        (
+            "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+            "http://purl.oclc.org/ooxml/spreadsheetml/main",
+        ),
+        (
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+            "http://purl.oclc.org/ooxml/officeDocument/relationships",
+        ),
+    ];
+    let rewrite = |part: &str| -> String {
+        let mut out = part.to_owned();
+        for (from, to) in PAIRS {
+            out = out.replace(from, to);
+        }
+        out
+    };
+
+    let workbook = rewrite(WORKBOOK);
+    let workbook_rels = rewrite(WORKBOOK_RELS);
+    let sheet1 = rewrite(SHEET1);
+    let sheet2 = rewrite(SHEET2);
+    let sheet1_rels = rewrite(SHEET1_RELS);
+    let shared_strings = rewrite(SHARED_STRINGS);
+    let styles = rewrite(STYLES);
+    package(&[
+        ("[Content_Types].xml", CONTENT_TYPES),
+        ("_rels/.rels", ROOT_RELS),
+        ("xl/workbook.xml", &workbook),
+        ("xl/_rels/workbook.xml.rels", &workbook_rels),
+        ("xl/worksheets/sheet1.xml", &sheet1),
+        ("xl/worksheets/sheet2.xml", &sheet2),
+        ("xl/worksheets/_rels/sheet1.xml.rels", &sheet1_rels),
+        ("xl/sharedStrings.xml", &shared_strings),
+        ("xl/styles.xml", &styles),
+    ])
+}
+
+#[test]
+fn strict_workbook_opens() {
+    let wb = open(strict_package()).expect("Strict-книга открывается");
+
+    assert_eq!(wb.sheet_count(), 2);
+    assert!(wb.date1904());
+
+    let first = wb.sheet("Данные").unwrap();
+    assert_eq!(
+        first
+            .cells
+            .cell(CellRef::new(0, 0))
+            .unwrap()
+            .value
+            .text(wb.shared_strings()),
+        Some("Привет")
+    );
+    assert_eq!(
+        first.cells.cell(CellRef::new(0, 1)).unwrap().value,
+        CellValue::Number(42.0)
+    );
+    // Индекс формата доводит до шрифта, заливки и кода числа — как у Transitional.
+    let styles = wb.styles();
+    let format = styles.resolve(first.cells.cell(CellRef::new(1, 0)).unwrap().style);
+    assert_eq!(styles.font(format.font).unwrap().name, "Arial");
+    assert_eq!(styles.number_format(format.num_fmt), Some("0.00%"));
+}
+
+#[test]
+fn committed_strict_fixtures_open() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-fixtures/xlsx/strict");
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .expect("каталог strict-фикстур")
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().to_string_lossy().into_owned();
+            name.ends_with(".xlsx").then_some(name)
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names.len(), 4, "в каталоге четыре strict-фикстуры");
+
+    for name in names {
+        let bytes = std::fs::read(dir.join(&name)).unwrap();
+        let wb = open(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(wb.sheet_count() > 0, "{name}: листов нет");
+    }
 }
 
 #[test]

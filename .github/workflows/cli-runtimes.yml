@@ -1,0 +1,148 @@
+# CLI под Node/Bun/Deno. Node-ветка уже покрыта ci.yml; здесь проверяется,
+# что тот же собранный dist запускается в Bun и Deno и отдаёт валидный PDF.
+#
+# Сборка одна: wasm-модули собираются Rust-тулчейном, CLI — tsc. Ноги матрицы
+# только скачивают артефакты, ставят рантайм и конвертируют фикстуры.
+name: CLI runtimes
+
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-cli-runtimes
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
+
+      - run: cargo install wasm-pack --locked
+
+      - run: pnpm build:wasm
+
+      - run: pnpm -F @meerrec/cli build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-dist
+          path: packages/cli/dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-wasm-pdf-pkg
+          path: packages/wasm-pdf/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-wasm-docx-pkg
+          path: packages/wasm-docx/pkg
+
+  runtime:
+    name: CLI on ${{ matrix.runtime }}
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [deno, bun]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # node_modules нужен Deno и Bun, чтобы резолвить `@meerrec/wasm-*`
+      # по workspace-ссылкам.
+      - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli-dist
+          path: packages/cli/dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli-wasm-pdf-pkg
+          path: packages/wasm-pdf/pkg
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli-wasm-docx-pkg
+          path: packages/wasm-docx/pkg
+
+      - name: pdf tooling
+        uses: ./.github/actions/apt-install
+        with:
+          packages: qpdf poppler-utils
+
+      - uses: denoland/setup-deno@v2
+        if: matrix.runtime == 'deno'
+        with:
+          deno-version: v2.x
+
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.runtime == 'bun'
+
+      - name: convert (deno)
+        if: matrix.runtime == 'deno'
+        run: |
+          set -euo pipefail
+          version=$(node -p 'require("./packages/cli/package.json").version')
+          test "$(deno run --allow-read --allow-write packages/cli/dist/cli.js --version)" = "$version"
+          deno run --allow-read --allow-write packages/cli/dist/cli.js \
+            convert test-fixtures/docx/simple/one_paragraph.docx -o out.pdf
+          qpdf --check out.pdf
+          pdfinfo out.pdf
+          deno run --allow-read --allow-write packages/cli/dist/cli.js \
+            convert test-fixtures/xlsx/content-single-cell.xlsx -o out-xlsx.pdf
+          qpdf --check out-xlsx.pdf
+          pdfinfo out-xlsx.pdf
+          # batch идёт через worker-deno.js: проверяем веб-воркеры пула.
+          deno run --allow-read --allow-write packages/cli/dist/cli.js \
+            batch test-fixtures/docx/simple --out out-batch --workers 2
+          qpdf --check out-batch/one_paragraph.pdf
+
+      - name: convert (bun)
+        if: matrix.runtime == 'bun'
+        run: |
+          set -euo pipefail
+          version=$(node -p 'require("./packages/cli/package.json").version')
+          test "$(bun packages/cli/dist/cli.js --version)" = "$version"
+          bun packages/cli/dist/cli.js \
+            convert test-fixtures/docx/simple/one_paragraph.docx -o out.pdf
+          qpdf --check out.pdf
+          pdfinfo out.pdf
+          bun packages/cli/dist/cli.js \
+            convert test-fixtures/xlsx/content-single-cell.xlsx -o out-xlsx.pdf
+          qpdf --check out-xlsx.pdf
+          pdfinfo out-xlsx.pdf
+          # batch идёт через worker.js на node:worker_threads.
+          bun packages/cli/dist/cli.js \
+            batch test-fixtures/docx/simple --out out-batch --workers 2
+          qpdf --check out-batch/one_paragraph.pdf

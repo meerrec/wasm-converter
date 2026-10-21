@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Проверка метаданных публикации пяти npm-пакетов @meerrec/*.
+// Проверка метаданных публикации npm-пакетов @meerrec/*.
 // Запуск: node scripts/check-package-metadata.mjs
 // Зависимостей нет — только встроенные модули Node.
 
@@ -8,9 +8,18 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const packages = ['core', 'wasm', 'wasm-docx', 'wasm-pdf', 'cli'];
+const packages = [
+  'core',
+  'wasm',
+  'wasm-docx',
+  'wasm-pdf',
+  'cli',
+  'react',
+  'vue',
+  'svelte',
+];
 
-// Единые для всех пяти пакетов значения: монорепозиторий meerrec/wasm-converter.
+// Единые для всех восьми пакетов значения: монорепозиторий meerrec/wasm-converter.
 const expected = {
   repositoryType: 'git',
   repositoryUrl: 'git+https://github.com/meerrec/wasm-converter.git',

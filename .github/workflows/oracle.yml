@@ -97,12 +97,26 @@ jobs:
       - name: compare with LibreOffice
         run: bash scripts/oracle-ssim.sh target/release/examples/mem_probe test-fixtures/xlsx oracle-out
 
+      # Strict-подмножество (ADR-0034): тот же прогон по purl-фикстурам из
+      # test-fixtures/xlsx/strict; LibreOffice читает оба варианта. Фикстуры
+      # перечислены явно: у strict-подмножества свой состав, и молчаливый
+      # отбор по умолчанию сравнил бы только пересечение с ним. Отдельный
+      # workdir, чтобы отчёты не смешивались.
+      - name: compare Strict with LibreOffice
+        run: bash scripts/oracle-ssim.sh target/release/examples/mem_probe test-fixtures/xlsx/strict oracle-out-strict values-integers.xlsx styles-bold-italic.xlsx charts-five-kinds.xlsx images-png.xlsx
+
       # Отчёт нужен и после падения прогона: по нему видно, что именно разъехалось.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: oracle-report
           path: oracle-out/report.md
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: oracle-strict-report
+          path: oracle-out-strict/report.md
 
   docx:
     name: LibreOffice DOCX pages + SSIM
@@ -143,6 +157,12 @@ jobs:
       - name: compare with LibreOffice
         run: bash scripts/oracle-docx-pages.sh target/release/examples/docx_export test-fixtures/docx oracle-out-docx
 
+      # Strict-подмножество (ADR-0034): тот же прогон по purl-фикстурам из
+      # test-fixtures/docx/strict; эталоном остаётся LibreOffice, читающий оба
+      # варианта. Отдельный workdir, чтобы отчёты не смешивались.
+      - name: compare Strict with LibreOffice
+        run: bash scripts/oracle-docx-pages.sh target/release/examples/docx_export test-fixtures/docx/strict oracle-out-docx-strict
+
       # Отчёт нужен и после падения прогона: по нему видно, что именно разъехалось.
       - uses: actions/upload-artifact@v4
         if: always()
@@ -150,6 +170,11 @@ jobs:
           name: oracle-docx-report
           path: oracle-out-docx/report.md
 
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: oracle-docx-strict-report
+          path: oracle-out-docx-strict/report.md
   pptx:
     name: LibreOffice Impress SSIM
     runs-on: ubuntu-latest

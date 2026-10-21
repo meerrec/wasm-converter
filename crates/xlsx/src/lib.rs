@@ -36,6 +36,7 @@ pub mod drawing;
 pub mod error;
 pub mod layout;
 pub mod model;
+pub mod ns;
 pub mod numfmt;
 pub mod paint;
 pub mod plugin;
@@ -228,7 +229,11 @@ fn open_archive(mut archive: Archive) -> Result<Workbook> {
     archive.validate_ooxml()?;
 
     let rels = RelMap::parse(&archive.read(&rels_part(WORKBOOK_PART))?)?;
-    let catalog = WorkbookMeta::parse(&archive.read(WORKBOOK_PART)?, &rels, WORKBOOK_PART)?;
+    let workbook_xml = archive.read(WORKBOOK_PART)?;
+    // Вариант OOXML — по namespace корня `xl/workbook.xml` (ADR-0034); парсеры
+    // частей сравнивают локальные имена, и таблица варианта им не нужна.
+    crate::ns::detect(&workbook_xml, WORKBOOK_PART)?;
+    let catalog = WorkbookMeta::parse(&workbook_xml, &rels, WORKBOOK_PART)?;
 
     let shared_strings = if archive.contains(SHARED_STRINGS_PART) {
         SharedStrings::parse(&archive.read(SHARED_STRINGS_PART)?, SHARED_STRINGS_PART)?
