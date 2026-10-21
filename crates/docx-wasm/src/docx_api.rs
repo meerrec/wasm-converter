@@ -10,11 +10,12 @@
 //! Форма статистики сборки и разбор окна — общие с XLSX: payload'ы живут в
 //! `doc_converter_core::wire` и генерируются в TS из одного источника.
 
+use std::cell::Cell;
 use std::cell::RefCell;
 
 use doc_converter_core::wire::{BuildStatsWire, ImageInfoWire, PageInfoWire, ViewportWire};
-use doc_converter_docx::layout::layout_document;
-use doc_converter_docx::{Document, LayoutOptions, MediaPart, PageLayout};
+use doc_converter_docx::layout::layout_document_with_cancel;
+use doc_converter_docx::{Document, LayoutError, LayoutOptions, MediaPart, PageLayout};
 use doc_converter_render::display_list::DisplayList;
 use doc_converter_render::font::FontRegistry;
 use doc_converter_render::sab::SabRing;
@@ -36,6 +37,18 @@ thread_local! {
     static FRAME: RefCell<DisplayList> = RefCell::new(DisplayList::new());
     /// Байты кадра: сериализация тоже переиспользует буфер.
     static SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// Флаг отмены тяжёлой операции (ADR-0032): взводит сообщение `cancel`.
+    static CANCEL: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Взвести или снять флаг кооперативной отмены (ADR-0032).
+///
+/// Раскладка проверяет его между блоками тела. Флаг одноразовый: операция,
+/// которая его заметила, гасит его сама, — иначе отмена, пришедшая после
+/// операции, ждала бы следующую.
+#[wasm_bindgen]
+pub fn set_cancel(flag: bool) {
+    CANCEL.with(|cancel| cancel.set(flag));
 }
 
 /// Открытый документ: разобранная модель, реестр шрифтов и готовая раскладка.
@@ -65,9 +78,26 @@ struct OpenDoc {
 #[wasm_bindgen]
 pub fn docx_open(bytes: Vec<u8>) -> Result<JsValue, JsValue> {
     let document = doc_converter_docx::open(bytes).map_err(to_js)?;
+    install_document(document)
+}
+
+/// Раскладывает готовый документ, ставит его в `DOC` и сериализует ответ
+/// открытия — общий хвост `docx_open` и `stream_open_docx` (ADR-0031).
+pub(crate) fn install_document(document: Document) -> Result<JsValue, JsValue> {
     let mut fonts = FontRegistry::new(FONT_CACHE);
-    let layout =
-        layout_document(&document, &LayoutOptions::default(), &mut fonts).map_err(to_js)?;
+    let laid_out = CANCEL.with(|cancelled| {
+        layout_document_with_cancel(&document, &LayoutOptions::default(), &mut fonts, cancelled)
+    });
+    // Флаг одноразовый (ADR-0032): попытка раскладки его гасит — иначе
+    // отменённое открытие отменяло бы и следующее.
+    CANCEL.with(|cancelled| cancelled.set(false));
+    let layout = laid_out.map_err(|e| {
+        if matches!(e, LayoutError::Cancelled) {
+            JsValue::from_str("[cancelled] operation cancelled")
+        } else {
+            to_js(e)
+        }
+    })?;
     let pages: Vec<PageInfoWire> = layout
         .pages
         .iter()
@@ -90,6 +120,7 @@ pub fn docx_open(bytes: Vec<u8>) -> Result<JsValue, JsValue> {
 /// Закрыть документ и освободить память.
 #[wasm_bindgen]
 pub fn docx_close() {
+    CANCEL.with(|cancel| cancel.set(false));
     DOC.with(|doc| *doc.borrow_mut() = None);
     FRAME.with(|frame| frame.borrow_mut().clear());
 }

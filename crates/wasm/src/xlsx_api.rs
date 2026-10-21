@@ -5,6 +5,7 @@
 //! ring'а, минуя JS: гонять сотни килобайт команд через `postMessage` значило
 //! бы платить за копирование на каждом кадре.
 
+use std::cell::Cell;
 use std::cell::RefCell;
 
 use doc_converter_core::wire::{
@@ -27,6 +28,18 @@ thread_local! {
     /// Байты кадра: сериализация тоже переиспользует буфер — на кадр глубиной
     /// в сотни килобайт `to_bytes()` был бы лишней аллокацией и копией.
     static SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// Флаг отмены тяжёлой операции (ADR-0032): взводит сообщение `cancel`.
+    static CANCEL: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Взвести или снять флаг кооперативной отмены (ADR-0032).
+///
+/// Сборка кадра проверяет его между полосами видимых строк. Флаг одноразовый:
+/// операция, которая его заметила, гасит его сама, — иначе отмена, пришедшая
+/// после операции, ждала бы следующую.
+#[wasm_bindgen]
+pub fn set_cancel(flag: bool) {
+    CANCEL.with(|cancel| cancel.set(flag));
 }
 
 /// Ошибка разбора — сообщением для человека: показывать её будет интерфейс.
@@ -40,7 +53,14 @@ pub(crate) fn to_js(error: impl std::fmt::Display) -> JsValue {
 /// Если байты не OOXML-пакет или какая-то из частей не разбирается.
 #[wasm_bindgen]
 pub fn xlsx_open(bytes: Vec<u8>) -> Result<JsValue, JsValue> {
+    CANCEL.with(|cancel| cancel.set(false));
     let book = doc_converter_xlsx::open(bytes).map_err(to_js)?;
+    install_book(book)
+}
+
+/// Ставит готовую книгу в `DOC` и сериализует ответ открытия — общий хвост
+/// `xlsx_open` и `stream_open_xlsx` (ADR-0031).
+pub(crate) fn install_book(book: doc_converter_xlsx::Workbook) -> Result<JsValue, JsValue> {
     let sheets: Vec<SheetInfoWire> = book
         .sheets()
         .iter()
@@ -69,6 +89,7 @@ pub fn xlsx_open(bytes: Vec<u8>) -> Result<JsValue, JsValue> {
 /// Закрыть книгу и освободить память.
 #[wasm_bindgen]
 pub fn xlsx_close() {
+    CANCEL.with(|cancel| cancel.set(false));
     DOC.with(|doc| *doc.borrow_mut() = None);
     FRAME.with(|frame| frame.borrow_mut().clear());
 }
@@ -171,7 +192,19 @@ fn with_frame_bytes(
 
         FRAME.with(|frame| {
             let mut frame = frame.borrow_mut();
-            paint::build(book, sheet, viewport, &options, &mut frame);
+            let built = CANCEL.with(|cancelled| {
+                paint::build(book, sheet, viewport, &options, &mut frame, cancelled)
+            });
+            // Флаг одноразовый (ADR-0032): попытка сборки его гасит — иначе
+            // отменённый кадр отменял бы и следующий.
+            CANCEL.with(|cancelled| cancelled.set(false));
+            built.map_err(|e| {
+                if matches!(e, doc_converter_xlsx::XlsxError::Cancelled) {
+                    JsValue::from_str("[cancelled] operation cancelled")
+                } else {
+                    to_js(e)
+                }
+            })?;
             let cmds = u32::try_from(frame.len()).unwrap_or(u32::MAX);
 
             SCRATCH.with(|scratch| {

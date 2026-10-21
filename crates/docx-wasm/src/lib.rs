@@ -18,3 +18,4 @@
 
 pub mod docx_api;
 pub mod export_api;
+pub mod stream_api;
