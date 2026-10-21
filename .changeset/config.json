@@ -7,10 +7,6 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": [
-    "@meerrec/eurooffice",
-    "@meerrec/x2t",
-    "@meerrec/browser-convert"
-  ],
+  "ignore": [],
   "privatePackages": { "version": false, "tag": false }
 }

@@ -6,7 +6,6 @@
 // отдельными чанками. Голый `new URL('./docx_worker.ts', import.meta.url)` он
 // считает обычным ассетом и инлайнит исходник в data-URL, где импорт
 // `@meerrec/core/worker` уже не разрешается, — воркер молча не стартует.
-import convertWorkerFileUrl from '../workers/convert_worker.ts?worker&url';
 import docxWorkerFileUrl from '../workers/docx_worker.ts?worker&url';
 import xlsxWorkerFileUrl from '../workers/xlsx_worker.ts?worker&url';
 import { getWasm, putWasm } from './doc_cache.js';
@@ -17,20 +16,16 @@ export const docxWorkerUrl = docxWorkerFileUrl;
 /** URL собранного воркера XLSX — уходит в `createXlsxViewer({ workerUrl })`. */
 export const xlsxWorkerUrl = xlsxWorkerFileUrl;
 
-/** URL собранного воркера конвертера — страница создаёт его `new Worker(...)`. */
-export const convertWorkerUrl = convertWorkerFileUrl;
-
-// Артефакты x2t (обвязка и wasm) лежат статикой: dev-сервер отдаёт `public/x2t/`
-// как есть, сборка кладёт их туда скриптом `scripts/copy-x2t.mjs`. На Pages путь
-// сдвигается базой Vite (`/<repo>/`), поэтому URL собирается от `BASE_URL`, —
-// локально это корень, и оба режима остаются рабочими.
-const X2T_DIR = `${import.meta.env.BASE_URL}x2t/`;
-
-/** URL обвязки x2t — её воркер вставляет `<script>` при первом запросе. */
-export const x2tScriptUrl = `${X2T_DIR}x2t.js`;
-
-/** URL wasm-модуля x2t: 38 МБ, лежит рядом с обвязкой и грузится ею же. */
-export const x2tWasmUrl = `${X2T_DIR}x2t.wasm`;
+/**
+ * Корень сайта со слэшем на конце — на Pages это уровень выше страницы демо
+ * (`/<repo>/viewer/` → `/<repo>/`), в dev — корень dev-сервера. Там лежит
+ * корневой service worker заголовков изоляции (`sw.js`), который регистрирует
+ * `lib/isolation.ts`.
+ */
+export const siteRootUrl: string = new URL(
+  '../',
+  new URL(import.meta.env.BASE_URL, window.location.origin),
+).href;
 
 // Ленивые wasm-модули отдаются URL-ами, а не импортом: `new URL(...)` Vite
 // разворачивает в ассет, тогда как импорт модуля втянул бы его в основной
@@ -106,43 +101,6 @@ async function urlFromCache(url: string, type: string): Promise<string> {
     return url;
   }
 }
-
-// ── Сайт редактора Euro-Office ─────────────────────────────────────────────
-
-/**
- * База со слэшем на конце: дальше к ней приклеивается имя страницы, а значение
- * из `.env.development` рукописное — без слэша склейка дала бы `…5271editor.html`.
- */
-function withTrailingSlash(url: string): string {
-  return url.endsWith('/') ? url : `${url}/`;
-}
-
-/**
- * База сайта редактора: в проде — на уровень выше страницы демо, в dev — свой
- * хост (`VITE_EUROOFFICE_BASE` из `.env.development`).
- *
- * Демо публикуется по `BASE_URL` (`/<repo>/viewer/`), а сайт редактора лежит в
- * корне (`/<repo>/`) — подъём на уровень вверх и есть его адрес. База здесь
- * одна: и `src` iframe, и его origin считаются от неё, разъехаться им нечем.
- */
-export const euroofficeBaseUrl: string = withTrailingSlash(
-  import.meta.env.VITE_EUROOFFICE_BASE ??
-    new URL('../', new URL(import.meta.env.BASE_URL, window.location.origin)).href,
-);
-
-/** Адрес страницы редактора: embed-режим, без хрома сайта вокруг документа. */
-export const euroofficeEditorUrl = `${euroofficeBaseUrl}editor.html?embed=1`;
-
-/**
- * Origin редактора — опция клиента Embed API.
- *
- * Клиент отсеивает входящие сообщения по origin'у iframe'а и по умолчанию берёт
- * `window.location.origin`. В дев-режиме «два сервера» (демо 5178, редактор
- * 5271) — это разные origin'ы, и без явной опции до страницы не дошло бы ни
- * одного события. В проде origin'ы совпадают, но опция передаётся всегда:
- * ветка кода одна.
- */
-export const euroofficeEditorOrigin: string = new URL(euroofficeBaseUrl).origin;
 
 /**
  * URL-ы DOCX-модуля для воркера: прогретый кэш — blob-URL-ы, холодный — сеть.

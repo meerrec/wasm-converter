@@ -18,16 +18,17 @@ service worker. GitHub Pages таких заголовков не умеет —
 С ними страница демо получает `crossOriginIsolated === true`, вьюер выбирает
 транспорт `sab` (`SharedArrayBuffer`), и SW-патч для изоляции не нужен: страницы
 регистрируют `sw.js`, только пока изоляции нет. В отличие от SW-патча
-(Chromium и вложенные кадры), native-заголовки работают во всех браузерах с
-поддержкой COOP/COEP. Заголовки действуют на весь сайт, включая движок
-Euro-Office в корне: его iframe и раньше требовал COEP у кадра.
+(Chromium), native-заголовки работают во всех браузерах с поддержкой COOP/COEP.
+Сайт движка Euro-Office уехал в отдельный репозиторий
+(github.com/meerrec/eurooffice-demo, ADR-0038) и публикуется оттуда; здесь
+заголовки накрывают только демо просмотрщика.
 
 Без заголовков вьюер не ломается — уходит на `bytes` (ADR-0021).
 
 ## Сборка артефакта
 
 Workflow `Pages` (`.github/workflows/pages.yml`) собирает сайт в `.pages/`:
-в корне — движок Euro-Office, в `/viewer/` — демо. Для Cloudflare Pages нужен
+демо — в `/viewer/`, корневой `sw.js` — в корне. Для Cloudflare Pages нужен
 тот же артефакт, но с другой базой демо: CI запекает
 `VITE_BASE=/wasm-converter/viewer/` (путь GitHub Pages), а на домене Cloudflare
 демо живёт в `/viewer/`. Сборка с базой от корня (шаги — как в `pages.yml`;
@@ -36,18 +37,14 @@ Workflow `Pages` (`.github/workflows/pages.yml`) собирает сайт в `.
 ```bash
 bash scripts/build-wasm.sh
 pnpm -F @meerrec/core build
-pnpm -F @meerrec/browser-convert... build
-pnpm -F @meerrec/eurooffice build
-EUROOFFICE_X2T_BR=copy node scripts/eurooffice/assemble.mjs
 VITE_BASE=/viewer/ pnpm -F @meerrec/example-viewer build
-node scripts/pages/stage.mjs --out .pages
+mkdir -p .pages/viewer
+cp -R examples/viewer/dist/. .pages/viewer/
+cp scripts/pages/sw.js .pages/sw.js
 cp demo/cloudflare/_headers .pages/_headers
 ```
 
-`stage.mjs` вырезает `_headers` и `_redirects` из сборки движка, поэтому конфиг
-кладётся в артефакт последним шагом, уже после компоновки. Локальный
-`--serve` у `stage.mjs` эмулирует префикс GitHub Pages (`/wasm-converter/`) и
-для CF-артефакта не подходит; локальная проверка — `npx wrangler pages dev .pages`.
+`_headers` кладётся в артефакт последним шагом, уже после компоновки.
 
 ## Подключение проекта
 
