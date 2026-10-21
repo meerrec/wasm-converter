@@ -4,7 +4,7 @@
 //! формат `DisplayList` и `DL_VERSION` не меняются. Картинки в кадре — только
 //! id (`Image.bitmap_id`): байты регистрирует потребитель (`pptx_image_bytes`
 //! → `ImageBitmap` → `register_bitmap`), как у DOCX. Диаграмма сериализуется
-//! в блоб [`ChartData::to_blob`] и рисуется painter'ом.
+//! в блоб [`doc_converter_render::chart::ChartData::to_blob`] и рисуется painter'ом.
 
 use doc_converter_render::display_list::{
     Color, DisplayList, DrawCommand, TextAlign, TextBaseline,
