@@ -15,7 +15,7 @@ This block is written and re-added by `turbo` before repository-scoped commands 
 
 ## Обзор проекта
 
-- **Что делает:** просмотрщики XLSX и DOCX в браузере (разбор, раскладка и отрисовка целиком в воркере), экспорт PDF/PNG/Markdown/HTML/текст, CLI `@meerrec/cli` c командами `convert` и `batch`, демо на GitHub Pages с браузерными конвертерами (страницы «Конвертер» на x2t и «Euro-Office»).
+- **Что делает:** просмотрщики XLSX и DOCX в браузере (разбор, раскладка и отрисовка целиком в воркере), экспорт PDF/PNG/Markdown/HTML/текст, CLI `@meerrec/cli` c командами `convert` и `batch`, демо на GitHub Pages. Браузерные конвертеры (страницы «Конвертер» на x2t и «Euro-Office» на движке Euro-Office) вынесены в отдельный репозиторий [github.com/meerrec/eurooffice-demo](https://github.com/meerrec/eurooffice-demo) (ADR-0038): монорепозиторий — чистый Apache-2.0.
 - **Скоуп v1 — только чтение и конвертация** (ADR-0018, ADR-0020). PPTX, Strict OOXML, ODF (`.odt`/`.ods`/`.odp`) и `.docm` — в плане ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)); XLSB, шифрование и бинарный `.doc` — статус non-goal снят, реализаций нет. Осознанно нет: VML-фолбэков `mc:Fallback` (ADR-0014), обтекания текстом вокруг плавающих рисунков; сноски и комментарии парсятся в модели, но в раскладку не попадают.
 - **Состояние:** версии крейтов и пяти npm-пакетов — `1.0.0`; npm-пятёрка `@meerrec/*` опубликована в **GitHub Packages** этого репозитория (тег `v1.0.0`), npmjs.org — целевой основной реестр (публикация готовится, [ADR-0027](docs/adr/0027-npmjs-primary-registry.md)); Rust-крейты отдаются ассетами релиза, публикация в crates.io — осознанный non-goal v1.x ([ADR-0026](docs/adr/0026-rust-crates-distribution.md)). Спринты 3–13 закрыты; Спринт 13 (спайк LOWA) завершён решением no-go (ADR-0023, ADR-0024). Фаза 1 архитектурного аудита реализована: npmjs-подготовка (ADR-0027), wire-типы через ts-rs (ADR-0028), main-thread fallback (ADR-0029).
 - Раздел «Статус» корневого `README.md` **устарел — не ориентир**; фактическое состояние — `ROADMAP.md` (§7 сводка, §9 бюджеты, §12 DoD).
@@ -40,12 +40,11 @@ This block is written and re-added by `turbo` before repository-scoped commands 
 | `packages/core` | `@meerrec/core`: протокол, воркер, транспорты кадра, просмотрщики |
 | `packages/cli` | `@meerrec/cli`: `convert`/`batch`, пул воркеров |
 | `packages/wasm`, `packages/wasm-pdf`, `packages/wasm-docx` | Сгенерированные wasm-bindgen-биндинги; `pkg/` в `.gitignore`, руками не править |
-| `packages/x2t`, `packages/browser-convert`, `packages/eurooffice` | Обвязка браузерных конвертеров (x2t) и клиент Embed API Euro-Office для демо; версии 0.1.0 |
-| `examples/viewer` | Демо (Vite + React) и Playwright-e2e; страницы `#/docx`, `#/xlsx`, `#/convert`, `#/eurooffice` |
+| `examples/viewer` | Демо (Vite + React) и Playwright-e2e; страницы `#/docx`, `#/xlsx` (конвертер и Euro-Office — в eurooffice-demo) |
 | `test-fixtures/` | `docx/` — 104 фикстуры с json-сайдкарами, `xlsx/` — 116 книг и `oracle.json` (эталон exceljs), `corrupted/`, `conf-xlsx/` (git-ignored) |
-| `scripts/` | Сборка wasm, генераторы фикстур, оракулы LibreOffice, memory-гейты, стайдинг Pages, сборка Euro-Office |
-| `docs/` | `adr/` (26 ADR и индекс), `sprint-6…13/`, `cookbook/`, `testing/`, `workers.md`, `bench-js.md`, `agent-contract.md` |
-| `experiments/` | Спайки Спринта 13 (`lowa-spike`, `x2t-spike`); часть артефактов в Git LFS |
+| `scripts/` | Сборка wasm, генераторы фикстур, оракулы LibreOffice, memory-гейты, стайдинг Pages (`pages/sw.js` — корневой воркер заголовков изоляции демо) |
+| `docs/` | `adr/` (34 ADR и индекс), `sprint-6…13/`, `cookbook/`, `testing/`, `workers.md`, `bench-js.md`, `agent-contract.md` |
+| `experiments/` | Спайк Спринта 13 (`lowa-spike`); часть артефактов в Git LFS (`x2t-spike` перенесён в eurooffice-demo) |
 | `target/`, `build/`, `.pages/`, `oracle-out/`, `oracle-out-docx/` | Выводы прогонов, git-ignored |
 
 ## Команды разработки
@@ -133,7 +132,7 @@ bash scripts/subset-fonts.sh   # пересборка подрезанных Car
 - **Rust:** 1.98.0 закреплён `rust-toolchain.toml` (совпадает с CI), MSRV — 1.88 (поднят из-за `zip 9`, RUSTSEC-2026-0369); `.cargo/config.toml` держит `incompatible-rust-versions = "fallback"`, чтобы резолвинг не вылезал за MSRV. `crates/fuzz` — свой workspace на nightly.
 - **Системные инструменты по требованию шага:** `wasm-pack` — обязателен для `build:wasm`; `wasm-opt` — системный, шаг опционален (встроенный в wasm-pack отключён: rustc эмитит bulk-memory, который та версия не понимает); `chromedriver` — для браузерных wasm-тестов; `uv` — для `subset-fonts.sh`; `soffice`, `pdftoppm`, `pdfinfo`, `ffmpeg`, ImageMagick — для оракулов; `/usr/bin/time` — для memory-гейтов; `qpdf` и `pdftotext` — для части тестов PDF (без них они скипаются).
 - **Генерируемое не править:** `packages/*/pkg/` (wasm-pack), `docs/api/` (TypeDoc), `packages/core/src/generated/` (wire-типы из Rust через `pnpm gen:wire`, ADR-0028).
-- **Git LFS:** `packages/x2t/vendor/*` и `experiments/lowa-spike/**` — после клона нужен `git lfs pull`.
+- **Git LFS:** `experiments/lowa-spike/**` — после клона нужен `git lfs pull` (артефакты x2t уехали вместе с пакетом в [github.com/meerrec/eurooffice-demo](https://github.com/meerrec/eurooffice-demo), ADR-0038).
 
 ## Тестирование и контроль качества
 

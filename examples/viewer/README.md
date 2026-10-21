@@ -1,39 +1,33 @@
-# Пример: демо-приложение (DOCX, XLSX, конвертер, Euro-Office)
+# Пример: демо-приложение (DOCX, XLSX)
 
-`@meerrec/example-viewer` — витрина проекта на GitHub Pages: четыре
-страницы под хеш-маршрутами, все — целиком в браузере, без серверного рендера.
+`@meerrec/example-viewer` — витрина проекта на GitHub Pages: две страницы под
+хеш-маршрутами, все — целиком в браузере, без серверного рендера.
 
 | Маршрут | Страница | Что показывает |
 |---|---|---|
 | `#/docx` | «Слово» | просмотрщик DOCX: воркер, `wasm-docx`, экспорт |
 | `#/xlsx` | «ДваИксель» | просмотрщик XLSX: воркер, `wasm`, экспорт |
-| `#/convert` | «Конвертер» | конвертация внутри семейства на x2t-wasm |
-| `#/eurooffice` | «Euro-Office» | редактор Euro-Office iframe'ом, только просмотр |
 
 Корень демо ведёт на `#/docx`. Публикуется демо подкаталогом `/viewer/` сайта
-Pages: корень сайта занимают страница-указатель и статика движка Euro-Office,
-которую открывает маршрут `#/eurooffice`.
+Pages (`VITE_BASE` в workflow `pages.yml`); корневой `sw.js` ставит заголовки
+cross-origin isolation (COOP/COEP), которые GitHub Pages сам не отдаёт.
 
-## Маршрут `#/eurooffice`
+## Страницы конвертера и Euro-Office
 
-Страница встраивает редактор Euro-Office из корня сайта — iframe с адресом
-`<корень>/editor.html?embed=1` — и открывает файлы через Embed API (клиент —
-пакет `@meerrec/eurooffice`) **только для просмотра**. Файл читает
-родитель и передаёт его байтами: документ никуда не уезжает, ни CORS, ни сети
-для этого не нужно.
+Маршруты `#/convert` («Конвертер» на x2t) и `#/eurooffice` («Euro-Office»,
+редактор iframe'ом через Embed API) жили здесь до Спринта 14 и вынесены вместе
+с пакетами `@meerrec/{x2t,browser-convert,eurooffice}` и сборкой движка в
+отдельный репозиторий [github.com/meerrec/eurooffice-demo](https://github.com/meerrec/eurooffice-demo)
+([ADR-0038](../../docs/adr/0038-agpl-separation.md)): монорепозиторий — чистый
+Apache-2.0, а всё, что грузит или собирает AGPL-движок, живёт там.
 
-Адрес редактора собирается в `src/lib/viewer_urls.ts`. В проде он выводится из
-`VITE_BASE` подъёмом на уровень вверх: демо живёт в `/viewer/`, а движок — в
-корне. В dev такой базы нет, поэтому адрес подменяется переменной
-`VITE_EUROOFFICE_BASE` из `.env.development` (`http://127.0.0.1:5271/`).
-
-Чтобы маршрут работал локально, рядом нужен хост движка:
+## Разработка
 
 ```bash
-node scripts/eurooffice/serve.mjs   # http://127.0.0.1:5271/
+pnpm dev          # dev-сервер с фикстурами и COOP/COEP-заголовками
+pnpm build        # vite build; база — VITE_BASE (на Pages /<repo>/viewer/)
+pnpm test         # Playwright e2e
 ```
 
-Он отдаёт статику с заголовком `Cross-Origin-Resource-Policy: cross-origin`:
-dev-сервер демо отвечает с COOP/COEP (иначе не будет `SharedArrayBuffer`), и без
-этого заголовка COEP заблокировал бы кросс-доменный iframe. Без поднятого хоста
-страница не покажет редактор, а выведет подсказку, что запустить.
+E2E сам поднимает dev-сервер на порту 5178; браузеры ставятся один раз:
+`pnpm exec playwright install chromium firefox webkit`.
