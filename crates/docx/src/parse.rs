@@ -17,6 +17,7 @@ use quick_xml::events::Event;
 
 use crate::context::ParseCtx;
 use crate::error::{Error, Result};
+use crate::ns;
 use crate::model::{
     BlockItem, Body, Document, Footnote, HeaderFooter, Inline, MediaPart, NoteKind, NumberingTable,
     Paragraph, PartRef, Relationships, Settings, StyleId, StyleTable, Table,
