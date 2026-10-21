@@ -308,7 +308,9 @@ fn layout_links_are_painted_as_links() {
             ..PaintOptions::default()
         },
         &mut dl,
-    );
+        &std::cell::Cell::new(false),
+    )
+    .expect("кадр собирается");
 
     let texts: Vec<(String, bool, PixelColor)> = (0..dl.len())
         .filter_map(|i| dl.cmd(i))
@@ -720,7 +722,9 @@ fn painted_fixture(name: &str) -> (Workbook, DisplayList) {
             ..PaintOptions::default()
         },
         &mut dl,
-    );
+        &std::cell::Cell::new(false),
+    )
+    .expect("кадр собирается");
     (book, dl)
 }
 

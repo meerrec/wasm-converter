@@ -36,6 +36,11 @@ pub enum XlsxError {
         /// Что именно не так.
         reason: String,
     },
+
+    /// Операция отменена вызывающим (ADR-0032): кооперативный флаг взведён
+    /// между полосами сборки кадра, состояние движка цело.
+    #[error("operation cancelled")]
+    Cancelled,
 }
 
 impl XlsxError {
