@@ -93,10 +93,12 @@ jobs:
         run: bash scripts/oracle-ssim.sh target/release/examples/mem_probe test-fixtures/xlsx oracle-out
 
       # Strict-подмножество (ADR-0034): тот же прогон по purl-фикстурам из
-      # test-fixtures/xlsx/strict; LibreOffice читает оба варианта. Отдельный
+      # test-fixtures/xlsx/strict; LibreOffice читает оба варианта. Фикстуры
+      # перечислены явно: у strict-подмножества свой состав, и молчаливый
+      # отбор по умолчанию сравнил бы только пересечение с ним. Отдельный
       # workdir, чтобы отчёты не смешивались.
       - name: compare Strict with LibreOffice
-        run: bash scripts/oracle-ssim.sh target/release/examples/mem_probe test-fixtures/xlsx/strict oracle-out-strict
+        run: bash scripts/oracle-ssim.sh target/release/examples/mem_probe test-fixtures/xlsx/strict oracle-out-strict values-integers.xlsx styles-bold-italic.xlsx charts-five-kinds.xlsx images-png.xlsx
 
       # Отчёт нужен и после падения прогона: по нему видно, что именно разъехалось.
       - uses: actions/upload-artifact@v4
