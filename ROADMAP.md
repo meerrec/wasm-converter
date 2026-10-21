@@ -1009,6 +1009,19 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 - ✅ `docs/sprint-13/report.md` — сводный отчёт спринта: числа по H1–H7 со ссылками на источники, разбор «провал — цена доставки, а не качество движка», ограничения методики.
 - ✅ Пакет `@meerrec/browser-convert`: 72 vitest-теста зелёные, zero-dep, честная матрица кодов 0/88/80; проверка сборки 9.3.5 не меняет вердикт ADR-0024.
 
+### Фаза 1 архитектурного аудита (21.10.2026): npmjs, typed wire, main-thread fallback
+
+**Цель:** три быстрые победы Фазы 1 из `docs/architecture.md`.
+
+**Задачи:**
+
+1. Подготовка публикации в npmjs.org — ✅ ADR-0027: npmjs.org объявлен основным реестром, GitHub Packages — зеркалом; в `release.yml` preflight организации/токена до `changeset version`, npmjs публикуется первой, скоуп-реестр переключается явно, crates.io — за `PUBLISH_CRATES_IO`; у пакетов появились `repository`/`homepage`/`bugs` и `LICENSE`, pack-гейт требует `LICENSE` и `README.md`. Реальная публикация — после ручных предпосылок (организация `@meerrec`, `NPM_TOKEN`, `PUBLISH_TO_NPMJS=true`).
+2. Typed wire Rust → TS — ✅ ADR-0028: общие DTO переехали в `doc-converter-core::wire`, `packages/core/src/generated/wire.ts` генерируется `pnpm gen:wire` (ts-rs 10.1), дрейф ловится в CI, касты wasm-ответов собраны в `worker/wasm_typed.ts`.
+3. Main-thread Canvas fallback — ✅ ADR-0029: `renderMode: 'auto' | 'worker' | 'main'`; без `transferControlToOffscreen` воркер собирает DisplayList в два `ArrayBuffer` и шлёт `frame`, main рисует `init_painter_main` и возвращает буфер `frame-ack`; painter-main — singleton.
+4. Корреляция IPC — ✅ (в фазе, сверх трёх пунктов): `open`/`docx-opened` несут `id`, у ошибок есть `id`/`code`, `destroy` отклоняет pending.
+
+**DoD:** `pnpm turbo run build` 9/9, typecheck `@meerrec/core` зелёный, core vitest 106/106, `pnpm size-limit` в бюджетах, e2e main-fallback в Chromium 2/2, wire drift детерминирован.
+
 ---
 
 ## 7. Сводная таблица
