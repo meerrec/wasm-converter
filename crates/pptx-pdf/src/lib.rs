@@ -1,38 +1,82 @@
 //! PDF-экспорт PPTX: слайд = страница, размер страницы из `p:sldSz`.
 //!
-//! Раскладка приходит от `doc-converter-pptx` ([`layout_slide`]) в пикселях при
-//! 96 dpi от левого верхнего угла слайда — те же единицы, что у canvas-пути
-//! (`pptx::render`). Здесь они переводятся в точки общей геометрией
+//! Раскладка приходит от `doc-converter-pptx-layout` ([`layout_slide`]) в
+//! пикселях при 96 dpi от левого верхнего угла слайда — те же единицы, что у
+//! canvas-пути (`pptx-render`). Здесь они переводятся в точки общей геометрией
 //! ([`PageGeometry`]), как у DOCX: вторая конвенция пересчёта разошлась бы с
 //! первой на первой же правке.
 //!
 //! Шрифт один — Carlito из `doc-converter-render`, тот же, которым раскладка
 //! мерила текст, поэтому переносы в PDF совпадают с canvas-путём по построению
-//! (ADR-0007). Диаграммы рисует общий PDF-бэкенд ([`crate::chart`], ADR-0011),
-//! картинки — общий реестр `XObject`'ов ([`crate::image`], ADR-0022).
+//! (ADR-0007). Диаграммы рисует общий PDF-бэкенд
+//! ([`doc_converter_pdf::chart`], ADR-0011), картинки — общий реестр
+//! `XObject`'ов ([`doc_converter_pdf::image`], ADR-0022). Крейт пишет свой
+//! экспортёр поверх публичного постраничного бэкенда `doc-converter-pdf`
+//! (ADR-0033: просмотрщик и экспортёр разнесены по модулям).
+#![forbid(unsafe_code)]
+#![deny(clippy::pedantic)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::f32::consts::FRAC_PI_2;
 
-use doc_converter_pptx::layout::{layout_slide, Item, PlacedRun, SlideLayout};
+use doc_converter_pdf::chart;
+use doc_converter_pdf::fonts::{EmbeddedFonts, Face, FaceSet};
+use doc_converter_pdf::image::{self, Placement};
+use doc_converter_pdf::layout::{PageGeometry, RectPx};
+use doc_converter_pdf::pdf::content;
+use doc_converter_pdf::pdf::fonts::PreparedFont;
+use doc_converter_pdf::pdf::ops::{
+    FontId, Line, LinePoint, Op, PaintMode, Point, Polygon, PolygonRing, Pt, TextItem,
+    WindingOrder, XObjectId,
+};
+use doc_converter_pdf::pdf::session::Session;
+use doc_converter_pdf::styles::to_pdf_color;
+use doc_converter_pdf::{Margins, PageConfig, PageSize, PdfOptions};
 use doc_converter_pptx::model::{ImagePart, Presentation, Rgb};
+use doc_converter_pptx_layout::{layout_slide, Item, PlacedRun, SlideLayout};
 use doc_converter_render::display_list::Color;
 use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
 use doc_converter_render::geometry::Rect;
 
-use crate::fonts::{EmbeddedFonts, Face, FaceSet};
-use crate::image::{self, Placement};
-use crate::layout::{PageGeometry, RectPx};
-use crate::options::{Margins, PageConfig, PageSize, PdfOptions};
-use crate::pdf::content;
-use crate::pdf::fonts::PreparedFont;
-use crate::pdf::ops::{
-    FontId, Line, LinePoint, Op, PaintMode, Point, Polygon, PolygonRing, Pt, TextItem,
-    WindingOrder, XObjectId,
-};
-use crate::pdf::session::Session;
-use crate::styles::to_pdf_color;
-use crate::PdfError;
+/// Ошибка экспорта PPTX в PDF.
+///
+/// `non_exhaustive`: набор вариантов будет расти вместе с бэкендом.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum Error {
+    /// Раскладка слайда не собралась.
+    #[error("pptx layout failed: {0}")]
+    Layout(String),
+    /// В презентации нет слайдов: PDF без страниц невалиден.
+    #[error("presentation has no slides")]
+    NoSlides,
+    /// Шрифт не разобран: битые байты или отказ подрезки.
+    #[error("invalid font data: {0}")]
+    Font(String),
+    /// Картинка не декодирована: неподдержанный mime или битые байты.
+    #[error("invalid image data: {0}")]
+    Image(String),
+    /// Приёмник PDF вернул ошибку записи.
+    #[error("write failed: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// Ошибка бэкенда `doc-converter-pdf` в терминах этого крейта.
+impl From<doc_converter_pdf::PdfError> for Error {
+    fn from(error: doc_converter_pdf::PdfError) -> Self {
+        use doc_converter_pdf::PdfError as Backend;
+        match error {
+            Backend::NoPages => Self::NoSlides,
+            Backend::Font(message) => Self::Font(message),
+            Backend::Image(message) => Self::Image(message),
+            Backend::Io(io) => Self::Io(io),
+            other => Self::Layout(format!("pdf: {other}")),
+        }
+    }
+}
+
+/// Результат операций крейта.
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// Размер LRU-кэша метрик: тот же, что у XLSX/DOCX-путей.
 const FONT_CACHE: usize = 4096;
@@ -49,15 +93,16 @@ const ARC_SEGMENTS: usize = 8;
 /// Собрать PDF из всех слайдов презентации.
 ///
 /// # Errors
-/// [`PdfError::Pptx`], если раскладка слайда не собралась; [`PdfError::NoPages`],
-/// если в презентации нет слайдов; [`PdfError::Font`], если байты шрифта не
-/// разобрались; [`PdfError::Image`], если сессия не приняла картинку;
-/// [`PdfError::Io`], если приёмник вернул ошибку записи.
-pub(crate) fn export(pres: &Presentation, options: &PdfOptions) -> Result<Vec<u8>, PdfError> {
+/// [`Error::Layout`], если раскладка слайда не собралась; [`Error::NoSlides`],
+/// если в презентации нет слайдов; [`Error::Font`], если байты шрифта не
+/// разобрались; [`Error::Image`], если сессия не приняла картинку;
+/// [`Error::Io`], если приёмник вернул ошибку записи.
+pub fn export(pres: &Presentation, options: &PdfOptions) -> Result<Vec<u8>> {
     let layouts = (0..pres.slide_count())
         .map(|index| layout_slide(pres, index))
-        .collect::<Result<Vec<_>, doc_converter_pptx::Error>>()?;
-    layouts.first().ok_or(PdfError::NoPages)?;
+        .collect::<std::result::Result<Vec<_>, doc_converter_pptx::Error>>()
+        .map_err(|error| Error::Layout(error.to_string()))?;
+    layouts.first().ok_or(Error::NoSlides)?;
 
     let faces = collect_faces(&layouts);
     let embedded = EmbeddedFonts::from_faces(faces);
@@ -104,7 +149,7 @@ pub(crate) fn export(pres: &Presentation, options: &PdfOptions) -> Result<Vec<u8
         .decoded()
         .iter()
         .map(|decoded| session.add_image(decoded))
-        .collect::<Result<_, _>>()?;
+        .collect::<std::result::Result<_, doc_converter_pdf::PdfError>>()?;
     for (index, name) in names.into_iter().enumerate() {
         images.assign(index, XObjectId(name));
     }
@@ -243,8 +288,8 @@ fn draw_slide(
                     continue;
                 }
                 let anchor = RectPx::new(rect.x, rect.y, rect.w, rect.h);
-                let chart = crate::chart::Layout::new(anchor, data);
-                crate::chart::draw(
+                let chart = chart::Layout::new(anchor, data);
+                chart::draw(
                     &mut ops,
                     registry,
                     embedded.id(Face::Regular),
@@ -439,7 +484,7 @@ fn text_color(rgb: Option<Rgb>) -> Color {
 
 /// Картинки презентации: `image_id` раскладки → имя `XObject` в сессии.
 ///
-/// Реестр общий с листом XLSX ([`crate::image`]): дедупликация по байтам,
+/// Реестр общий с листом XLSX ([`doc_converter_pdf::image`]): дедупликация по байтам,
 /// декодирование PNG/JPEG, размещение с отсечением по прямоугольнику якоря.
 struct Images<'a> {
     /// Media-часть по `image_id` — для размещения при отрисовке слайда.
@@ -460,7 +505,7 @@ impl<'a> Images<'a> {
                 id: &part.name,
                 mime: &part.mime,
                 bytes: &part.bytes,
-                rect: crate::pdf::ops::Rect {
+                rect: doc_converter_pdf::pdf::ops::Rect {
                     x: Pt(0.0),
                     y: Pt(0.0),
                     width: Pt(1.0),
@@ -601,7 +646,7 @@ mod tests {
         let pres = Presentation::default();
         assert!(matches!(
             export(&pres, &PdfOptions::default()),
-            Err(PdfError::NoPages)
+            Err(Error::NoSlides)
         ));
     }
 }

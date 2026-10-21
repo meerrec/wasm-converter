@@ -13,8 +13,8 @@ use std::cell::Cell;
 use std::cell::RefCell;
 
 use doc_converter_core::wire::{BuildStatsWire, ImageInfoWire, SlideInfoWire, ViewportWire};
-use doc_converter_pptx::layout::{layout_slide, SlideLayout};
 use doc_converter_pptx::model::Presentation;
+use doc_converter_pptx_render::{layout_slide, SlideLayout};
 use doc_converter_render::display_list::DisplayList;
 use doc_converter_render::sab::SabRing;
 use doc_converter_render::viewport::Viewport;
@@ -196,7 +196,7 @@ fn with_frame_bytes(
 
         FRAME.with(|frame| {
             let mut frame = frame.borrow_mut();
-            doc_converter_pptx::render::build(layout, &viewport, &mut frame);
+            doc_converter_pptx_render::render::build(layout, &viewport, &mut frame);
             let cmds = u32::try_from(frame.len()).unwrap_or(u32::MAX);
 
             SCRATCH.with(|scratch| {

@@ -15,7 +15,7 @@ use crate::PdfError;
 
 /// Раскодированное изображение для встраивания.
 #[derive(Debug)]
-pub(crate) struct DecodedImage {
+pub struct DecodedImage {
     pub width: u32,
     pub height: u32,
     /// RGB (3 байта/пиксель) или Gray (1 байт/пиксель).
@@ -28,7 +28,7 @@ pub(crate) struct DecodedImage {
 
 /// Цветовая модель пикселей.
 #[derive(Debug)]
-pub(crate) enum PixelFormat {
+pub enum PixelFormat {
     /// RGB, 3 байта/пиксель.
     Rgb,
     /// Серый, 1 байт/пиксель.
@@ -51,7 +51,7 @@ impl PixelFormat {
 ///
 /// [`PdfError::Image`], если mime — картинка, но не PNG/JPEG, или байты не
 /// разобрал ни один встроенный декодер.
-pub(crate) fn decode(mime: &str, bytes: &[u8]) -> Result<DecodedImage, PdfError> {
+pub fn decode(mime: &str, bytes: &[u8]) -> Result<DecodedImage, PdfError> {
     let normalized = mime
         .split(';')
         .next()

@@ -1,5 +1,5 @@
 //! PPTX: разбор PresentationML-пакета в нормализованную модель презентации
-//! и раскладка слайдов фиксированным размером (ADR-0033).
+//! (ADR-0033).
 //!
 //! Модель (`model`) повторяет `PresentationML`: слайд — шейпы `p:sp`/`p:pic`/
 //! `p:graphicFrame`, тема `a:theme` — шрифты и цвета, размер слайда — `p:sldSz`.
@@ -7,26 +7,22 @@
 //! стиль уровня мастера → умолчания. Диаграммы — общая модель
 //! `doc_converter_render::chart::ChartData` (ADR-0011).
 //!
-//! Раскладка (`layout`) — фиксированный размер слайда без пагинации: слайд —
-//! одна страница рендера, координаты EMU переводятся в пиксели при 96 dpi.
-//! Рендер (`render`) собирает `DisplayList` — единственный контракт кадра.
+//! Раскладки и `DisplayList` здесь нет: они вынесены в `doc-converter-pptx-layout`
+//! и `doc-converter-pptx-render`, PDF — в `doc-converter-pptx-pdf`, чтобы
+//! нативный разбор не тянул метрики шрифта и рендер (ADR-0033, решение
+//! владельца).
 //!
 //! Разбор синхронный (ADR-0030 §в): потоковый вход буферизуется вызывающим до
 //! [`parse`]; отмена — кооперативный флаг между слайдами (ADR-0032).
 #![forbid(unsafe_code)]
 #![deny(clippy::pedantic)]
-// Имена типов повторяют имена модулей модели (`layout::SlideLayout`).
-#![allow(clippy::module_name_repetitions)]
 // Свойства знака OOXML — набор bool-атрибутов (`RunProps`).
 #![allow(clippy::struct_excessive_bools)]
 
 pub mod error;
 pub mod export;
-pub mod layout;
 pub mod model;
 pub mod parse;
-pub mod plugin;
-pub mod render;
 pub(crate) mod xml;
 
 pub use error::{Error, Result};

@@ -31,7 +31,7 @@ use crate::PdfError;
 ///
 /// [`PdfError::Font`], если `WriteText` или `SetFontSize` ссылаются на шрифт,
 /// которого нет в `fonts`: молча потерянный текст хуже ошибки экспорта.
-pub(crate) fn translate(
+pub fn translate(
     ops: &[Op],
     fonts: &BTreeMap<FontId, &fonts::PreparedFont>,
 ) -> Result<Vec<u8>, PdfError> {

@@ -1,0 +1,19 @@
+[package]
+name = "doc-converter-pptx-pdf"
+version.workspace = true
+edition.workspace = true
+description = "PDF export for PPTX presentations (slide = page)"
+license.workspace = true
+# workspace-URL не совпадает с фактическим remote (meerrec/wasm-converter)
+repository = "https://github.com/meerrec/wasm-converter"
+
+[dependencies]
+doc-converter-pdf        = { workspace = true }
+doc-converter-pptx       = { workspace = true }
+doc-converter-pptx-layout = { workspace = true }
+doc-converter-render     = { workspace = true }
+thiserror                = { workspace = true }
+
+[dev-dependencies]
+# Тест загружает собранный PDF, чтобы посчитать страницы.
+lopdf = "0.45"

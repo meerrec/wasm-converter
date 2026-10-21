@@ -74,15 +74,15 @@ jobs:
 
       - name: build (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
-        run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm --release
+        run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm --release
 
-      # На нативном таргете все три крейта пусты (`#![cfg(target_arch = "wasm32")]`),
+      # На нативном таргете все четыре крейта пусты (`#![cfg(target_arch = "wasm32")]`),
       # поэтому их доккомментарии проверяет только эта нога матрицы.
       - name: doc (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm --no-deps
+        run: cargo doc --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm --no-deps
 
   wasm:
     name: Wasm bindings
@@ -138,11 +138,13 @@ jobs:
 
           check_exports packages/wasm-pdf/pkg/doc_converter_pdf_wasm.d.ts crates/pdf-wasm/src
           check_exports packages/wasm-docx/pkg/doc_converter_docx_wasm.d.ts crates/docx-wasm/src
+          check_exports packages/wasm-pptx/pkg/doc_converter_pptx_wasm.d.ts crates/pptx-wasm/src
 
       # Просмотрщик DOCX уехал из основного модуля в ленивый `wasm-docx`;
       # экспорты `docx_*` в `packages/wasm/pkg` означают его возврат в основной
-      # бандл — регрессию бюджета `wasm (viewer)`.
-      - name: check viewer module has no docx exports
+      # бандл — регрессию бюджета `wasm (viewer)`. То же про PPTX: его
+      # просмотрщик живёт в ленивом `wasm-pptx`.
+      - name: check viewer module has no lazy-format exports
         run: |
           set -euo pipefail
           if grep -rq 'docx_' packages/wasm/pkg/*.d.ts; then
@@ -151,7 +153,13 @@ jobs:
               "его возврат в основной модуль — регрессия бюджета wasm (viewer)"
             exit 1
           fi
-          echo "OK: в основном модуле нет экспортов docx_*"
+          if grep -rq 'pptx_' packages/wasm/pkg/*.d.ts; then
+            echo "::error::packages/wasm/pkg/*.d.ts экспортирует pptx_*:" \
+              "просмотрщик PPTX живёт в отдельном воркере и ленивом модуле wasm-pptx," \
+              "его возврат в основной модуль — регрессия бюджета wasm (viewer)"
+            exit 1
+          fi
+          echo "OK: в основном модуле нет экспортов docx_*/pptx_*"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -167,6 +175,11 @@ jobs:
         with:
           name: wasm-docx-pkg
           path: packages/wasm-docx/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pptx-pkg
+          path: packages/wasm-pptx/pkg
 
   # Браузерные wasm-bindgen-тесты до этой джобы не запускались нигде: в
   # crates/wasm/tests/ живёт регрессия кэша стилей painter'а, тесты остальных
@@ -245,6 +258,10 @@ jobs:
       - name: wasm-pack test (pdf)
         run: wasm-pack test --headless --chrome --release crates/pdf-wasm
 
+      # Тесты моста PPTX живут в отдельном крейте `crates/pptx-wasm`.
+      - name: wasm-pack test (pptx)
+        run: wasm-pack test --headless --chrome --release crates/pptx-wasm
+
   js:
     name: JS (node ${{ matrix.node }})
     needs: wasm
@@ -280,6 +297,11 @@ jobs:
         with:
           name: wasm-docx-pkg
           path: packages/wasm-docx/pkg
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-pptx-pkg
+          path: packages/wasm-pptx/pkg
 
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 

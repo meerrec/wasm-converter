@@ -12,8 +12,8 @@ use doc_converter_render::display_list::DisplayList;
 use doc_converter_render::plugin::{DocumentModel, EngineError, FormatPlugin, RenderContext};
 use doc_converter_render::viewport::Viewport;
 
-use crate::layout::{layout_slide, SlideLayout};
-use crate::model::Presentation;
+use doc_converter_pptx::model::Presentation;
+use doc_converter_pptx_layout::{layout_slide, SlideLayout};
 
 /// Плагин PPTX: `id()` → `"pptx"`, как `DocFormat` протокола TS.
 #[derive(Debug, Default)]
@@ -33,13 +33,13 @@ impl FormatPlugin for PptxPlugin {
         bytes: &[u8],
         limits: &ZipLimits,
     ) -> Result<Box<dyn DocumentModel>, EngineError> {
-        let presentation =
-            crate::parse::parse(bytes, limits).map_err(|e| EngineError::Parse(e.to_string()))?;
+        let presentation = doc_converter_pptx::parse::parse(bytes, limits)
+            .map_err(|e| EngineError::Parse(e.to_string()))?;
         // Раскладка считается здесь и один раз: размер слайда задан
         // презентацией, а не окном, поэтому окно и зум приходят только с кадром.
         let layouts = (0..presentation.slide_count())
             .map(|index| layout_slide(&presentation, index))
-            .collect::<crate::Result<Vec<_>>>()
+            .collect::<doc_converter_pptx::Result<Vec<_>>>()
             .map_err(|e| EngineError::Layout(e.to_string()))?;
         Ok(Box::new(PptxDocument {
             presentation,

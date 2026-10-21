@@ -1,7 +1,7 @@
 //! Раскладка слайда: фиксированный размер, без пагинации (ADR-0033 §4).
 //!
 //! Слайд — одна страница рендера; координаты EMU переводятся в пиксели при
-//! 96 dpi ([`crate::model::emu_to_px`]). Текст переносится по словам теми же
+//! 96 dpi ([`doc_converter_pptx::model::emu_to_px`]). Текст переносится по словам теми же
 //! метриками, что у DOCX (`doc_converter_render::text_measure`): прогон знает
 //! свой кегль, строка собирается жадным word wrap'ом, высота строки — максимум
 //! кеглей прогонов × 1.2. Автоподбор кегля (`a:normAutofit`) не применяется.
@@ -16,8 +16,8 @@ use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
 use doc_converter_render::geometry::Rect;
 use doc_converter_render::text_measure::measure_text;
 
-use crate::error::{Error, Result};
-use crate::model::{
+use doc_converter_pptx::error::{Error, Result};
+use doc_converter_pptx::model::{
     emu_to_px, pt_to_px, Align, Anchor, Bullet, GeometryPreset, Paragraph, Presentation, Rgb,
     RunProps, Shape, ShapeKind, TextBody,
 };
@@ -381,7 +381,7 @@ fn anchor_shift(anchor: Anchor, content: Rect, total: f32) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Frame, Insets, Run, Slide, SlideSize, TextBox};
+    use doc_converter_pptx::model::{Frame, Insets, Run, Slide, SlideSize, TextBox};
 
     fn run(text: &str, size: f32) -> Run {
         Run {

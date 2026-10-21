@@ -11,8 +11,8 @@ use doc_converter_render::display_list::{
 };
 use doc_converter_render::viewport::Viewport;
 
-use crate::layout::{Item, PlacedRun, SlideLayout, TextLine};
-use crate::model::Rgb;
+use doc_converter_pptx::model::Rgb;
+use doc_converter_pptx_layout::{Item, PlacedRun, SlideLayout, TextLine};
 
 /// Гарнитура по умолчанию кадра, когда прогон её не назвал.
 const DEFAULT_FONT: &str = "Calibri";
@@ -177,11 +177,11 @@ mod tests {
     use doc_converter_render::display_list::DisplayList;
 
     use super::*;
-    use crate::layout::layout_slide;
-    use crate::model::{
+    use doc_converter_pptx::model::{
         Frame, Paragraph, Presentation, Run, RunProps, Shape, ShapeKind, Slide, SlideSize,
         TextBody, TextBox,
     };
+    use doc_converter_pptx_layout::layout_slide;
 
     #[test]
     fn empty_slide_is_background_only() {

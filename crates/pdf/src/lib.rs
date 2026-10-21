@@ -7,6 +7,11 @@
 //! `text_measure`). Обе стороны общие с canvas-путём, поэтому точки разрыва
 //! строк у экрана и в PDF совпадают по построению; граница зафиксирована в
 //! ADR-0007, отдельного крейта `layout-core` нет.
+//!
+//! Форматы вне этого крейта (PPTX, дальше ODF) пишут свои экспортёры поверх
+//! публичного постраничного бэкенда: модули `pdf` (сессия и операции),
+//! `fonts`, `layout`, `styles` и `chart` открыты наружу ровно в том объёме,
+//! который нужен `doc-converter-pptx-pdf` (ADR-0033).
 #![forbid(unsafe_code)]
 #![deny(clippy::pedantic)]
 
@@ -15,16 +20,15 @@ mod background;
 mod border;
 pub mod chart;
 mod docx;
-mod fonts;
+pub mod fonts;
 pub mod image;
-mod layout;
+pub mod layout;
 mod options;
 pub mod overlay;
 mod pagination;
 mod painter;
-mod pdf;
-mod pptx;
-mod styles;
+pub mod pdf;
+pub mod styles;
 mod text;
 
 pub use options::*;
@@ -34,8 +38,13 @@ use std::io::Write;
 use doc_converter_core::Result;
 
 /// Ошибка PDF-экспорта.
+///
+/// Публична, потому что постраничный бэкенд (`pdf::session` и операции)
+/// возвращает её наружу: экспортёры форматов вне этого крейта
+/// (`doc-converter-pptx-pdf`) обязаны её называть.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum PdfError {
+#[non_exhaustive]
+pub enum PdfError {
     /// Лист с таким индексом в книге не найден.
     #[error("sheet index {0} is out of range")]
     NoSuchSheet(usize),
@@ -48,9 +57,6 @@ pub(crate) enum PdfError {
     /// Раскладка DOCX не дала ни одной страницы: PDF без страниц невалиден.
     #[error("docx layout has no pages")]
     NoPages,
-    /// Раскладка PPTX не собралась.
-    #[error("pptx: {0}")]
-    Pptx(#[from] doc_converter_pptx::Error),
     /// Шрифт не разобран: битые байты или отказ подрезки.
     #[error("invalid font data: {0}")]
     Font(String),
@@ -84,21 +90,6 @@ impl PdfExporter {
     /// дала ни одной страницы или PDF не собрался.
     pub fn export_docx(&mut self, doc: &doc_converter_docx::Document) -> Result<Vec<u8>> {
         docx::export(doc, &self.opts)
-            .map_err(|err| doc_converter_core::Error::Export(format!("pdf: {err}")))
-    }
-
-    /// Экспортировать презентацию PPTX в PDF: слайд = страница.
-    ///
-    /// Страницы берутся готовыми у раскладки `doc-converter-pptx`: сколько
-    /// слайдов в презентации, столько страниц попадёт в PDF, и того же размера
-    /// (`p:sldSz`). Один шрифт на экран и PDF (Carlito из
-    /// `doc-converter-render`) — залог совпадения точек переноса (ADR-0007).
-    ///
-    /// # Errors
-    /// [`doc_converter_core::Error::Export`], если раскладка слайда не
-    /// собралась, в презентации нет слайдов или PDF не собрался.
-    pub fn export_pptx(&mut self, pres: &doc_converter_pptx::Presentation) -> Result<Vec<u8>> {
-        pptx::export(pres, &self.opts)
             .map_err(|err| doc_converter_core::Error::Export(format!("pdf: {err}")))
     }
 

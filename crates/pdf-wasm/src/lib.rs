@@ -131,6 +131,5 @@ pub fn export_docx_pdf(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValu
 pub fn export_pptx_pdf(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValue> {
     let options = parse_options(options)?;
     let presentation = doc_converter_pptx::open(bytes.to_vec()).map_err(to_js)?;
-    let mut exporter = PdfExporter::new(options);
-    exporter.export_pptx(&presentation).map_err(to_js)
+    doc_converter_pptx_pdf::export(&presentation, &options).map_err(to_js)
 }

@@ -16,7 +16,11 @@ crate-type = ["cdylib", "rlib"]
 doc-converter-core = { workspace = true }
 doc-converter-docx = { workspace = true }
 doc-converter-pdf = { workspace = true }
+# Экспорт PPTX — отдельный крейт `doc-converter-pptx-pdf` (просмотрщик и
+# экспортёр разнесены по модулям, как у DOCX); `doc-converter-pptx` нужен,
+# чтобы разобрать байты пакета до экспорта.
 doc-converter-pptx = { workspace = true }
+doc-converter-pptx-pdf = { workspace = true }
 doc-converter-xlsx = { workspace = true }
 wasm-bindgen = "0.2"
 serde = { version = "1", features = ["derive"] }

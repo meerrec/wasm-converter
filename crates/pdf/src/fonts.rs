@@ -52,7 +52,8 @@ impl Face {
     }
 
     /// Байты Carlito этого начертания — аргумент подрезки сессии.
-    pub(crate) fn bytes(self) -> &'static [u8] {
+    #[must_use]
+    pub fn bytes(self) -> &'static [u8] {
         match self {
             Self::Regular => default_font_bytes(),
             Self::Bold => bold_font_bytes(),
