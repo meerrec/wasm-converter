@@ -43,5 +43,8 @@
 | 0037 | OpenTelemetry-инструментация — opt-in и только API | [`0037-opentelemetry.md`](0037-opentelemetry.md) |
 | 0038 | Вынос AGPL-части в `meerrec/eurooffice-demo` | [`0038-agpl-separation.md`](0038-agpl-separation.md) |
 | 0039 | Отмена non-goal'ов v1 | [`0039-cancel-v1-non-goals.md`](0039-cancel-v1-non-goals.md) |
+| 0040 | Bidi — UAX #9 через `unicode-bidi`, без `rustybuzz` в Спринте 2 | [`0040-bidi-strategy.md`](0040-bidi-strategy.md) |
+| 0041 | TextLayer и DOM-overlay — доступность без изменения `DisplayList` | [`0041-text-layer-dom-overlay.md`](0041-text-layer-dom-overlay.md) |
+| 0042 | Покрытие RTL-шрифтов — системный fallback и ленивый сабсет | [`0042-rtl-font-coverage.md`](0042-rtl-font-coverage.md) |
 
 Сводка принятых решений по спринтам — `ROADMAP.md` §11.

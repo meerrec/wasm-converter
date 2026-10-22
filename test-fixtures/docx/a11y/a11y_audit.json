@@ -1,0 +1,163 @@
+{
+  "metadata": {
+    "name": "a11y/a11y_audit",
+    "category": "a11y",
+    "description": "20 страниц для NVDA/VoiceOver и axe: заголовки H1/H2, списки, таблицы с шапкой и объединениями, ссылка и поле PAGE",
+    "docTitle": "20 страниц для NVDA/VoiceOver и axe: заголовки H1/H2, списки, таблицы с шапкой и объединениями, ссылка и поле PAGE",
+    "expectedParagraphs": 100,
+    "expectedTables": 3,
+    "expectedImages": 0,
+    "expectedWarnings": [],
+    "pages": 20,
+    "pageBreaks": 19
+  },
+  "content": {
+    "pages": 20,
+    "paragraphs": [
+      {
+        "text": "Доступность документа",
+        "style": "Heading1"
+      },
+      {
+        "text": "Структура заголовков",
+        "style": "Heading2"
+      },
+      {
+        "text": "Полное руководство: Руководство по доступности",
+        "hyperlink": "https://example.com/a11y",
+        "relId": "rIdA11yLink"
+      },
+      {
+        "text": "Версия макета: 1",
+        "field": "PAGE"
+      },
+      {
+        "text": "Проверить иерархию заголовков.",
+        "numId": 1,
+        "ilvl": 0
+      },
+      {
+        "text": "Заголовки и подзаголовки.",
+        "numId": 2,
+        "ilvl": 0
+      },
+      {
+        "text": "Пройти ротором по спискам.",
+        "numId": 2,
+        "ilvl": 1
+      }
+    ],
+    "tables": [
+      {
+        "rows": 4,
+        "cols": 3,
+        "headerRows": 1,
+        "gridSpan": [
+          {
+            "row": 1,
+            "col": 0,
+            "span": 2
+          }
+        ],
+        "vMerge": [
+          {
+            "row": 2,
+            "col": 0,
+            "val": "restart"
+          },
+          {
+            "row": 3,
+            "col": 0,
+            "val": "continue"
+          }
+        ],
+        "cells": [
+          [
+            "Компонент",
+            "Критерий",
+            "Статус"
+          ],
+          [
+            "Клавиатурная навигация",
+            "Пройдено"
+          ],
+          [
+            "Экранный диктор",
+            "NVDA",
+            "Пройдено"
+          ],
+          [
+            "",
+            "VoiceOver",
+            "В работе"
+          ]
+        ]
+      },
+      {
+        "rows": 4,
+        "cols": 2,
+        "headerRows": 1,
+        "gridSpan": [
+          {
+            "row": 3,
+            "col": 0,
+            "span": 2
+          }
+        ],
+        "cells": [
+          [
+            "Проверка",
+            "Ожидание"
+          ],
+          [
+            "Порядок заголовков",
+            "H1 и H2 без пропусков"
+          ],
+          [
+            "Имена элементов",
+            "У ссылок и полей есть текст"
+          ],
+          [
+            "Все проверки пройдены"
+          ]
+        ]
+      },
+      {
+        "rows": 3,
+        "cols": 2,
+        "headerRows": 1,
+        "cells": [
+          [
+            "Платформа",
+            "Диктор"
+          ],
+          [
+            "Windows",
+            "NVDA"
+          ],
+          [
+            "macOS",
+            "VoiceOver"
+          ]
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "instruction": " PAGE ",
+        "type": "page",
+        "cached": "1",
+        "form": "fldChar"
+      }
+    ],
+    "rels": [
+      {
+        "id": "rIdA11yLink",
+        "type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+        "target": "https://example.com/a11y",
+        "external": true
+      }
+    ],
+    "images": []
+  }
+}

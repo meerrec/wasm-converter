@@ -32,6 +32,9 @@ pub struct Table {
     pub indent: Option<Twips>,
     /// Умолчания полей ячеек (`w:tblCellMar`).
     pub cell_margins: CellMargins,
+    /// Таблица читается справа налево (`w:bidiVisual`): колонки зеркалятся.
+    #[serde(default)]
+    pub bidi_visual: bool,
 }
 
 /// Столбец сетки таблицы (`w:gridCol`).

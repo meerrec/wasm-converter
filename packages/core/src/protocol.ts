@@ -9,6 +9,8 @@ import type {
   PdfOptionsWire,
   SheetInfoWire,
   SlideInfoWire,
+  TextLayerWire,
+  TextRunWire,
 } from './generated/wire.js';
 
 /**
@@ -41,6 +43,16 @@ export type HitResult = CellRef | TextPos;
  * их объявил файл, либо `null`, если их нет.
  */
 export type HyperlinkInfo = HyperlinkInfoWire;
+
+/**
+ * Позиционированный текстовый слой документа: runs и карта страниц.
+ *
+ * Поля приходят из Rust (`crates/core/src/wire.rs`) без пересчёта: `bbox` и
+ * `lineRect` — пиксели раскладки, `readingOrder` — логический порядок.
+ */
+export type TextLayer = TextLayerWire;
+/** Один run TextLayer — фрагмент строки с одним стилем знака. */
+export type TextRun = TextRunWire;
 
 export type PdfOptions = PdfOptionsWire & {
   /**
@@ -378,6 +390,23 @@ export interface ExportDocxTextMsg {
 }
 
 /**
+ * TextLayer одной страницы открытого DOCX. Воркер не пересобирает документ:
+ * слой берётся из готовой раскладки, посчитанной при открытии.
+ */
+export interface TextLayerMsg {
+  type: 'text-layer';
+  id: number;
+  /** 0-based номер страницы. */
+  page: number;
+}
+
+/** TextLayer всего документа — для семантического дерева и Ctrl+A. */
+export interface TextLayerAllMsg {
+  type: 'text-layer-all';
+  id: number;
+}
+
+/**
  * Экспорт открытой презентации PPTX в PDF. Считается в ленивом PDF-модуле: он
  * разбирает презентацию сам, а байты получает те же, что пришли при открытии.
  *
@@ -434,6 +463,8 @@ export type InMsg =
   | ExportPdfMsg
   | ExportDocxPdfMsg
   | ExportDocxTextMsg
+  | TextLayerMsg
+  | TextLayerAllMsg
   | ExportPptxPdfMsg
   | ExportPptxTextMsg;
 
@@ -492,6 +523,8 @@ export interface PngMsg { type: 'png'; id: number; bytes: Uint8Array }
 export interface PdfMsg { type: 'pdf'; id: number; bytes: Uint8Array }
 /** Текстовая выгрузка документа в том формате, что запросил клиент. */
 export interface DocxTextMsg { type: 'docx-text'; id: number; text: string }
+/** TextLayer, собранный по открытому документу. */
+export interface TextLayerResultMsg { type: 'text-layer'; id: number; layer: TextLayer }
 /** Текстовая выгрузка презентации в том формате, что запросил клиент. */
 export interface PptxTextMsg { type: 'pptx-text'; id: number; text: string }
 /**
@@ -536,5 +569,6 @@ export type OutMsg =
   | HitMsg
   | HyperlinkMsg
   | DocxTextMsg
+  | TextLayerResultMsg
   | PptxTextMsg
   | WorkerErrorMsg;

@@ -15,6 +15,7 @@ quick-xml            = { workspace = true }
 thiserror            = { workspace = true }
 miette               = { workspace = true }
 tracing              = { workspace = true }
+unicode-bidi         = { workspace = true }
 
 [dev-dependencies]
 # Сквозные тесты собирают пакеты в памяти, как это делает Word.

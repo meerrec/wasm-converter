@@ -76,6 +76,145 @@ pub struct PageInfoWire {
     pub height: f32,
 }
 
+/// Прямоугольник в пикселях раскладки (до зума и DPR).
+///
+/// Отдельный тип, а не `render::Rect`: wire не должен зависеть от крейта
+/// рендера, а поля совпадают с формой, которую ждёт TS.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct BBoxWire {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Направление строки по UAX #9.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum TextDirectionWire {
+    Ltr,
+    Rtl,
+}
+
+/// Физическое выравнивание строки внутри её полосы набора.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum TextAlignWire {
+    Left,
+    Center,
+    Right,
+}
+
+/// Что за блок породил run — от этого зависит ARIA-роль.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum BlockKindWire {
+    Paragraph,
+    Heading,
+    TableCell,
+}
+
+/// Стиль знака, которым нарисован run.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct TextStyleWire {
+    /// Гарнитура, которая реально ушла в `ctx.font`; `None` — умолчание реестра.
+    pub font_family: Option<String>,
+    /// Кегль в пикселях раскладки.
+    pub size_px: f32,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    /// Цвет `RRGGBB`; `None` — цвет по умолчанию.
+    pub color: Option<u32>,
+}
+
+/// Табличный контекст run — для ARIA `table/row/cell/columnheader`.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct TableContextWire {
+    /// `NodeId` таблицы: различает вложенные таблицы.
+    pub table_id: u32,
+    /// `NodeId` ячейки.
+    pub cell_id: u32,
+    /// Логический индекс строки в таблице (0-based).
+    pub row: u32,
+    /// Логический индекс колонки сетки (0-based); `w:bidiVisual` его не меняет.
+    pub col: u32,
+    /// Объединение по горизонтали (`w:gridSpan`).
+    pub col_span: u32,
+    /// Объединение по вертикали (`w:vMerge`).
+    pub row_span: u32,
+    /// Строка объявлена заголовком (`w:tblHeader`).
+    pub is_header: bool,
+    /// Строка повторена как заголовок на странице-продолжении.
+    pub is_repeated_header: bool,
+    /// Ячейка — продолжение вертикального объединения: своего текста у неё нет.
+    pub is_vmerge_continuation: bool,
+}
+
+/// Позиционированный текстовый run — единица `TextLayer`.
+///
+/// `bbox` и `line_rect` приходят из layout и не пересчитываются в TS: один
+/// источник истины для геометрии. `reading_order` — логический порядок (для
+/// AT и копирования), а не визуальный: визуальный порядок RTL даёт браузер.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct TextRunWire {
+    /// Стабильный ключ вида `p12:l3:f0`.
+    pub id: String,
+    /// Прямоугольник самого фрагмента в пикселях раскладки.
+    pub bbox: BBoxWire,
+    /// Прямоугольник всей строки: по нему строится визуальный span.
+    pub line_rect: BBoxWire,
+    pub text: String,
+    pub style: TextStyleWire,
+    /// 0-based номер страницы.
+    pub page: u32,
+    pub line_index: u32,
+    pub fragment_index: u32,
+    /// Сквозной логический порядок по документу.
+    pub reading_order: u32,
+    pub direction: TextDirectionWire,
+    /// Уровень UAX #9.
+    pub bidi_level: u8,
+    pub text_align: TextAlignWire,
+    /// `NodeId` абзаца или ячейки — группировка для ARIA.
+    pub node_id: u32,
+    pub block_kind: BlockKindWire,
+    /// Уровень заголовка 1–9; `None` — не заголовок.
+    pub heading_level: Option<u8>,
+    /// Табличный контекст; `None` — текст вне таблицы.
+    pub table: Option<TableContextWire>,
+}
+
+/// Runs одной страницы: срез в общем `runs`.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct PageRunsWire {
+    pub page: u32,
+    pub start: u32,
+    pub count: u32,
+}
+
+/// `TextLayer` документа: плоский список runs и карта страниц.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct TextLayerWire {
+    pub runs: Vec<TextRunWire>,
+    pub page_map: Vec<PageRunsWire>,
+}
+
 /// Описание слайда для интерфейса: индекс, имя (`p:cSld name`) и размеры в
 /// пикселях раскладки — по ним интерфейс показывает счётчик слайдов и строит
 /// навигацию, как по размерам страниц DOCX.

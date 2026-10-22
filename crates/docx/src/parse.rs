@@ -17,11 +17,11 @@ use quick_xml::events::Event;
 
 use crate::context::ParseCtx;
 use crate::error::{Error, Result};
-use crate::ns;
 use crate::model::{
     BlockItem, Body, Document, Footnote, HeaderFooter, Inline, MediaPart, NoteKind, NumberingTable,
     Paragraph, PartRef, Relationships, Settings, StyleId, StyleTable, Table,
 };
+use crate::ns;
 use crate::settings::xml_error;
 use crate::xml::local_name;
 use crate::{comments, document, footnotes, metadata, numbering, rels, settings, styles};
@@ -791,7 +791,9 @@ fn parse_archive(mut archive: Archive) -> Result<Document> {
     if !archive.contains(CONTENT_TYPES) {
         return Err(Error::MissingPart(CONTENT_TYPES.to_owned()));
     }
-    let content_types = read_part(&mut archive, CONTENT_TYPES)?;
+    // Часть читается, чтобы порчи XML не осталась незамеченной; содержимое
+    // дальше не нужно — типы частей знает `rels`.
+    let _content_types = read_part(&mut archive, CONTENT_TYPES)?;
 
     let root_rels = root_rels(&mut archive, &mut ctx)?;
     let document_part = main_part(&root_rels);

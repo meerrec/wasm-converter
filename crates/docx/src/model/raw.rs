@@ -736,6 +736,8 @@ pub struct RawPPr {
     pub ind: Option<Ind>,
     /// Выравнивание (`w:jc`).
     pub jc: Option<Justification>,
+    /// Базовое направление абзаца — справа налево (`w:bidi`).
+    pub bidi: Option<Toggle>,
     /// Не отрывать абзац от следующего (`w:keepNext`).
     pub keep_next: Option<Toggle>,
     /// Не разрывать абзац между страницами (`w:keepLines`).
@@ -798,6 +800,8 @@ pub struct RawRPr {
     pub sz: Option<HalfPoint>,
     /// Размер шрифта для языков со сложной раскладкой (`w:szCs`).
     pub sz_cs: Option<HalfPoint>,
+    /// Знак относится к RTL-тексту (`w:rtl`) — для арабского и иврита.
+    pub rtl: Option<Toggle>,
     /// Выделение цветом (`w:highlight`).
     pub highlight: Option<Highlight>,
     /// Подчёркивание (`w:u`).

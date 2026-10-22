@@ -128,6 +128,11 @@ export interface XlsxViewerOptions {
    * вызывающий его знает; путь байтов колбэк не трогает.
    */
   onProgress?: (loaded: number, total?: number) => void;
+  /**
+   * Минимальная a11y-обвязка: canvas скрыт от скринридеров, область получает
+   * `role=document`. Полноценная DOM-сетка листа — после Sprint 2.
+   */
+  a11y?: boolean;
 }
 
 const DEFAULT_SLOT_CAPACITY = 1 << 20;
@@ -152,6 +157,10 @@ export async function createXlsxViewer(
   canvas.style.cssText =
     'position:absolute;top:0;left:0;display:block;transform:translate(0px,0px)';
   scroller.append(spacer, canvas);
+  if (options.a11y === true) {
+    canvas.setAttribute('aria-hidden', 'true');
+    scroller.setAttribute('role', 'document');
+  }
   host.append(scroller);
 
   // Режим решает, уедет ли холст в воркер. Проверяем ровно ту возможность,

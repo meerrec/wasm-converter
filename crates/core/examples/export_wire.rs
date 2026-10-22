@@ -14,9 +14,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use doc_converter_core::wire::{
-    BuildStatsWire, HyperlinkInfoWire, ImageInfoWire, MarginsWire, OrientationWire, PageInfoWire,
-    PageSizeWire, PaintStatsWire, PdfOptionsWire, RenderOptionsWire, SheetInfoWire, SlideInfoWire,
-    ViewportWire,
+    BBoxWire, BlockKindWire, BuildStatsWire, HyperlinkInfoWire, ImageInfoWire, MarginsWire,
+    OrientationWire, PageInfoWire, PageRunsWire, PageSizeWire, PaintStatsWire, PdfOptionsWire,
+    RenderOptionsWire, SheetInfoWire, SlideInfoWire, TableContextWire, TextAlignWire,
+    TextDirectionWire, TextLayerWire, TextRunWire, TextStyleWire, ViewportWire,
 };
 use ts_rs::TS;
 
@@ -37,6 +38,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         RenderOptionsWire::decl(),
         SheetInfoWire::decl(),
         PageInfoWire::decl(),
+        BBoxWire::decl(),
+        TextDirectionWire::decl(),
+        TextAlignWire::decl(),
+        BlockKindWire::decl(),
+        TextStyleWire::decl(),
+        TableContextWire::decl(),
+        TextRunWire::decl(),
+        PageRunsWire::decl(),
+        TextLayerWire::decl(),
         SlideInfoWire::decl(),
         ImageInfoWire::decl(),
         HyperlinkInfoWire::decl(),

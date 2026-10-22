@@ -43,7 +43,7 @@ This block is written and re-added by `turbo` before repository-scoped commands 
 | `examples/viewer` | Демо (Vite + React) и Playwright-e2e; страницы `#/docx`, `#/xlsx` (конвертер и Euro-Office — в eurooffice-demo) |
 | `test-fixtures/` | `docx/` — 104 фикстуры с json-сайдкарами, `xlsx/` — 116 книг и `oracle.json` (эталон exceljs), `corrupted/`, `conf-xlsx/` (git-ignored) |
 | `scripts/` | Сборка wasm, генераторы фикстур, оракулы LibreOffice, memory-гейты, стайдинг Pages (`pages/sw.js` — корневой воркер заголовков изоляции демо) |
-| `docs/` | `adr/` (34 ADR и индекс), `sprint-6…13/`, `cookbook/`, `testing/`, `workers.md`, `bench-js.md`, `agent-contract.md` |
+| `docs/` | `adr/` (40 ADR и индекс), `sprint-2/`, `sprint-6…13/`, `cookbook/`, `testing/`, `workers.md`, `bench-js.md`, `agent-contract.md` |
 | `experiments/` | Спайк Спринта 13 (`lowa-spike`); часть артефактов в Git LFS (`x2t-spike` перенесён в eurooffice-demo) |
 | `target/`, `build/`, `.pages/`, `oracle-out/`, `oracle-out-docx/` | Выводы прогонов, git-ignored |
 

@@ -4,7 +4,6 @@
 
 use std::io::{Cursor, Write};
 
-use doc_converter_core::ZipLimits;
 use libfuzzer_sys::fuzz_target;
 
 /// Пакет PPTX с одной подставленной частью слайда: мусорные байты
@@ -40,5 +39,5 @@ fuzz_target!(|data: &[u8]| {
     let bytes = package_with(data);
     // Ошибка разбора — легальный исход на мусоре: панику внутри библиотеки
     // ловит сам либфаззер, и только она здесь находка.
-    let _ = doc_converter_pptx::parse(&bytes, &ZipLimits::default());
+    let _ = doc_converter_pptx::open(bytes);
 });

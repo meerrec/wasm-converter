@@ -770,6 +770,7 @@ pub(crate) fn parse_p_pr(
             b"spacing" => ppr.spacing = Some(parse_paragraph_spacing(&attrs, ctx, part)?),
             b"ind" => ppr.ind = Some(parse_ind(&attrs, ctx, part)?),
             b"jc" => ppr.jc = find(&attrs, "val").map(justification),
+            b"bidi" => ppr.bidi = attr_toggle(&attrs, ctx, part, "w:bidi")?,
             b"keepNext" => ppr.keep_next = attr_toggle(&attrs, ctx, part, "w:keepNext")?,
             b"keepLines" => ppr.keep_lines = attr_toggle(&attrs, ctx, part, "w:keepLines")?,
             b"pageBreakBefore" => {
@@ -863,6 +864,7 @@ pub(crate) fn parse_r_pr(
             }
             b"sz" => rpr.sz = attr_i32(&attrs, "val", ctx, part)?.map(HalfPoint::new),
             b"szCs" => rpr.sz_cs = attr_i32(&attrs, "val", ctx, part)?.map(HalfPoint::new),
+            b"rtl" => rpr.rtl = attr_toggle(&attrs, ctx, part, "w:rtl")?,
             b"highlight" => rpr.highlight = find(&attrs, "val").map(highlight),
             // `w:u` без `w:val` — одиночная линия: так велит умолчание схемы.
             b"u" => rpr.u = Some(find(&attrs, "val").map_or(Underline::Single, underline)),
@@ -1848,7 +1850,7 @@ mod tests {
         let (table, warnings) = parse_xml(
             r#"<w:style w:type="paragraph" w:styleId="Normal">
                  <w:pPr><w:lang w:val="en-US"/><w:weirdThing><w:inner/></w:weirdThing></w:pPr>
-                 <w:rPr><w:rtl/></w:rPr>
+                 <w:rPr><w:weirdRunProp/></w:rPr>
                </w:style>"#,
         );
 
@@ -1864,7 +1866,11 @@ mod tests {
             .unknown
             .iter()
             .any(|(name, xml)| name == "weirdThing" && xml.contains("<w:inner/>")));
-        assert!(style.rpr.unknown.iter().any(|(name, _)| name == "rtl"));
+        assert!(style
+            .rpr
+            .unknown
+            .iter()
+            .any(|(name, _)| name == "weirdRunProp"));
     }
 
     #[test]

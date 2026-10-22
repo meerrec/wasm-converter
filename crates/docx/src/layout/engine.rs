@@ -18,7 +18,7 @@ use crate::layout::fields::{resolve_paragraph, FieldPass};
 use crate::layout::float::{emu_to_px, layout_floats_on_page, FloatElement, FloatKind};
 use crate::layout::line_break::LineBreaker;
 use crate::layout::pagination::{HeaderExtent, Paginator};
-use crate::layout::paragraph::{layout_paragraph, Line, ParagraphLayout};
+use crate::layout::paragraph::{layout_paragraph, Line, LineAlign, LineFragment, ParagraphLayout};
 use crate::layout::tables::{
     compute_table_frame, layout_table_fragments, table_item, PageBand, TableRowLayout,
 };
@@ -135,6 +135,14 @@ pub enum LayoutItem {
         italic: bool,
         /// Подчёркивание (`w:u`).
         underline: bool,
+        /// Фрагменты строки по стилям знака — источник `TextLayer`.
+        fragments: Vec<LineFragment>,
+        /// Физическое выравнивание строки.
+        align: LineAlign,
+        /// База строки по UAX #9: `true` — справа налево.
+        rtl: bool,
+        /// Уровень заголовка 1–9; `None` — обычный абзац.
+        heading_level: Option<u8>,
     },
     /// Таблица — фрагмент на одной странице.
     ///
@@ -193,6 +201,22 @@ pub struct TableCellLayout {
     /// Ячейка — продолжение вертикального объединения: её содержимое осталось
     /// в начале объединения, здесь только геометрия.
     pub v_merge_continue: bool,
+    /// `NodeId` таблицы: отличает вложенную таблицу от внешней.
+    pub table_id: NodeId,
+    /// `NodeId` ячейки.
+    pub cell_id: NodeId,
+    /// Логический индекс строки в таблице (0-based).
+    pub row: u32,
+    /// Логический индекс колонки сетки (0-based).
+    pub col: u32,
+    /// `w:gridSpan`: сколько колонок занимает ячейка.
+    pub grid_span: u32,
+    /// Сколько строк занимает ячейка (`w:vMerge`); `0` — продолжение объединения.
+    pub row_span: u32,
+    /// Строка объявлена заголовком (`w:tblHeader`).
+    pub is_header: bool,
+    /// Строка повторена как заголовок на странице-продолжении.
+    pub header_repeat: bool,
 }
 
 /// Страница документа после раскладки.
@@ -652,6 +676,9 @@ fn empty_paragraph_line(line_breaker: &mut LineBreaker, x: f32) -> Line {
         bold: false,
         italic: false,
         underline: false,
+        fragments: Vec::new(),
+        align: LineAlign::Left,
+        rtl: false,
     }
 }
 
@@ -783,6 +810,10 @@ fn place_lines(
                 bold: line.bold,
                 italic: line.italic,
                 underline: line.underline,
+                fragments: line.fragments.clone(),
+                align: line.align,
+                rtl: line.rtl,
+                heading_level: layout.heading_level,
             });
     }
 
@@ -3039,6 +3070,7 @@ mod tests {
             jc: None,
             indent: None,
             cell_margins: CellMargins::default(),
+            bidi_visual: false,
         }
     }
 

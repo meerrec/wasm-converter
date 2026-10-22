@@ -361,6 +361,14 @@ mod tests {
             shading: None,
             borders: Box::new(borders),
             v_merge_continue: false,
+            table_id: doc_converter_core::NodeId::ROOT,
+            cell_id: doc_converter_core::NodeId::ROOT,
+            row: 0,
+            col: 0,
+            grid_span: 1,
+            row_span: 1,
+            is_header: false,
+            header_repeat: false,
         }
     }
 

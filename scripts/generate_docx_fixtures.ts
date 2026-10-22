@@ -38,6 +38,7 @@ import { rtlFixtures } from './docx-fixtures/rtl.js';
 import { cjkFixtures } from './docx-fixtures/cjk.js';
 import { headersFootersFixtures } from './docx-fixtures/headers-footers.js';
 import { notesFixtures } from './docx-fixtures/notes.js';
+import { a11yFixtures } from './docx-fixtures/a11y.js';
 import { brokenFixtures } from './docx-fixtures/broken.js';
 import { generateLargeFixtures, largeFixtureNames } from './docx-fixtures/large.js';
 
@@ -88,6 +89,7 @@ export const committableFixtures = (): FixtureSpec[] => [
     ...cjkFixtures,
     ...headersFootersFixtures,
     ...notesFixtures,
+    ...a11yFixtures,
     ...brokenFixtures,
 ];
 

@@ -157,6 +157,8 @@ pub struct ResolvedPPr {
     pub shd: Option<Shading>,
     /// Границы абзаца (`w:pBdr`).
     pub p_bdr: Option<ParagraphBorders>,
+    /// Базовое направление абзаца — справа налево (`w:bidi`).
+    pub bidi: bool,
 }
 
 impl Default for ResolvedPPr {
@@ -175,6 +177,7 @@ impl Default for ResolvedPPr {
             num_pr: None,
             shd: None,
             p_bdr: None,
+            bidi: false,
         }
     }
 }
@@ -211,6 +214,7 @@ impl ResolvedPPr {
         if let Some(p_bdr) = &ppr.p_bdr {
             self.p_bdr = Some(p_bdr.clone());
         }
+        apply_toggle(&mut self.bidi, ppr.bidi);
     }
 }
 
@@ -243,6 +247,12 @@ pub struct ResolvedRPr {
     pub vert_align: Option<VertAlign>,
     /// Выделение цветом (`w:highlight`).
     pub highlight: Option<Highlight>,
+    /// Гарнитура сложной раскладки (`w:rFonts w:cs`).
+    pub cs_font_family: Option<String>,
+    /// Кегль сложной раскладки (`w:szCs`); `None` — наследует [`Self::size`].
+    pub size_cs: Option<HalfPoint>,
+    /// Знак относится к RTL-тексту (`w:rtl`).
+    pub rtl: bool,
 }
 
 impl Default for ResolvedRPr {
@@ -259,6 +269,9 @@ impl Default for ResolvedRPr {
             color: None,
             vert_align: None,
             highlight: None,
+            cs_font_family: None,
+            size_cs: None,
+            rtl: false,
         }
     }
 }
@@ -283,10 +296,19 @@ impl ResolvedRPr {
             if let Some(family) = family {
                 self.font_family = Some(family.clone());
             }
+            // Гарнитура сложной раскладки хранится отдельно: она выбирается
+            // сегментацией по скрипту, а не заменяет латинскую.
+            if let Some(cs) = &fonts.cs {
+                self.cs_font_family = Some(cs.clone());
+            }
         }
         if let Some(size) = rpr.sz {
             self.size = size;
         }
+        if let Some(size) = rpr.sz_cs {
+            self.size_cs = Some(size);
+        }
+        apply_toggle(&mut self.rtl, rpr.rtl);
         apply_toggle(&mut self.bold, rpr.b);
         apply_toggle(&mut self.italic, rpr.i);
         apply_toggle(&mut self.all_caps, rpr.caps);

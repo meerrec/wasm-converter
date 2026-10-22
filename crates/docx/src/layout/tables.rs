@@ -55,7 +55,7 @@ use super::cascade::StyleCache;
 use super::engine::{
     LayoutItem, LayoutOptions, LayoutState, Rect, TableCellLayout, VAlign, PX_PER_POINT,
 };
-use super::paragraph::layout_paragraph_styled;
+use super::paragraph::{layout_paragraph_styled, LineAlign, LineFragment};
 
 /// Преобразовать twips в пиксели: 1 twip = 1/1440 дюйма, 1 пиксель = 1/96 дюйма.
 /// Отношение: (1/1440) / (1/96) = 96/1440 = 1/15.
@@ -115,6 +115,8 @@ pub struct TableFrame {
     pub x: f32,
     /// Ширины колонок в пикселях.
     pub col_widths: Vec<f32>,
+    /// `w:bidiVisual`: логическая колонка 0 стоит справа.
+    pub bidi_visual: bool,
 }
 
 impl TableFrame {
@@ -124,10 +126,17 @@ impl TableFrame {
         self.col_widths.iter().sum()
     }
 
-    /// Левый край колонки `col`.
+    /// Левый край колонки `col` (логический индекс).
+    ///
+    /// При `w:bidiVisual` колонки зеркалятся: логическая 0 — самая правая.
+    /// `col` в `TextLayer` и ARIA остаётся логическим.
     #[must_use]
     pub fn column_x(&self, col: usize) -> f32 {
-        self.x + self.col_widths.iter().take(col).sum::<f32>()
+        if self.bidi_visual {
+            self.x + self.col_widths.iter().skip(col + 1).sum::<f32>()
+        } else {
+            self.x + self.col_widths.iter().take(col).sum::<f32>()
+        }
     }
 
     /// Ширина ячейки, начинающейся в колонке `col` и занимающей `span` колонок.
@@ -341,6 +350,7 @@ pub fn compute_table_frame(table: &Table, x: f32, available_width: f32) -> Table
     TableFrame {
         x: x + offset,
         col_widths,
+        bidi_visual: table.bidi_visual,
     }
 }
 
@@ -396,6 +406,7 @@ pub fn measure_row_heights(
     let frame = TableFrame {
         x: 0.0,
         col_widths: col_widths.to_vec(),
+        bidi_visual: table.bidi_visual,
     };
     // Стилей у вызывающего нет: содержимое меряется умолчаниями движка, а не
     // каскадом документа (абзац со стилем может оказаться другого кегля).
@@ -701,6 +712,35 @@ fn layout_nested(
 /// `w:tblHeader` в середине ни на что не влияет.
 fn header_row_count(table: &Table) -> usize {
     table.rows.iter().take_while(|row| row.header).count()
+}
+
+/// Сколько строк занимает ячейка по `w:vMerge`.
+///
+/// Продолжение объединения — `0`: своего содержимого и своей роли в ARIA у него
+/// нет. Начало считает себя и все подряд идущие `continue` в том же слоте.
+/// `gridSpan` на вертикальное объединение не влияет.
+fn vertical_span(table: &Table, row: usize, cell_index: usize) -> u32 {
+    let Some(cell) = table
+        .rows
+        .get(row)
+        .and_then(|row| row.cells.get(cell_index))
+    else {
+        return 1;
+    };
+    match cell.v_merge {
+        Some(VMerge::Continue) => 0,
+        Some(VMerge::Restart) => {
+            let mut span = 1u32;
+            for next in table.rows.iter().skip(row + 1) {
+                match next.cells.get(cell_index).and_then(|cell| cell.v_merge) {
+                    Some(VMerge::Continue) => span = span.saturating_add(1),
+                    _ => break,
+                }
+            }
+            span
+        }
+        None => 1,
+    }
 }
 
 /// Часть строки, занимающая её целиком.
@@ -1017,6 +1057,12 @@ struct CellLine {
     bold: bool,
     italic: bool,
     underline: bool,
+    /// Фрагменты строки по стилям знака — источник `TextLayer`.
+    fragments: Vec<LineFragment>,
+    /// Физическое выравнивание строки.
+    align: LineAlign,
+    /// База строки по UAX #9.
+    rtl: bool,
 }
 
 /// Измерить строки таблицы: высоты и блоки содержимого.
@@ -1187,6 +1233,9 @@ fn measure_cell<'a>(
                         bold: line.bold,
                         italic: line.italic,
                         underline: line.underline,
+                        fragments: line.fragments,
+                        align: line.align,
+                        rtl: line.rtl,
                     }));
                 }
             }
@@ -1609,6 +1658,7 @@ fn interior_edge(edge: Option<&Border>, inside: Option<&Border>, interior: bool)
 }
 
 /// Разложить части строк в готовые строки: ячейки, объединения, границы.
+#[allow(clippy::too_many_lines)]
 fn layout_pieces(
     table: &Table,
     frame: &TableFrame,
@@ -1711,6 +1761,14 @@ fn layout_pieces(
                     table, style, piece.row, col, span, last_col, last_row, cut,
                 )),
                 v_merge_continue: cell.v_merge == Some(VMerge::Continue),
+                table_id: table.id,
+                cell_id: cell.id,
+                row: u32::try_from(piece.row).unwrap_or(u32::MAX),
+                col: u32::try_from(col).unwrap_or(u32::MAX),
+                grid_span: u32::try_from(span).unwrap_or(u32::MAX),
+                row_span: vertical_span(table, piece.row, cell_index),
+                is_header: row.header,
+                header_repeat: piece.header_repeat,
             });
             col += span;
         }
@@ -1789,6 +1847,12 @@ fn layout_cell_blocks(
                     bold: line.bold,
                     italic: line.italic,
                     underline: line.underline,
+                    fragments: line.fragments.clone(),
+                    align: line.align,
+                    rtl: line.rtl,
+                    // Заголовки внутри ячеек таблиц в TextLayer — обычный
+                    // TableCell: ARIA-роль определяется табличным контекстом.
+                    heading_level: None,
                 });
                 cursor += line.height + line.space_after;
             }
@@ -2121,6 +2185,7 @@ mod tests {
             jc: None,
             indent: None,
             cell_margins: CellMargins::default(),
+            bidi_visual: false,
         }
     }
 
