@@ -115,9 +115,14 @@ export interface XlsxPageApi {
   showHeaders: boolean;
   onShowGrid: (checked: boolean) => void;
   onShowHeaders: (checked: boolean) => void;
-  /** PDF: уместить лист на одну страницу (`fitToPage`). */
-  fitToPage: boolean;
-  onFitToPage: (checked: boolean) => void;
+  /**
+   * PDF: уместить все столбцы по ширине страницы (`fitToWidth: 1`).
+   *
+   * Не `fitToPage`: тот жмёт лист ещё и по высоте (1×1), и длинная таблица
+   * уезжает на одну страницу нечитаемым мелким шрифтом вместо переноса строк.
+   */
+  fitToWidth: boolean;
+  onFitToWidth: (checked: boolean) => void;
   /** PDF собирается: кнопки гасятся, пока файл не готов. */
   exporting: boolean;
   /** Текст индикатора занятости; `null` — окно свободно. */
@@ -140,7 +145,7 @@ export function useXlsxPage(): XlsxPageApi {
   const [zoom, setZoom] = useState('1');
   const [showGrid, setShowGrid] = useState(true);
   const [showHeaders, setShowHeaders] = useState(true);
-  const [fitToPage, setFitToPage] = useState(false);
+  const [fitToWidth, setFitToWidth] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -393,17 +398,17 @@ export function useXlsxPage(): XlsxPageApi {
     showHeaders,
     onShowGrid: setShowGrid,
     onShowHeaders: setShowHeaders,
-    fitToPage,
-    onFitToPage: setFitToPage,
+    fitToWidth,
+    onFitToWidth: setFitToWidth,
     exporting,
     busyLabel: loading ? 'Открываю документ…' : exporting ? 'Экспортирую PDF…' : null,
     exportDisabled: label === null || exporting,
     onExportSheet: () => {
-      void exportPdf(fitToPage ? { fitToPage: true } : { scale: 1 }, '');
+      void exportPdf(fitToWidth ? { fitToWidth: 1 } : { scale: 1 }, '');
     },
     onExportBook: () => {
       void exportPdf(
-        fitToPage ? { fitToPage: true, allSheets: true } : { scale: 1, allSheets: true },
+        fitToWidth ? { fitToWidth: 1, allSheets: true } : { scale: 1, allSheets: true },
         ' (все листы)',
       );
     },

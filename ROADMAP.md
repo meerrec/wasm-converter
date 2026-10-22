@@ -1057,6 +1057,11 @@ axe по корпусу — Спринт 3; бюджет `wasm (docx)` подн�
 `--fit-to-page`/`--fit-to-width`/`--fit-to-height`, cookbook `ex-09`,
 changeset. На `edge-many-columns.xlsx`: без fit — 20 страниц, с `fitToPage` — 1.
 
+**Правка после демо (23.10.2026):** чекбокс в демо — «вписать по ширине»,
+отдаёт `fitToWidth: 1`. `fitToPage` (1×1) втискивал `edge-many-rows.xlsx`
+(105 страниц) в одну; строки должны переноситься, а 1×1 остаётся в API как
+буквальный Excel «Fit Sheet on One Page».
+
 **Ограничения:** DOCX/PPTX поля не читают; fit-режим сильнее ручного `scale`.
 
 ---
