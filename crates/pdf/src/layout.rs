@@ -9,7 +9,7 @@
 //! верх ([`PageGeometry::with_page_top_px`]), который вычитается из
 //! вертикальных координат. Разбивка по строкам и столбцам, повтор шапки
 //! ([`PageConfig::repeat_header_rows`]) и первых столбцов
-//! ([`PageConfig::repeat_first_columns`]) — [`crate::pagination`].
+//! ([`PageConfig::repeat_first_columns`]) — `crate::pagination`.
 
 use doc_converter_xlsx::layout::PX_PER_POINT;
 
@@ -84,7 +84,7 @@ impl PageGeometry {
     ///
     /// Сдвиг только вертикальный: горизонтального сдвига у геометрии нет —
     /// полосу столбцов вычитает отрисовка среза (`PageSlice::offset_x`), а
-    /// разбивка листа — [`crate::pagination`].
+    /// разбивка листа — `crate::pagination`.
     #[must_use]
     pub fn with_page_top_px(self, top_px: f32) -> Self {
         Self {

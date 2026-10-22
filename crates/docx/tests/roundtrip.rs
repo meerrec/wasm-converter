@@ -163,6 +163,7 @@ fn full_rpr() -> RawRPr {
         color: Some(Color::Rgb(0x0033_66CC)),
         sz: Some(HalfPoint::new(24)),
         sz_cs: Some(HalfPoint::new(22)),
+        rtl: Some(Toggle::On),
         highlight: Some(Highlight::Yellow),
         u: Some(Underline::WavyDouble),
         vert_align: Some(VertAlign::Superscript),
@@ -198,6 +199,7 @@ fn full_ppr() -> RawPPr {
             hanging: Some(Twips::new(180)),
         }),
         jc: Some(Justification::Both),
+        bidi: Some(Toggle::On),
         keep_next: Some(Toggle::On),
         keep_lines: Some(Toggle::Off),
         page_break_before: Some(Toggle::On),
@@ -550,6 +552,7 @@ fn full_table() -> Table {
             bottom: Some(Twips::new(0)),
             right: Some(Twips::new(108)),
         },
+        bidi_visual: true,
     }
 }
 

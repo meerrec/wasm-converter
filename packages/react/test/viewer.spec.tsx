@@ -60,6 +60,8 @@ function fakeDocxHandle(): DocxViewerHandle {
     exportMarkdown: vi.fn(),
     exportHtml: vi.fn(),
     exportText: vi.fn(),
+    getTextLayer: vi.fn(),
+    getFullTextLayer: vi.fn(),
     onTick: vi.fn(),
     destroy: vi.fn(),
   };

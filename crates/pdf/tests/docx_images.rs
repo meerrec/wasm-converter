@@ -501,6 +501,7 @@ fn a_table(items: Vec<BlockItem>) -> Table {
         jc: None,
         indent: None,
         cell_margins: CellMargins::default(),
+        bidi_visual: false,
     }
 }
 

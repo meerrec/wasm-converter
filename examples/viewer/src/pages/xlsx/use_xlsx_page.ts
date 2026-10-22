@@ -149,6 +149,9 @@ export function useXlsxPage(): XlsxPageApi {
         // при промахе воркер пойдёт по сети сам — при первом экспорте, как и
         // раньше.
         pdfWasm: await resolvePdfWasm(),
+        // Минимальная a11y-обвязка для axe: `?a11y=1` скрывает canvas от
+        // скринридеров и помечает область как документ.
+        ...(new URLSearchParams(window.location.search).has('a11y') ? { a11y: true } : {}),
       }),
     (handle) => {
       publishViewer({ kind: 'xlsx', viewer: handle });

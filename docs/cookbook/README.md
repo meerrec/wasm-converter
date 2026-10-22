@@ -23,6 +23,7 @@ TypeScript** (сверен с публичным API `@meerrec/core`,
 | [export.md](export.md) | Экспорт: PNG, PDF, ленивый PDF-модуль, Markdown/HTML/текст |
 | [cli.md](cli.md) | CLI: `convert`, `batch`, опции PDF, коллизии имён |
 | [integration.md](integration.md) | Интеграция: Vite, WorkerPool и convertFile в Node, ошибки инициализации |
+| [a11y.md](a11y.md) | Доступность DOCX: TextLayer, скринридеры, выделение и копирование, ограничения |
 
 ## Числа, на которые опираются рецепты
 
@@ -43,7 +44,7 @@ Chrome 90+, Firefox 96+, Safari 16.4+.
 
 ## Рецепты
 
-Всего рецептов: **46**.
+Всего рецептов: **51**.
 
 | # | Рецепт | Файл |
 |---|---|---|
@@ -69,30 +70,35 @@ Chrome 90+, Firefox 96+, Safari 16.4+.
 | 20 | Embed без SAB: iframe, расширение, GitHub Pages | [transports.md](transports.md#tr-05) |
 | 21 | Что даёт SAB: ring и отбрасывание кадров | [transports.md](transports.md#tr-06) |
 | 22 | Диагностика dropped-кадров | [transports.md](transports.md#tr-07) |
-| 23 | PNG текущего кадра | [export.md](export.md#ex-01) |
-| 24 | PDF одного листа | [export.md](export.md#ex-02) |
-| 25 | PDF всей книги (allSheets) | [export.md](export.md#ex-03) |
-| 26 | Параметры PDF: размер, ориентация, поля, масштаб | [export.md](export.md#ex-04) |
-| 27 | DOCX → PDF из просмотрщика | [export.md](export.md#ex-05) |
-| 28 | Ленивый PDF-модуль: как отдать URL | [export.md](export.md#ex-06) |
-| 29 | DOCX → Markdown/HTML/текст | [export.md](export.md#ex-07) |
-| 30 | Экспорт без pdfWasm: внятная ошибка | [export.md](export.md#ex-08) |
-| 31 | convert: DOCX → PDF | [cli.md](cli.md#cli-01) |
-| 32 | convert: DOCX → Markdown/HTML/текст | [cli.md](cli.md#cli-02) |
-| 33 | convert: XLSX → PDF и выбор листа | [cli.md](cli.md#cli-03) |
-| 34 | Опции PDF в CLI | [cli.md](cli.md#cli-04) |
-| 35 | batch: glob и пул воркеров | [cli.md](cli.md#cli-05) |
-| 36 | batch: каталог рекурсивно | [cli.md](cli.md#cli-06) |
-| 37 | Коллизии имён в batch | [cli.md](cli.md#cli-07) |
-| 38 | Выходные коды и диагностика CLI | [cli.md](cli.md#cli-08) |
-| 39 | Vite: воркер через `?worker&url` | [integration.md](integration.md#in-01) |
-| 40 | Vite: COOP/COEP на dev-сервере | [integration.md](integration.md#in-02) |
-| 41 | WorkerPool в Node | [integration.md](integration.md#in-03) |
-| 42 | convertFile в Node без пула | [integration.md](integration.md#in-04) |
-| 43 | Явный `sab` без заголовков: ловим ошибку и объясняем пользователю | [integration.md](integration.md#in-05) |
-| 44 | supportsOffscreen и проверка окружения | [integration.md](integration.md#in-06) |
-| 45 | Отдельный воркер на каждый вьюер | [integration.md](integration.md#in-07) |
-| 46 | Кэш wasm-модулей blob-URL-ами | [integration.md](integration.md#in-08) |
+| 23 | Браузер без OffscreenCanvas: `renderMode` | [transports.md](transports.md#tr-08) |
+| 24 | PNG текущего кадра | [export.md](export.md#ex-01) |
+| 25 | PDF одного листа | [export.md](export.md#ex-02) |
+| 26 | PDF всей книги (allSheets) | [export.md](export.md#ex-03) |
+| 27 | Параметры PDF: размер, ориентация, поля, масштаб | [export.md](export.md#ex-04) |
+| 28 | DOCX → PDF из просмотрщика | [export.md](export.md#ex-05) |
+| 29 | Ленивый PDF-модуль: как отдать URL | [export.md](export.md#ex-06) |
+| 30 | DOCX → Markdown/HTML/текст | [export.md](export.md#ex-07) |
+| 31 | Экспорт без pdfWasm: внятная ошибка | [export.md](export.md#ex-08) |
+| 32 | convert: DOCX → PDF | [cli.md](cli.md#cli-01) |
+| 33 | convert: DOCX → Markdown/HTML/текст | [cli.md](cli.md#cli-02) |
+| 34 | convert: XLSX → PDF и выбор листа | [cli.md](cli.md#cli-03) |
+| 35 | Опции PDF в CLI | [cli.md](cli.md#cli-04) |
+| 36 | batch: glob и пул воркеров | [cli.md](cli.md#cli-05) |
+| 37 | batch: каталог рекурсивно | [cli.md](cli.md#cli-06) |
+| 38 | Коллизии имён в batch | [cli.md](cli.md#cli-07) |
+| 39 | Выходные коды и диагностика CLI | [cli.md](cli.md#cli-08) |
+| 40 | Vite: воркер через `?worker&url` | [integration.md](integration.md#in-01) |
+| 41 | Vite: COOP/COEP на dev-сервере | [integration.md](integration.md#in-02) |
+| 42 | WorkerPool в Node | [integration.md](integration.md#in-03) |
+| 43 | convertFile в Node без пула | [integration.md](integration.md#in-04) |
+| 44 | Явный `sab` без заголовков: ловим ошибку и объясняем пользователю | [integration.md](integration.md#in-05) |
+| 45 | supportsOffscreen и проверка окружения | [integration.md](integration.md#in-06) |
+| 46 | Отдельный воркер на каждый вьюер | [integration.md](integration.md#in-07) |
+| 47 | Кэш wasm-модулей blob-URL-ами | [integration.md](integration.md#in-08) |
+| 48 | Включить доступный режим DOCX | [a11y.md](a11y.md#a11y-01) |
+| 49 | Программно получить TextLayer | [a11y.md](a11y.md#a11y-02) |
+| 50 | Почему `a11y` выключен по умолчанию | [a11y.md](a11y.md#a11y-03) |
+| 51 | Известные ограничения TextLayer | [a11y.md](a11y.md#a11y-04) |
 
 ## Источники фактов
 

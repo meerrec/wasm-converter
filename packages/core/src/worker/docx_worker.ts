@@ -8,6 +8,8 @@ import { frameTarget } from './frame_args.js';
 import {
   buildDocxInto,
   buildDocxSab,
+  docxFullTextLayer,
+  docxTextLayer,
   exportDocxPdf,
   images,
   openDocx,
@@ -152,6 +154,33 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
         post({ type: 'pdf', id: msg.id, bytes }, [bytes.buffer]);
       } catch (e) {
         // Ошибка экспорта — ответ, а не падение воркера: документ остаётся открытым.
+        postError(String(e), { id: msg.id, code: 'export' });
+      }
+      break;
+    }
+    case 'text-layer': {
+      const mod = docxWasm;
+      if (!mod) {
+        postError('no docx document is open', { id: msg.id, code: 'export' });
+        break;
+      }
+      try {
+        // Раскладка уже посчитана при открытии: здесь только выбор страницы.
+        post({ type: 'text-layer', id: msg.id, layer: docxTextLayer(mod, msg.page) });
+      } catch (e) {
+        postError(String(e), { id: msg.id, code: 'export' });
+      }
+      break;
+    }
+    case 'text-layer-all': {
+      const mod = docxWasm;
+      if (!mod) {
+        postError('no docx document is open', { id: msg.id, code: 'export' });
+        break;
+      }
+      try {
+        post({ type: 'text-layer', id: msg.id, layer: docxFullTextLayer(mod) });
+      } catch (e) {
         postError(String(e), { id: msg.id, code: 'export' });
       }
       break;

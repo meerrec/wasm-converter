@@ -19,6 +19,7 @@ pub mod layout;
 pub mod model;
 pub mod plugin;
 pub mod render;
+pub mod text_layer;
 
 // Парсеры частей пакета и общий контекст разбора.
 mod comments;

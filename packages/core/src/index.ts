@@ -16,6 +16,8 @@ export type {
   PageInfo,
   SlideInfo,
   HyperlinkInfo,
+  TextLayer,
+  TextRun,
 } from './protocol.js';
 
 export {

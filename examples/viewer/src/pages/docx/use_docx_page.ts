@@ -103,6 +103,9 @@ export function useDocxPage(): DocxPageController {
         // или первого экспорта, как и раньше.
         docxWasm: await resolveDocxWasm(),
         pdfWasm: await resolvePdfWasm(),
+        // Сквозные тесты и ручная проверка NVDA/VoiceOver включают слой
+        // параметром `?a11y=1`; по умолчанию он выключен.
+        ...(new URLSearchParams(window.location.search).has('a11y') ? { a11y: true } : {}),
       }),
     (handle) => {
       publishViewer({ kind: 'docx', viewer: handle });

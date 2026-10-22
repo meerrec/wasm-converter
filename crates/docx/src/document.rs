@@ -708,6 +708,8 @@ struct TableParts {
     indent: Option<Twips>,
     /// Умолчания полей ячеек (`w:tblPr/w:tblCellMar`).
     cell_margins: CellMargins,
+    /// Таблица справа налево (`w:tblPr/w:bidiVisual`).
+    bidi_visual: bool,
 }
 
 impl Default for TableParts {
@@ -724,6 +726,7 @@ impl Default for TableParts {
             jc: None,
             indent: None,
             cell_margins: CellMargins::default(),
+            bidi_visual: false,
         }
     }
 }
@@ -759,6 +762,7 @@ fn parse_table(
         jc: parts.jc,
         indent: parts.indent,
         cell_margins: parts.cell_margins,
+        bidi_visual: parts.bidi_visual,
     })
 }
 
@@ -881,6 +885,12 @@ fn parse_tbl_pr(
                 }
             }
             b"tblLook" => parts.look = parse_table_look(&attrs),
+            b"bidiVisual" => {
+                parts.bidi_visual = matches!(
+                    attr_toggle(&attrs, ctx, part, "w:bidiVisual")?,
+                    Some(Toggle::On)
+                );
+            }
             b"jc" => parts.jc = parse_justification(&attrs, ctx, part)?,
             b"tblInd" => parts.indent = attr_i32(&attrs, "w", ctx, part)?.map(Twips::new),
             b"tblCellMar" => {
@@ -3002,6 +3012,7 @@ fn parse_ppr(
             b"spacing" => ppr.spacing = Some(parse_spacing(&attrs, ctx, part)?),
             b"ind" => ppr.ind = Some(parse_ind(&attrs, ctx, part)?),
             b"jc" => ppr.jc = parse_justification(&attrs, ctx, part)?,
+            b"bidi" => ppr.bidi = attr_toggle(&attrs, ctx, part, "w:bidi")?,
             b"keepNext" => ppr.keep_next = attr_toggle(&attrs, ctx, part, "w:keepNext")?,
             b"keepLines" => ppr.keep_lines = attr_toggle(&attrs, ctx, part, "w:keepLines")?,
             b"pageBreakBefore" => {
@@ -3336,6 +3347,7 @@ fn parse_rpr(
             b"color" => rpr.color = parse_color(find(&attrs, "val"), ctx, part)?,
             b"sz" => rpr.sz = attr_i32(&attrs, "val", ctx, part)?.map(HalfPoint::new),
             b"szCs" => rpr.sz_cs = attr_i32(&attrs, "val", ctx, part)?.map(HalfPoint::new),
+            b"rtl" => rpr.rtl = attr_toggle(&attrs, ctx, part, "w:rtl")?,
             b"highlight" => rpr.highlight = parse_highlight(&attrs, ctx, part)?,
             b"u" => rpr.u = Some(parse_underline(&attrs)),
             b"vertAlign" => rpr.vert_align = parse_vert_align(&attrs, ctx, part)?,
@@ -4127,8 +4139,9 @@ mod tests {
 
     #[test]
     fn unknown_properties_stay_in_the_unknown_lists() {
-        let (body, warnings) =
-            parse_xml("<w:p><w:pPr><w:contextualSpacing/><w:rPr><w:rtl/></w:rPr></w:pPr></w:p>");
+        let (body, warnings) = parse_xml(
+            "<w:p><w:pPr><w:contextualSpacing/><w:rPr><w:weirdRunProp/></w:rPr></w:pPr></w:p>",
+        );
 
         assert_eq!(warnings.len(), 2, "{warnings:?}");
         let paragraph = paragraphs(&body)[0];
@@ -4136,7 +4149,24 @@ mod tests {
         assert_eq!(paragraph.ppr.unknown[0].0, "contextualSpacing");
         assert_eq!(paragraph.ppr.unknown[0].1, "<w:contextualSpacing/>");
         let rpr = paragraph.ppr.r_pr.as_ref().expect("`w:rPr` is kept");
-        assert_eq!(rpr.unknown, vec![("rtl".to_owned(), "<w:rtl/>".to_owned())]);
+        assert_eq!(
+            rpr.unknown,
+            vec![("weirdRunProp".to_owned(), "<w:weirdRunProp/>".to_owned())]
+        );
+    }
+
+    #[test]
+    fn bidi_and_rtl_are_parsed_not_unknown() {
+        let (body, warnings) =
+            parse_xml("<w:p><w:pPr><w:bidi/><w:rPr><w:rtl/></w:rPr></w:pPr></w:p>");
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let paragraph = paragraphs(&body)[0];
+        assert_eq!(paragraph.ppr.bidi, Some(Toggle::On));
+        let rpr = paragraph.ppr.r_pr.as_ref().expect("`w:rPr` is kept");
+        assert_eq!(rpr.rtl, Some(Toggle::On));
+        assert!(paragraph.ppr.unknown.is_empty());
+        assert!(rpr.unknown.is_empty());
     }
 
     #[test]

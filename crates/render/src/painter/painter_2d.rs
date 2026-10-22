@@ -45,6 +45,20 @@ impl Painter2D {
         &self.ctx
     }
 
+    /// Поставить canvas `direction` (`ltr`/`rtl`).
+    ///
+    /// web-sys не генерирует свойство `direction` у Canvas2D-контекста, хотя
+    /// оно есть в спецификации и в обоих браузерных контекстах. Пишем его
+    /// напрямую: ошибка свойства не должна ронять кадр.
+    fn set_text_direction(&self, rtl: bool) {
+        let ctx: &JsValue = self.ctx.as_ref();
+        let _ = js_sys::Reflect::set(
+            ctx,
+            &JsValue::from_str("direction"),
+            &JsValue::from_str(if rtl { "rtl" } else { "ltr" }),
+        );
+    }
+
     pub fn bitmaps_mut(&mut self) -> &mut BitmapCache {
         &mut self.bitmaps
     }
@@ -149,6 +163,14 @@ impl Painter2D {
                 underline,
             } => {
                 let s = reader.string(text_ref);
+                // RLM в начале — сигнал RTL-базы от раскладки DOCX: canvas
+                // `direction` не входит в web-sys, ставим его свойством
+                // контекста. Символ в строку рисования не попадает.
+                let (s, rtl) = match s.strip_prefix('\u{200F}') {
+                    Some(rest) => (rest, true),
+                    None => (s, false),
+                };
+                self.set_text_direction(rtl);
                 let family = reader.string(font_ref);
                 let font = self.state.font_css(family, size, bold, italic).to_owned();
                 self.ctx.set_font(&font);
@@ -182,6 +204,9 @@ impl Painter2D {
                 if let Some(metrics) = metrics {
                     self.draw_underline(&metrics, x, y, size, color, align, baseline);
                 }
+                // Следующая команда (в том числе текст диаграммы) не должна
+                // наследовать RTL-направление предыдущей строки.
+                self.set_text_direction(false);
             }
             DrawCommand::Image {
                 x,

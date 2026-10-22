@@ -308,6 +308,14 @@ pub(crate) fn to_js(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 
+/// Доступ к раскладке открытого документа — для [`crate::text_api`].
+///
+/// `None` — документ не открыт. Замыкание выполняется под заимствованием
+/// `DOC`: вызывающий не должен сам трогать `DOC` внутри.
+pub(crate) fn with_layout<T>(read: impl FnOnce(&PageLayout) -> T) -> Option<T> {
+    DOC.with(|doc| doc.borrow().as_ref().map(|doc| read(&doc.layout)))
+}
+
 /// Перевести окно из JS в представление рендера.
 ///
 /// У DOCX `scrollY` отсчитывается от верха стопки страниц, а не от верха

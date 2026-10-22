@@ -19,6 +19,7 @@
 //! первого слова, но переносится уже целиком.
 
 use doc_converter_render::font::FontId;
+use unicode_bidi::BidiClass;
 
 use crate::model::raw::{HalfPoint, Underline};
 use crate::model::{
@@ -67,6 +68,50 @@ pub struct Line {
     pub italic: bool,
     /// Подчёркивание (`w:u`), сведённое к факту: вид линии несёт только `DisplayList`.
     pub underline: bool,
+    /// Фрагменты строки — по одному на отрезок с одним стилем знака.
+    ///
+    /// `Line` по-прежнему несёт стиль первого прогона: так её рисует canvas и
+    /// так её читает PDF. Фрагменты — второй, аддитивный слой для `TextLayer`:
+    /// они дают стиль и ширину каждой части, не меняя картинку.
+    pub fragments: Vec<LineFragment>,
+    /// Физическое выравнивание строки в её полосе набора.
+    pub align: LineAlign,
+    /// База строки по UAX #9: `true` — справа налево.
+    pub rtl: bool,
+}
+
+/// Физическое выравнивание строки — без `w:jc`-семантики `Both`/`Distribute`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineAlign {
+    Left,
+    Center,
+    Right,
+}
+
+/// Отрезок строки с одним стилем знака.
+///
+/// `range` — байтовый диапазон в [`Line::text`] (не в тексте абзаца), поэтому
+/// текст фрагмента — `line.text[range]` без второго хранилища строк.
+#[derive(Debug, Clone)]
+pub struct LineFragment {
+    /// Байтовый диапазон в тексте строки.
+    pub range: std::ops::Range<usize>,
+    /// Смещение X от начала строки.
+    pub x: f32,
+    /// Ширина фрагмента.
+    pub width: f32,
+    /// Гарнитура, которой фрагмент измерен и будет нарисован.
+    pub font_family: Option<String>,
+    /// Кегль (`w:sz`) в полупунктах.
+    pub size: HalfPoint,
+    /// Полужирный (`w:b`).
+    pub bold: bool,
+    /// Курсив (`w:i`).
+    pub italic: bool,
+    /// Подчёркивание (`w:u`).
+    pub underline: bool,
+    /// Цвет текста `RRGGBB`; `None` — по умолчанию.
+    pub color: Option<u32>,
 }
 
 /// Результат раскладки абзаца.
@@ -88,6 +133,9 @@ pub struct ParagraphLayout {
     pub widow_control: bool,
     /// Плавающие объекты абзаца.
     pub anchors: Vec<Anchor>,
+    /// Уровень заголовка из `w:outlineLvl` (0–8 соответствует h1–h9);
+    /// `None` — обычный абзац.
+    pub heading_level: Option<u8>,
 }
 
 /// Отрезок абзаца с одним стилем знака: текст, метрики и начертание.
@@ -172,6 +220,55 @@ impl ParagraphText {
             spans,
         }
     }
+
+    /// Нарезать диапазон строки на фрагменты по границам отрезков.
+    ///
+    /// X считается той же меркой, что и ширина строки: префикс до фрагмента
+    /// меряется спанами `MetricSpan`, поэтому второй системы ширин не
+    /// появляется. Диапазоны фрагментов относительны тексту строки.
+    fn fragments(
+        &self,
+        segments: &[Segment],
+        line_range: std::ops::Range<usize>,
+        breaker: &mut LineBreaker,
+    ) -> Vec<LineFragment> {
+        let mut fragments = Vec::new();
+        let mut cursor = line_range.start;
+        let mut x = 0.0;
+        for (index, segment) in segments.iter().enumerate() {
+            let start = self.starts[index].max(line_range.start);
+            let end = self
+                .starts
+                .get(index + 1)
+                .copied()
+                .unwrap_or(self.text.len())
+                .min(line_range.end);
+            if start >= end {
+                continue;
+            }
+            // Промежуток между фрагментами — обычно нулевой; если отрезок
+            // начался до строки или между ними остались байты, они тоже
+            // занимают ширину и не должны теряться.
+            if start > cursor {
+                x += breaker.measure_spanned(&self.text, &self.spans, cursor..start);
+            }
+            let width = breaker.measure_spanned(&self.text, &self.spans, start..end);
+            fragments.push(LineFragment {
+                range: (start - line_range.start)..(end - line_range.start),
+                x,
+                width,
+                font_family: segment.draw_family.clone(),
+                size: segment.size,
+                bold: segment.bold,
+                italic: segment.italic,
+                underline: segment.underline,
+                color: segment.color,
+            });
+            x += width;
+            cursor = end;
+        }
+        fragments
+    }
 }
 
 /// Подчёркивание знака, сведённое к факту.
@@ -192,43 +289,40 @@ fn is_underlined(underline: Option<&Underline>) -> bool {
 /// именем строка потом рисуется. Незарегистрированное семейство даёт запасное
 /// лицо, и строка несёт его имя, а не имя из документа: иначе painter поставил
 /// бы canvas'у шрифт, которым раскладка не мерила.
+///
+/// Гиперссылки и поля обходятся тем же `collect_runs`, что и в таблицах: текст
+/// ссылки/оглавления — часть абзаца, и без него не только `TextLayer`, но и
+/// canvas теряли содержимое.
 fn segments(
     styles: &StyleTable,
     paragraph: &Paragraph,
     resolved: &ResolvedParagraph,
     cache: &mut StyleCache,
     line_breaker: &LineBreaker,
-    nested: bool,
+    include_fields: bool,
 ) -> Vec<Segment> {
     let mut segments: Vec<Segment> = Vec::new();
-    if nested {
-        // Абзац ячейки несёт ещё и текст ссылок и полей: ни подстановку полей,
-        // ни раскладку ссылок движок к таблице не применяет, и без захода в них
-        // оглавление в ячейке пропало бы целиком.
-        let mut runs = Vec::new();
-        collect_runs(&paragraph.runs, &mut runs);
-        for run in runs {
-            push_segment(&mut segments, styles, resolved, run, cache, line_breaker);
-        }
-    } else {
-        for inline in &paragraph.runs {
-            let Inline::Run(run) = inline else {
-                // Прочие варианты `Inline` (гиперссылки, поля) раскладка пока не несёт.
-                continue;
-            };
-            push_segment(&mut segments, styles, resolved, run, cache, line_breaker);
-        }
+    let mut runs = Vec::new();
+    collect_runs(&paragraph.runs, &mut runs, include_fields);
+    for run in runs {
+        push_segment(&mut segments, styles, resolved, run, cache, line_breaker);
     }
     segments
 }
 
-/// Прогоны inline-элементов в порядке текста, с заходом в ссылки и поля.
-fn collect_runs<'a>(inlines: &'a [Inline], runs: &mut Vec<&'a Run>) {
+/// Прогоны inline-элементов в порядке текста, с заходом в ссылки.
+///
+/// `include_fields` — обход результата полей. Тело документа поля не разворачивает
+/// (это контракт [`super::fields`]: неизвестное поле остаётся пустым), а ячейка
+/// таблицы исторически несёт кэш поля — например, оглавление целиком.
+fn collect_runs<'a>(inlines: &'a [Inline], runs: &mut Vec<&'a Run>, include_fields: bool) {
     for inline in inlines {
         match inline {
             Inline::Run(run) => runs.push(run),
-            Inline::Hyperlink(link) => collect_runs(&link.runs, runs),
-            Inline::Field(field) => collect_runs(&field.result, runs),
+            Inline::Hyperlink(link) => collect_runs(&link.runs, runs, include_fields),
+            Inline::Field(field) if include_fields => {
+                collect_runs(&field.result, runs, include_fields);
+            }
             _ => {}
         }
     }
@@ -248,17 +342,60 @@ fn push_segment(
         return;
     }
     let rpr = resolve_run_styled(styles, resolved, run, cache);
-    let family = rpr.font_family.as_deref();
-    segments.push(Segment {
-        text,
-        font_id: line_breaker.resolve_family(family),
-        draw_family: line_breaker.drawable_family(family).map(str::to_owned),
-        size: rpr.size,
-        bold: rpr.bold,
-        italic: rpr.italic,
-        underline: is_underlined(rpr.underline.as_ref()),
-        color: rpr.color,
-    });
+    for (chunk, rtl) in split_script(&text, rpr.rtl) {
+        // RTL-кусок меряется гарнитурой и кеглем сложной раскладки (`w:cs`/
+        // `w:szCs`), LTR — обычными `w:rFonts`/`w:sz`. Координаты строки
+        // складываются из этих ширин, поэтому смешивать их нельзя.
+        let (family, size) = if rtl {
+            (
+                rpr.cs_font_family.as_deref().or(rpr.font_family.as_deref()),
+                rpr.size_cs.unwrap_or(rpr.size),
+            )
+        } else {
+            (rpr.font_family.as_deref(), rpr.size)
+        };
+        segments.push(Segment {
+            text: chunk.to_owned(),
+            font_id: line_breaker.resolve_family(family),
+            draw_family: line_breaker.drawable_family(family).map(str::to_owned),
+            size,
+            bold: rpr.bold,
+            italic: rpr.italic,
+            underline: is_underlined(rpr.underline.as_ref()),
+            color: rpr.color,
+        });
+    }
+}
+
+/// Разбить текст run'а на куски сильного направления.
+///
+/// Нейтральные символы (пробелы, знаки) примыкают к предыдущему сильному куску:
+/// иначе пробел между арабскими словами уезжал бы в латинскую мерку. В начале
+/// строки направление нейтралов задаёт `w:rtl` прогона.
+fn split_script(text: &str, default_rtl: bool) -> Vec<(&str, bool)> {
+    let mut chunks = Vec::new();
+    let mut start = 0usize;
+    let mut current: Option<bool> = None;
+    for (index, ch) in text.char_indices() {
+        let rtl = match super::bidi::class(ch) {
+            BidiClass::R | BidiClass::AL | BidiClass::AN => true,
+            BidiClass::L => false,
+            _ => current.unwrap_or(default_rtl),
+        };
+        match current {
+            Some(previous) if previous != rtl => {
+                chunks.push((&text[start..index], previous));
+                start = index;
+                current = Some(rtl);
+            }
+            None => current = Some(rtl),
+            Some(_) => {}
+        }
+    }
+    if start < text.len() {
+        chunks.push((&text[start..], current.unwrap_or(default_rtl)));
+    }
+    chunks
 }
 
 /// Разложить абзац в строки.
@@ -294,10 +431,12 @@ pub fn layout_paragraph(
 /// же каскадом, что и абзац тела. Раскладка у обоих путей одна: кегль, цвет,
 /// начертание, `w:jc`, `w:ind` и межстрочный интервал считаются здесь, а
 /// вертикаль строк ведёт владелец абзаца.
-///
-/// `nested` — обход прогонов с заходом в ссылки и поля (см. [`segments`]).
 #[must_use]
 #[allow(clippy::too_many_arguments)]
+// Разбивка «текст → строки → фрагменты» живёт одним проходом: вынести
+// фрагменты в отдельную функцию значило бы заново передать туда каскад,
+// сегменты и мерку.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn layout_paragraph_styled(
     styles: &StyleTable,
     paragraph: &Paragraph,
@@ -305,7 +444,7 @@ pub(crate) fn layout_paragraph_styled(
     options: &LayoutOptions,
     cache: &mut StyleCache,
     line_breaker: &mut LineBreaker,
-    nested: bool,
+    include_fields: bool,
 ) -> ParagraphLayout {
     let resolved = resolve_paragraph_styled(styles, paragraph, cache);
     let ind = resolved.ppr.ind;
@@ -318,7 +457,14 @@ pub(crate) fn layout_paragraph_styled(
     let origin = state.x + ind.left_px;
 
     let mut lines = Vec::new();
-    let segments = segments(styles, paragraph, &resolved, cache, line_breaker, nested);
+    let segments = segments(
+        styles,
+        paragraph,
+        &resolved,
+        cache,
+        line_breaker,
+        include_fields,
+    );
     let flow = ParagraphText::new(&segments);
 
     // Первую строку абзаца отрезаем её полосой отдельно: перенос идёт по всему
@@ -342,6 +488,10 @@ pub(crate) fn layout_paragraph_styled(
             .map(|line| (line, origin, band)),
     );
 
+    // База абзаца — из `w:bidi` или первого сильного символа. От неё зависят
+    // выравнивание и направление строки в TextLayer.
+    let rtl = super::bidi::base_rtl(&flow.text, resolved.ppr.bidi);
+
     for (line, x, line_band) in broken {
         let style = Segment::at(&segments, &flow.starts, line.range.start);
         // Высота строки — по самому крупному её прогону, а если спанов на
@@ -354,9 +504,11 @@ pub(crate) fn layout_paragraph_styled(
         // Шрифт — того же прогона, что задал кегль; без спанов — отрезка,
         // открывшего строку. Высоту считает метрика именно этого шрифта.
         let font_id = line.max_size_font.unwrap_or(style.font_id);
+        let align = line_align(jc, rtl);
+        let fragments = flow.fragments(&segments, line.range.clone(), line_breaker);
         lines.push(Line {
             text: flow.text[line.range].to_owned(),
-            x: x + align_shift(jc, line_band, line.width),
+            x: x + align_shift(jc, line_band, line.width, rtl),
             width: line.width,
             height: line_breaker.line_height_for(font_id, size, resolved.ppr.spacing.line),
             line_rule_excess: line_rule_excess(
@@ -371,6 +523,9 @@ pub(crate) fn layout_paragraph_styled(
             bold: style.bold,
             italic: style.italic,
             underline: style.underline,
+            fragments,
+            align,
+            rtl,
         });
     }
 
@@ -381,7 +536,7 @@ pub(crate) fn layout_paragraph_styled(
         let font_id = line_breaker.resolve_family(resolved.rpr.font_family.as_deref());
         lines.push(Line {
             text: String::new(),
-            x: origin + ind.first_line_px + align_shift(jc, first_line_band, 0.0),
+            x: origin + ind.first_line_px + align_shift(jc, first_line_band, 0.0, rtl),
             width: 0.0,
             height: line_breaker.line_height_for(
                 font_id,
@@ -404,6 +559,9 @@ pub(crate) fn layout_paragraph_styled(
             bold: resolved.rpr.bold,
             italic: resolved.rpr.italic,
             underline: is_underlined(resolved.rpr.underline.as_ref()),
+            fragments: Vec::new(),
+            align: line_align(jc, rtl),
+            rtl,
         });
     }
 
@@ -416,6 +574,11 @@ pub(crate) fn layout_paragraph_styled(
         keep_lines: resolved.ppr.keep_lines,
         widow_control: resolved.ppr.widow_control,
         anchors: collect_anchors(paragraph),
+        // `w:outlineLvl` 0-based; ARIA/HTML ждут 1-based уровень заголовка.
+        heading_level: resolved
+            .ppr
+            .outline_lvl
+            .map(|level| level.saturating_add(1).min(9)),
     }
 }
 
@@ -471,13 +634,40 @@ fn run_text(run: &Run) -> String {
 
 /// Сдвиг строки внутри её полосы по `w:jc`.
 ///
-/// `Both` и `Distribute` идут как левое: растянуть строку можно, лишь зная, какие
-/// пробелы в ней растяжимы, — это отдельный слайс.
-fn align_shift(jc: Option<&Justification>, band: f32, width: f32) -> f32 {
+/// `Both` и `Distribute` идут как начало строки: растянуть строку можно, лишь
+/// зная, какие пробелы в ней растяжимы, — это отдельный слайс.
+fn align_shift(jc: Option<&Justification>, band: f32, width: f32, rtl: bool) -> f32 {
+    match line_align(jc, rtl) {
+        LineAlign::Center => (band - width) / 2.0,
+        LineAlign::Right => band - width,
+        LineAlign::Left => 0.0,
+    }
+}
+
+/// Физическое выравнивание строки для `TextLayer` и правого якоря canvas.
+///
+/// `Start`/`End` зависят от направления: в RTL `Start` — справа, `End` — слева.
+/// Без явного `w:jc` RTL-абзац выравнивается вправо, как в Word.
+fn line_align(jc: Option<&Justification>, rtl: bool) -> LineAlign {
+    let start = if rtl {
+        LineAlign::Right
+    } else {
+        LineAlign::Left
+    };
+    let end = if rtl {
+        LineAlign::Left
+    } else {
+        LineAlign::Right
+    };
     match jc {
-        Some(Justification::Center) => (band - width) / 2.0,
-        Some(Justification::Right | Justification::End) => band - width,
-        _ => 0.0,
+        Some(Justification::Center) => LineAlign::Center,
+        Some(Justification::Right) => LineAlign::Right,
+        Some(Justification::Left) => LineAlign::Left,
+        Some(Justification::Start) => start,
+        Some(Justification::End) => end,
+        Some(Justification::Both | Justification::Distribute | Justification::Other(_)) | None => {
+            start
+        }
     }
 }
 

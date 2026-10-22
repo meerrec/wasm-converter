@@ -600,6 +600,10 @@ fn parse_ppr(
                 ppr.jc = find(&attrs, "val").map(justification);
                 skip_tail(reader, empty, part)?;
             }
+            b"bidi" => {
+                ppr.bidi = attr_toggle(&attrs, ctx, part, "w:bidi")?;
+                skip_tail(reader, empty, part)?;
+            }
             b"keepNext" => {
                 ppr.keep_next = attr_toggle(&attrs, ctx, part, "w:keepNext")?;
                 skip_tail(reader, empty, part)?;
@@ -667,6 +671,7 @@ fn parse_rpr(
             b"color" => rpr.color = parse_color(&attrs, ctx, part)?,
             b"sz" => rpr.sz = attr_i32(&attrs, "val", ctx, part)?.map(HalfPoint::new),
             b"szCs" => rpr.sz_cs = attr_i32(&attrs, "val", ctx, part)?.map(HalfPoint::new),
+            b"rtl" => rpr.rtl = attr_toggle(&attrs, ctx, part, "w:rtl")?,
             b"highlight" => rpr.highlight = find(&attrs, "val").map(highlight),
             b"u" => {
                 rpr.u = Some(find(&attrs, "val").map_or(Underline::Single, underline));

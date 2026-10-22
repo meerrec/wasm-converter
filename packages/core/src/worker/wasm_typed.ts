@@ -23,6 +23,7 @@ import type {
   RenderOptionsWire,
   SheetInfoWire,
   SlideInfoWire,
+  TextLayerWire,
   ViewportWire,
 } from '../generated/wire.js';
 
@@ -53,6 +54,14 @@ export const openXlsxStream = (streamId: number): SheetInfoWire[] =>
 /** Завершить поток DOCX: разобрать накопленный буфер, ответ — страницы. */
 export const openDocxStream = (mod: DocxWasm, streamId: number): PageInfoWire[] =>
   mod.stream_open_docx(streamId) as unknown as PageInfoWire[];
+
+/** TextLayer одной страницы открытого DOCX. Модуль ленивый. */
+export const docxTextLayer = (mod: DocxWasm, page: number): TextLayerWire =>
+  mod.docx_get_text_layer(page) as unknown as TextLayerWire;
+
+/** TextLayer всего документа — для семантического дерева и Ctrl+A. */
+export const docxFullTextLayer = (mod: DocxWasm): TextLayerWire =>
+  mod.docx_get_full_text_layer() as unknown as TextLayerWire;
 
 /** Открыть презентацию PPTX: слайды с именами и размерами раскладки. */
 export const openPptx = (mod: PptxWasm, bytes: Uint8Array): SlideInfoWire[] =>

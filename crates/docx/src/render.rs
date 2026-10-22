@@ -23,6 +23,7 @@ use doc_converter_render::viewport::Viewport;
 
 use crate::layout::engine::{half_points_to_px, LayoutItem, PageLayout, Rect};
 use crate::layout::float::FloatKind;
+use crate::layout::paragraph::LineAlign;
 
 mod tables;
 
@@ -250,16 +251,36 @@ fn draw_items(items: &[LayoutItem], viewport: &Viewport, font: StringRef, out: &
                 bold,
                 italic,
                 underline,
+                align,
+                rtl,
                 ..
             } => {
-                let (x, y) = to_screen(viewport, rect.x, rect.y);
-                let text = out.intern(text);
+                let (left, y) = to_screen(viewport, rect.x, rect.y);
+                // RLM в начале строки — сигнал painter'у поставить canvas
+                // `direction: rtl`. В раскладке и TextLayer его нет: это
+                // деталь отрисовки, а не символ документа.
+                let text = if *rtl && !text.is_empty() {
+                    format!("\u{200F}{text}")
+                } else {
+                    text.clone()
+                };
+                let text = out.intern(&text);
                 // Гарнитура строки — та, которой её мерила раскладка; имя
                 // приходит из `w:rFonts` через реестр шрифтов. Без имени
                 // (ячейка таблицы, пустой абзац) рисует запасное лицо.
                 let font = match font_family {
                     Some(family) => out.intern(family),
                     None => font,
+                };
+                // Для RTL якорем служит правый край: shaped-ширина строки
+                // может разойтись с измеренной, и тогда расхождение уходит
+                // влево, а не ломает правую границу полосы набора.
+                let (x, align) = match align {
+                    LineAlign::Left => (left, TextAlign::Left),
+                    LineAlign::Center => {
+                        (left + rect.width * viewport.scale / 2.0, TextAlign::Center)
+                    }
+                    LineAlign::Right => (left + rect.width * viewport.scale, TextAlign::Right),
                 };
                 out.push(DrawCommand::Text {
                     x,
@@ -271,9 +292,7 @@ fn draw_items(items: &[LayoutItem], viewport: &Viewport, font: StringRef, out: &
                     // домножает, как это делает xlsx для шрифта ячейки.
                     size: half_points_to_px(size.value()) * viewport.scale,
                     color: text_color(*color),
-                    // Выравнивание уже учтено в `rect.x` (`align_shift` в
-                    // раскладке абзаца), поэтому повторно его применять нельзя.
-                    align: TextAlign::Left,
+                    align,
                     // `rect.y` — верх строки: движок отсчитывает его от курсора
                     // вниз за вычетом высоты строки и интервала после неё.
                     baseline: TextBaseline::Top,
@@ -1431,6 +1450,20 @@ mod tests {
             (bottom - last).abs() <= 2.0 / 15.0 + 1e-3,
             "`bottom` опускает строку к низу полосы ряда (целым twip): {bottom} против {last}"
         );
+    }
+
+    /// RTL-строка уходит в кадр с RLM и правым якорем: canvas шейпит её сам,
+    /// а `DisplayList` остаётся версии 4.
+    #[test]
+    fn rtl_line_gets_rlm_and_right_anchor() {
+        let layout = fixture_layout("rtl/arabic_basic.docx");
+        let texts = drawn_texts(&frame(&layout, 0));
+        let rtl = texts
+            .iter()
+            .find(|text| text.text.starts_with('\u{200F}'))
+            .expect("арабская строка несёт RLM");
+        assert_eq!(rtl.align, TextAlign::Right);
+        assert!(rtl.text.chars().nth(1).is_some(), "RLM — не вся строка");
     }
 
     /// Кадр переживает сериализацию: painter получает его из ring'а байтами.

@@ -11,6 +11,7 @@ import type {
   ReadyInfo,
   RenderConfig,
   RenderMode,
+  TextLayer,
   Viewport,
 } from '../protocol.js';
 import { armAbort } from './abort.js';
@@ -26,6 +27,7 @@ import {
 import { resolveRenderMode } from './offscreen.js';
 import { pumpStream, type PumpOptions } from './open_stream.js';
 import { computeDpr } from './resize_observer.js';
+import { createTextLayer, type TextLayerController } from './text_layer.js';
 import { endSpan, setSpanAttribute, startSpan, type SpanAttributes } from '../telemetry.js';
 
 /** Что умеет открытый документ. */
@@ -79,6 +81,14 @@ export interface DocxViewerHandle {
   exportHtml(opts?: { signal?: AbortSignal }): Promise<string>;
   /** Экспорт документа в обычный текст: содержимое без разметки. */
   exportText(opts?: { signal?: AbortSignal }): Promise<string>;
+  /**
+   * TextLayer одной страницы (0-based): runs с bbox в пикселях раскладки.
+   *
+   * Не зависит от флага `a11y`: это данные, а не DOM-слой.
+   */
+  getTextLayer(page: number): Promise<TextLayer>;
+  /** TextLayer всего документа — для семантического дерева и Ctrl+A. */
+  getFullTextLayer(): Promise<TextLayer>;
   /** Подписка на метрики кадров. */
   onTick(handler: (stats: PaintStats) => void): () => void;
   /** Остановить воркер и убрать за собой разметку. */
@@ -115,6 +125,14 @@ export interface DocxViewerOptions {
    * `transport: 'sab'` — ошибка конфигурации.
    */
   renderMode?: RenderMode;
+  /**
+   * Доступный документ: прозрачный DOM-слой поверх canvas с выделением текста
+   * и ARIA-деревом. По умолчанию выключен — включаем после стабилизации (v2).
+   *
+   * Флаг задаётся при создании вьюера; в React смена объекта опций пересоздаёт
+   * вьюер, в Vue/Svelte опция читается только при монтировании.
+   */
+  a11y?: boolean;
   /** Начальный зум. */
   zoom?: number;
   /**
@@ -214,7 +232,23 @@ export async function createDocxViewer(
     number,
     { resolve: (text: string) => void; reject: (e: Error) => void }
   >();
+  const pendingTextLayer = new Map<
+    number,
+    { resolve: (layer: TextLayer) => void; reject: (e: Error) => void }
+  >();
   let nextRequestId = 1;
+
+  // Доступный слой создаётся до первого кадра: он живёт в layout-координатах и
+  // наполняется после `docx-opened`.
+  let textLayer: TextLayerController | null = null;
+  if (options.a11y === true) {
+    canvas.setAttribute('aria-hidden', 'true');
+    textLayer = createTextLayer({
+      fetchPage: (page) => requestTextLayer(page),
+      fetchAll: () => requestTextLayer(null),
+    });
+    scroller.append(textLayer.element);
+  }
 
   // main-режим: painter поднимается до воркера и до первого кадра. Если
   // инициализация не удалась, воркер не должен остаться висеть.
@@ -264,6 +298,7 @@ export async function createDocxViewer(
         pages = msg.pages;
         layoutStack();
         applyStackSize();
+        textLayer?.configure(pages, pageTops);
         pageIndex = pageAt(scroller.scrollTop);
         // Ответ адресный: разрешаем ровно тот промис, чей id эхом вернул воркер.
         const pending = pendingOpen.get(msg.id);
@@ -287,6 +322,11 @@ export async function createDocxViewer(
       case 'docx-text': {
         pendingText.get(msg.id)?.resolve(msg.text);
         pendingText.delete(msg.id);
+        break;
+      }
+      case 'text-layer': {
+        pendingTextLayer.get(msg.id)?.resolve(msg.layer);
+        pendingTextLayer.delete(msg.id);
         break;
       }
       case 'error': {
@@ -315,6 +355,11 @@ export async function createDocxViewer(
             pendingText.delete(msg.id);
             text.reject(error);
           }
+          const layer = pendingTextLayer.get(msg.id);
+          if (layer) {
+            pendingTextLayer.delete(msg.id);
+            layer.reject(error);
+          }
           break;
         }
         // Ошибки без id — сбой воркера целиком (init): ответа не будет ни на
@@ -327,6 +372,8 @@ export async function createDocxViewer(
         pendingPdf.clear();
         for (const p of pendingText.values()) p.reject(error);
         pendingText.clear();
+        for (const p of pendingTextLayer.values()) p.reject(error);
+        pendingTextLayer.clear();
         break;
       }
       default:
@@ -407,6 +454,9 @@ export async function createDocxViewer(
     padLeft = Math.max(0, (scroller.clientWidth - stackWidth * zoom) / 2);
     spacer.style.width = `${stackWidth * zoom + 2 * padLeft}px`;
     spacer.style.height = `${stackHeight * zoom}px`;
+    // Слой в layout-координатах: зум и поле — только transform, spans не
+    // пересобираются и не отстают от canvas на кадр.
+    textLayer?.setTransform(padLeft, zoom, stackWidth, stackHeight);
   }
 
   /**
@@ -510,6 +560,9 @@ export async function createDocxViewer(
     requestAnimationFrame(() => {
       frameScheduled = false;
       render();
+      // Второй слой обновляется в том же rAF, что и кадр: окно виртуализации
+      // не должно отставать от canvas.
+      textLayer?.updateWindow(scroller.scrollTop, scroller.clientHeight, zoom);
     });
   }
 
@@ -551,6 +604,19 @@ export async function createDocxViewer(
       }
       pendingText.set(id, guard);
       worker.postMessage({ type: 'export-docx-text', id, format } satisfies InMsg);
+    });
+  }
+
+  /** TextLayer страницы (`page`) или всего документа (`null`). */
+  function requestTextLayer(page: number | null): Promise<TextLayer> {
+    const id = nextRequestId++;
+    return new Promise<TextLayer>((resolve, reject) => {
+      pendingTextLayer.set(id, { resolve, reject });
+      const message: InMsg =
+        page === null
+          ? { type: 'text-layer-all', id }
+          : { type: 'text-layer', id, page };
+      worker.postMessage(message);
     });
   }
 
@@ -742,6 +808,8 @@ export async function createDocxViewer(
     exportMarkdown: (opts?: { signal?: AbortSignal }) => exportText('markdown', opts),
     exportHtml: (opts?: { signal?: AbortSignal }) => exportText('html', opts),
     exportText: (opts?: { signal?: AbortSignal }) => exportText('text', opts),
+    getTextLayer: (page: number) => requestTextLayer(page),
+    getFullTextLayer: () => requestTextLayer(null),
 
     onTick(handler: (stats: PaintStats) => void): () => void {
       tickHandlers.add(handler);
@@ -767,6 +835,9 @@ export async function createDocxViewer(
       pendingPdf.clear();
       for (const p of pendingText.values()) p.reject(error);
       pendingText.clear();
+      for (const p of pendingTextLayer.values()) p.reject(error);
+      pendingTextLayer.clear();
+      textLayer?.destroy();
       // Сначала цикл кадров: он вернёт воркеру вытесненный буфер, пока тот
       // ещё жив. Затем singleton painter'а освобождается для страницы.
       mainChain?.destroy();

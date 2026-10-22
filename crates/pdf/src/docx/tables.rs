@@ -446,6 +446,14 @@ mod tests {
             shading: None,
             borders: Box::new(borders),
             v_merge_continue: false,
+            table_id: NodeId::new(1),
+            cell_id: NodeId::new(2),
+            row: 0,
+            col: 0,
+            grid_span: 1,
+            row_span: 1,
+            is_header: false,
+            header_repeat: false,
         }
     }
 
@@ -461,6 +469,10 @@ mod tests {
             bold: false,
             italic: false,
             underline: false,
+            fragments: Vec::new(),
+            align: doc_converter_docx::layout::paragraph::LineAlign::Left,
+            rtl: false,
+            heading_level: None,
         }
     }
 
