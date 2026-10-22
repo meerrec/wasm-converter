@@ -124,20 +124,56 @@ test('без сетки и заголовков кадр проще', async ({ p
   expect(errors).toEqual([]);
 });
 
-test('переключатель fitToPage доступен до и после открытия книги', async ({ page }) => {
+test('«вписать по ширине» отдаёт вьюеру fitToWidth, а не fitToPage', async ({ page }) => {
   const errors = await boot(page, '/xlsx');
 
   // До открытия книги экспорт недоступен — гасим и переключатель.
-  await expect(page.locator('#fit-to-page')).toBeDisabled();
+  await expect(page.locator('#fit-to-width')).toBeDisabled();
 
   await page.selectOption('#fixture', 'content-table.xlsx');
   await expect(page.locator('#status')).toContainText('1 лист', { timeout: 30_000 });
 
-  const fit = page.locator('#fit-to-page');
+  const fit = page.locator('#fit-to-width');
   await expect(fit).toBeEnabled();
   await expect(fit).not.toBeChecked();
+
+  // Настройки экспорта ловятся обёрткой над ручкой вьюера: страница зовёт её
+  // через мост, и до воркера доходит ровно то, что собрала страница.
+  await page.evaluate(() => {
+    const bridge = window.docConverter;
+    if (bridge?.kind !== 'xlsx') throw new Error('ожидался XLSX-вьюер');
+    const original = bridge.viewer.exportPdf.bind(bridge.viewer);
+    const holder = window as unknown as { __pdfOptions?: unknown[] };
+    holder.__pdfOptions = [];
+    bridge.viewer.exportPdf = async (options, opts) => {
+      holder.__pdfOptions?.push(options);
+      return original(options, opts);
+    };
+  });
+
   await fit.check();
-  await expect(fit).toBeChecked();
+  await page.click('#export-pdf');
+  await page.waitForFunction(
+    () => (window as unknown as { __pdfOptions?: unknown[] }).__pdfOptions?.length === 1,
+  );
+  expect(
+    await page.evaluate(() => (window as unknown as { __pdfOptions?: unknown[] }).__pdfOptions),
+  ).toEqual([{ fitToWidth: 1 }]);
+
+  // Пока PDF собирается, лента погашена: ждём, когда вьюер освободится.
+  await expect(fit).toBeEnabled();
+
+  // Без «вписать» — обычный масштаб: лист делится на страницы как есть.
+  await fit.uncheck();
+  await page.click('#export-pdf');
+  await page.waitForFunction(
+    () => (window as unknown as { __pdfOptions?: unknown[] }).__pdfOptions?.length === 2,
+  );
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __pdfOptions?: unknown[] }).__pdfOptions?.[1],
+    ),
+  ).toEqual({ scale: 1 });
 
   expect(errors).toEqual([]);
 });

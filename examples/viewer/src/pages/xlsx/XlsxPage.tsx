@@ -205,8 +205,9 @@ interface HomeRibbonProps {
   zoomDisabled: boolean;
   onZoom: (value: string) => void;
   exportDisabled: boolean;
-  fitToPage: boolean;
-  onFitToPage: (checked: boolean) => void;
+  /** Вписать столбцы по ширине страницы; строки при этом переносятся. */
+  fitToWidth: boolean;
+  onFitToWidth: (checked: boolean) => void;
   onExportSheet: () => void;
   onExportBook: () => void;
 }
@@ -325,19 +326,19 @@ function HomeRibbon(props: HomeRibbonProps): ReactElement {
         />
         <label
           className="ofc-statusbar__check"
-          title="Уместить лист на одну страницу: широкие таблицы не рвутся по столбцам"
+          title="Уместить столбцы по ширине страницы: широкие таблицы не рвутся по столбцам, строки переходят на следующие страницы"
           style={{ marginLeft: 8 }}
         >
           <input
-            id="fit-to-page"
+            id="fit-to-width"
             type="checkbox"
-            checked={props.fitToPage}
+            checked={props.fitToWidth}
             disabled={props.exportDisabled}
             onChange={(event) => {
-              props.onFitToPage(event.target.checked);
+              props.onFitToWidth(event.target.checked);
             }}
           />{' '}
-          вписать
+          вписать по ширине
         </label>
       </RibbonGroup>
       {/* Масштаб — тоже команда вьюера, а не каркаса: она переживает отказ
@@ -407,8 +408,8 @@ export default function XlsxPage(): ReactElement {
             zoomDisabled={page.controlsDisabled}
             onZoom={page.onZoomChange}
             exportDisabled={page.exportDisabled}
-            fitToPage={page.fitToPage}
-            onFitToPage={page.onFitToPage}
+            fitToWidth={page.fitToWidth}
+            onFitToWidth={page.onFitToWidth}
             onExportSheet={page.onExportSheet}
             onExportBook={page.onExportBook}
           />
