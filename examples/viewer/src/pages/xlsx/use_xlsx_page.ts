@@ -115,8 +115,13 @@ export interface XlsxPageApi {
   showHeaders: boolean;
   onShowGrid: (checked: boolean) => void;
   onShowHeaders: (checked: boolean) => void;
+  /** PDF: уместить лист на одну страницу (`fitToPage`). */
+  fitToPage: boolean;
+  onFitToPage: (checked: boolean) => void;
   /** PDF собирается: кнопки гасятся, пока файл не готов. */
   exporting: boolean;
+  /** Текст индикатора занятости; `null` — окно свободно. */
+  busyLabel: string | null;
   exportDisabled: boolean;
   onExportSheet: () => void;
   onExportBook: () => void;
@@ -135,7 +140,9 @@ export function useXlsxPage(): XlsxPageApi {
   const [zoom, setZoom] = useState('1');
   const [showGrid, setShowGrid] = useState(true);
   const [showHeaders, setShowHeaders] = useState(true);
+  const [fitToPage, setFitToPage] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const cellRef = useRef<HTMLSpanElement | null>(null);
   /** Номер последнего запроса `hitTest`: ответы по старым точкам не должны обгонять свежие. */
@@ -203,6 +210,7 @@ export function useXlsxPage(): XlsxPageApi {
     setStatus(`разбираю ${name}…`);
     const started = performance.now();
     let list: SheetInfo[];
+    setLoading(true);
     try {
       list = await active.open(bytes);
     } catch (e) {
@@ -211,6 +219,8 @@ export function useXlsxPage(): XlsxPageApi {
       setLabel(null);
       setStatus(`не открылось: ${messageOf(e)}`);
       return;
+    } finally {
+      setLoading(false);
     }
     const elapsed = Math.round(performance.now() - started);
     setLabel(name);
@@ -383,13 +393,19 @@ export function useXlsxPage(): XlsxPageApi {
     showHeaders,
     onShowGrid: setShowGrid,
     onShowHeaders: setShowHeaders,
+    fitToPage,
+    onFitToPage: setFitToPage,
     exporting,
+    busyLabel: loading ? 'Открываю документ…' : exporting ? 'Экспортирую PDF…' : null,
     exportDisabled: label === null || exporting,
     onExportSheet: () => {
-      void exportPdf({ scale: 1 }, '');
+      void exportPdf(fitToPage ? { fitToPage: true } : { scale: 1 }, '');
     },
     onExportBook: () => {
-      void exportPdf({ scale: 1, allSheets: true }, ' (все листы)');
+      void exportPdf(
+        fitToPage ? { fitToPage: true, allSheets: true } : { scale: 1, allSheets: true },
+        ' (все листы)',
+      );
     },
   };
 }

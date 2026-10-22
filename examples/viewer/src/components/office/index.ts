@@ -17,3 +17,4 @@ export { TitleBar } from './TitleBar.js';
 export { StatusBar } from './StatusBar.js';
 export { Ruler } from './Ruler.js';
 export { FormulaBar } from './FormulaBar.js';
+export { LoadingOverlay } from './LoadingOverlay.js';

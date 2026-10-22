@@ -4,6 +4,7 @@ import {
   FormulaBar,
   Icon,
   LogoExcel,
+  LoadingOverlay,
   RibbonButton,
   RibbonGroup,
   RibbonSelect,
@@ -204,6 +205,8 @@ interface HomeRibbonProps {
   zoomDisabled: boolean;
   onZoom: (value: string) => void;
   exportDisabled: boolean;
+  fitToPage: boolean;
+  onFitToPage: (checked: boolean) => void;
   onExportSheet: () => void;
   onExportBook: () => void;
 }
@@ -320,6 +323,22 @@ function HomeRibbon(props: HomeRibbonProps): ReactElement {
           disabled={props.exportDisabled}
           onClick={props.onExportBook}
         />
+        <label
+          className="ofc-statusbar__check"
+          title="Уместить лист на одну страницу: широкие таблицы не рвутся по столбцам"
+          style={{ marginLeft: 8 }}
+        >
+          <input
+            id="fit-to-page"
+            type="checkbox"
+            checked={props.fitToPage}
+            disabled={props.exportDisabled}
+            onChange={(event) => {
+              props.onFitToPage(event.target.checked);
+            }}
+          />{' '}
+          вписать
+        </label>
       </RibbonGroup>
       {/* Масштаб — тоже команда вьюера, а не каркаса: она переживает отказ
           книги и остаётся доступной, когда остальная лента пуста. */}
@@ -388,6 +407,8 @@ export default function XlsxPage(): ReactElement {
             zoomDisabled={page.controlsDisabled}
             onZoom={page.onZoomChange}
             exportDisabled={page.exportDisabled}
+            fitToPage={page.fitToPage}
+            onFitToPage={page.onFitToPage}
             onExportSheet={page.onExportSheet}
             onExportBook={page.onExportBook}
           />
@@ -490,6 +511,7 @@ export default function XlsxPage(): ReactElement {
         {/* Кэш документов: метрика подвала, меняется редко — состоянием React. */}
         <span id="cache">{page.cacheLabel}</span>
       </StatusBar>
+      {page.busyLabel !== null ? <LoadingOverlay label={page.busyLabel} /> : null}
     </div>
   );
 }
