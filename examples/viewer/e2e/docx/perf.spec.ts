@@ -11,6 +11,14 @@ import { openFixture, pageCount } from '../helpers/docx_frame.js';
 
 test.setTimeout(180_000);
 
+// fps-гейт меряется только в Chromium: в WebKit/Firefox headless rAF
+// троттлится и число не сравнимо; виртуализация там проверяется структурно
+// (число страниц/строк в DOM) в a11y/selection-спеках.
+test.skip(
+  ({ browserName }) => browserName !== 'chromium',
+  'p95 fps меряется только в Chromium',
+);
+
 test('200 страниц: p95 ≥ 55 fps и ограниченный DOM', async ({ page }) => {
   await boot(page, '/docx', { a11y: true });
   await openFixture(page, 'a11y/a11y_perf.docx');

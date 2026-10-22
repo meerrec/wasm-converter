@@ -57,7 +57,7 @@ struct OpenPres {
 ///
 /// # Errors
 /// Если байты не OOXML-пакет, `ppt/presentation.xml` не разбирается, в
-/// презентации нет слайдов или раскладка упирается в [`Error`].
+/// презентации нет слайдов или раскладка упирается в `Error`.
 #[wasm_bindgen]
 pub fn pptx_open(bytes: Vec<u8>) -> Result<JsValue, JsValue> {
     let presentation = doc_converter_pptx::open(bytes).map_err(to_js)?;
