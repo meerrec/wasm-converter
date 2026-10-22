@@ -123,3 +123,21 @@ test('без сетки и заголовков кадр проще', async ({ p
 
   expect(errors).toEqual([]);
 });
+
+test('переключатель fitToPage доступен до и после открытия книги', async ({ page }) => {
+  const errors = await boot(page, '/xlsx');
+
+  // До открытия книги экспорт недоступен — гасим и переключатель.
+  await expect(page.locator('#fit-to-page')).toBeDisabled();
+
+  await page.selectOption('#fixture', 'content-table.xlsx');
+  await expect(page.locator('#status')).toContainText('1 лист', { timeout: 30_000 });
+
+  const fit = page.locator('#fit-to-page');
+  await expect(fit).toBeEnabled();
+  await expect(fit).not.toBeChecked();
+  await fit.check();
+  await expect(fit).toBeChecked();
+
+  expect(errors).toEqual([]);
+});

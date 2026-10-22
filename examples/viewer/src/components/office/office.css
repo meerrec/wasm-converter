@@ -27,6 +27,8 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  /* Оверлей загрузки позиционируется от окна, а не от вьюпорта. */
+  position: relative;
   background: #fff;
   color: var(--ofc-text);
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -676,4 +678,41 @@
 
 .ofc-statusbar #status {
   color: var(--ofc-text-2);
+}
+
+/* Занятость окна: разбор документа или сборка PDF. Оверлей перекрывает
+   команды, но не прячет содержимое — видно, что документ уже открыт. */
+.ofc-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ofc-text);
+  font-size: 13px;
+  backdrop-filter: blur(1px);
+}
+
+.ofc-loading__spinner {
+  width: 26px;
+  height: 26px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: ofc-spin 0.8s linear infinite;
+}
+
+@keyframes ofc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ofc-loading__spinner {
+    animation: none;
+  }
 }
