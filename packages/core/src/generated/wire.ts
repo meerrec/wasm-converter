@@ -9,6 +9,20 @@ export type MarginsWire = { top: number, right: number, bottom: number, left: nu
 
 export type PdfOptionsWire = { pageSize?: PageSizeWire, orientation?: OrientationWire, margins?: MarginsWire, scale?: number, 
 /**
+ * Уместить лист на одну страницу: `fitToWidth = fitToHeight = 1`.
+ *
+ * Явные [`Self::fit_to_width`]/[`Self::fit_to_height`] сильнее флага.
+ */
+fitToPage?: boolean, 
+/**
+ * Сколько страниц по ширине; `0` — без ограничения.
+ */
+fitToWidth?: number, 
+/**
+ * Сколько страниц по высоте; `0` — без ограничения.
+ */
+fitToHeight?: number, 
+/**
  * Лист из настроек: интерфейс может экспортировать не тот, что на экране.
  */
 sheetIndex?: number, };

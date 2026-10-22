@@ -43,8 +43,29 @@ fn into_options(options: PdfOptionsWire) -> PdfOptions {
     if let Some(scale) = options.scale {
         result.page.scale = scale;
     }
+    // Явные числа сильнее флага: `fitToWidth: 0` — «без ограничения по
+    // ширине», и булев `fitToPage` не должен вернуть единицу обратно.
+    if let Some(width) = options.fit_to_width {
+        result.page.fit_to_width = fit_pages(width);
+    }
+    if let Some(height) = options.fit_to_height {
+        result.page.fit_to_height = fit_pages(height);
+    }
+    if options.fit_to_page == Some(true) {
+        if options.fit_to_width.is_none() {
+            result.page.fit_to_width = Some(1);
+        }
+        if options.fit_to_height.is_none() {
+            result.page.fit_to_height = Some(1);
+        }
+    }
     result.sheet_index = options.sheet_index;
     result
+}
+
+/// Число страниц `fitTo*`: `0` — «сколько потребуется», то есть без границы.
+fn fit_pages(value: u32) -> Option<u32> {
+    (value > 0).then_some(value)
 }
 
 /// Ошибка разбора — сообщением для человека: показывать её будет интерфейс.

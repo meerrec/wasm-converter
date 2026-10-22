@@ -297,6 +297,20 @@ pub struct PdfOptionsWire {
     #[serde(default)]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub scale: Option<f32>,
+    /// Уместить лист на одну страницу: `fitToWidth = fitToHeight = 1`.
+    ///
+    /// Явные [`Self::fit_to_width`]/[`Self::fit_to_height`] сильнее флага.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub fit_to_page: Option<bool>,
+    /// Сколько страниц по ширине; `0` — без ограничения.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub fit_to_width: Option<u32>,
+    /// Сколько страниц по высоте; `0` — без ограничения.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub fit_to_height: Option<u32>,
     /// Лист из настроек: интерфейс может экспортировать не тот, что на экране.
     #[serde(default)]
     #[cfg_attr(feature = "ts", ts(optional))]

@@ -179,5 +179,30 @@ try {
 
 ---
 
+### <a id="ex-09"></a>Рецепт 9. Широкий лист — на одну страницу (`fitToPage`)
+
+**Задача.** Экспортировать XLSX в PDF так, чтобы таблица не разъезжалась по
+полосам столбцов: весь лист — на одной странице, либо только по ширине.
+
+```ts
+// Весь лист на одну страницу (1×1).
+await viewer.exportPdf({ fitToPage: true });
+
+// Только по ширине: одна страница вширь, по высоте — сколько потребуется.
+await viewer.exportPdf({ fitToWidth: 1, fitToHeight: 0 });
+
+// Явные числа сильнее fitToPage; 0 — без ограничения.
+await viewer.exportPdf({ fitToPage: true, fitToWidth: 3 });
+```
+
+**Под капотом.** `fitToPage` — сахар для `fitToWidth = fitToHeight = 1`;
+явные `fitToWidth`/`fitToHeight` перебивают флаг. Числа уходят в
+`PdfOptionsWire` (`crates/core/src/wire.rs`), а оттуда — в
+`PageConfig::fit_to_width/height` PDF-крейта. Масштаб подбирается на лист,
+ручной `scale` и fit-режим взаимоисключающие. Для DOCX/PPTX поля не
+действуют: страницы берутся из секции документа/слайда.
+
+---
+
 Ссылки: [ADR-0022](../adr/0022-own-pdf-backend.md) — собственный PDF-бэкенд
 (lopdf, subsetter, skrifa), бюджеты — `docs/sprint-12/budgets.md`.

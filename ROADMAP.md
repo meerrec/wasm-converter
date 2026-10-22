@@ -1047,6 +1047,18 @@ TextLayer, нативное выделение, ARIA и явный UAX #9. Пл�
 axe по корпусу — Спринт 3; бюджет `wasm (docx)` поднят 410 → 420 КБ
 (+7,05 КБ, ADR-0040).
 
+### Мини-спринт 2.5: `fitToPage` для XLSX → PDF
+
+**Цель:** не давать широкой таблице разъезжаться по полосам столбцов; открыть
+`fitToPage`/`fitToWidth`/`fitToHeight` в публичном API и CLI. План и отчёт —
+`docs/sprint-2.5-fit-to-page/`.
+
+**Сделано:** `PdfOptionsWire` и TS-типы, маппинг в `pdf-wasm`, CLI-флаги
+`--fit-to-page`/`--fit-to-width`/`--fit-to-height`, cookbook `ex-09`,
+changeset. На `edge-many-columns.xlsx`: без fit — 20 страниц, с `fitToPage` — 1.
+
+**Ограничения:** DOCX/PPTX поля не читают; fit-режим сильнее ручного `scale`.
+
 ---
 
 ## 7. Сводная таблица

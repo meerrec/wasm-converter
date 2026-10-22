@@ -84,5 +84,8 @@ function pdfOptionsForWasm(pdf: PdfCliOptions): Record<string, unknown> {
     options['margins'] = { top: pdf.margins.top, right: pdf.margins.right, bottom: pdf.margins.bottom, left: pdf.margins.left };
   }
   if (pdf.sheetIndex !== undefined) options['sheetIndex'] = pdf.sheetIndex;
+  if (pdf.fitToPage !== undefined) options['fitToPage'] = pdf.fitToPage;
+  if (pdf.fitToWidth !== undefined) options['fitToWidth'] = pdf.fitToWidth;
+  if (pdf.fitToHeight !== undefined) options['fitToHeight'] = pdf.fitToHeight;
   return options;
 }
