@@ -456,7 +456,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-core"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "chrono",
  "flate2",
@@ -474,7 +474,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-docx"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "criterion",
  "doc-converter-core",
@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-docx-wasm"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "doc-converter-core",
  "doc-converter-docx",
@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-pdf"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "criterion",
  "doc-converter-core",
@@ -525,7 +525,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-pdf-wasm"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "doc-converter-core",
  "doc-converter-docx",
@@ -540,7 +540,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-pptx"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "doc-converter-core",
  "doc-converter-render",
@@ -551,7 +551,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-pptx-layout"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "doc-converter-core",
  "doc-converter-pptx",
@@ -560,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-pptx-pdf"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "doc-converter-pdf",
  "doc-converter-pptx",
@@ -572,7 +572,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-pptx-pdf-wasm"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "doc-converter-core",
  "doc-converter-pdf",
@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-pptx-render"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "doc-converter-core",
  "doc-converter-pptx",
@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-pptx-wasm"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "doc-converter-core",
  "doc-converter-pptx",
@@ -614,7 +614,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-render"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "bytemuck",
  "criterion",
@@ -629,7 +629,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-wasm"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "doc-converter-core",
  "doc-converter-render",
@@ -644,7 +644,7 @@ dependencies = [
 
 [[package]]
 name = "doc-converter-xlsx"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "chrono",
  "criterion",

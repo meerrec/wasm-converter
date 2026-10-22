@@ -1,5 +1,22 @@
 # @doc-converter/core
 
+## 1.4.0
+
+### Minor Changes
+
+- 43ebe72: XLSX → PDF: `fitToPage`, `fitToWidth` и `fitToHeight`.
+
+  - `exportPdf({ fitToPage: true })` укладывает лист на одну страницу;
+    явные `fitToWidth`/`fitToHeight` сильнее флага, `0` — без ограничения.
+  - CLI: `--fit-to-page`, `--fit-to-width <n>`, `--fit-to-height <n>`.
+  - Семантика — как у Excel: fit-поля перебивают ручной `scale`;
+    для DOCX/PPTX поля не действуют.
+
+### Patch Changes
+
+- Updated dependencies [43ebe72]
+  - @meerrec/wasm@1.4.0
+
 ## 1.3.0
 
 ### Minor Changes
