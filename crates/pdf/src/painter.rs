@@ -489,8 +489,10 @@ fn draw_page(
         }
         let rect = on_page(painted);
         if matches!(cell.value, CellValue::Number(_)) {
-            let size_px = painted.style.font_size_pt * PX_PER_POINT * page.scale();
-            value = text::clip_number(value, size_px, text::inner_width_px(page, rect), registry);
+            // Замер — при 100 %, как и перенос в `draw_cell_text`: масштаб
+            // печати к единицам замера не относится.
+            let size_px = painted.style.font_size_pt * PX_PER_POINT;
+            value = text::clip_number(value, size_px, text::inner_width_px(rect), registry);
         }
         text::draw_cell_text(
             ops,
