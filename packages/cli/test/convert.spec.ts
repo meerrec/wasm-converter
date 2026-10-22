@@ -55,6 +55,15 @@ describe('convertFile', () => {
     const book = join(outDir, 'single-cell-book.pdf');
     await convertFile({ input: XLSX, output: book, format: 'pdf', pdf: {} });
     expect((await readFile(book)).subarray(0, 5).toString('latin1')).toBe('%PDF-');
+
+    const fitted = join(outDir, 'single-cell-fit.pdf');
+    await convertFile({
+      input: XLSX,
+      output: fitted,
+      format: 'pdf',
+      pdf: { fitToPage: true, fitToHeight: 0 },
+    });
+    expect((await readFile(fitted)).subarray(0, 5).toString('latin1')).toBe('%PDF-');
   });
 
   it('XLSX в текст — явная ошибка, модуль даже не грузится', async () => {

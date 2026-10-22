@@ -75,6 +75,10 @@ export interface XlsxViewerHandle {
    * Экспорт листа в PDF. Без настроек — весь текущий лист на A4.
    * `options.sheetIndex` перекрывает показанный лист, `options.allSheets` —
    * вся книга одним документом (листы подряд, закладка на каждый).
+   *
+   * `fitToPage` укладывает лист на одну страницу (1×1),
+   * `fitToWidth`/`fitToHeight` задают число страниц по осям (`0` — без
+   * ограничения) и сильнее флага; fit-режим перебивает ручной `scale`.
    */
   exportPdf(options?: PdfOptions, opts?: { signal?: AbortSignal }): Promise<Uint8Array>;
   /** Подписка на метрики кадров. */

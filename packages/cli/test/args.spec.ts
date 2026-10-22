@@ -38,6 +38,11 @@ describe('parseArgs', () => {
       '10,12.5,10,12.5',
       '--sheet',
       '2',
+      '--fit-to-page',
+      '--fit-to-width',
+      '3',
+      '--fit-to-height',
+      '0',
     ]);
     if (command.kind !== 'convert') throw new Error('expected convert');
     expect(command.format).toBe('pdf');
@@ -47,6 +52,9 @@ describe('parseArgs', () => {
       scale: 0.8,
       margins: { top: 10, right: 12.5, bottom: 10, left: 12.5 },
       sheetIndex: 2,
+      fitToPage: true,
+      fitToWidth: 3,
+      fitToHeight: 0,
     });
   });
 
@@ -110,6 +118,8 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['convert', 'a.xlsx', '-o', 'a.pdf', '--page-size', 'A5'])).toThrow(/unknown page size/);
     expect(() => parseArgs(['convert', 'a.xlsx', '-o', 'a.pdf', '--margins', '1,2,3'])).toThrow(/four comma-separated/);
     expect(() => parseArgs(['convert', 'a.xlsx', '-o', 'a.pdf', '--scale', '-1'])).toThrow(/positive number/);
+    expect(() => parseArgs(['convert', 'a.xlsx', '-o', 'a.pdf', '--fit-to-width', '-1'])).toThrow(/non-negative integer/);
+    expect(() => parseArgs(['convert', 'a.xlsx', '-o', 'a.pdf', '--fit-to-height', 'x'])).toThrow(/non-negative integer/);
   });
 
   it('показывает справку по help в подкоманде', () => {

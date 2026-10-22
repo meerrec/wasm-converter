@@ -44,7 +44,7 @@ Chrome 90+, Firefox 96+, Safari 16.4+.
 
 ## Рецепты
 
-Всего рецептов: **51**.
+Всего рецептов: **52**.
 
 | # | Рецепт | Файл |
 |---|---|---|
@@ -79,26 +79,27 @@ Chrome 90+, Firefox 96+, Safari 16.4+.
 | 29 | Ленивый PDF-модуль: как отдать URL | [export.md](export.md#ex-06) |
 | 30 | DOCX → Markdown/HTML/текст | [export.md](export.md#ex-07) |
 | 31 | Экспорт без pdfWasm: внятная ошибка | [export.md](export.md#ex-08) |
-| 32 | convert: DOCX → PDF | [cli.md](cli.md#cli-01) |
-| 33 | convert: DOCX → Markdown/HTML/текст | [cli.md](cli.md#cli-02) |
-| 34 | convert: XLSX → PDF и выбор листа | [cli.md](cli.md#cli-03) |
-| 35 | Опции PDF в CLI | [cli.md](cli.md#cli-04) |
-| 36 | batch: glob и пул воркеров | [cli.md](cli.md#cli-05) |
-| 37 | batch: каталог рекурсивно | [cli.md](cli.md#cli-06) |
-| 38 | Коллизии имён в batch | [cli.md](cli.md#cli-07) |
-| 39 | Выходные коды и диагностика CLI | [cli.md](cli.md#cli-08) |
-| 40 | Vite: воркер через `?worker&url` | [integration.md](integration.md#in-01) |
-| 41 | Vite: COOP/COEP на dev-сервере | [integration.md](integration.md#in-02) |
-| 42 | WorkerPool в Node | [integration.md](integration.md#in-03) |
-| 43 | convertFile в Node без пула | [integration.md](integration.md#in-04) |
-| 44 | Явный `sab` без заголовков: ловим ошибку и объясняем пользователю | [integration.md](integration.md#in-05) |
-| 45 | supportsOffscreen и проверка окружения | [integration.md](integration.md#in-06) |
-| 46 | Отдельный воркер на каждый вьюер | [integration.md](integration.md#in-07) |
-| 47 | Кэш wasm-модулей blob-URL-ами | [integration.md](integration.md#in-08) |
-| 48 | Включить доступный режим DOCX | [a11y.md](a11y.md#a11y-01) |
-| 49 | Программно получить TextLayer | [a11y.md](a11y.md#a11y-02) |
-| 50 | Почему `a11y` выключен по умолчанию | [a11y.md](a11y.md#a11y-03) |
-| 51 | Известные ограничения TextLayer | [a11y.md](a11y.md#a11y-04) |
+| 32 | Широкий лист — на одну страницу (`fitToPage`) | [export.md](export.md#ex-09) |
+| 33 | convert: DOCX → PDF | [cli.md](cli.md#cli-01) |
+| 34 | convert: DOCX → Markdown/HTML/текст | [cli.md](cli.md#cli-02) |
+| 35 | convert: XLSX → PDF и выбор листа | [cli.md](cli.md#cli-03) |
+| 36 | Опции PDF в CLI | [cli.md](cli.md#cli-04) |
+| 37 | batch: glob и пул воркеров | [cli.md](cli.md#cli-05) |
+| 38 | batch: каталог рекурсивно | [cli.md](cli.md#cli-06) |
+| 39 | Коллизии имён в batch | [cli.md](cli.md#cli-07) |
+| 40 | Выходные коды и диагностика CLI | [cli.md](cli.md#cli-08) |
+| 41 | Vite: воркер через `?worker&url` | [integration.md](integration.md#in-01) |
+| 42 | Vite: COOP/COEP на dev-сервере | [integration.md](integration.md#in-02) |
+| 43 | WorkerPool в Node | [integration.md](integration.md#in-03) |
+| 44 | convertFile в Node без пула | [integration.md](integration.md#in-04) |
+| 45 | Явный `sab` без заголовков: ловим ошибку и объясняем пользователю | [integration.md](integration.md#in-05) |
+| 46 | supportsOffscreen и проверка окружения | [integration.md](integration.md#in-06) |
+| 47 | Отдельный воркер на каждый вьюер | [integration.md](integration.md#in-07) |
+| 48 | Кэш wasm-модулей blob-URL-ами | [integration.md](integration.md#in-08) |
+| 49 | Включить доступный режим DOCX | [a11y.md](a11y.md#a11y-01) |
+| 50 | Программно получить TextLayer | [a11y.md](a11y.md#a11y-02) |
+| 51 | Почему `a11y` выключен по умолчанию | [a11y.md](a11y.md#a11y-03) |
+| 52 | Известные ограничения TextLayer | [a11y.md](a11y.md#a11y-04) |
 
 ## Источники фактов
 

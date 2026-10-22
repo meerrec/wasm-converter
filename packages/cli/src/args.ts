@@ -21,6 +21,12 @@ export interface PdfCliOptions {
   margins?: { top: number; right: number; bottom: number; left: number };
   /** Экспортировать только этот лист XLSX; без него книга идёт целиком. */
   sheetIndex?: number;
+  /** Уместить лист на одну страницу (1×1); числа ниже сильнее. */
+  fitToPage?: boolean;
+  /** Сколько страниц по ширине; 0 — без ограничения. */
+  fitToWidth?: number;
+  /** Сколько страниц по высоте; 0 — без ограничения. */
+  fitToHeight?: number;
 }
 
 export interface ConvertCommand {
@@ -73,6 +79,9 @@ PDF options (both commands):
       --page-size <A4|A3|Letter|Legal>   XLSX only; DOCX keeps its section size
       --orientation <portrait|landscape> XLSX only
       --scale <factor>                   XLSX only, e.g. 0.8
+      --fit-to-page                      XLSX only: fit the sheet on one page
+      --fit-to-width <n>                 XLSX only: pages wide, 0 = unlimited
+      --fit-to-height <n>                XLSX only: pages tall, 0 = unlimited
       --margins <top,right,bottom,left>  XLSX only, millimetres
       --sheet <n>                        XLSX only, 0-based; default is the whole book
 
@@ -187,6 +196,15 @@ function scan(args: readonly string[]): ScanResult {
         break;
       case '--scale':
         result.pdf.scale = parsePositiveFloat(take(), '--scale');
+        break;
+      case '--fit-to-page':
+        result.pdf.fitToPage = true;
+        break;
+      case '--fit-to-width':
+        result.pdf.fitToWidth = parseIndex(take(), '--fit-to-width');
+        break;
+      case '--fit-to-height':
+        result.pdf.fitToHeight = parseIndex(take(), '--fit-to-height');
         break;
       case '--margins':
         result.pdf.margins = parseMargins(take());
