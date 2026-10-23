@@ -28,7 +28,7 @@ use crate::layout::line_break::LineRule;
 use crate::model::{
     CharacterStyle, Color, Document, HalfPoint, Highlight, Ind, Justification, LineSpacing,
     LineSpacingRule, NumPr, Paragraph, ParagraphBorders, ParagraphSpacing, RawPPr, RawRPr, Run,
-    Shading, StyleId, StyleTable, Toggle, Twips, Underline, VertAlign,
+    Shading, ShadingPattern, StyleId, StyleTable, Toggle, Twips, Underline, VertAlign,
 };
 
 /// Предел глубины цепочки `basedOn` — как в `model::validate` (ADR-0016 §2).
@@ -247,6 +247,9 @@ pub struct ResolvedRPr {
     pub vert_align: Option<VertAlign>,
     /// Выделение цветом (`w:highlight`).
     pub highlight: Option<Highlight>,
+    /// Фон под текстом (`w:rPr/w:shd w:fill`) — `RRGGBB`; `nil` и `auto`
+    /// фона не дают.
+    pub shading: Option<u32>,
     /// Гарнитура сложной раскладки (`w:rFonts w:cs`).
     pub cs_font_family: Option<String>,
     /// Кегль сложной раскладки (`w:szCs`); `None` — наследует [`Self::size`].
@@ -269,6 +272,7 @@ impl Default for ResolvedRPr {
             color: None,
             vert_align: None,
             highlight: None,
+            shading: None,
             cs_font_family: None,
             size_cs: None,
             rtl: false,
@@ -330,6 +334,16 @@ impl ResolvedRPr {
         }
         if let Some(highlight) = &rpr.highlight {
             self.highlight = Some(highlight.clone());
+        }
+        if let Some(shd) = &rpr.shd {
+            // Узор `nil` — заливки нет, а `auto` — цвет фона по контексту:
+            // рисовать их нечем. Сплошной и «чистый» узор дают фон `w:fill`.
+            self.shading = match (&shd.val, shd.fill) {
+                (ShadingPattern::Clear | ShadingPattern::Solid, Some(Color::Rgb(value))) => {
+                    Some(value)
+                }
+                _ => None,
+            };
         }
     }
 }

@@ -156,6 +156,7 @@ impl Builder {
                     italic: *italic,
                     underline: *underline,
                     color: *color,
+                    highlight: None,
                 };
                 let fragments = if fragments.is_empty() {
                     std::slice::from_ref(&fallback)
@@ -501,6 +502,7 @@ mod tests {
             italic: false,
             underline: false,
             color: None,
+            highlight: None,
         };
         let bbox = Rect::new(rect.x + fragment.x, rect.y, fragment.width, rect.height);
         assert!(close(bbox.x, 13.0));

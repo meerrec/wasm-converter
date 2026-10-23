@@ -356,23 +356,30 @@ fn draw_items(
                 color,
                 bold,
                 italic,
+                fragments,
                 ..
-            } => draw_line(
-                ops,
-                page,
-                embedded,
-                registry,
-                LineRun {
-                    // Сдвиг снимается здесь: дальше строка живёт в своих
-                    // координатах, как и любая строка тела документа.
-                    rect: Rect::new(rect.x, rect.y + offset_y, rect.width, rect.height),
-                    text,
-                    size: *size,
-                    color: *color,
-                    bold: *bold,
-                    italic: *italic,
-                },
-            ),
+            } => {
+                // Подсветка — фон под текстом: прямоугольник на всю высоту
+                // строки, по ширине фрагмента. Рисуется до текста, иначе
+                // заливка перекрыла бы знаки.
+                draw_highlights(ops, page, rect, fragments, offset_y);
+                draw_line(
+                    ops,
+                    page,
+                    embedded,
+                    registry,
+                    LineRun {
+                        // Сдвиг снимается здесь: дальше строка живёт в своих
+                        // координатах, как и любая строка тела документа.
+                        rect: Rect::new(rect.x, rect.y + offset_y, rect.width, rect.height),
+                        text,
+                        size: *size,
+                        color: *color,
+                        bold: *bold,
+                        italic: *italic,
+                    },
+                );
+            }
             LayoutItem::Table { cells, .. } => {
                 tables::draw(ops, cells, page, embedded, registry, images, offset_y);
             }
@@ -389,6 +396,36 @@ fn draw_items(
             }
         }
     }
+}
+
+/// Залить фоном подсвеченные фрагменты строки.
+///
+/// Фрагмент несёт смещение и ширину в пикселях раскладки; высота — вся строка,
+/// как рисует подсветку Word. Строки без подсветки не дают ни одной операции.
+fn draw_highlights(
+    ops: &mut Vec<Op>,
+    page: &PageGeometry,
+    rect: &Rect,
+    fragments: &[doc_converter_docx::layout::LineFragment],
+    offset_y: f32,
+) {
+    for fragment in fragments {
+        let Some(rgb) = fragment.highlight else {
+            continue;
+        };
+        let rect = crate::layout::RectPt {
+            x: page.px_to_pt(rect.x + fragment.x),
+            y: page.px_to_pt(rect.y + offset_y),
+            w: page.px_to_pt(fragment.width),
+            h: page.px_to_pt(rect.height),
+        };
+        crate::background::fill_rect(ops, rect, page.height_pt(), highlight_color(rgb));
+    }
+}
+
+/// Цвет подсветки `RRGGBB` → `RRGGBBAA`, как у [`text_color`].
+fn highlight_color(rgb: u32) -> Color {
+    Color(((rgb & 0x00FF_FFFF) << 8) | 0xFF)
 }
 
 /// Строка абзаца для отрисовки: поля [`LayoutItem::Paragraph`] без

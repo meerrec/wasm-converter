@@ -23,7 +23,8 @@ use unicode_bidi::BidiClass;
 
 use crate::model::raw::{HalfPoint, Underline};
 use crate::model::{
-    Anchor, Document, Inline, InlineOrAnchor, Justification, Paragraph, Run, RunContent, StyleTable,
+    Anchor, Document, Highlight, Inline, InlineOrAnchor, Justification, Paragraph, Run, RunContent,
+    StyleTable,
 };
 
 use super::cascade::{resolve_paragraph_styled, resolve_run_styled, ResolvedParagraph, StyleCache};
@@ -112,6 +113,9 @@ pub struct LineFragment {
     pub underline: bool,
     /// Цвет текста `RRGGBB`; `None` — по умолчанию.
     pub color: Option<u32>,
+    /// Фон под фрагментом `RRGGBB` (`w:highlight` или `w:rPr/w:shd`);
+    /// `None` — подсветки нет.
+    pub highlight: Option<u32>,
 }
 
 /// Результат раскладки абзаца.
@@ -166,6 +170,8 @@ struct Segment {
     underline: bool,
     /// Цвет текста (`w:color`).
     color: Option<u32>,
+    /// Фон под текстом (`w:highlight` или `w:rPr/w:shd`), `RRGGBB`.
+    highlight: Option<u32>,
 }
 
 impl Segment {
@@ -263,6 +269,7 @@ impl ParagraphText {
                 italic: segment.italic,
                 underline: segment.underline,
                 color: segment.color,
+                highlight: segment.highlight,
             });
             x += width;
             cursor = end;
@@ -363,6 +370,13 @@ fn push_segment(
             italic: rpr.italic,
             underline: is_underlined(rpr.underline.as_ref()),
             color: rpr.color,
+            // Именованное выделение сильнее заливки: Word пишет `w:highlight`,
+            // когда его выбрали в интерфейсе, а `w:shd` — когда покрасили фон.
+            highlight: rpr
+                .highlight
+                .as_ref()
+                .and_then(Highlight::rgb)
+                .or(rpr.shading),
         });
     }
 }
@@ -697,8 +711,8 @@ mod tests {
     use crate::layout::engine::{half_points_to_px, twips_to_px};
     use crate::layout::float::emu_to_px;
     use crate::model::raw::{
-        Color, HalfPoint, Ind, LineSpacing, LineSpacingRule, ParagraphSpacing, RFonts, RawPPr,
-        RawRPr, Toggle, Underline,
+        Color, HalfPoint, Highlight, Ind, LineSpacing, LineSpacingRule, ParagraphSpacing, RFonts,
+        RawPPr, RawRPr, Shading, ShadingPattern, Toggle, Underline,
     };
     use crate::model::{
         BlockItem, Body, DocDefaults, Extent, Hyperlink, InlineImage, InlineOrAnchor, Metadata,
@@ -840,6 +854,43 @@ mod tests {
     /// Длинный текст: на 600 px он переносится, иначе проверить первую строку не на чем.
     const LONG_TEXT: &str = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do \
                              eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim";
+
+    /// Подсветка и заливка знака доезжают до фрагмента строки: по нему оба
+    /// рендерера рисуют фон под текстом.
+    ///
+    /// `w:highlight` (именованный цвет) сильнее `w:shd` (`w:fill`): Word пишет
+    /// первое из интерфейса выделения, второе — когда красят фон знака.
+    #[test]
+    fn highlight_and_run_shading_reach_the_fragment() {
+        let highlight = RawRPr {
+            highlight: Some(Highlight::Yellow),
+            ..RawRPr::default()
+        };
+        let shading = RawRPr {
+            shd: Some(Shading {
+                val: ShadingPattern::Clear,
+                color: None,
+                fill: Some(Color::Rgb(0x00FF_00CC)),
+            }),
+            ..RawRPr::default()
+        };
+        let paragraph = paragraph_of_runs(&[
+            ("жёлтый ", highlight),
+            ("заливка ", shading),
+            ("обычный", RawRPr::default()),
+        ]);
+        let laid = layout(&document(), &paragraph, &state());
+        let fragments = &laid.lines[0].fragments;
+
+        assert_eq!(fragments.len(), 3, "стили знаков дают три фрагмента");
+        assert_eq!(
+            fragments[0].highlight,
+            Some(0x00FF_FF00),
+            "жёлтое выделение"
+        );
+        assert_eq!(fragments[1].highlight, Some(0x00FF_00CC), "заливка `w:shd`");
+        assert_eq!(fragments[2].highlight, None, "обычный текст без фона");
+    }
 
     #[test]
     fn flags_and_spacing_come_from_the_cascade() {

@@ -34,7 +34,11 @@ pub use engine::{
 };
 pub use float::{layout_float, layout_floats_on_page, FloatElement, FloatKind, FloatLayoutContext};
 pub use line_break::LineBreaker;
+// Фрагмент строки — часть `LayoutItem::Paragraph`, и потребителю (canvas- и
+// PDF-рендер) его тип нужен в том же пространстве имён: по нему рисуется
+// подсветка.
 pub use pagination::Paginator;
+pub use paragraph::LineFragment;
 // Рядом с `TableCellLayout`: строка — такой же элемент `LayoutItem::Table`, и
 // потребителю (canvas- и PDF-рендер) нужен её тип в том же пространстве имён.
 pub use tables::TableRowLayout;
