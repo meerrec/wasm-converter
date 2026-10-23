@@ -10,15 +10,15 @@
 //! Эталоны обновляются осознанно: фактические значения из сообщения упавшего
 //! `assert`'а переносятся в [`PAGE_COUNTS`] и [`DRAWING`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use doc_converter_pdf::{PageConfig, PdfExporter, PdfOptions};
 use doc_converter_xlsx::{
-    Cell, CellRef, CellValue, PrintSettings, SharedStrings, Sheet, SheetContent, SheetState,
-    StyleTable, Theme, Workbook, WorksheetBuilder, WorksheetMeta,
+    Cell, CellFormat, CellRef, CellValue, Font, PrintSettings, SharedStrings, Sheet, SheetContent,
+    SheetState, StyleTable, Theme, Workbook, WorksheetBuilder, WorksheetMeta,
 };
 use lopdf::{Object, ObjectId};
 
@@ -667,6 +667,66 @@ fn fit_pages(bytes: &[u8]) -> usize {
         .expect("PDF разбирается lopdf")
         .get_pages()
         .len()
+}
+
+/// Книга, где после данных стоит пустая ячейка с нестандартным шрифтом:
+/// `paints` считает её содержимым (шрифт не дефолтный), но рисовать в ней
+/// нечего — так выглядят остатки форматирования за концом данных.
+fn styled_empty_workbook() -> Workbook {
+    const PART: &str = "xl/worksheets/sheet1.xml";
+    let mut builder = WorksheetBuilder::new(PART);
+    builder
+        .push(0, Cell::new(0, 0, CellValue::Number(1.0)))
+        .expect("ячейка");
+    builder
+        .push(120, Cell::new(0, 1, CellValue::Empty))
+        .expect("ячейка");
+    let fonts = vec![
+        Font::default(),
+        Font {
+            bold: true,
+            ..Font::default()
+        },
+    ];
+    let formats = vec![
+        CellFormat::default(),
+        CellFormat {
+            font: 1,
+            ..CellFormat::default()
+        },
+    ];
+    let table = StyleTable::new(formats, fonts, Vec::new(), Vec::new(), BTreeMap::new());
+    let content = SheetContent {
+        cells: builder.finish(),
+        ..SheetContent::default()
+    };
+    let meta = WorksheetMeta {
+        name: "Лист1".to_owned(),
+        part: PART.to_owned(),
+        state: SheetState::Visible,
+    };
+    Workbook::new(
+        vec![Sheet::new(meta, content)],
+        SharedStrings::default(),
+        table,
+        Theme::default(),
+        false,
+    )
+}
+
+/// Пустая стилизованная ячейка в конце листа не создаёт белую страницу.
+///
+/// Реальная книга давала три пустых страницы: остатки форматирования за концом
+/// данных попадали в полосы, а рисовать в них было нечего.
+#[test]
+fn styled_empty_cells_do_not_create_blank_pages() {
+    let book = styled_empty_workbook();
+    let bytes = fit_export(&book, PageConfig::default());
+    assert_eq!(
+        fit_pages(&bytes),
+        1,
+        "пустая стилизованная ячейка дала лишнюю страницу"
+    );
 }
 
 /// Без настроек широкий лист печатается в 100 % и делится полосами столбцов,

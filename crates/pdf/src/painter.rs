@@ -25,7 +25,9 @@ use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
 use doc_converter_render::text_measure::measure_text;
 use doc_converter_xlsx::layout::{SheetLayout, PX_PER_POINT};
 use doc_converter_xlsx::paint::{anchor_rect, display_text};
-use doc_converter_xlsx::{CellValue, Orientation, Sheet, Span, Workbook, WorkbookImage};
+use doc_converter_xlsx::{
+    CellValue, Orientation, Sheet, SheetState, Span, Workbook, WorkbookImage,
+};
 use lopdf::Dictionary;
 
 use crate::fonts::{EmbeddedFonts, Face};
@@ -987,8 +989,13 @@ fn prepare_book<'a>(
     sheets: &[usize],
     options: &PdfOptions,
 ) -> Result<(Vec<PreparedSheet<'a>>, String, image::Registry), PdfError> {
+    // «Вся книга» — это видимые листы: скрытые Excel и LibreOffice в печать не
+    // отдают. Явно названный лист печатается, даже если он скрыт: вызывающий
+    // выбрал его сам.
     let selection: Vec<usize> = if sheets.is_empty() {
-        (0..book.sheets().len()).collect()
+        (0..book.sheets().len())
+            .filter(|&index| book.sheets()[index].meta.state == SheetState::Visible)
+            .collect()
     } else {
         sheets.to_vec()
     };

@@ -32,8 +32,10 @@
 use std::ops::Range;
 
 use doc_converter_xlsx::layout::SheetLayout;
+use doc_converter_xlsx::paint::display_text;
 use doc_converter_xlsx::{Cell, CellRef, Sheet, Workbook};
 
+use crate::border;
 use crate::fonts::{Face, FaceSet};
 use crate::layout::{PageGeometry, RectPx};
 use crate::options::PageConfig;
@@ -232,6 +234,9 @@ fn fit_height_scale(
 /// Ячейки шапки и повторяемых столбцов попадают на каждую страницу; чтобы
 /// painter поставил их к краю страницы тем же вычетом среза, их прямоугольники
 /// сдвинуты на срез заранее (см. [`PaintedCell`]).
+// Длинная функция — один проход по ячейкам листа, раскладывающий их по
+// корзинам страниц; вынос корзин в отдельную функцию разорвал бы этот проход.
+#[allow(clippy::too_many_lines)]
 pub fn paginate<'a>(
     book: &Workbook,
     sheet: &'a Sheet,
@@ -311,6 +316,9 @@ pub fn paginate<'a>(
                 column_bands_over(&bands_x, &col_span)
             };
             let style = styles::resolve(book, cell);
+            if !has_visible_content(book, cell, &style) {
+                continue;
+            }
             faces.insert(Face::of(style.bold, style.italic));
             for bx in cols {
                 for by in rows.clone() {
@@ -353,6 +361,20 @@ pub fn paginate<'a>(
         pages.push(empty_page());
     }
     SheetPagination { faces, pages }
+}
+
+/// Нарисует ли ячейка хоть что-нибудь: текст, заливку, рамку или формулу.
+///
+/// Пустые ячейки с остатками форматирования (шрифт, формат числа) содержимым
+/// не считаются: иначе за концом данных появляются полностью белые страницы,
+/// которых Excel и `LibreOffice` не печатают. Формула содержимым остаётся — её
+/// результата модель не считает, но по контракту `visible_used_range` она
+/// принадлежит листу.
+fn has_visible_content(book: &Workbook, cell: &Cell, style: &CellStyle) -> bool {
+    style.fill.is_some()
+        || border::is_visible(&style.border)
+        || cell.formula.is_some()
+        || display_text(book, cell, style.number_format).is_some_and(|text| !text.is_empty())
 }
 
 /// Сколько первых строк (столбцов) листа повторять.

@@ -326,19 +326,19 @@ fn empty_sheet_does_not_break_the_book() {
     );
 }
 
-/// Скрытый лист попадает в документ: список листов просмотрщика строится по
-/// модели книги (`SheetInfo.hidden` — пометка, а не фильтр), и терять лист
-/// молча batch-путь не должен.
+/// Скрытый лист в печать книги не попадает — как у Excel и LibreOffice:
+/// «вся книга» это видимые листы, и скрытый лист не должен добавлять страницы
+/// (у реальных книг он бывает черновиком на десятки страниц).
+///
+/// Явно выбранный лист печатается независимо от состояния: выбор делает
+/// вызывающий, а не книга — это одиночный путь (`single_sheet_export_is_unchanged`).
 #[test]
-fn hidden_sheets_are_exported() {
+fn hidden_sheets_are_not_printed() {
     let book = open_book("sheets-hidden.xlsx");
     let doc = parse(&export_book(&book));
 
-    assert_eq!(page_count(&doc), 2);
-    assert_eq!(
-        outline_items(&doc),
-        vec![("Видимый".to_owned(), 1), ("Скрытый".to_owned(), 2)]
-    );
+    assert_eq!(page_count(&doc), 1, "скрытый лист не печатается");
+    assert_eq!(outline_items(&doc), vec![("Видимый".to_owned(), 1)]);
 }
 
 /// Одиночный экспорт не изменился: лист выбирается по индексу, а не по
