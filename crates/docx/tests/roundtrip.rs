@@ -165,6 +165,11 @@ fn full_rpr() -> RawRPr {
         sz_cs: Some(HalfPoint::new(22)),
         rtl: Some(Toggle::On),
         highlight: Some(Highlight::Yellow),
+        shd: Some(Shading {
+            val: ShadingPattern::Clear,
+            color: None,
+            fill: Some(Color::Rgb(0x00FF_FF00)),
+        }),
         u: Some(Underline::WavyDouble),
         vert_align: Some(VertAlign::Superscript),
         spacing: Some(CharacterSpacing {

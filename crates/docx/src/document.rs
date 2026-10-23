@@ -3349,6 +3349,8 @@ fn parse_rpr(
             b"szCs" => rpr.sz_cs = attr_i32(&attrs, "val", ctx, part)?.map(HalfPoint::new),
             b"rtl" => rpr.rtl = attr_toggle(&attrs, ctx, part, "w:rtl")?,
             b"highlight" => rpr.highlight = parse_highlight(&attrs, ctx, part)?,
+            // Заливка знака: Word пишет подсветку и так — `w:fill` под текст.
+            b"shd" => rpr.shd = Some(parse_shading(&attrs, ctx, part)?),
             b"u" => rpr.u = Some(parse_underline(&attrs)),
             b"vertAlign" => rpr.vert_align = parse_vert_align(&attrs, ctx, part)?,
             b"spacing" => {
@@ -4018,7 +4020,9 @@ mod tests {
                     <w:b/><w:i w:val="0"/><w:caps/><w:smallCaps/><w:strike/><w:dstrike/>
                     <w:vanish/><w:outline/><w:shadow/><w:emboss/><w:imprint/>
                     <w:color w:val="00FF00"/><w:sz w:val="24"/><w:szCs w:val="28"/>
-                    <w:highlight w:val="yellow"/><w:u w:val="double"/>
+                    <w:highlight w:val="yellow"/>
+                    <w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/>
+                    <w:u w:val="double"/>
                     <w:vertAlign w:val="superscript"/><w:spacing w:val="20"/>
                     <w:position w:val="-6"/>
                 </w:rPr>
@@ -4049,6 +4053,8 @@ mod tests {
         assert_eq!(rpr.sz, Some(HalfPoint::new(24)));
         assert_eq!(rpr.sz_cs, Some(HalfPoint::new(28)));
         assert_eq!(rpr.highlight, Some(Highlight::Yellow));
+        let shd = rpr.shd.as_ref().expect("`w:shd` знака сохраняется");
+        assert_eq!(shd.fill, Some(Color::Rgb(0x00FF_FF00)));
         assert_eq!(rpr.u, Some(Underline::Double));
         assert_eq!(rpr.vert_align, Some(VertAlign::Superscript));
         let spacing = rpr.spacing.as_ref().expect("`w:spacing` is kept");

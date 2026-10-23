@@ -253,9 +253,25 @@ fn draw_items(items: &[LayoutItem], viewport: &Viewport, font: StringRef, out: &
                 underline,
                 align,
                 rtl,
+                fragments,
                 ..
             } => {
                 let (left, y) = to_screen(viewport, rect.x, rect.y);
+                // Подсветка — фон под текстом: прямоугольник на всю высоту
+                // строки по ширине фрагмента, до самой строки, иначе заливка
+                // перекрыла бы знаки.
+                for fragment in fragments {
+                    if let Some(rgb) = fragment.highlight {
+                        fill_rect(
+                            out,
+                            left + fragment.x * viewport.scale,
+                            y,
+                            fragment.width * viewport.scale,
+                            rect.height * viewport.scale,
+                            highlight_color(rgb),
+                        );
+                    }
+                }
                 // RLM в начале строки — сигнал painter'у поставить canvas
                 // `direction: rtl`. В раскладке и TextLayer его нет: это
                 // деталь отрисовки, а не символ документа.
@@ -385,6 +401,11 @@ fn text_color(rgb: Option<u32>) -> Color {
     }
 }
 
+/// Цвет подсветки `RRGGBB` → `RRGGBBAA` — те же каналы, что у [`text_color`].
+fn highlight_color(rgb: u32) -> Color {
+    Color(((rgb & 0x00FF_FFFF) << 8) | 0xFF)
+}
+
 /// Точка раскладки → физические пиксели canvas.
 fn to_screen(viewport: &Viewport, x: f32, y: f32) -> (f32, f32) {
     let point = viewport.layout_to_screen(Point::new(x, y));
@@ -404,7 +425,9 @@ mod tests {
 
     use super::*;
     use crate::layout::engine::{TableCellLayout, VAlign, PX_PER_POINT};
+    use crate::layout::paragraph::{LineAlign, LineFragment};
     use crate::layout::{layout_document, LayoutOptions, Page};
+    use crate::model::raw::HalfPoint;
     use crate::model::{
         BlockItem, Body, Extent, Inline, InlineImage, InlineOrAnchor, Paragraph, Run, RunContent,
     };
@@ -712,6 +735,61 @@ mod tests {
             })],
             ..Paragraph::default()
         })
+    }
+
+    /// Подсветка рисуется фоном под строкой: прямоугольник нужного цвета идёт
+    /// до текста, иначе заливка перекрыла бы знаки.
+    #[test]
+    fn highlight_is_filled_under_the_line() {
+        let fragment = LineFragment {
+            range: 0..5,
+            x: 4.0,
+            width: 40.0,
+            font_family: None,
+            size: HalfPoint::new(24),
+            bold: false,
+            italic: false,
+            underline: false,
+            color: None,
+            highlight: Some(0x00FF_FF00),
+        };
+        let item = LayoutItem::Paragraph {
+            node_id: NodeId::ROOT,
+            rect: Rect::new(10.0, 20.0, 100.0, 14.0),
+            text: "текст".to_owned(),
+            line_height: 14.0,
+            color: None,
+            font_family: None,
+            size: HalfPoint::new(24),
+            bold: false,
+            italic: false,
+            underline: false,
+            fragments: vec![fragment],
+            align: LineAlign::Left,
+            rtl: false,
+            heading_level: None,
+        };
+        let mut out = DisplayList::new();
+        let font = out.intern("Carlito");
+        draw_items(&[item], &viewport(), font, &mut out);
+
+        let rects = drawn_rects(&out);
+        assert_eq!(rects.len(), 1, "подсветка — ровно один прямоугольник");
+        let (x, y, w, h, fill) = rects[0];
+        // Окно сдвинуто на (10, 20) и увеличено вдвое: фрагмент x = 4, ширина 40.
+        assert!((x - 8.0).abs() < 0.01, "x {x}");
+        assert!((y - 0.0).abs() < 0.01, "y {y}");
+        assert!((w - 80.0).abs() < 0.01, "ширина {w}");
+        assert!((h - 28.0).abs() < 0.01, "высота {h}");
+        assert_eq!(fill, Color(0xFFFF_00FF), "жёлтый фон, альфа непрозрачная");
+
+        let rect_at = (0..out.len())
+            .position(|i| matches!(out.cmd(i), Some(DrawCommand::Rect { .. })))
+            .expect("прямоугольник подсветки");
+        let text_at = (0..out.len())
+            .position(|i| matches!(out.cmd(i), Some(DrawCommand::Text { .. })))
+            .expect("строка текста");
+        assert!(rect_at < text_at, "фон должен идти до текста");
     }
 
     /// Прямоугольники заливки кадра.

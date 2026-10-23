@@ -46,6 +46,7 @@ pub struct Paginator {
     /// секции, номеру страницы и `w:titlePg`, и на момент создания страницы
     /// известны только они (см. [`Paginator::apply_header_extent`]).
     header_extents: Vec<HeaderExtent>,
+    footer_extents: Vec<FooterExtent>,
     /// `w:evenAndOddHeaders`: включает колонтитул чётных страниц.
     even_and_odd: bool,
     /// Текущая страница открывает свою секцию — ей достаётся колонтитул `first`.
@@ -76,6 +77,39 @@ impl HeaderExtent {
     /// подменил расчёт ([`HeaderExtent`] приходит из раскладки колонтитулов),
     /// поэтому здесь достаточно выбора по флагам.
     fn bottom_of(&self, section: &Section, first_in_section: bool, even_page: bool) -> f32 {
+        if first_in_section && section.title_pg {
+            self.first
+        } else if even_page {
+            self.even
+        } else {
+            self.default
+        }
+    }
+}
+
+/// Насколько нижний колонтитул поднимается в полосу набора.
+///
+/// `w:footer` задаёт расстояние от низа страницы до нижнего края колонтитула, а
+/// не его высоту: высокий подвал в это поле не влезает и наезжает на тело —
+/// таблица, поставленная до самого низа полосы, печаталась поверх подписи.
+/// Значение — расстояние от низа страницы до *верха* полосы колонтитула; низ
+/// полосы набора поднимается до него, если нижнее поле меньше.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FooterExtent {
+    /// `w:footerReference w:type="default"`.
+    pub default: f32,
+    /// `w:footerReference w:type="first"` — первая страница секции при `w:titlePg`.
+    pub first: f32,
+    /// `w:footerReference w:type="even"` — чётные страницы при `w:evenAndOddHeaders`.
+    pub even: f32,
+}
+
+impl FooterExtent {
+    /// Верх полосы того колонтитула, который печатается на странице, —
+    /// расстояние от низа страницы.
+    ///
+    /// Выбор варианта повторяет [`HeaderExtent::bottom_of`].
+    fn top_of(&self, section: &Section, first_in_section: bool, even_page: bool) -> f32 {
         if first_in_section && section.title_pg {
             self.first
         } else if even_page {
@@ -122,6 +156,7 @@ impl Paginator {
             column_gap: 0.0,
             column_index: 0,
             header_extents: Vec::new(),
+            footer_extents: Vec::new(),
             even_and_odd: false,
             first_in_section: true,
         };
@@ -153,6 +188,20 @@ impl Paginator {
         self.even_and_odd = even_and_odd;
         let empty = self.current_page.items.is_empty();
         self.apply_header_extent();
+        self.apply_footer_extent();
+        if empty {
+            self.current_y = self.current_page.margins.top;
+        }
+    }
+
+    /// Передать пагинатору верхи нижних колонтитулов по секциям.
+    ///
+    /// Вызывается рядом с [`Paginator::set_header_extents`]: высокий подвал
+    /// поднимает низ полосы набора, иначе тело наезжает на подпись в подвале.
+    pub fn set_footer_extents(&mut self, extents: Vec<FooterExtent>) {
+        self.footer_extents = extents;
+        let empty = self.current_page.items.is_empty();
+        self.apply_footer_extent();
         if empty {
             self.current_y = self.current_page.margins.top;
         }
@@ -383,6 +432,9 @@ impl Paginator {
         let finished = std::mem::replace(&mut self.current_page, next);
         self.first_in_section = starts_section;
         self.apply_header_extent();
+        // Подвал поднимает низ полосы набора: без этого последняя строка
+        // страницы ложится на подпись в подвале.
+        self.apply_footer_extent();
         self.current_y = self.current_page.margins.top;
         self.reset_columns();
         self.pages.push(finished.clone());
@@ -406,6 +458,18 @@ impl Paginator {
         let bottom = extent.bottom_of(&self.current_section, self.first_in_section, even_page);
         if bottom > self.current_page.margins.top {
             self.current_page.margins.top = bottom;
+        }
+    }
+
+    /// Поднять низ полосы набора над подвалом, если нижнего поля не хватает.
+    fn apply_footer_extent(&mut self) {
+        let Some(extent) = self.footer_extents.get(self.section_index) else {
+            return;
+        };
+        let even_page = self.even_and_odd && self.current_page.number.is_multiple_of(2);
+        let top = extent.top_of(&self.current_section, self.first_in_section, even_page);
+        if top > self.current_page.margins.bottom {
+            self.current_page.margins.bottom = top;
         }
     }
 }
@@ -615,6 +679,46 @@ mod tests {
             !paginator.fits(room + 1.0),
             "на пиксель больше — не влезает"
         );
+    }
+
+    /// Высокий подвал поднимает низ полосы набора: тело не наезжает на подпись.
+    ///
+    /// `w:footer` задаёт расстояние до нижнего края колонтитула, а не его
+    /// высоту, поэтому подвал выше нижнего поля раньше ложился поверх тела —
+    /// на реальной книге таблица печаталась прямо на строке «стр. 15 из 22».
+    #[test]
+    fn tall_footer_raises_the_content_bottom() {
+        let mut paginator = Paginator::new(&section(11_906, 15_360, 1_440));
+        let before = paginator.content_bottom();
+        let normal_bottom = PAGE_HEIGHT_PX - MARGIN_PX;
+        assert!((before - normal_bottom).abs() < 0.01);
+
+        paginator.set_footer_extents(vec![FooterExtent {
+            default: 120.0,
+            first: 120.0,
+            even: 120.0,
+        }]);
+
+        assert!(
+            (paginator.current_page().margins.bottom - 120.0).abs() < 0.01,
+            "нижнее поле выросло до верха подвала"
+        );
+        assert!(
+            (paginator.content_bottom() - (PAGE_HEIGHT_PX - 120.0)).abs() < 0.01,
+            "низ полосы набора поднялся над подвалом"
+        );
+    }
+
+    /// Подвал ниже нижнего поля ничего не меняет: поле уже его накрывает.
+    #[test]
+    fn footer_inside_the_margin_keeps_the_content_bottom() {
+        let mut paginator = Paginator::new(&section(11_906, 15_360, 1_440));
+        paginator.set_footer_extents(vec![FooterExtent {
+            default: 48.0,
+            first: 48.0,
+            even: 48.0,
+        }]);
+        assert!((paginator.current_page().margins.bottom - MARGIN_PX).abs() < 0.01);
     }
 
     #[test]

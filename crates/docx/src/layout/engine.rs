@@ -17,7 +17,7 @@ use crate::layout::cascade::StyleCache;
 use crate::layout::fields::{resolve_paragraph, FieldPass};
 use crate::layout::float::{emu_to_px, layout_floats_on_page, FloatElement, FloatKind};
 use crate::layout::line_break::LineBreaker;
-use crate::layout::pagination::{HeaderExtent, Paginator};
+use crate::layout::pagination::{FooterExtent, HeaderExtent, Paginator};
 use crate::layout::paragraph::{layout_paragraph, Line, LineAlign, LineFragment, ParagraphLayout};
 use crate::layout::tables::{
     compute_table_frame, layout_table_fragments, table_item, PageBand, TableRowLayout,
@@ -495,6 +495,10 @@ fn layout_pass(
     // колонтитулы с `PAGE`/`NUMPAGES` считаются одинаково там и здесь.
     let extents = header_extents(document, options, fonts, &mut pass);
     paginator.set_header_extents(extents, document.settings.even_and_odd_headers);
+    // Нижний колонтитул поднимает низ полосы набора: высокий подвал иначе
+    // ложится поверх тела — последняя строка страницы печаталась на подписи.
+    let footers = footer_extents(document, options, fonts, &mut pass);
+    paginator.set_footer_extents(footers);
     let mut state = LayoutState::for_page(paginator.current_page(), &first_section);
     let mut cache = StyleCache::new();
     // Секция, в которой идёт раскладка: `sections[i]` описывает секцию, которую
@@ -1545,6 +1549,63 @@ fn header_extents(
             even: header_extent(document, section, false, true, options, fonts, pass),
         })
         .collect()
+}
+
+/// Верхи нижних колонтитулов по секциям — расстояние от низа страницы.
+///
+/// Симметрично [`header_extents`]: подвал прижат к линии `w:footer`, и если он
+/// выше нижнего поля, полоса набора поднимается до его верха.
+fn footer_extents(
+    document: &Document,
+    options: &LayoutOptions,
+    fonts: &mut FontRegistry,
+    pass: &mut FieldPass,
+) -> Vec<FooterExtent> {
+    document
+        .body
+        .sections
+        .iter()
+        .map(|section| FooterExtent {
+            default: footer_extent(document, section, false, false, options, fonts, pass),
+            first: footer_extent(document, section, true, false, options, fonts, pass),
+            even: footer_extent(document, section, false, true, options, fonts, pass),
+        })
+        .collect()
+}
+
+/// Верх полосы одного нижнего колонтитула — расстояние от низа страницы.
+///
+/// `0.0` — колонтитула нет: низ полосы набора остаётся на нижнем поле.
+fn footer_extent(
+    document: &Document,
+    section: &Section,
+    first_in_section: bool,
+    even_page: bool,
+    options: &LayoutOptions,
+    fonts: &mut FontRegistry,
+    pass: &mut FieldPass,
+) -> f32 {
+    let part = chrome_part(section, ChromeBand::Footer, first_in_section, even_page);
+    let band = layout_chrome_items(
+        document,
+        part,
+        section,
+        ChromeBand::Footer,
+        options,
+        fonts,
+        pass,
+    );
+    if band.items.is_empty() {
+        return 0.0;
+    }
+    let height = band
+        .items
+        .iter()
+        .map(item_bottom)
+        .fold(band.height, f32::max);
+    // `w:footer` — расстояние до нижнего края полосы; её верх — выше на высоту
+    // содержимого.
+    MarginsLayout::from_margins(&section.margins).footer + height
 }
 
 /// Низ полосы одного верхнего колонтитула в координатах страницы.

@@ -233,6 +233,37 @@ pub enum Highlight {
     Other(String),
 }
 
+impl Highlight {
+    /// Цвет фона выделения, `RRGGBB`; `None` — рисовать нечего (`none` и
+    /// незнакомое значение).
+    ///
+    /// Палитра — `ST_HighlightColor` из ECMA-376: шестнадцать именованных
+    /// цветов, как их показывает Word.
+    #[must_use]
+    pub fn rgb(&self) -> Option<u32> {
+        let value = match self {
+            Self::Black => 0x00_0000,
+            Self::Blue => 0x00_00FF,
+            Self::Cyan => 0x00_FFFF,
+            Self::Green => 0x00_FF00,
+            Self::Magenta => 0xFF_00FF,
+            Self::Red => 0xFF_0000,
+            Self::Yellow => 0xFF_FF00,
+            Self::White => 0xFF_FFFF,
+            Self::DarkBlue => 0x00_0080,
+            Self::DarkCyan => 0x00_8080,
+            Self::DarkGreen => 0x00_8000,
+            Self::DarkMagenta => 0x80_0080,
+            Self::DarkRed => 0x80_0000,
+            Self::DarkYellow => 0x80_8000,
+            Self::DarkGray => 0x80_8080,
+            Self::LightGray => 0xC0_C0C0,
+            Self::None | Self::Other(_) => return None,
+        };
+        Some(value)
+    }
+}
+
 /// Шрифты run'а (`w:rFonts`).
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct RFonts {
@@ -796,6 +827,10 @@ pub struct RawRPr {
     pub imprint: Option<Toggle>,
     /// Цвет текста (`w:color`).
     pub color: Option<Color>,
+    /// Заливка знака (`w:shd`): фон под текстом, как `w:highlight`, но цветом
+    /// из `w:fill` — так Word помечает подсвеченные фрагменты чаще, чем
+    /// именованным `ST_HighlightColor`.
+    pub shd: Option<Shading>,
     /// Размер шрифта в полупунктах (`w:sz`): 24 — это 12 pt.
     pub sz: Option<HalfPoint>,
     /// Размер шрифта для языков со сложной раскладкой (`w:szCs`).
@@ -847,7 +882,19 @@ pub struct RawTblPr {
 
 #[cfg(test)]
 mod tests {
-    use super::Toggle;
+    use super::{Highlight, Toggle};
+
+    /// Палитра `ST_HighlightColor`: шестнадцать именованных цветов Word.
+    #[test]
+    fn highlight_rgb_covers_the_standard_palette() {
+        assert_eq!(Highlight::Yellow.rgb(), Some(0x00FF_FF00));
+        assert_eq!(Highlight::Red.rgb(), Some(0x00FF_0000));
+        assert_eq!(Highlight::DarkBlue.rgb(), Some(0x00_0080));
+        assert_eq!(Highlight::LightGray.rgb(), Some(0x00C0_C0C0));
+        // `none` снимает выделение, незнакомое значение рисовать нечем.
+        assert_eq!(Highlight::None.rgb(), None);
+        assert_eq!(Highlight::Other("bogus".to_owned()).rgb(), None);
+    }
 
     #[test]
     fn toggle_from_val_recognizes_all_values() {
