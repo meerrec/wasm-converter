@@ -1,6 +1,6 @@
 {
   "name": "@meerrec/cli",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Command-line converter: DOCX to PDF/Markdown/HTML/text, XLSX to PDF, with a worker pool for batch runs.",
   "license": "Apache-2.0",
   "repository": {
