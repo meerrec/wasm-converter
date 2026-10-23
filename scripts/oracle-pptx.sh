@@ -79,9 +79,13 @@ for fixture in "${fixtures[@]}"; do
   fi
 
   # Постраничный SSIM: страницы у обоих PDF одни и те же (слайд = страница),
-  # размер бумаги тоже задан документом (p:sldSz).
-  pdftoppm -png -r 150 "$ref" "$workdir/ref/page" >/dev/null 2>&1
-  pdftoppm -png -r 150 "$ours_pdf" "$workdir/ours/page" >/dev/null 2>&1
+  # размер бумаги тоже задан документом (p:sldSz). Растеризация — в пиксельный
+  # размер нашей страницы, а не по `-r`: LibreOffice пишет 960.009 pt там, где
+  # у нас ровно 960, и при 150 dpi эталон выходил на пиксель шире. `ssim`
+  # требует одинаковых размеров и на расхождении в пиксель падает.
+  read -r page_w page_h < <(pdfinfo "$ours_pdf" | awk '/^Page size:/{printf "%d %d\n", $3, $5}')
+  pdftoppm -png -scale-to-x "$page_w" -scale-to-y "$page_h" "$ref" "$workdir/ref/page" >/dev/null 2>&1
+  pdftoppm -png -scale-to-x "$page_w" -scale-to-y "$page_h" "$ours_pdf" "$workdir/ours/page" >/dev/null 2>&1
   pages=0
   total=0
   for ref_page in "$workdir"/ref/page-*.png; do

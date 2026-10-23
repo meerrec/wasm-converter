@@ -29,11 +29,28 @@ interface Deck {
     parts: Part[];
 }
 
-const CONTENT_TYPES = (extra: string): string =>
+// Части пакета объявляются `Override`, а не общим `Default` для `xml`:
+// без типа «presentation.main+xml» у `presentation.xml` LibreOffice Impress
+// отказывается открывать файл («source file could not be loaded», код 0 и
+// пустой каталог), и оракул `scripts/oracle-pptx.sh` остаётся без эталонов.
+const SLIDE_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
+
+const CONTENT_TYPES = (slideNumbers: readonly string[], extra: string): string =>
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
     '<Default Extension="xml" ContentType="application/xml"/>' +
     '<Default Extension="png" ContentType="image/png"/>' +
+    '<Override PartName="/ppt/presentation.xml" ' +
+    'ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>' +
+    '<Override PartName="/ppt/slideMasters/slideMaster1.xml" ' +
+    'ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>' +
+    '<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ' +
+    'ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>' +
+    '<Override PartName="/ppt/theme/theme1.xml" ' +
+    'ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>' +
+    slideNumbers
+        .map((number) => `<Override PartName="/ppt/slides/slide${number}.xml" ContentType="${SLIDE_TYPE}"/>`)
+        .join('') +
     extra +
     '</Types>';
 
@@ -209,7 +226,13 @@ const deck = (
     return [part.replace('.xml', '.xml.rels').replace('slides/', 'slides/_rels/'), slideRels(number, extra)] as Part;
   });
   return [
-    ['[Content_Types].xml', CONTENT_TYPES(extra === 'chart' ? CHART_TYPE : '')],
+    [
+      '[Content_Types].xml',
+      CONTENT_TYPES(
+        slideNames.map((part) => part.match(/slide(\d+)\.xml/)![1]!),
+        extra === 'chart' ? CHART_TYPE : '',
+      ),
+    ],
     ['_rels/.rels', ROOT_RELS],
     ['ppt/presentation.xml', PRESENTATION(slideNames.map((_, index) => `<p:sldId id="${256 + index}" r:id="rId${index + 2}"/>`).join(''))],
     ['ppt/_rels/presentation.xml.rels', PRESENTATION_RELS(slideTargets)],
