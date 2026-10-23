@@ -408,7 +408,7 @@ export function useXlsxPage(): XlsxPageApi {
     },
     onExportBook: () => {
       void exportPdf(
-        fitToWidth ? { fitToWidth: 1, allSheets: true } : { scale: 1, allSheets: true },
+        fitToWidth ? { fitToPage: true, allSheets: true } : { scale: 1, allSheets: true },
         ' (все листы)',
       );
     },
