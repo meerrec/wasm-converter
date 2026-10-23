@@ -99,9 +99,11 @@ export default [
     // классификатором направлений модуль — 417,07 КБ (+7,05 КБ, 1,7 %).
     // Отказ от unicode-bidi сломал бы смешанные RTL-абзацы, поэтому бюджет
     // поднят осознанно; trade-off зафиксирован в отчёте спринта.
+    // 420 → 425 КБ: подсветка знака (`w:highlight` и `w:rPr/w:shd`) и
+    // подъём полосы набора над высоким подвалом добавили 1,33 КБ.
     name: 'wasm (docx)',
     path: 'packages/wasm-docx/pkg/*.wasm',
-    limit: '420 KB',
+    limit: '425 KB',
     gzip: true,
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },
