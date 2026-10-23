@@ -1,6 +1,6 @@
 {
   "name": "@meerrec/core",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Core primitives: worker protocol, OffscreenCanvas glue, DisplayList transport.",
   "license": "Apache-2.0",
   "repository": {

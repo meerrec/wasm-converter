@@ -1,6 +1,6 @@
 {
   "name": "@meerrec/vue",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Vue-обёртки (composable и компонент) над просмотрщиками @meerrec/core.",
   "license": "Apache-2.0",
   "repository": {
