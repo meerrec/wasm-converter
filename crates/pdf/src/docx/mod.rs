@@ -24,10 +24,13 @@ mod tables;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use doc_converter_core::units::MM_PER_PX;
 use doc_converter_docx::layout::{LayoutItem, Page, PageChrome, PageLayout, Rect};
 use doc_converter_docx::{Document, HalfPoint, LayoutOptions};
 use doc_converter_render::display_list::Color;
-use doc_converter_render::font::{default_font_bytes, FontRegistry, DEFAULT_FONT_ID};
+use doc_converter_render::font::{
+    default_font_bytes, FontRegistry, DEFAULT_FONT_CACHE, DEFAULT_FONT_ID,
+};
 use lopdf::Dictionary;
 use skrifa::raw::TableProvider;
 
@@ -35,22 +38,11 @@ use crate::fonts::{EmbeddedFonts, Face, FaceSet};
 use crate::layout::PageGeometry;
 use crate::options::{Margins, PageConfig, PageSize, PdfOptions};
 use crate::pdf::content;
-use crate::pdf::fonts::PreparedFont;
-use crate::pdf::ops::{FontId, Op, Point, Pt, TextItem, XObjectId};
+use crate::pdf::export;
+use crate::pdf::ops::{Op, Point, Pt, TextItem, XObjectId};
 use crate::pdf::session::Session;
 use crate::styles::to_pdf_color;
 use crate::PdfError;
-
-/// Размер LRU-кэша метрик: тот же, что у XLSX-пути (`painter::FONT_CACHE`).
-const FONT_CACHE: usize = 4096;
-
-/// Миллиметров в пикселе раскладки: 96 dpi против 25.4 мм в дюйме.
-///
-/// Единственный вход [`PageGeometry`] для произвольной страницы —
-/// [`PageSize::Custom`] в миллиметрах, поэтому размер раскладки переводится
-/// сперва в миллиметры; обратно в точки его вернёт сама геометрия
-/// (`PT_PER_MM`), и `Page.width` дойдёт до PDF без второй константы.
-const MM_PER_PX: f32 = 25.4 / 96.0;
 
 /// Собрать PDF из всех страниц документа.
 ///
@@ -60,7 +52,7 @@ const MM_PER_PX: f32 = 25.4 / 96.0;
 /// разобрались; [`PdfError::Image`], если сессия не приняла картинку;
 /// [`PdfError::Io`], если приёмник вернул ошибку записи.
 pub(crate) fn export(doc: &Document, options: &PdfOptions) -> Result<Vec<u8>, PdfError> {
-    let mut registry = FontRegistry::new(FONT_CACHE);
+    let mut registry = FontRegistry::new(DEFAULT_FONT_CACHE);
     let layout =
         doc_converter_docx::layout::layout_document(doc, &LayoutOptions::default(), &mut registry)
             .map_err(PdfError::DocxLayout)?;
@@ -137,18 +129,12 @@ pub(crate) fn export(doc: &Document, options: &PdfOptions) -> Result<Vec<u8>, Pd
             })
             .collect();
         ops.retain(|op| !matches!(op, Op::Annotation { .. }));
-        // Карта шрифтов живёт только до `translate`: `write_page` требует
-        // сессию целиком, и заимствование `prepared_fonts` обязано кончиться.
-        let content = {
-            let fonts_map: BTreeMap<FontId, &PreparedFont> = session
-                .prepared_fonts()
-                .iter()
-                .map(|(name, prepared)| (FontId(name.clone()), prepared))
-                .collect();
-            content::translate(&ops, &fonts_map)?
-        };
+        // Карта шрифтов — та, что живёт в сессии: `translate` занимает её
+        // неизменяемо и возвращает готовые байты, поэтому заимствование
+        // кончается до `write_page` с его `&mut self`.
+        let content = content::translate(&ops, session.prepared_fonts())?;
         session.write_page(
-            &content,
+            content,
             [0.0, 0.0, geometry.width_pt(), geometry.height_pt()],
             &annots,
         )?;
@@ -222,15 +208,17 @@ fn geometry(page: &Page) -> PageGeometry {
 /// Обход рекурсивный: содержимое ячеек таблицы — такие же элементы раскладки, и
 /// начертание из ячейки обязано попасть в набор, даже пока таблицы не рисуются.
 fn collect_faces(layout: &PageLayout) -> FaceSet {
-    fn walk(items: &[LayoutItem], faces: &mut FaceSet) {
+    // Рекурсивный обход раскладки остаётся здесь: ячейки таблиц — вложенные
+    // срезы элементов, цепочкой итераторов они не выражаются. Собираются пары
+    // (полужирный, курсив); вставку начертаний делает общий
+    // [`export::collect_faces`], как и у PPTX.
+    fn walk(items: &[LayoutItem], pairs: &mut Vec<(bool, bool)>) {
         for item in items {
             match item {
-                LayoutItem::Paragraph { bold, italic, .. } => {
-                    faces.insert(Face::of(*bold, *italic));
-                }
+                LayoutItem::Paragraph { bold, italic, .. } => pairs.push((*bold, *italic)),
                 LayoutItem::Table { cells, .. } => {
                     for cell in cells {
-                        walk(&cell.content, faces);
+                        walk(&cell.content, pairs);
                     }
                 }
                 LayoutItem::Float(_)
@@ -241,17 +229,17 @@ fn collect_faces(layout: &PageLayout) -> FaceSet {
         }
     }
 
-    let mut faces = FaceSet::default();
+    let mut pairs = Vec::new();
     for page in &layout.pages {
-        walk(&page.items, &mut faces);
+        walk(&page.items, &mut pairs);
     }
     // Начертания колонтитулов нужны так же: шрифт подрезается до записи первой
     // страницы, и полужирный колонтитул без своей грани вышел бы regular'ом.
     for chrome in &layout.chrome {
-        walk(&chrome.header, &mut faces);
-        walk(&chrome.footer, &mut faces);
+        walk(&chrome.header, &mut pairs);
+        walk(&chrome.footer, &mut pairs);
     }
-    faces
+    export::collect_faces(pairs)
 }
 
 /// Символы каждой страницы по начертаниям: то, что реально попадёт в PDF.
@@ -259,7 +247,7 @@ fn collect_faces(layout: &PageLayout) -> FaceSet {
 /// Источник — те же операции, что уйдут в запись ([`draw_page`]): пре-скан
 /// текста по элементам раскладки разошёлся бы с отрисовкой при первой же правке
 /// (например, когда таблицы начнут рисовать своё содержимое). Ключ накопления —
-/// [`Face`], а не [`FontId`]: зонды идут до сессии, и id шрифтов ещё не
+/// [`Face`], а не [`crate::pdf::ops::FontId`]: зонды идут до сессии, и id шрифтов ещё не
 /// существует; обратное сопоставление делает [`EmbeddedFonts::face`].
 fn collect_glyphs(
     layout: &PageLayout,
@@ -270,22 +258,18 @@ fn collect_glyphs(
     let mut glyphs: BTreeMap<Face, BTreeSet<char>> = BTreeMap::new();
     for (index, page) in layout.pages.iter().enumerate() {
         let geometry = geometry(page);
-        for op in draw_page(
+        let ops = draw_page(
             page,
             layout.chrome.get(index),
             &geometry,
             embedded,
             registry,
             images,
-        ) {
-            if let Op::WriteText { font, items } = op {
-                let set = glyphs.entry(embedded.face(&font)).or_default();
-                for item in items {
-                    if let TextItem::Text(text) = item {
-                        set.extend(text.chars());
-                    }
-                }
-            }
+        );
+        // Обход команд общий с XLSX/PPTX: одна правка `WriteText` — все пути.
+        let page_glyphs = export::collect_text_glyphs(&ops, |font| embedded.face(font));
+        for (face, chars) in page_glyphs {
+            glyphs.entry(face).or_default().extend(chars);
         }
     }
     glyphs

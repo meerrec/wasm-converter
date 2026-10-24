@@ -33,9 +33,12 @@ use crate::PdfError;
 /// которого нет в `fonts`: молча потерянный текст хуже ошибки экспорта.
 pub fn translate(
     ops: &[Op],
-    fonts: &BTreeMap<FontId, &fonts::PreparedFont>,
+    fonts: &BTreeMap<String, fonts::PreparedFont>,
 ) -> Result<Vec<u8>, PdfError> {
     let mut operations: Vec<Operation> = Vec::new();
+    // Буфер кодирования текста на весь поток: `Object::String` забирает байты,
+    // поэтому каждый текстовый элемент получает готовый `Vec`, а не копию.
+    let mut text_buf: Vec<u8> = Vec::new();
     for op in ops {
         match op {
             Op::SaveGraphicsState => push(&mut operations, "q", vec![]),
@@ -47,7 +50,7 @@ pub fn translate(
             Op::EndTextSection => push(&mut operations, "ET", vec![]),
             Op::WriteText { items, font } => {
                 let prepared = prepared_font(font, fonts)?;
-                encode_text_items(items, prepared, &mut operations);
+                encode_text_items(items, prepared, &mut text_buf, &mut operations);
             }
             Op::SetFontSize { size, font } => {
                 prepared_font(font, fonts)?;
@@ -102,11 +105,10 @@ fn push(operations: &mut Vec<Operation>, operator: &str, operands: Vec<Object>) 
 /// Шрифт по имени в ресурсах.
 fn prepared_font<'a>(
     font: &FontId,
-    fonts: &'a BTreeMap<FontId, &fonts::PreparedFont>,
+    fonts: &'a BTreeMap<String, fonts::PreparedFont>,
 ) -> Result<&'a fonts::PreparedFont, PdfError> {
     fonts
-        .get(font)
-        .copied()
+        .get(font.0.as_str())
         .ok_or_else(|| PdfError::Font(format!("font '{}' is not registered", font.0)))
 }
 
@@ -115,6 +117,7 @@ fn prepared_font<'a>(
 fn encode_text_items(
     items: &[TextItem],
     font: &fonts::PreparedFont,
+    buf: &mut Vec<u8>,
     operations: &mut Vec<Operation>,
 ) {
     if items.is_empty() {
@@ -124,9 +127,13 @@ fn encode_text_items(
     for item in items {
         match item {
             // Identity-H: коды символов — 2-байтовые CID подрезанного шрифта,
-            // поэтому строка только шестнадцатеричная.
+            // поэтому строка только шестнадцатеричная. `Object::String`
+            // забирает байты буфера, поэтому следующий элемент кодируется в
+            // опустевший `Vec`.
             TextItem::Text(text) => {
-                tj_array.push(Object::String(font.encode(text), Hexadecimal));
+                buf.clear();
+                font.encode_into(buf, text);
+                tj_array.push(Object::String(std::mem::take(buf), Hexadecimal));
             }
             TextItem::Offset(offset) => tj_array.push(Real(*offset)),
         }
@@ -309,32 +316,39 @@ mod tests {
         out
     }
 
-    /// Реестр шрифтов теста: владеет шрифтами и отдаёт на них ссылки —
-    /// иначе временный массив умер бы раньше, чем карта ссылок на него.
+    /// Байты текста в Identity-H: тестам нужен готовый `Vec`.
+    fn encoded(font: &fonts::PreparedFont, text: &str) -> Vec<u8> {
+        let mut out = Vec::new();
+        font.encode_into(&mut out, text);
+        out
+    }
+
+    /// Реестр шрифтов теста: владеет шрифтами и отдаёт карту, которую ждёт
+    /// `translate`, — имя → шрифт, как у сессии.
     struct FontRegistry {
-        ids: Vec<FontId>,
-        owned: Vec<fonts::PreparedFont>,
+        fonts: BTreeMap<String, fonts::PreparedFont>,
     }
 
     impl FontRegistry {
         fn new(entries: Vec<(FontId, fonts::PreparedFont)>) -> Self {
-            let (ids, owned) = entries.into_iter().unzip();
-            Self { ids, owned }
+            Self {
+                fonts: entries.into_iter().map(|(id, font)| (id.0, font)).collect(),
+            }
         }
 
         /// Реестр шрифтов в форме, которую ждёт `translate`.
-        fn by_id(&self) -> BTreeMap<FontId, &fonts::PreparedFont> {
-            self.ids.iter().cloned().zip(self.owned.iter()).collect()
+        fn fonts(&self) -> &BTreeMap<String, fonts::PreparedFont> {
+            &self.fonts
         }
     }
 
     /// Пустой реестр — для операций, не трогающих шрифты.
-    fn empty_fonts() -> BTreeMap<FontId, &'static fonts::PreparedFont> {
+    fn empty_fonts() -> BTreeMap<String, fonts::PreparedFont> {
         BTreeMap::new()
     }
 
     /// Перевод в строку: тесты сверяют точные последовательности операторов.
-    fn translated(ops: &[Op], fonts: &BTreeMap<FontId, &fonts::PreparedFont>) -> String {
+    fn translated(ops: &[Op], fonts: &BTreeMap<String, fonts::PreparedFont>) -> String {
         String::from_utf8(translate(ops, fonts).unwrap()).unwrap()
     }
 
@@ -342,9 +356,9 @@ mod tests {
     fn text_ops_emit_bt_tf_td_tj_et_with_hex_glyphs() {
         const TEXT: &str = "Hello, мир!";
         let font = prepared(TEXT);
-        let hex = hex_of(&font.encode(TEXT));
+        let hex = hex_of(&encoded(&font, TEXT));
         let registry = FontRegistry::new(vec![(FontId(String::from("F0")), font)]);
-        let fonts = registry.by_id();
+        let fonts = registry.fonts();
         let ops = vec![
             Op::StartTextSection,
             Op::SetFontSize {
@@ -364,7 +378,7 @@ mod tests {
             Op::EndTextSection,
         ];
         assert_eq!(
-            translated(&ops, &fonts),
+            translated(&ops, fonts),
             format!("BT\n/F0 24 Tf\n72 700 Td\n<{hex}> Tj\nET")
         );
     }
@@ -372,10 +386,10 @@ mod tests {
     #[test]
     fn multiple_text_items_use_tj_array() {
         let font = prepared("AB");
-        let hex_a = hex_of(&font.encode("A"));
-        let hex_b = hex_of(&font.encode("B"));
+        let hex_a = hex_of(&encoded(&font, "A"));
+        let hex_b = hex_of(&encoded(&font, "B"));
         let registry = FontRegistry::new(vec![(FontId(String::from("F0")), font)]);
-        let fonts = registry.by_id();
+        let fonts = registry.fonts();
         let ops = vec![Op::WriteText {
             items: vec![
                 TextItem::Text(String::from("A")),
@@ -383,32 +397,32 @@ mod tests {
             ],
             font: FontId(String::from("F0")),
         }];
-        assert_eq!(translated(&ops, &fonts), format!("[<{hex_a}><{hex_b}>] TJ"));
+        assert_eq!(translated(&ops, fonts), format!("[<{hex_a}><{hex_b}>] TJ"));
     }
 
     #[test]
     fn offset_items_use_tj_array_with_real() {
         let font = prepared("A");
-        let hex_a = hex_of(&font.encode("A"));
+        let hex_a = hex_of(&encoded(&font, "A"));
         let registry = FontRegistry::new(vec![(FontId(String::from("F0")), font)]);
-        let fonts = registry.by_id();
+        let fonts = registry.fonts();
         let ops = vec![Op::WriteText {
             items: vec![TextItem::Text(String::from("A")), TextItem::Offset(-1.5)],
             font: FontId(String::from("F0")),
         }];
-        assert_eq!(translated(&ops, &fonts), format!("[<{hex_a}> -1.5] TJ"));
+        assert_eq!(translated(&ops, fonts), format!("[<{hex_a}> -1.5] TJ"));
     }
 
     #[test]
     fn empty_write_text_emits_nothing() {
         let font = prepared("");
         let registry = FontRegistry::new(vec![(FontId(String::from("F0")), font)]);
-        let fonts = registry.by_id();
+        let fonts = registry.fonts();
         let ops = vec![Op::WriteText {
             items: vec![],
             font: FontId(String::from("F0")),
         }];
-        assert_eq!(translated(&ops, &fonts), "");
+        assert_eq!(translated(&ops, fonts), "");
     }
 
     #[test]
@@ -700,7 +714,7 @@ mod tests {
         let used = used_of(TEXT);
         let font = prepared(TEXT);
         let registry = FontRegistry::new(vec![(FontId(String::from("F0")), font)]);
-        let fonts = registry.by_id();
+        let fonts = registry.fonts();
         let ops = vec![
             Op::StartTextSection,
             Op::SetFontSize {
@@ -719,7 +733,7 @@ mod tests {
             },
             Op::EndTextSection,
         ];
-        let content = translate(&ops, &fonts).unwrap();
+        let content = translate(&ops, fonts).unwrap();
 
         let mut bytes = Vec::new();
         {
@@ -730,7 +744,7 @@ mod tests {
                     .unwrap(),
                 "F0"
             );
-            session.write_page(&content, A4, &[]).unwrap();
+            session.write_page(content.clone(), A4, &[]).unwrap();
             session.finish().unwrap();
         }
 

@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 
 use doc_converter_render::chart::ChartData;
-use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE, DEFAULT_FONT_ID};
 use doc_converter_render::geometry::Rect;
 use doc_converter_render::text_measure::measure_text;
 
@@ -21,9 +21,6 @@ use doc_converter_pptx::model::{
     emu_to_px, pt_to_px, Align, Anchor, Bullet, GeometryPreset, Paragraph, Presentation, Rgb,
     RunProps, Shape, ShapeKind, TextBody,
 };
-
-/// Размер LRU-кэша метрик шрифта — как у `docx`/`xlsx`.
-const FONT_CACHE: usize = 4096;
 
 /// Высота строки: кегль × [`LINE_SPACING`].
 const LINE_SPACING: f32 = 1.2;
@@ -45,6 +42,12 @@ pub struct SlideLayout {
     pub background: Option<Rgb>,
     /// Элементы в порядке рисования (наложения).
     pub items: Vec<Item>,
+    /// Сериализованные блобы диаграмм в порядке [`Item::Chart`] в `items`.
+    ///
+    /// Заполняются при раскладке: сериализация выполняется один раз на
+    /// диаграмму, кадры берут готовые байты. Слайд после раскладки неизменяем,
+    /// поэтому кэш не инвалидируется.
+    pub chart_blobs: Vec<Vec<u8>>,
 }
 
 /// Элемент раскладки.
@@ -99,16 +102,26 @@ pub struct PlacedRun {
 /// [`Error::NoSuchSlide`] — индекса нет в презентации.
 pub fn layout_slide(pres: &Presentation, index: usize) -> Result<SlideLayout> {
     let slide = pres.slide(index).ok_or(Error::NoSuchSlide(index))?;
-    let mut fonts = FontRegistry::new(FONT_CACHE);
+    let mut fonts = FontRegistry::new(DEFAULT_FONT_CACHE);
     let mut items = Vec::new();
     for shape in &slide.shapes {
         layout_shape(shape, &mut fonts, &mut items);
     }
+    // Блобы — ровно в порядке `Item::Chart` в `items`: один пост-проход по
+    // готовой раскладке, поэтому порядок не может разойтись с кадрами.
+    let chart_blobs: Vec<Vec<u8>> = items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Chart { data, .. } => Some(data.to_blob()),
+            _ => None,
+        })
+        .collect();
     Ok(SlideLayout {
         width: pres.size.width_px(),
         height: pres.size.height_px(),
         background: slide.background,
         items,
+        chart_blobs,
     })
 }
 

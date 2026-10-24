@@ -12,13 +12,17 @@
 //! своим `PushClip`, поэтому содержимое не выползает за его границы.
 
 use std::cell::RefCell;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 // Алиас: имя `Cell` занято ячейкой листа из модели.
 use std::cell::Cell as CancelCell;
 
 use doc_converter_render::display_list::{
-    Color, DisplayList, DrawCommand, LineStyle, TextAlign, TextBaseline,
+    Color, DisplayList, DrawCommand, LineStyle, StringRef, TextAlign, TextBaseline,
 };
-use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE, DEFAULT_FONT_ID};
 use doc_converter_render::text_measure::{break_lines, measure_text};
 use doc_converter_render::viewport::Viewport;
 
@@ -56,7 +60,199 @@ thread_local! {
     /// Все ячейки меряются шрифтом по умолчанию: байтов шрифта книги в пакете
     /// нет, а политика «что делать при промахе» зафиксирована в ADR-0005 —
     /// метрики обязаны быть детерминированными на любой машине.
-    static FONTS: RefCell<FontRegistry> = RefCell::new(FontRegistry::new(4096));
+    static FONTS: RefCell<FontRegistry> = RefCell::new(FontRegistry::new(DEFAULT_FONT_CACHE));
+
+    /// Кэши горячего пути кадра: раскладки листов и разобранные форматы чисел.
+    ///
+    /// Одна книга на поток: раскладка считается один раз на лист, код формата
+    /// разбирается один раз на `numFmtId`, а кадры переиспользуют и то и
+    /// другое. Смена книги (открытие нового документа) сбрасывает обе карты по
+    /// адресу книги — книга после `open` неизменяема, листы из её `Vec` не
+    /// переезжают, поэтому указатели — законные ключи.
+    static CACHES: RefCell<FrameCaches> = RefCell::new(FrameCaches::default());
+}
+
+/// Кэши кадра на поток: раскладки по листам, форматы чисел по `numFmtId`.
+struct FrameCaches {
+    /// Книга, для которой набраны кэши; `null` — кэши пусты.
+    book: *const Workbook,
+    /// Раскладки листов, ключ — адрес листа в книге. Рядом с раскладкой лежит
+    /// отпечаток её входов: адрес листа после `open` стабилен, но аллокатор
+    /// может отдать адрес выброшенной книги следующей, и без сверки входов
+    /// кэш отдал бы раскладку чужого листа.
+    layouts: HashMap<*const Sheet, (u64, SheetLayout)>,
+    /// Разобранные форматы чисел: `numFmtId` → (код, формат). Код сверяется на
+    /// каждом попадании — у разных книг один и тот же `numFmtId` может нести
+    /// разные `numFmts`, и чужой формат не должен подменить свой. `Rc` —
+    /// `NumberFormat` глубоко клонируется.
+    numfmt: HashMap<u32, (Box<str>, Rc<numfmt::NumberFormat>)>,
+}
+
+impl Default for FrameCaches {
+    fn default() -> Self {
+        Self {
+            book: std::ptr::null(),
+            layouts: HashMap::new(),
+            numfmt: HashMap::new(),
+        }
+    }
+}
+
+/// Сбросить кэши кадра, если открыта другая книга.
+///
+/// Сравнение по адресу книги: книга неизменяема после `open`, а смена книги
+/// (даже на ту, что аллокатор поставил на старый адрес) уже не опасна — входы
+/// кэшей сверяются по содержимому ([`cached_number_format`],
+/// [`sheet_layout`]), и чужое значение либо пересчитается, либо совпадёт
+/// байт-в-байт.
+fn reset_frame_caches(book: &Workbook) {
+    with_caches(book, |_| {});
+}
+
+/// Достать кэши потока, сбросив их при смене книги.
+fn with_caches<T>(book: &Workbook, use_caches: impl FnOnce(&mut FrameCaches) -> T) -> T {
+    CACHES.with(|caches| {
+        let mut caches = caches.borrow_mut();
+        let book = std::ptr::from_ref(book);
+        if caches.book != book {
+            caches.book = book;
+            caches.layouts.clear();
+            caches.numfmt.clear();
+        }
+        use_caches(&mut caches)
+    })
+}
+
+/// Отпечаток входов раскладки листа: всё, что читает [`SheetLayout::new`],
+/// кроме используемого диапазона.
+///
+/// Диапазон в отпечаток не входит — он считается обходом строк и стоил бы
+/// столько же, сколько сама раскладка. Вместо него — дешёвая статистика ячеек
+/// (счёт, число строк, последняя строка, крайние столбцы первой и последней
+/// строки): двух книг с одинаковыми размерами и одинаковыми краями, но разным
+/// диапазоном, в практике не бывает, а полная сверка убила бы сам кэш.
+#[must_use]
+fn sheet_layout_identity(sheet: &Sheet) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    sheet.meta.name.hash(&mut hasher);
+    sheet.meta.part.hash(&mut hasher);
+    let format = sheet.dims.format;
+    format.default_col_width_declared.hash(&mut hasher);
+    format.default_col_width.to_bits().hash(&mut hasher);
+    format.default_row_height.to_bits().hash(&mut hasher);
+    format.base_col_width.to_bits().hash(&mut hasher);
+    format.custom_height.hash(&mut hasher);
+    format.zero_height.hash(&mut hasher);
+    for span in sheet.dims.cols.spans() {
+        span.first.hash(&mut hasher);
+        span.last.hash(&mut hasher);
+        span.width.to_bits().hash(&mut hasher);
+        span.hidden.hash(&mut hasher);
+        span.custom.hash(&mut hasher);
+    }
+    for row in sheet.dims.rows.rows() {
+        row.row.hash(&mut hasher);
+        row.height.to_bits().hash(&mut hasher);
+        row.hidden.hash(&mut hasher);
+        row.custom.hash(&mut hasher);
+    }
+    sheet.cells.cell_count().hash(&mut hasher);
+    sheet.cells.row_count().hash(&mut hasher);
+    sheet.cells.last_row().hash(&mut hasher);
+    if let Some(first) = sheet.cells.cells_of_row(0).first() {
+        first.col.hash(&mut hasher);
+    }
+    if let Some(row) = sheet.cells.last_row() {
+        let cells = sheet.cells.cells_of_row(row);
+        if let Some(first) = cells.first() {
+            first.col.hash(&mut hasher);
+        }
+        if let Some(last) = cells.last() {
+            last.col.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
+/// Раскладка листа из кэша кадра: попадание — только при совпавшем отпечатке
+/// входов, иначе раскладка пересчитывается.
+#[must_use]
+fn sheet_layout(sheet: &Sheet) -> SheetLayout {
+    let identity = sheet_layout_identity(sheet);
+    CACHES.with(|caches| {
+        let mut caches = caches.borrow_mut();
+        let key = std::ptr::from_ref(sheet);
+        match caches.layouts.get(&key) {
+            Some((fingerprint, layout)) if *fingerprint == identity => layout.clone(),
+            _ => {
+                let layout = SheetLayout::new(sheet);
+                caches.layouts.insert(key, (identity, layout.clone()));
+                layout
+            }
+        }
+    })
+}
+
+/// Разобранный формат числа из кэша кадра.
+///
+/// `None`-код (неизвестный `numFmtId`) — общий формат, как и раньше: значение
+/// показывается как есть. Попадание сверяет код: один и тот же `numFmtId`
+/// разных книг может нести разные `numFmts`.
+#[must_use]
+fn cached_number_format(book: &Workbook, num_fmt_id: u32) -> Rc<numfmt::NumberFormat> {
+    let code = book
+        .styles()
+        .format_code(num_fmt_id)
+        .unwrap_or(numfmt::GENERAL);
+    with_caches(book, |caches| match caches.numfmt.get(&num_fmt_id) {
+        Some((cached, format)) if cached.as_ref() == code => Rc::clone(format),
+        _ => {
+            let format = Rc::new(numfmt::NumberFormat::parse(code));
+            caches.numfmt.insert(
+                num_fmt_id,
+                (code.to_owned().into_boxed_str(), Rc::clone(&format)),
+            );
+            format
+        }
+    })
+}
+
+/// Имя шрифта, которым подписываются заголовки строк и столбцов.
+const HEADER_FONT: &str = "Calibri";
+
+/// Шрифт по умолчанию кадра: семейство нулевого формата `cellXfs` книги.
+///
+/// Ячейки без собственного шрифта интернируют ровно это имя — на каждый кадр
+/// оно кладётся в пул один раз, а не на каждую ячейку. Ссылка `reference`
+/// переиспользуется для всех строк с этим семейством; иные имена интернируются
+/// как раньше, по месту.
+struct FrameFont<'a> {
+    family: &'a str,
+    reference: StringRef,
+}
+
+impl<'a> FrameFont<'a> {
+    /// Разрешить дефолтное семейство: шрифт, на который ссылается нулевой
+    /// формат `cellXfs`. Таблица без шрифтов — пустое имя, как у
+    /// `Font::default()`, и ячейки так его и рисовали раньше.
+    fn new(book: &'a Workbook, out: &mut DisplayList) -> Self {
+        let font = book.styles().font(book.styles().resolve(0).font);
+        let family = font.map_or("", |font| font.name.as_str());
+        Self {
+            family,
+            reference: out.intern(family),
+        }
+    }
+
+    /// Ссылка шрифта: дефолтное семейство переиспользует общий `StringRef`,
+    /// собственное имя ячейки интернируется отдельно, как раньше.
+    fn reference_for(&self, name: &str, out: &mut DisplayList) -> StringRef {
+        if name == self.family {
+            self.reference
+        } else {
+            out.intern(name)
+        }
+    }
 }
 
 /// Что рисовать поверх содержимого.
@@ -202,7 +398,7 @@ struct Geometry {
 
 impl Geometry {
     fn new(sheet: &Sheet, viewport: Viewport, show_headers: bool) -> Self {
-        let layout = SheetLayout::new(sheet);
+        let layout = sheet_layout(sheet);
         let scale = if viewport.scale > 0.0 {
             viewport.scale
         } else {
@@ -257,10 +453,13 @@ impl Geometry {
 /// Точка в полосе заголовков даёт крайнюю ячейку: заголовок — это тоже место
 /// листа, и возвращать «никуда» было бы неудобно выделению. Маппинг «точка →
 /// ячейка» остаётся раскладочным адаптером: `DisplayList` не несёт идентичности
-/// ячеек, а геометрия попадания по командам кадра (картинки, текст) живёт в
-/// `render::hit_test` (ADR-0003).
+/// ячеек (ADR-0003).
 #[must_use]
 pub fn hit_test(sheet: &Sheet, viewport: Viewport, x: f32, y: f32) -> crate::cellref::CellRef {
+    // Раскладка — из общего поточного кэша кадра. Указателя книги здесь нет
+    // (`hit_test` — публичный API без `Workbook`), поэтому сброс кэша делает
+    // `build` при открытии другой книги: просмотрщик собирает кадр сразу после
+    // `open`, и к моменту попадания кэш уже принадлежит текущей книге.
     let geometry = Geometry::new(sheet, viewport, true);
     crate::cellref::CellRef::new(
         geometry.layout.row_at(geometry.layout_y(y)),
@@ -307,6 +506,9 @@ impl Region {
 ///
 /// # Errors
 /// [`XlsxError::Cancelled`] — флаг взведён между полосами.
+// Сборка кадра — единый проход; делить её ради счётчика строк вреднее
+// (горячий путь, локальные контексты).
+#[allow(clippy::too_many_lines)]
 pub fn build(
     book: &Workbook,
     sheet: &Sheet,
@@ -315,6 +517,7 @@ pub fn build(
     out: &mut DisplayList,
     cancelled: &CancelCell<bool>,
 ) -> Result<(), XlsxError> {
+    reset_frame_caches(book);
     let Geometry {
         layout,
         scale,
@@ -333,7 +536,8 @@ pub fn build(
     let rules = RuleIndex::new(book, sheet);
 
     // Список команд переиспользуется между кадрами: без очистки следующий
-    // кадр лёг бы поверх предыдущего, и картинка задвоилась бы.
+    // кадр лёг бы поверх предыдущего, и картинка задвоилась бы. Очистка
+    // опустошает и пул строк — интернировать можно только после неё.
     out.clear();
     out.push(DrawCommand::Clear);
     fill_rect(
@@ -344,6 +548,15 @@ pub fn build(
         viewport.h,
         options.effective_background(),
     );
+
+    // Дефолтное семейство шрифта — один intern на кадр, а не на ячейку.
+    // Заголовки подписаны «Calibri»: если дефолт книги тот же, ссылка общая.
+    let frame_font = FrameFont::new(book, out);
+    let header_font = if frame_font.family == HEADER_FONT {
+        frame_font.reference
+    } else {
+        out.intern(HEADER_FONT)
+    };
 
     let scroll_w = (viewport.w - header_w - frozen_w).max(0.0) / scale;
     let scroll_h = (viewport.h - header_h - frozen_h).max(0.0) / scale;
@@ -404,7 +617,17 @@ pub fn build(
                 (viewport.h - screen_y).max(0.0),
             ),
         };
-        draw_region(book, sheet, &rules, &layout, scale, &region, options, out);
+        draw_region(
+            book,
+            sheet,
+            &rules,
+            &layout,
+            scale,
+            &region,
+            options,
+            &frame_font,
+            out,
+        );
     }
 
     if options.show_headers {
@@ -420,6 +643,7 @@ pub fn build(
                 frozen_rows,
                 view_left,
                 view_top,
+                font: header_font,
             },
             out,
         );
@@ -464,6 +688,7 @@ fn draw_region(
     scale: f32,
     region: &Region,
     options: &PaintOptions,
+    frame_font: &FrameFont<'_>,
     out: &mut DisplayList,
 ) {
     out.push(DrawCommand::PushClip {
@@ -512,7 +737,7 @@ fn draw_region(
     // текстом: изображение правила не должно закрывать ни рамку ячейки, ни её
     // содержимое.
     if rules.has_visuals() {
-        draw_visuals(book, sheet, rules, layout, scale, region, out);
+        draw_visuals(book, sheet, rules, layout, scale, region, frame_font, out);
     }
 
     // Границы — поверх сетки и заливок: в Excel рамка замещает сетку на своём
@@ -542,6 +767,7 @@ fn draw_region(
                 &TextClip::Rect,
                 is_link,
                 options,
+                frame_font,
                 out,
             );
         }
@@ -575,7 +801,7 @@ fn draw_region(
             };
             let is_link = sheet.hyperlink_at(cell.at(row)).is_some();
             draw_text(
-                book, cell, &style, x, y, w, h, scale, &clip, is_link, options, out,
+                book, cell, &style, x, y, w, h, scale, &clip, is_link, options, frame_font, out,
             );
         }
     }
@@ -706,6 +932,7 @@ const ICON_HEIGHT_RATIO: f32 = 0.7;
 /// Полосы данных и значки видимых ячеек.
 ///
 /// Объединённые ячейки рисуются по своему диапазону один раз — как текст.
+#[allow(clippy::too_many_arguments)]
 fn draw_visuals(
     book: &Workbook,
     sheet: &Sheet,
@@ -713,11 +940,20 @@ fn draw_visuals(
     layout: &SheetLayout,
     scale: f32,
     region: &Region,
+    frame_font: &FrameFont<'_>,
     out: &mut DisplayList,
 ) {
     for range in visible_merges(sheet, region) {
         let (x, y, w, h) = range_rect(layout, scale, region, range);
-        draw_visual(book, rules, range.first, (x, y, w, h), scale, out);
+        draw_visual(
+            book,
+            rules,
+            range.first,
+            (x, y, w, h),
+            scale,
+            frame_font,
+            out,
+        );
     }
     for row in region.rows.0..=region.rows.1 {
         for (col, cell) in visible_cells(sheet, row, region.cols) {
@@ -728,7 +964,15 @@ fn draw_visuals(
             let y = region.screen_y(layout.row_y(row), scale);
             let w = layout.column_width(col) * scale;
             let h = layout.row_height(row) * scale;
-            draw_visual(book, rules, cell.at(row), (x, y, w, h), scale, out);
+            draw_visual(
+                book,
+                rules,
+                cell.at(row),
+                (x, y, w, h),
+                scale,
+                frame_font,
+                out,
+            );
         }
     }
 }
@@ -740,6 +984,7 @@ fn draw_visual(
     at: CellRef,
     (x, y, w, h): (f32, f32, f32, f32),
     scale: f32,
+    frame_font: &FrameFont<'_>,
     out: &mut DisplayList,
 ) {
     if w <= 0.0 || h <= 0.0 {
@@ -786,7 +1031,7 @@ fn draw_visual(
                 (x + w / 2.0, TextAlign::Center)
             };
             let text = out.intern(glyph);
-            let font_ref = out.intern(&font);
+            let font_ref = frame_font.reference_for(&font, out);
             out.push(DrawCommand::Text {
                 x: tx,
                 y: y + h / 2.0,
@@ -1201,6 +1446,8 @@ struct Headers<'a> {
     frozen_rows: u32,
     view_left: f32,
     view_top: f32,
+    /// Подпись заголовков: один intern на кадр.
+    font: StringRef,
 }
 
 /// Полосы заголовков: буквы столбцов сверху, номера строк слева.
@@ -1258,6 +1505,7 @@ fn draw_column_headers(headers: &Headers<'_>, out: &mut DisplayList) {
         frozen_cols,
         frozen_rows: _,
         view_left,
+        font,
         ..
     } = *headers;
 
@@ -1285,7 +1533,6 @@ fn draw_column_headers(headers: &Headers<'_>, out: &mut DisplayList) {
                 continue;
             }
             let text = out.intern(&column_name(col));
-            let font = out.intern("Calibri");
             out.push(DrawCommand::PushClip {
                 x: visible_x,
                 y: 0.0,
@@ -1322,6 +1569,7 @@ fn draw_row_headers(headers: &Headers<'_>, out: &mut DisplayList) {
         frozen_cols: _,
         frozen_rows,
         view_top,
+        font,
         ..
     } = *headers;
 
@@ -1342,7 +1590,6 @@ fn draw_row_headers(headers: &Headers<'_>, out: &mut DisplayList) {
                 continue;
             }
             let text = out.intern(&row_name(row));
-            let font = out.intern("Calibri");
             out.push(DrawCommand::Text {
                 x: header_w - TEXT_PADDING * scale,
                 y: y + h / 2.0,
@@ -1369,6 +1616,8 @@ enum TextClip {
 }
 
 /// Текст одной ячейки; `is_link` — на ячейке лежит гиперссылка.
+// Функция — единый разбор стиля ячейки; деление размоет контекст.
+#[allow(clippy::too_many_lines)]
 #[allow(clippy::too_many_arguments)]
 fn draw_text(
     book: &Workbook,
@@ -1382,10 +1631,16 @@ fn draw_text(
     clip: &TextClip,
     is_link: bool,
     options: &PaintOptions,
+    frame_font: &FrameFont<'_>,
     out: &mut DisplayList,
 ) {
-    let code = style.format_code(book.styles());
-    let Some(text) = display_text_with(book, cell, code) else {
+    // Сырой `formatCode` из `dxf` перекрывает и базовый код, и его id: без
+    // идентификатора он не попадает в кэш форматов и разбирается на ячейку —
+    // так же, как и раньше. Обычный путь идёт по `numFmtId` через кэш.
+    let Some(text) = (match style.format_code_override() {
+        Some(code) => display_text_with_code(book, cell, code),
+        None => display_text_with(book, cell, style.format_id(book.styles())),
+    }) else {
         return;
     };
     if text.is_empty() || w <= 0.0 || h <= 0.0 {
@@ -1456,7 +1711,7 @@ fn draw_text(
         HorizontalAlign::Right => (TextAlign::Right, x + w - padding),
         _ => (TextAlign::Left, x + padding),
     };
-    let font_ref = out.intern(&font.name);
+    let font_ref = frame_font.reference_for(&font.name, out);
 
     // Перенос внутри ячейки: Excel не выпускает перенесённый текст за границы,
     // поэтому здесь клип обязателен, даже если однострочный текст мог бы уйти
@@ -1565,20 +1820,38 @@ const HASHES: &str = "#####";
 /// как их пишет Excel.
 #[must_use]
 pub fn display_text(book: &Workbook, cell: &Cell, num_fmt: u32) -> Option<String> {
-    display_text_with(book, cell, book.styles().format_code(num_fmt))
+    display_text_with(book, cell, num_fmt)
+}
+
+/// Текст ячейки по идентификатору формата числа.
+///
+/// Код резолвится через [`crate::model::StyleTable::format_code`] и
+/// разбирается из поточного кэша кадра: `NumberFormat::parse` один раз на
+/// формат книги, а не на ячейку. Сырой `formatCode` из `dxf` сюда не попадает —
+/// он перекрывает базовый формат, и [`draw_text`] проводит его отдельным путём
+/// ([`display_text_with_code`]).
+fn display_text_with(book: &Workbook, cell: &Cell, num_fmt_id: u32) -> Option<String> {
+    match &cell.value {
+        CellValue::Empty => cell.formula.as_ref().map(|_| String::new()),
+        CellValue::Number(value) => {
+            Some(cached_number_format(book, num_fmt_id).format(*value, book.date1904()))
+        }
+        CellValue::Bool(value) => Some(if *value { "TRUE" } else { "FALSE" }.to_owned()),
+        _ => cell.value.text(book.shared_strings()).map(str::to_owned),
+    }
 }
 
 /// Текст ячейки по уже разрешённому коду формата.
 ///
-/// Нужен условному форматированию: правило может задать свой формат числа,
-/// и он перекрывает базовый (см. [`EffectiveStyle::format_code`]). `None` —
-/// формат не задан, число показывается в общем формате.
-fn display_text_with(book: &Workbook, cell: &Cell, code: Option<&str>) -> Option<String> {
+/// Нужен условному форматированию: правило может записать `formatCode` прямо
+/// в `dxf`, и он перекрывает базовый (см.
+/// [`crate::conditional::EffectiveStyle::format_code`]). Такой код разбирается
+/// на месте — идентификатора у него нет, кэш по `numFmtId` его не вмещает.
+fn display_text_with_code(book: &Workbook, cell: &Cell, code: &str) -> Option<String> {
     match &cell.value {
         CellValue::Empty => cell.formula.as_ref().map(|_| String::new()),
         CellValue::Number(value) => {
-            let code = code.unwrap_or(numfmt::GENERAL);
-            Some(numfmt::format(*value, code, book.date1904()))
+            Some(numfmt::NumberFormat::parse(code).format(*value, book.date1904()))
         }
         CellValue::Bool(value) => Some(if *value { "TRUE" } else { "FALSE" }.to_owned()),
         _ => cell.value.text(book.shared_strings()).map(str::to_owned),
@@ -1631,7 +1904,7 @@ fn fill_color(
 pub fn resolve_color(theme: &Theme, color: CellColor) -> Option<Color> {
     match color {
         CellColor::None => None,
-        CellColor::Rgb(value) => Some(Color(argb_to_rgba(value))),
+        CellColor::Rgb(value) => Some(Color::from_argb32(value)),
         CellColor::Theme(index) => theme_color(theme, index),
         CellColor::Indexed(index) => indexed_color(index).map(Color),
     }
@@ -1641,7 +1914,7 @@ pub fn resolve_color(theme: &Theme, color: CellColor) -> Option<Color> {
 /// переставить каналы. Пустой слот и индекс вне палитры дают `None`.
 fn theme_color(theme: &Theme, index: u32) -> Option<Color> {
     match theme.color(index)? {
-        CellColor::Rgb(value) => Some(Color(argb_to_rgba(value))),
+        CellColor::Rgb(value) => Some(Color::from_argb32(value)),
         // Палитра хранит только RGB — прочие варианты означают пустой слот.
         CellColor::None | CellColor::Theme(_) | CellColor::Indexed(_) => None,
     }
@@ -1735,17 +2008,6 @@ fn ensure_contrast(foreground: Color, background: Color) -> Color {
         .map(|step| mix(foreground, target, step))
         .find(|candidate| contrast_ratio(*candidate, background) >= MIN_TEXT_CONTRAST)
         .unwrap_or(target)
-}
-
-/// Переставить каналы: в файле цвет записан как `AARRGGBB`, а `DisplayList`
-/// ждёт `RRGGBBAA`.
-///
-/// Без этого заливки не просто меняли оттенок: альфа уезжала в синий канал,
-/// и жёлтая заливка `FFFFFF00` становилась прозрачной.
-fn argb_to_rgba(value: u32) -> u32 {
-    let alpha = value >> 24;
-    let rgb = value & 0x00FF_FFFF;
-    (rgb << 8) | alpha
 }
 
 /// Устаревшая палитра Excel (`indexed`): индексы 0…63 — цвета BIFF8,

@@ -8,6 +8,7 @@ license.workspace = true
 repository = "https://github.com/meerrec/wasm-converter"
 
 [dependencies]
+doc-converter-core       = { workspace = true }
 doc-converter-pdf        = { workspace = true }
 doc-converter-pptx       = { workspace = true }
 doc-converter-pptx-layout = { workspace = true }

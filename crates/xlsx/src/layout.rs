@@ -21,19 +21,15 @@ use crate::cellref::MAX_COL;
 use crate::dims::SheetFormat;
 use crate::model::Sheet;
 
-/// Пикселей на пункт: 96 dpi против 72 pt.
-pub const PX_PER_POINT: f32 = 96.0 / 72.0;
+/// Пикселей на пункт: 96 dpi против 72 pt — канон в `doc_converter_core::units`.
+pub use doc_converter_core::units::PX_PER_POINT;
+use doc_converter_core::units::TWIPS_PER_PX;
 /// Ширина символа `0` у шрифта по умолчанию, твипы (1/1440 дюйма).
 ///
 /// Carlito 11 pt: 0,5068 em × 11 pt ≈ 111,5 твипа; до целого твипа округляет
 /// уже перевод ширины ([`width_to_px`]). Именно метрика шрифта, а не формовые
 /// 7 px Excel, воспроизводит печать `LibreOffice` — эталона оракула.
 const MAX_DIGIT_TWIPS: f32 = 111.0;
-/// Твипов в пикселе при 96 dpi: 1440/96. Делить, а не умножать на 1/15:
-/// произведение с округлением до целого твипа обязано попадать в целые
-/// пиксели точно (4440 твипов — ровно 296 px), иначе ширина листа уезжает на
-/// стотысячные доли.
-const TWIPS_PER_PX: f32 = 15.0;
 /// Ширина символа `0`, пиксели: 7,4 при шрифте по умолчанию (Carlito 11 pt).
 pub const MAX_DIGIT_WIDTH: f32 = MAX_DIGIT_TWIPS / TWIPS_PER_PX;
 /// Ширина столбца, которую файл не объявил, пиксели.
@@ -95,18 +91,15 @@ pub fn height_to_px(points: f32) -> f32 {
     points * PX_PER_POINT
 }
 
-/// Английская метрическая единица (EMU): 914 400 на дюйм. При 96 dpi пиксель —
-/// это ровно 9525 EMU.
-pub const EMU_PER_PIXEL: f32 = 9525.0;
+/// Английская метрическая единица (EMU): 914 400 на дюйм — канон в
+/// `doc_converter_core::units`.
+pub use doc_converter_core::units::EMU_PER_PIXEL;
 
 /// Перевести длину из EMU в пиксели раскладки.
 ///
 /// Так записаны размеры и смещения якорей изображений: `cx`/`cy` и `colOff`/
 /// `rowOff` в `drawing*.xml`.
-#[must_use]
-pub fn emu_to_px(emu: f32) -> f32 {
-    emu / EMU_PER_PIXEL
-}
+pub use doc_converter_core::units::emu_to_px;
 
 /// Полоса столбцов одинаковой ширины.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -125,6 +118,12 @@ pub struct SheetLayout {
     default_row_height: f32,
     /// Полосы столбцов своей ширины, по возрастанию.
     spans: Vec<ColSpan>,
+    /// Левые границы полос, пиксели: `span_x0[i]` — координата `spans[i].first`.
+    ///
+    /// Суммы набраны тем же порядком сложений, что и [`Self::column_x`];
+    /// поэтому граница полосы, посчитанная по префиксу, битово совпадает с
+    /// прежним линейным обходом.
+    span_x0: Vec<f32>,
     /// Строки своей высоты: номер и высота, по возрастанию.
     row_heights: Vec<(u32, f32)>,
     /// Сколько столбцов и строк в раскладке.
@@ -154,7 +153,13 @@ impl SheetLayout {
             )
         });
 
-        let spans = sheet
+        let default_col_width = if format.default_col_width_declared {
+            width_to_px(format.default_col_width)
+        } else {
+            DEFAULT_COL_WIDTH_PX
+        };
+
+        let mut spans: Vec<ColSpan> = sheet
             .dims
             .cols
             .spans()
@@ -166,6 +171,27 @@ impl SheetLayout {
                 width: width_to_px(span.effective_width()),
             })
             .collect();
+        // Порядок полос из файла Excel — по возрастанию, но контракт OOXML его
+        // не требует, а `column_x`/`column_width` ищут полосу бинарно. Сортировка
+        // стабильная: при одинаковом `first` порядок файла сохраняется.
+        #[allow(clippy::stable_sort_primitive)]
+        spans.sort_by_key(|span| span.first);
+
+        // Префиксные левые границы полос. Сумма набирается ровно тем порядком
+        // сложений, что прежний линейный `column_x`: промежуток до полосы —
+        // умножением на умолчание, сама полоса — умножением на свою ширину.
+        // Другая группировка сместила бы дробные f32 и границы `column_at`.
+        let mut span_x0: Vec<f32> = Vec::with_capacity(spans.len());
+        {
+            let mut x = 0.0_f32;
+            let mut done = 0_u32;
+            for span in &spans {
+                x += to_px(span.first - done) * default_col_width;
+                span_x0.push(x);
+                x += to_px(span.last - span.first + 1) * span.width;
+                done = span.last + 1;
+            }
+        }
 
         let row_heights = sheet
             .dims
@@ -182,13 +208,10 @@ impl SheetLayout {
             .collect();
 
         Self {
-            default_col_width: if format.default_col_width_declared {
-                width_to_px(format.default_col_width)
-            } else {
-                DEFAULT_COL_WIDTH_PX
-            },
+            default_col_width,
             default_row_height: height_to_px(format.effective_row_height()),
             spans,
+            span_x0,
             row_heights,
             cols,
             rows,
@@ -222,9 +245,10 @@ impl SheetLayout {
     /// Ширина столбца в пикселях; у скрытого она нулевая.
     #[must_use]
     pub fn column_width(&self, col: u32) -> f32 {
+        let index = self.spans.partition_point(|span| span.last < col);
         self.spans
-            .iter()
-            .find(|span| col >= span.first && col <= span.last)
+            .get(index)
+            .filter(|span| span.first <= col)
             .map_or(self.default_col_width, |span| span.width)
     }
 
@@ -246,19 +270,26 @@ impl SheetLayout {
     /// уезжает на столбец назад прямо на границе.
     #[must_use]
     pub fn column_x(&self, col: u32) -> f32 {
-        let mut x = 0.0_f32;
-        let mut done = 0_u32;
-        for span in &self.spans {
-            if span.first >= col {
-                break;
-            }
-            // Пересечение полосы с `[0, col)`.
-            let end = span.last.min(col - 1);
-            x += to_px(span.first - done) * self.default_col_width;
-            x += to_px(end - span.first + 1) * span.width;
-            done = end + 1;
+        // Полоса, накрывающая `col`, или полоса перед ним, если `col` лежит в
+        // промежутке: `partition_point` по `first` находит первую полосу с
+        // `first > col`.
+        let next = self.spans.partition_point(|span| span.first <= col);
+        if next == 0 {
+            // Перед первой полосой: сумма — сплошное умолчание.
+            return (to_px(col) * self.default_col_width).max(0.0);
         }
-        x += to_px(col - done) * self.default_col_width;
+        let index = next - 1;
+        let span = self.spans[index];
+        let x0 = self.span_x0[index];
+        let x = if col <= span.last {
+            // Внутри полосы: префикс до её начала плюс пройденная часть.
+            // Умножение и сложение — те же операции, что в прежнем цикле.
+            x0 + to_px(col - span.first) * span.width
+        } else {
+            // После полосы: префикс до её конца плюс промежуток умолчанием.
+            let after = x0 + to_px(span.last - span.first + 1) * span.width;
+            after + to_px(col - span.last - 1) * self.default_col_width
+        };
         x.max(0.0)
     }
 
@@ -574,5 +605,78 @@ mod tests {
         let layout = SheetLayout::new(&sheet_with(content));
 
         assert_eq!(layout.column_x(1), 64.0);
+    }
+
+    /// Прежний линейный `column_x` — дословно, по хранимым полосам раскладки:
+    /// страж битового равенства префиксной версии. Другая группировка
+    /// f32-сложений сместила бы дробные границы полос.
+    fn naive_column_x(layout: &SheetLayout, col: u32) -> f32 {
+        let mut x = 0.0_f32;
+        let mut done = 0_u32;
+        for span in &layout.spans {
+            if span.first >= col {
+                break;
+            }
+            // Пересечение полосы с `[0, col)`.
+            let end = span.last.min(col - 1);
+            x += to_px(span.first - done) * layout.default_col_width;
+            x += to_px(end - span.first + 1) * span.width;
+            done = end + 1;
+        }
+        x += to_px(col - done) * layout.default_col_width;
+        x.max(0.0)
+    }
+
+    #[test]
+    fn column_x_prefix_matches_naive_bitwise() {
+        // Полосы с дробными ширинами и скрытая, умолчание — дробное:
+        // перегруппировка слагаемых проявилась бы именно здесь.
+        let layout = layout_of(3, 8, |content| {
+            content.dims.format.default_col_width_declared = true;
+            content.dims.format.default_col_width = 11.37;
+            content.dims.cols.push(crate::ColWidth {
+                first: 1,
+                last: 1,
+                width: 20.0,
+                custom: true,
+                hidden: false,
+                best_fit: false,
+            });
+            content.dims.cols.push(crate::ColWidth {
+                first: 3,
+                last: 5,
+                width: 8.43,
+                custom: true,
+                hidden: false,
+                best_fit: false,
+            });
+            content.dims.cols.push(crate::ColWidth {
+                first: 7,
+                last: 7,
+                width: 40.0,
+                custom: true,
+                hidden: true,
+                best_fit: false,
+            });
+        });
+
+        // От нуля до запаса, плюс далеко за последней полосой и крайний столбец.
+        for col in (0..=layout.cols() + 2).chain([10_000, MAX_COL]) {
+            assert_eq!(
+                layout.column_x(col).to_bits(),
+                naive_column_x(&layout, col).to_bits(),
+                "столбец {col}: префикс разошёлся с линейной суммой"
+            );
+        }
+
+        // Лист без полос: сплошное умолчание тоже обязано совпасть битово.
+        let plain = SheetLayout::new(&grid(&[0], &[0]));
+        for col in 0..=plain.cols() + 1 {
+            assert_eq!(
+                plain.column_x(col).to_bits(),
+                naive_column_x(&plain, col).to_bits(),
+                "столбец {col} без полос"
+            );
+        }
     }
 }

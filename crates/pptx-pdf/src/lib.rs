@@ -19,15 +19,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::f32::consts::FRAC_PI_2;
 
+use doc_converter_core::units::MM_PER_PX;
 use doc_converter_pdf::chart;
 use doc_converter_pdf::fonts::{EmbeddedFonts, Face, FaceSet};
 use doc_converter_pdf::image::{self, Placement};
 use doc_converter_pdf::layout::{PageGeometry, RectPx};
 use doc_converter_pdf::pdf::content;
-use doc_converter_pdf::pdf::fonts::PreparedFont;
+use doc_converter_pdf::pdf::export;
 use doc_converter_pdf::pdf::ops::{
-    FontId, Line, LinePoint, Op, PaintMode, Point, Polygon, PolygonRing, Pt, TextItem,
-    WindingOrder, XObjectId,
+    Line, LinePoint, Op, PaintMode, Point, Polygon, PolygonRing, Pt, TextItem, WindingOrder,
+    XObjectId,
 };
 use doc_converter_pdf::pdf::session::Session;
 use doc_converter_pdf::styles::to_pdf_color;
@@ -35,7 +36,7 @@ use doc_converter_pdf::{Margins, PageConfig, PageSize, PdfOptions};
 use doc_converter_pptx::model::{ImagePart, Presentation, Rgb};
 use doc_converter_pptx_layout::{layout_slide, Item, PlacedRun, SlideLayout};
 use doc_converter_render::display_list::Color;
-use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE, DEFAULT_FONT_ID};
 use doc_converter_render::geometry::Rect;
 
 /// Ошибка экспорта PPTX в PDF.
@@ -78,14 +79,6 @@ impl From<doc_converter_pdf::PdfError> for Error {
 /// Результат операций крейта.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Размер LRU-кэша метрик: тот же, что у XLSX/DOCX-путей.
-const FONT_CACHE: usize = 4096;
-
-/// Миллиметров в пикселе раскладки: 96 dpi против 25.4 мм в дюйме. Тот же
-/// множитель, что у DOCX-пути: размер слайда переводится в миллиметры для
-/// `PageSize::Custom`, обратно в точки его возвращает геометрия.
-const MM_PER_PX: f32 = 25.4 / 96.0;
-
 /// Сегментов дуги на четверть скруглённого угла: восемь точек дают угол,
 /// неотличимый на странице, и не нагружают поток содержимого.
 const ARC_SEGMENTS: usize = 8;
@@ -104,17 +97,22 @@ pub fn export(pres: &Presentation, options: &PdfOptions) -> Result<Vec<u8>> {
         .map_err(|error| Error::Layout(error.to_string()))?;
     layouts.first().ok_or(Error::NoSlides)?;
 
+    // Геометрия страницы зависит только от размера слайда: считается один раз
+    // на слайд и переиспользуется обоими проходами (сбор глифов и запись
+    // страниц), чтобы не строить `PageGeometry` дважды.
+    let geometries: Vec<PageGeometry> = layouts.iter().map(geometry).collect();
+
     let faces = collect_faces(&layouts);
     let embedded = EmbeddedFonts::from_faces(faces);
     let mut images = Images::collect(pres);
-    let mut registry = FontRegistry::new(FONT_CACHE);
+    let mut registry = FontRegistry::new(DEFAULT_FONT_CACHE);
 
     // Шрифты подрезаются до записи первой страницы (`Session::add_font`), а
     // подрезка перенумеровывает глифы: символ, не попавший в зонды, вывелся бы
     // нулевым глифом — молча. Поэтому символы собираются первой отрисовкой, той
     // же `draw_slide`, что пойдёт в PDF, — как у листа XLSX (`painter`) и
     // документа DOCX (`docx::export`).
-    let glyphs = collect_glyphs(&layouts, &embedded, &mut registry, &images);
+    let glyphs = collect_glyphs(&layouts, &geometries, &embedded, &mut registry, &images);
 
     let mut out = Vec::new();
     let mut session = Session::begin(&mut out, layouts.len(), options.compress)?;
@@ -154,21 +152,14 @@ pub fn export(pres: &Presentation, options: &PdfOptions) -> Result<Vec<u8>> {
         images.assign(index, XObjectId(name));
     }
 
-    for layout in &layouts {
-        let geometry = geometry(layout);
-        let ops = draw_slide(layout, &geometry, &embedded, &mut registry, &images);
-        // Карта шрифтов живёт только до `translate`: `write_page` требует
-        // сессию целиком, и заимствование `prepared_fonts` обязано кончиться.
-        let content = {
-            let fonts_map: BTreeMap<FontId, &PreparedFont> = session
-                .prepared_fonts()
-                .iter()
-                .map(|(name, prepared)| (FontId(name.clone()), prepared))
-                .collect();
-            content::translate(&ops, &fonts_map)?
-        };
+    for (layout, geometry) in layouts.iter().zip(&geometries) {
+        let ops = draw_slide(layout, geometry, &embedded, &mut registry, &images);
+        // Карта шрифтов — та, что живёт в сессии: `translate` занимает её
+        // неизменяемо и возвращает готовые байты, поэтому заимствование
+        // кончается до `write_page` с его `&mut self`.
+        let content = content::translate(&ops, session.prepared_fonts())?;
         session.write_page(
-            &content,
+            content,
             [0.0, 0.0, geometry.width_pt(), geometry.height_pt()],
             &[],
         )?;
@@ -179,18 +170,21 @@ pub fn export(pres: &Presentation, options: &PdfOptions) -> Result<Vec<u8>> {
 
 /// Начертания, встретившиеся в тексте слайдов: ими подрезаются шрифты.
 fn collect_faces(layouts: &[SlideLayout]) -> FaceSet {
-    let mut faces = FaceSet::default();
-    for layout in layouts {
-        for item in &layout.items {
-            if let Item::Text { lines } = item {
-                for line in lines {
-                    for run in &line.runs {
-                        faces.insert(Face::of(run.bold, run.italic));
-                    }
-                }
-            }
-        }
-    }
+    // Пары (полужирный, курсив) по строкам текста слайдов; вставку начертаний
+    // делает общий [`export::collect_faces`], как и у DOCX.
+    let pairs = layouts
+        .iter()
+        .flat_map(|layout| &layout.items)
+        .filter_map(|item| match item {
+            Item::Text { lines } => Some(lines),
+            _ => None,
+        })
+        .flatten()
+        .flat_map(|line| &line.runs)
+        .map(|run| (run.bold, run.italic));
+    let mut faces = export::collect_faces(pairs);
+    // Регулярное начертание нужно всегда: шрифт подрезается до записи первой
+    // страницы, и слайд без текста вышел бы вообще без встроенного шрифта.
     faces.insert(Face::Regular);
     faces
 }
@@ -199,23 +193,18 @@ fn collect_faces(layouts: &[SlideLayout]) -> FaceSet {
 /// та же, что пойдёт в PDF, — источник один, и подрезка не потеряет глифов.
 fn collect_glyphs(
     layouts: &[SlideLayout],
+    geometries: &[PageGeometry],
     embedded: &EmbeddedFonts,
     registry: &mut FontRegistry,
     images: &Images<'_>,
 ) -> BTreeMap<Face, BTreeSet<char>> {
     let mut glyphs: BTreeMap<Face, BTreeSet<char>> = BTreeMap::new();
-    for layout in layouts {
-        let geometry = geometry(layout);
-        let ops = draw_slide(layout, &geometry, embedded, registry, images);
-        for op in &ops {
-            if let Op::WriteText { font, items } = op {
-                let set = glyphs.entry(embedded.face(font)).or_default();
-                for item in items {
-                    if let TextItem::Text(text) = item {
-                        set.extend(text.chars());
-                    }
-                }
-            }
+    for (layout, geometry) in layouts.iter().zip(geometries) {
+        let ops = draw_slide(layout, geometry, embedded, registry, images);
+        // Обход команд общий с DOCX/XLSX: одна правка `WriteText` — все пути.
+        let page_glyphs = export::collect_text_glyphs(&ops, |font| embedded.face(font));
+        for (face, chars) in page_glyphs {
+            glyphs.entry(face).or_default().extend(chars);
         }
     }
     glyphs
@@ -477,7 +466,7 @@ fn draw_run(
 /// чёрный, как у canvas-пути. `Rgb` — `RRGGBB`, а [`Color`] ждёт `RRGGBBAA`.
 fn text_color(rgb: Option<Rgb>) -> Color {
     match rgb {
-        Some(rgb) => Color((rgb.to_u32() << 8) | 0xFF),
+        Some(rgb) => Color::from_rgb24(rgb.to_u32()),
         None => Color::BLACK,
     }
 }

@@ -3,15 +3,15 @@
 //! Команды — те же `Rect`/`Line`/`Text`/`Image`/`Chart`, что у DOCX/XLSX;
 //! формат `DisplayList` и `DL_VERSION` не меняются. Картинки в кадре — только
 //! id (`Image.bitmap_id`): байты регистрирует потребитель (`pptx_image_bytes`
-//! → `ImageBitmap` → `register_bitmap`), как у DOCX. Диаграмма сериализуется
-//! в блоб [`doc_converter_render::chart::ChartData::to_blob`] и рисуется painter'ом.
+//! → `ImageBitmap` → `register_bitmap`), как у DOCX. Блоб диаграммы готовит
+//! раскладка ([`SlideLayout::chart_blobs`]), кадр только интернирует байты и
+//! рисует диаграмму painter'ом.
 
 use doc_converter_render::display_list::{
     Color, DisplayList, DrawCommand, TextAlign, TextBaseline,
 };
 use doc_converter_render::viewport::Viewport;
 
-use doc_converter_pptx::model::Rgb;
 use doc_converter_pptx_layout::{Item, PlacedRun, SlideLayout, TextLine};
 
 /// Гарнитура по умолчанию кадра, когда прогон её не назвал.
@@ -41,18 +41,28 @@ pub fn build(layout: &SlideLayout, viewport: &Viewport, out: &mut DisplayList) {
         0.0,
         layout.width,
         layout.height,
-        layout.background.map_or(Color::WHITE, rgb_color),
+        layout
+            .background
+            .map_or(Color::WHITE, |c| Color::from_rgb24(c.to_u32())),
     );
 
+    // Блобы диаграмм — готовые байты в порядке `Item::Chart`; итератор
+    // двигает только ветка диаграммы, кадры сериализацию не повторяют.
+    let mut charts = layout.chart_blobs.iter();
     for item in &layout.items {
-        draw_item(item, viewport, out);
+        draw_item(item, viewport, out, &mut charts);
     }
 
     out.push(DrawCommand::PopClip);
 }
 
 /// Один элемент раскладки.
-fn draw_item(item: &Item, viewport: &Viewport, out: &mut DisplayList) {
+fn draw_item(
+    item: &Item,
+    viewport: &Viewport,
+    out: &mut DisplayList,
+    charts: &mut std::slice::Iter<'_, Vec<u8>>,
+) {
     match item {
         Item::Rect {
             rect,
@@ -72,8 +82,8 @@ fn draw_item(item: &Item, viewport: &Viewport, out: &mut DisplayList) {
                 y,
                 w,
                 h,
-                fill: fill.map_or(Color::TRANSPARENT, rgb_color),
-                stroke: stroke.map_or(Color::TRANSPARENT, rgb_color),
+                fill: fill.map_or(Color::TRANSPARENT, |c| Color::from_rgb24(c.to_u32())),
+                stroke: stroke.map_or(Color::TRANSPARENT, |c| Color::from_rgb24(c.to_u32())),
                 stroke_w: *stroke_w * viewport.scale,
                 radius: [*radius * viewport.scale; 4],
             });
@@ -88,10 +98,12 @@ fn draw_item(item: &Item, viewport: &Viewport, out: &mut DisplayList) {
                 bitmap_id: *image_id,
             });
         }
-        Item::Chart { rect, data } => {
+        Item::Chart { rect, .. } => {
             let (x, y) = to_screen(viewport, rect.x, rect.y);
-            let blob = data.to_blob();
-            let data = out.intern_bytes(&blob);
+            // Блоб подготовлен раскладкой в порядке `Item::Chart`; ручная
+            // `SlideLayout` без блоба рисует пустую диаграмму, не паникуя.
+            let blob = charts.next().map_or(&[][..], |blob| blob.as_slice());
+            let data = out.intern_bytes(blob);
             out.push(DrawCommand::Chart {
                 x,
                 y,
@@ -124,7 +136,9 @@ fn draw_run(line: &TextLine, run: &PlacedRun, viewport: &Viewport, out: &mut Dis
         text,
         font,
         size: run.size_px * viewport.scale,
-        color: run.color.map_or(Color::BLACK, rgb_color),
+        color: run
+            .color
+            .map_or(Color::BLACK, |c| Color::from_rgb24(c.to_u32())),
         align: TextAlign::Left,
         baseline: TextBaseline::Top,
         bold: run.bold,
@@ -165,11 +179,6 @@ fn to_screen(viewport: &Viewport, x: f32, y: f32) -> (f32, f32) {
         (x - viewport.x) * viewport.scale,
         (y - viewport.y) * viewport.scale,
     )
-}
-
-/// Цвет модели (`RRGGBB`) → `RRGGBBAA` `DisplayList`.
-fn rgb_color(color: Rgb) -> Color {
-    Color((color.to_u32() << 8) | 0xFF)
 }
 
 #[cfg(test)]

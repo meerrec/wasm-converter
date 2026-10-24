@@ -369,6 +369,30 @@ impl<'a> EffectiveStyle<'a> {
         code.or_else(|| styles.format_code(self.base.num_fmt))
     }
 
+    /// Идентификатор формата числа: `dxf` перекрывает базовый, как и в
+    /// [`Self::format_code`].
+    ///
+    /// Сырой `formatCode`, записанный прямо в `dxf`, идентификатора не имеет —
+    /// его отдаёт [`Self::format_code_override`]; здесь остаются только ссылки
+    /// на `numFmts`. Ссылка `dxf` на код, которого нет в таблице, уступает
+    /// базовому формату — ровно так же падает `format_code`.
+    #[must_use]
+    pub fn format_id(&self, styles: &StyleTable) -> u32 {
+        self.applied
+            .number_format
+            .and_then(|format| format.id)
+            .filter(|&id| styles.format_code(id).is_some())
+            .unwrap_or(self.base.num_fmt)
+    }
+
+    /// Сырой `formatCode` из `dxf`, если правило записало код прямо в элемент.
+    #[must_use]
+    pub fn format_code_override(&self) -> Option<&str> {
+        self.applied
+            .number_format
+            .and_then(|format| format.code.as_deref())
+    }
+
     /// Наложить `dxf` сработавшего правила.
     fn apply(&mut self, overlay: &Overlay<'a>) {
         if let Some(font) = &overlay.font {

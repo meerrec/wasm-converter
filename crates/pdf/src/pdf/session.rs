@@ -225,7 +225,8 @@ impl<'w, W: Write> Session<'w, W> {
 
     /// Пишет поток содержимого страницы и объект страницы: `MediaBox`,
     /// ресурсы, аннотации (пустой список — без `/Annots`); страница
-    /// освобождается сразу после записи.
+    /// освобождается сразу после записи. Владение `content` переходит
+    /// странице — копии содержимого не остаётся.
     ///
     /// # Errors
     ///
@@ -233,7 +234,7 @@ impl<'w, W: Write> Session<'w, W> {
     /// [`io::ErrorKind::InvalidInput`], если вызвана больше `page_count` раз.
     pub fn write_page(
         &mut self,
-        content: &[u8],
+        content: Vec<u8>,
         media_box: [f32; 4],
         annots: &[Dictionary],
     ) -> Result<(), PdfError> {
@@ -250,9 +251,9 @@ impl<'w, W: Write> Session<'w, W> {
         // писатель сожмёт его только при `compress`, а `/Filter` и `/Length`
         // обновит сам lopdf.
         let content_id = self.doc.new_object_id();
-        let stream = Stream::new(Dictionary::new(), content.to_vec()).with_compression(true);
+        let stream = Stream::new(Dictionary::new(), content).with_compression(true);
         self.writer
-            .write_indirect(content_id.0, content_id.1, &Object::Stream(stream))?;
+            .write_indirect_stream(content_id.0, content_id.1, stream)?;
 
         let mut resources = Dictionary::new();
         resources.set("Font", Object::Reference(self.font_dict_id));
@@ -367,11 +368,17 @@ impl<'w, W: Write> Session<'w, W> {
 
     /// Перекладывает накопленные объекты `Document` в писатель и освобождает
     /// их: реестр существует ради `fonts::write_font`, копить в нём нечего.
+    /// Потоки уходят `write_indirect_stream` по владению — сжимать их по
+    /// ссылке нельзя.
     fn flush_objects(&mut self) -> Result<(), PdfError> {
         let ids: Vec<ObjectId> = self.doc.objects.keys().copied().collect();
         for id in ids {
-            if let Some(object) = self.doc.objects.remove(&id) {
-                self.writer.write_indirect(id.0, id.1, &object)?;
+            match self.doc.objects.remove(&id) {
+                Some(Object::Stream(stream)) => {
+                    self.writer.write_indirect_stream(id.0, id.1, stream)?;
+                }
+                Some(object) => self.writer.write_indirect(id.0, id.1, &object)?,
+                None => {}
             }
         }
         Ok(())
@@ -550,8 +557,10 @@ mod tests {
     /// попадает в content stream Identity-H (следующий слайс заменит это
     /// `pdf::content`).
     fn hex(prepared: &PreparedFont, text: &str) -> String {
+        let mut encoded = Vec::new();
+        prepared.encode_into(&mut encoded, text);
         let mut out = String::new();
-        for byte in prepared.encode(text) {
+        for byte in encoded {
             let _ = write!(out, "{byte:02X}");
         }
         out
@@ -638,7 +647,7 @@ mod tests {
             "оба начертания доступны для `translate`"
         );
         for content in &contents {
-            session.write_page(content, A4, &[]).unwrap();
+            session.write_page(content.clone(), A4, &[]).unwrap();
         }
         session.finish().unwrap();
 
@@ -836,7 +845,9 @@ mod tests {
             session
                 .add_font(doc_converter_render::font::default_font_bytes(), &used)
                 .unwrap();
-            session.write_page(content.as_bytes(), A4, &[]).unwrap();
+            session
+                .write_page(content.as_bytes().to_vec(), A4, &[])
+                .unwrap();
             session.finish().unwrap();
         }
 
@@ -876,7 +887,7 @@ mod tests {
         {
             let mut session = Session::begin(&mut bytes, 1, true).unwrap();
             session.set_info(&entries);
-            session.write_page(b"BT ET", A4, &[]).unwrap();
+            session.write_page(b"BT ET".to_vec(), A4, &[]).unwrap();
             session.finish().unwrap();
         }
 
@@ -900,7 +911,7 @@ mod tests {
         session
             .add_font(doc_converter_render::font::default_font_bytes(), &used)
             .unwrap();
-        session.write_page(b"BT ET", A4, &[]).unwrap();
+        session.write_page(b"BT ET".to_vec(), A4, &[]).unwrap();
 
         let error = session
             .add_font(doc_converter_render::font::bold_font_bytes(), &used)
@@ -912,8 +923,8 @@ mod tests {
     fn write_page_beyond_page_count_is_an_error() {
         let mut bytes = Vec::new();
         let mut session = Session::begin(&mut bytes, 1, true).unwrap();
-        session.write_page(b"BT ET", A4, &[]).unwrap();
-        let error = session.write_page(b"BT ET", A4, &[]).unwrap_err();
+        session.write_page(b"BT ET".to_vec(), A4, &[]).unwrap();
+        let error = session.write_page(b"BT ET".to_vec(), A4, &[]).unwrap_err();
         assert!(matches!(error, PdfError::Io(_)), "{error}");
     }
 
@@ -929,7 +940,7 @@ mod tests {
         let finish: fn(Session<'static, Vec<u8>>) -> Result<(), PdfError> = Session::finish;
         let write_page: fn(
             &mut Session<'static, Vec<u8>>,
-            &[u8],
+            Vec<u8>,
             [f32; 4],
             &[Dictionary],
         ) -> Result<(), PdfError> = Session::write_page;
@@ -974,7 +985,7 @@ mod tests {
         {
             let mut session = Session::begin(&mut bytes, 1, true).unwrap();
             assert_eq!(session.add_image(&decoded).unwrap(), "X0");
-            session.write_page(&content, A4, &[]).unwrap();
+            session.write_page(content, A4, &[]).unwrap();
             session.finish().unwrap();
         }
 
@@ -1043,7 +1054,7 @@ mod tests {
         {
             let mut session = Session::begin(&mut bytes, 1, true).unwrap();
             assert_eq!(session.add_image(&decoded).unwrap(), "X0");
-            session.write_page(b"q /X0 Do Q", A4, &[]).unwrap();
+            session.write_page(b"q /X0 Do Q".to_vec(), A4, &[]).unwrap();
             session.finish().unwrap();
         }
 
@@ -1081,7 +1092,7 @@ mod tests {
         {
             let mut session = Session::begin(&mut bytes, 1, true).unwrap();
             session.add_graphics_state("GS0", gs).unwrap();
-            session.write_page(&content, A4, &[]).unwrap();
+            session.write_page(content, A4, &[]).unwrap();
             session.finish().unwrap();
         }
 
@@ -1109,8 +1120,8 @@ mod tests {
         let mut bytes = Vec::new();
         {
             let mut session = Session::begin(&mut bytes, 3, true).unwrap();
-            session.write_page(b"BT ET", A4, &[]).unwrap();
-            session.write_page(b"BT ET", A4, &[]).unwrap();
+            session.write_page(b"BT ET".to_vec(), A4, &[]).unwrap();
+            session.write_page(b"BT ET".to_vec(), A4, &[]).unwrap();
             session.set_outline(&entries).unwrap();
             session.finish().unwrap();
         }
@@ -1173,7 +1184,7 @@ mod tests {
         {
             let mut session = Session::begin(&mut bytes, 1, true).unwrap();
             session.set_outline(&[]).unwrap();
-            session.write_page(b"BT ET", A4, &[]).unwrap();
+            session.write_page(b"BT ET".to_vec(), A4, &[]).unwrap();
             session.finish().unwrap();
         }
 
@@ -1203,8 +1214,8 @@ mod tests {
         let second = session.page_ref(1).unwrap();
         assert_ne!(first, second);
         assert!(session.page_ref(2).is_none(), "id не резервировались");
-        session.write_page(b"BT ET", A4, &[]).unwrap();
-        session.write_page(b"BT ET", A4, &[]).unwrap();
+        session.write_page(b"BT ET".to_vec(), A4, &[]).unwrap();
+        session.write_page(b"BT ET".to_vec(), A4, &[]).unwrap();
         session.finish().unwrap();
 
         let loaded = Document::load_mem(&bytes).unwrap();
@@ -1218,7 +1229,7 @@ mod tests {
     fn add_image_after_first_page_is_an_error() {
         let mut bytes = Vec::new();
         let mut session = Session::begin(&mut bytes, 2, true).unwrap();
-        session.write_page(b"BT ET", A4, &[]).unwrap();
+        session.write_page(b"BT ET".to_vec(), A4, &[]).unwrap();
         let error = session.add_image(&decoded_rgba()).unwrap_err();
         assert!(matches!(error, PdfError::Image(_)), "{error}");
     }
@@ -1230,7 +1241,7 @@ mod tests {
         gs.set("CA", 0.5);
         let mut bytes = Vec::new();
         let mut session = Session::begin(&mut bytes, 2, true).unwrap();
-        session.write_page(b"BT ET", A4, &[]).unwrap();
+        session.write_page(b"BT ET".to_vec(), A4, &[]).unwrap();
         let error = session.add_graphics_state("GS0", gs).unwrap_err();
         assert!(matches!(error, PdfError::Io(_)), "{error}");
     }
@@ -1286,7 +1297,7 @@ mod tests {
         session.add_font(doc_converter_render::font::bold_font_bytes(), &bold_used)?;
         for (heading, lines) in &texts {
             let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
-            session.write_page(&page_content(heading, &lines, &regular, &bold), A4, &[])?;
+            session.write_page(page_content(heading, &lines, &regular, &bold), A4, &[])?;
         }
         session.finish()
     }

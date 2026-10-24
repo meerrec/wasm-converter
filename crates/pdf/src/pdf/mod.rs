@@ -8,6 +8,7 @@
 //! ADR-0033), кроме `writer` — он внутренняя деталь сессии.
 
 pub mod content;
+pub mod export;
 pub mod fonts;
 pub mod image;
 pub mod ops;

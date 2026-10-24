@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
 use doc_converter_render::display_list::Color;
-use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE, DEFAULT_FONT_ID};
 use doc_converter_render::text_measure::measure_text;
 use doc_converter_xlsx::layout::{SheetLayout, PX_PER_POINT};
 use doc_converter_xlsx::paint::{anchor_rect, display_text};
@@ -37,17 +37,14 @@ use crate::options::{Margins, PageConfig, PageOrientation, PdfOptions};
 use crate::overlay::{self, Align, OverlayMargins, PageContext, Watermark, WatermarkLayer};
 use crate::pagination::{paginate, print_scale, PageSlice, PaintedCell, SheetPage};
 use crate::pdf::content;
-use crate::pdf::fonts::PreparedFont;
+use crate::pdf::export;
 use crate::pdf::ops::{
-    ExtendedGraphicsState, ExtendedGraphicsStateId, FontId, Line, LinePoint, Op, Point, Pt,
+    ExtendedGraphicsState, ExtendedGraphicsStateId, Line, LinePoint, Op, Point, Pt,
     TextItem, TextMatrix, XObjectId,
 };
 use crate::pdf::session::Session;
 use crate::styles::to_pdf_color;
 use crate::{annot, background, border, chart, fonts, text, PdfError};
-
-/// Размер LRU-кэша метрик: столько же, сколько у canvas-пути.
-const FONT_CACHE: usize = 4096;
 
 /// Цвет линий печатной сетки — тот же, что у canvas (`dl_color::GRID` в
 /// `xlsx::paint`): `D9D9D9`.
@@ -135,7 +132,7 @@ pub fn export_to<W: Write>(
 /// диаграммы нулевые глифы. Раскладка при этом не считается второй раз — она
 /// приходит готовой ([`chart_layouts`]).
 ///
-/// Ключ накопления — [`Face`], а не [`FontId`]: зонды идут до сессии, и id
+/// Ключ накопления — [`Face`], а не [`crate::pdf::ops::FontId`]: зонды идут до сессии, и id
 /// шрифтов ещё не существует; обратное сопоставление делает
 /// [`EmbeddedFonts::face`] по id, которые painter сам построил заранее
 /// ([`EmbeddedFonts::from_faces`]).
@@ -177,15 +174,10 @@ fn collect_glyphs(
             options.page.print_grid_lines,
             base.page(first_page_no + index, page_count),
         );
-        for op in &ops {
-            if let Op::WriteText { font, items, .. } = op {
-                let set = glyphs.entry(fonts.face(font)).or_default();
-                for item in items {
-                    if let TextItem::Text(text) = item {
-                        set.extend(text.chars());
-                    }
-                }
-            }
+        // Обход команд общий с DOCX/PPTX: одна правка `WriteText` — все пути.
+        let page_glyphs = export::collect_text_glyphs(&ops, |font| fonts.face(font));
+        for (face, chars) in page_glyphs {
+            glyphs.entry(face).or_default().extend(chars);
         }
     }
 }
@@ -1071,7 +1063,7 @@ fn write_book<W: Write>(
         .iter()
         .map(|sheet| sheet.pagination.pages.len())
         .sum();
-    let mut metric_registry = FontRegistry::new(FONT_CACHE);
+    let mut metric_registry = FontRegistry::new(DEFAULT_FONT_CACHE);
     let mut glyphs: BTreeMap<Face, BTreeSet<char>> = BTreeMap::new();
     // Нумерация зондов та же, что у записи: `&P`/`&N` в колонтитулах обязаны
     // совпасть, иначе подрезанный шрифт не покроет символы реальной страницы.
@@ -1261,18 +1253,12 @@ fn write_pages<W: Write>(
                 })
                 .collect();
             ops.retain(|op| !matches!(op, Op::Annotation { .. }));
-            // Карта шрифтов живёт только до `translate`: `write_page` требует
-            // сессию целиком, и заимствование `prepared_fonts` обязано кончиться.
-            let content = {
-                let fonts_map: BTreeMap<FontId, &PreparedFont> = session
-                    .prepared_fonts()
-                    .iter()
-                    .map(|(name, prepared)| (FontId(name.clone()), prepared))
-                    .collect();
-                content::translate(&ops, &fonts_map)?
-            };
+            // Карта шрифтов — та, что живёт в сессии: `translate` занимает её
+            // неизменяемо и возвращает готовые байты, поэтому заимствование
+            // кончается до `write_page` с его `&mut self`.
+            let content = content::translate(&ops, session.prepared_fonts())?;
             session.write_page(
-                &content,
+                content,
                 [0.0, 0.0, page_geom.width_pt(), page_geom.height_pt()],
                 &annots,
             )?;

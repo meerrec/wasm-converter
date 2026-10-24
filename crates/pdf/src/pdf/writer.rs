@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::io::{self, Write};
 
 use lopdf::{
-    Dictionary, Object,
+    Dictionary, Object, Stream,
     StringFormat::{Hexadecimal, Literal},
 };
 
@@ -68,6 +68,11 @@ impl<W: Write> StreamWriter<W> {
         self.out.write_all(b"\n")
     }
 
+    /// Записывает объект-значение (словарь, ссылку, массив…) с xref-записью.
+    ///
+    /// Потоки сюда не ходят: их пишет [`Self::write_indirect_stream`] по
+    /// владению — сжатие требует `&mut Stream`.
+    ///
     /// # Errors
     ///
     /// Ошибка записи в приёмник.
@@ -77,25 +82,49 @@ impl<W: Write> StreamWriter<W> {
         generation: u16,
         object: &Object,
     ) -> io::Result<()> {
+        debug_assert!(
+            !matches!(object, Object::Stream(_)),
+            "поток пишется через write_indirect_stream: сжатие требует владения"
+        );
         let offset = self.out.count;
         self.entries.insert(id, (offset, generation));
         writeln!(self.out, "{id} {generation} obj")?;
         if needs_separator(object) {
             self.out.write_all(b" ")?;
         }
-        match object {
-            Object::Stream(stream) if self.compress && stream.allows_compression => {
-                let mut stream = stream.clone();
-                // Как `Document::compress()`: неудача сжатия не фатальна.
-                let _ = stream.compress();
-                write_value(&mut self.out, &Object::Stream(stream))?;
-            }
-            _ => write_value(&mut self.out, object)?,
-        }
+        write_value(&mut self.out, object)?;
         if needs_end_separator(object) {
             self.out.write_all(b" ")?;
         }
         self.out.write_all(b"\nendobj\n")
+    }
+
+    /// Записать поток отдельным объектом, забрав его по значению.
+    ///
+    /// Сжатие — как у `Document::compress()`: до записи, чтобы `/Filter` и
+    /// `/Length` попали в файл. Поток принадлежит писателю, поэтому копия для
+    /// сжатия не нужна.
+    ///
+    /// # Errors
+    ///
+    /// Ошибка записи в приёмник.
+    pub(crate) fn write_indirect_stream(
+        &mut self,
+        id: u32,
+        generation: u16,
+        mut stream: Stream,
+    ) -> io::Result<()> {
+        let offset = self.out.count;
+        self.entries.insert(id, (offset, generation));
+        writeln!(self.out, "{id} {generation} obj")?;
+        if self.compress && stream.allows_compression {
+            // Как `Document::compress()`: неудача сжатия не фатальна.
+            let _ = stream.compress();
+        }
+        write_value(&mut self.out, &Object::Stream(stream))?;
+        // Поток всегда заканчивается `endstream` — пробел перед `endobj`
+        // обязателен, как у `needs_end_separator` для `Object::Stream`.
+        self.out.write_all(b" \nendobj\n")
     }
 
     /// Закрывает файл: xref одной секцией `0..=max_id`, trailer, startxref.
@@ -262,7 +291,12 @@ mod tests {
             let mut writer = StreamWriter::new(&mut bytes, compress);
             writer.begin("1.7", b"\xE2\xE3\xCF\xD3").unwrap();
             for (id, generation, object) in objects {
-                writer.write_indirect(*id, *generation, object).unwrap();
+                match object {
+                    Object::Stream(stream) => writer
+                        .write_indirect_stream(*id, *generation, stream.clone())
+                        .unwrap(),
+                    object => writer.write_indirect(*id, *generation, object).unwrap(),
+                }
             }
             writer.finish(max_id, &make_trailer(max_id)).unwrap();
         }

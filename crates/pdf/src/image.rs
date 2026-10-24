@@ -69,10 +69,9 @@ pub enum DecodeError {
 /// Изображение к размещению на странице.
 #[derive(Debug, Clone)]
 pub struct Placement<'a> {
-    /// Идентификатор media-части (`xl/media/image1.png`) — попадает в отчёт
-    /// о пропуске, чтобы было видно, какую картинку потеряли. Дедупликация
-    /// на него не опирается: ключ — байты, так что разные id с одинаковым
-    /// содержимым дают один `XObject`.
+    /// Идентификатор media-части (`xl/media/image1.png`). Дедупликация на него
+    /// не опирается: ключ — байты, так что разные id с одинаковым содержимым
+    /// дают один `XObject`.
     pub id: &'a str,
     /// Mime-тип из `[Content_Types].xml`.
     pub mime: &'a str,
@@ -82,25 +81,11 @@ pub struct Placement<'a> {
     pub rect: Rect,
 }
 
-/// Изображение, которое разместить не удалось.
-// Поля читают только тесты: painter берёт из [`Batch`] одни операции, а отчёт
-// о пропусках — предмет unit-тестов модуля.
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct Skipped {
-    /// Идентификатор media-части.
-    pub id: String,
-    /// Причина, по которой страница осталась без картинки.
-    pub error: DecodeError,
-}
-
-/// Результат [`place_all`]: операции уцелевших изображений и пропуски.
+/// Результат [`place_all`]: операции уцелевших изображений.
 #[derive(Debug, Default)]
 pub struct Batch {
     /// Операции для страницы, в порядке переданных изображений.
     pub ops: Vec<Op>,
-    /// Изображения, которые разместить не удалось.
-    pub skipped: Vec<Skipped>,
 }
 
 /// Реестр картинок документа: декодированные изображения и их имена.
@@ -129,8 +114,8 @@ pub struct Registry {
 impl Registry {
     /// Декодировать новые картинки размещений; известные байты не трогаются.
     ///
-    /// Битые и неподдержанные запоминаются с причиной: [`place_all`] отметит
-    /// такие размещения в [`Batch::skipped`], не декодируя повторно.
+    /// Битые и неподдержанные запоминаются с причиной: [`place_all`] пропустит
+    /// такие размещения, не декодируя повторно.
     pub fn collect(&mut self, placements: &[Placement<'_>]) {
         for placement in placements {
             if self.index_by_bytes.contains_key(placement.bytes)
@@ -189,18 +174,14 @@ impl Registry {
 ///
 /// Порядок операций — порядок `placements`: вызывающий сортирует их в порядке
 /// наложения листа (`Sheet.images`). Ошибка одного изображения не мешает
-/// остальным: причина ложится в [`Batch::skipped`], операции уцелевших — в
-/// [`Batch::ops`], так что одно битое вложение не роняет экспорт листа.
+/// остальным: операции уцелевших ложатся в [`Batch::ops`], так что одно битое
+/// вложение не роняет экспорт листа.
 #[must_use]
 pub fn place_all(registry: &Registry, placements: &[Placement<'_>]) -> Batch {
     let mut batch = Batch::default();
     for placement in placements {
-        match place(registry, placement) {
-            Ok(ops) => batch.ops.extend(ops),
-            Err(error) => batch.skipped.push(Skipped {
-                id: placement.id.to_owned(),
-                error,
-            }),
+        if let Ok(ops) = place(registry, placement) {
+            batch.ops.extend(ops);
         }
     }
     batch
@@ -335,7 +316,7 @@ fn clip_rect(rect: &Rect) -> Polygon {
 mod tests {
     use std::io::Cursor;
 
-    use super::{decode, place_all, placement_ops, DecodeError, Registry};
+    use super::{decode, place, place_all, placement_ops, DecodeError, Registry};
     use crate::pdf::ops::{Op, PaintMode, Pt, Rect, XObjectId};
 
     /// RGB-пиксели 2x2: красный, зелёный, синий, белый.
@@ -441,7 +422,11 @@ mod tests {
             },
         ];
         let batch = place_all(&registry, &placements);
-        assert!(batch.skipped.is_empty(), "обе картинки размещаются");
+        assert_eq!(
+            batch.ops.len(),
+            8,
+            "обе картинки размещаются: по четыре операции"
+        );
         assert_eq!(registry.decoded().len(), 1, "одна декодированная картинка");
         let ids = placed_ids(&batch.ops);
         assert_eq!(ids.len(), 2, "два вывода");
@@ -507,24 +492,23 @@ mod tests {
     }
 
     #[test]
-    fn degenerate_rect_is_skipped_without_ops() {
+    fn degenerate_rect_gives_no_ops() {
         let bytes = encode_rgb(image::ImageFormat::Png);
         let (registry, bytes) = registry(&bytes);
-        let batch = place_all(
-            &registry,
-            &[super::Placement {
-                id: "xl/media/image1.png",
-                mime: "image/png",
-                bytes: &bytes,
-                rect: rect(0.0, 0.0, 0.0, 10.0),
-            }],
-        );
+        let placement = super::Placement {
+            id: "xl/media/image1.png",
+            mime: "image/png",
+            bytes: &bytes,
+            rect: rect(0.0, 0.0, 0.0, 10.0),
+        };
+        let batch = place_all(&registry, std::slice::from_ref(&placement));
         assert!(batch.ops.is_empty(), "нулевая ширина — операций нет");
-        assert_eq!(batch.skipped.len(), 1);
         assert!(
-            matches!(batch.skipped[0].error, DecodeError::DegenerateRect { .. }),
-            "{:?}",
-            batch.skipped[0].error
+            matches!(
+                place(&registry, &placement),
+                Err(DecodeError::DegenerateRect { .. })
+            ),
+            "причина пропуска — вырожденный прямоугольник"
         );
     }
 
@@ -549,10 +533,20 @@ mod tests {
         registry.collect(&placements);
         registry.assign(0, XObjectId(String::from("X0")));
         let batch = place_all(&registry, &placements);
-        assert_eq!(batch.skipped.len(), 1, "битая картинка пропущена");
-        assert_eq!(batch.skipped[0].id, "xl/media/image2.png");
+        assert_eq!(
+            placed_ids(&batch.ops),
+            vec![XObjectId(String::from("X0"))],
+            "битая картинка в операции не попала, уцелевшая — на месте"
+        );
         assert_eq!(batch.ops.len(), 4, "операции уцелевшей картинки на месте");
         assert_eq!(registry.decoded().len(), 1);
+        assert!(
+            matches!(
+                place(&registry, &placements[1]),
+                Err(DecodeError::Decode(_))
+            ),
+            "причина пропуска — ошибка декодирования"
+        );
     }
 
     #[test]
@@ -560,7 +554,6 @@ mod tests {
         let registry = Registry::default();
         let batch = place_all(&registry, &[]);
         assert!(batch.ops.is_empty());
-        assert!(batch.skipped.is_empty());
         assert!(registry.decoded().is_empty());
     }
 }

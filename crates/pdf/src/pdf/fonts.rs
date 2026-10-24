@@ -51,18 +51,19 @@ pub struct PreparedFont {
 }
 
 impl PreparedFont {
-    /// Текст в 2-байтовые BE-глифы (CID Identity-H), без разделителей и скобок.
+    /// Дописать текст 2-байтовыми BE-глифами (CID Identity-H) в `out`, без
+    /// разделителей и скобок.
     ///
-    /// Символ, которого не было в `used` или для которого нет глифа, кодируется
-    /// нулевым CID — `.notdef` подмножества.
-    #[must_use]
-    pub(crate) fn encode(&self, text: &str) -> Vec<u8> {
-        let mut out = Vec::with_capacity(text.len() * 2);
+    /// Буфер принадлежит вызывающему: он может быть общим на поток, и лишней
+    /// копии готовых байтов не возникает. Символ, которого не было в `used`
+    /// или для которого нет глифа, кодируется нулевым CID — `.notdef`
+    /// подмножества.
+    pub(crate) fn encode_into(&self, out: &mut Vec<u8>, text: &str) {
+        out.reserve(text.len() * 2);
         for ch in text.chars() {
             let cid = self.cid_by_char.get(&ch).copied().unwrap_or(0);
             out.extend_from_slice(&cid.to_be_bytes());
         }
-        out
     }
 
     /// `CMap` для `ToUnicode`: CID подрезанного шрифта → Unicode.
@@ -106,7 +107,7 @@ impl PreparedFont {
 /// Разобрать TTF, подрезать по использованным символам и собрать данные для записи.
 ///
 /// `used` — только те символы, что реально встретились в тексте. Символ без
-/// глифа в шрифте в подмножество не попадает; [`PreparedFont::encode`] кодирует
+/// глифа в шрифте в подмножество не попадает; [`PreparedFont::encode_into`] кодирует
 /// его нулевым CID.
 ///
 /// # Errors
@@ -373,6 +374,13 @@ mod tests {
         text.chars().collect()
     }
 
+    /// Байты текста в Identity-H: тестам нужен готовый `Vec`.
+    fn encoded(prepared: &PreparedFont, text: &str) -> Vec<u8> {
+        let mut out = Vec::new();
+        prepared.encode_into(&mut out, text);
+        out
+    }
+
     /// Мини-документ из одной страницы с `TEXT`, записанный своим писателем
     /// с `compress: true`: байты PDF, исходный текст и подготовленный шрифт.
     fn mini_pdf() -> (Vec<u8>, &'static str, PreparedFont) {
@@ -387,7 +395,7 @@ mod tests {
         let font_id = write_font(&prepared, &mut doc);
 
         let mut hex = String::new();
-        for byte in prepared.encode(TEXT) {
+        for byte in encoded(&prepared, TEXT) {
             let _ = write!(hex, "{byte:02X}");
         }
         let content = format!("BT /F0 24 Tf 1 0 0 1 72 700 Tm <{hex}> Tj ET");
@@ -434,7 +442,12 @@ mod tests {
             let mut writer = StreamWriter::new(&mut bytes, true);
             writer.begin("1.7", b"\xE2\xE3\xCF\xD3").unwrap();
             for (id, object) in &doc.objects {
-                writer.write_indirect(id.0, id.1, object).unwrap();
+                match object {
+                    Object::Stream(stream) => writer
+                        .write_indirect_stream(id.0, id.1, stream.clone())
+                        .unwrap(),
+                    object => writer.write_indirect(id.0, id.1, object).unwrap(),
+                }
             }
             let mut trailer = Dictionary::new();
             trailer.set("Size", i64::from(doc.max_id) + 1);
@@ -477,14 +490,14 @@ mod tests {
             prepared.subset.len(),
             bytes.len()
         );
-        assert_eq!(prepared.encode(text).len(), text.chars().count() * 2);
+        assert_eq!(encoded(&prepared, text).len(), text.chars().count() * 2);
         for ch in text.chars() {
             assert_ne!(prepared.cid_by_char[&ch], 0, "символ {ch:?} без глифа");
         }
         // Символ есть в исходном шрифте, но не в подмножестве, — нулевой CID.
-        assert_eq!(prepared.encode("ж"), vec![0, 0]);
+        assert_eq!(encoded(&prepared, "ж"), vec![0, 0]);
         // И символа нет вовсе — тоже нулевой CID.
-        assert_eq!(prepared.encode("\u{1F600}"), vec![0, 0]);
+        assert_eq!(encoded(&prepared, "\u{1F600}"), vec![0, 0]);
     }
 
     #[test]
@@ -578,15 +591,15 @@ mod tests {
 
         assert_ne!(regular.subset, bold.subset);
         assert_ne!(regular.face_name, bold.face_name);
-        assert_eq!(regular.encode("Bold").len(), 4 * 2);
-        assert_eq!(bold.encode("Bold").len(), 4 * 2);
+        assert_eq!(encoded(&regular, "Bold").len(), 4 * 2);
+        assert_eq!(encoded(&bold, "Bold").len(), 4 * 2);
     }
 
     #[test]
     fn empty_used_set_stays_valid() {
         let empty = BTreeSet::new();
         let prepared = prepare(doc_converter_render::font::default_font_bytes(), &empty).unwrap();
-        assert_eq!(prepared.encode("abc"), vec![0, 0, 0, 0, 0, 0]);
+        assert_eq!(encoded(&prepared, "abc"), vec![0, 0, 0, 0, 0, 0]);
 
         let mut doc = Document::new();
         let font_id = write_font(&prepared, &mut doc);
