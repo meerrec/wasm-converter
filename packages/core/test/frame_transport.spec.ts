@@ -5,7 +5,7 @@ import {
   HEADER_INTS,
   SLOT_COUNT,
 } from '../src/sab/protocol.js';
-import { SabReader } from '../src/sab/reader.js';
+import { SabReader } from './sab_reader.js';
 import { FramePool, pickTransport } from '../src/worker/transport.js';
 
 /** Кадр-образец: у настоящего DisplayList тот же вид — заголовок и команды. */

@@ -6,7 +6,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import type { PdfCliOptions } from './args.js';
+import type { PdfOptions } from '@meerrec/core';
+
 import { CliError } from './errors.js';
 import { assertSupported, inputKind, type InputKind, type OutputFormat } from './formats.js';
 import { loadDocxWasm, loadPdfWasm } from './wasm.js';
@@ -15,7 +16,7 @@ export interface ConvertJob {
   input: string;
   output: string;
   format: OutputFormat;
-  pdf: PdfCliOptions;
+  pdf: PdfOptions;
 }
 
 export interface ConvertResult {
@@ -49,9 +50,19 @@ export async function convertFile(job: ConvertJob): Promise<ConvertResult> {
   return { input: job.input, output: job.output, bytes: data.byteLength, ms: Date.now() - started };
 }
 
-async function toPdf(kind: InputKind, bytes: Uint8Array, pdf: PdfCliOptions): Promise<Uint8Array> {
+async function toPdf(kind: InputKind, bytes: Uint8Array, pdf: PdfOptions): Promise<Uint8Array> {
   const wasm = await loadPdfWasm();
-  const options = pdfOptionsForWasm(pdf);
+  // Опции для wasm-модуля: только заданные ключи (exactOptionalPropertyTypes).
+  // Имена — camelCase, как в `PdfOptionsWire`; `allSheets` CLI не знает и не шлёт.
+  const options: PdfOptions = {};
+  if (pdf.pageSize !== undefined) options.pageSize = pdf.pageSize;
+  if (pdf.orientation !== undefined) options.orientation = pdf.orientation;
+  if (pdf.scale !== undefined) options.scale = pdf.scale;
+  if (pdf.margins !== undefined) options.margins = pdf.margins;
+  if (pdf.sheetIndex !== undefined) options.sheetIndex = pdf.sheetIndex;
+  if (pdf.fitToPage !== undefined) options.fitToPage = pdf.fitToPage;
+  if (pdf.fitToWidth !== undefined) options.fitToWidth = pdf.fitToWidth;
+  if (pdf.fitToHeight !== undefined) options.fitToHeight = pdf.fitToHeight;
   if (kind === 'docx') return wasm.export_docx_pdf(bytes, options);
   return pdf.sheetIndex === undefined
     ? wasm.export_pdf_book(bytes, options)
@@ -69,23 +80,4 @@ async function toText(kind: InputKind, bytes: Uint8Array, format: OutputFormat):
         ? wasm.docx_export_html(bytes)
         : wasm.docx_export_text(bytes);
   return Buffer.from(text, 'utf8');
-}
-
-/**
- * Опции для `PdfOptionsWire` wasm-модуля: только заданные ключи.
- * Имена — camelCase, как в TS-интерфейсе просмотрщика.
- */
-function pdfOptionsForWasm(pdf: PdfCliOptions): Record<string, unknown> {
-  const options: Record<string, unknown> = {};
-  if (pdf.pageSize !== undefined) options['pageSize'] = pdf.pageSize;
-  if (pdf.orientation !== undefined) options['orientation'] = pdf.orientation;
-  if (pdf.scale !== undefined) options['scale'] = pdf.scale;
-  if (pdf.margins !== undefined) {
-    options['margins'] = { top: pdf.margins.top, right: pdf.margins.right, bottom: pdf.margins.bottom, left: pdf.margins.left };
-  }
-  if (pdf.sheetIndex !== undefined) options['sheetIndex'] = pdf.sheetIndex;
-  if (pdf.fitToPage !== undefined) options['fitToPage'] = pdf.fitToPage;
-  if (pdf.fitToWidth !== undefined) options['fitToWidth'] = pdf.fitToWidth;
-  if (pdf.fitToHeight !== undefined) options['fitToHeight'] = pdf.fitToHeight;
-  return options;
 }

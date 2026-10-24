@@ -93,7 +93,7 @@ Chrome 90+, Firefox 96+, Safari 16.4+.
 | 43 | WorkerPool в Node | [integration.md](integration.md#in-03) |
 | 44 | convertFile в Node без пула | [integration.md](integration.md#in-04) |
 | 45 | Явный `sab` без заголовков: ловим ошибку и объясняем пользователю | [integration.md](integration.md#in-05) |
-| 46 | supportsOffscreen и проверка окружения | [integration.md](integration.md#in-06) |
+| 46 | Режим рендера и проверка окружения | [integration.md](integration.md#in-06) |
 | 47 | Отдельный воркер на каждый вьюер | [integration.md](integration.md#in-07) |
 | 48 | Кэш wasm-модулей blob-URL-ами | [integration.md](integration.md#in-08) |
 | 49 | Включить доступный режим DOCX | [a11y.md](a11y.md#a11y-01) |

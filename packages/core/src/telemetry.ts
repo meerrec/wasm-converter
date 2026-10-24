@@ -17,8 +17,8 @@ import pkg from '../package.json';
  * во внешний APM, и содержимое документа — не телеметрия (ADR-0037).
  */
 export interface SpanAttributes extends Attributes {
-  /** Формат документа: `'xlsx' | 'docx'`. */
-  format?: 'xlsx' | 'docx';
+  /** Формат документа: `'xlsx' | 'docx' | 'pptx'`. */
+  format?: 'xlsx' | 'docx' | 'pptx';
   /** Что выгружали: `'pdf' | 'png'`. */
   kind?: 'pdf' | 'png';
   /** Длина входа (при открытии) или результата (при экспорте). */
@@ -27,6 +27,8 @@ export interface SpanAttributes extends Attributes {
   sheetCount?: number;
   /** Сколько страниц открыл документ. */
   pageCount?: number;
+  /** Сколько слайдов открыла презентация. */
+  slideCount?: number;
 }
 
 /**

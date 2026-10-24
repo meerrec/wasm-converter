@@ -1,4 +1,4 @@
-import { HEADER_BYTES, canRead, readHeader, readerSlot } from './protocol';
+import { HEADER_BYTES, canRead, readHeader, readerSlot } from '../src/sab/protocol.js';
 
 /** Симметричен Rust `SabRing` — для дебага и тестов. */
 export class SabReader {

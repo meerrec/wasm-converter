@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeDpr } from '../src/render/resize_observer.js';
+import { computeDpr } from '../src/render/dpr.js';
 
 /** На Retina 4K canvas.width*height > 16M — OffscreenCanvas падает. */
 const MAX_PIXELS = 16_000_000;

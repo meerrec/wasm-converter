@@ -52,11 +52,6 @@ export function docx_is_open(...args) {
 // те же аргументы, что у настоящего модуля. Параметры названы, чтобы порядок
 // аргументов было видно из заглушки: расходятся они — расходится и запись.
 
-export function docx_build_display_list(viewport, gap) {
-  record('docx_build_display_list', [viewport, gap]);
-  return new Uint8Array();
-}
-
 export function docx_build_display_list_sab(sab, slotCapacity, viewport, gap) {
   record('docx_build_display_list_sab', [sab, slotCapacity, viewport, gap]);
   return { written: true, cmds: 1, buildMs: 0 };

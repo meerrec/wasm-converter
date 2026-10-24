@@ -76,7 +76,7 @@ const job: ConvertJob = {
   input: 'in/report.docx',
   output: 'out/report.pdf',
   format: 'pdf',
-  pdf: {}, // PdfCliOptions: pageSize/orientation/scale/margins/sheetIndex — необязательны
+  pdf: {}, // PdfOptions (@meerrec/core): pageSize/orientation/scale/margins/sheetIndex — необязательны
 };
 
 const results = await Promise.all([
@@ -153,36 +153,36 @@ async function mount(): Promise<void> {
 
 ---
 
-### <a id="in-06"></a>Рецепт 6. supportsOffscreen и проверка окружения
+### <a id="in-06"></a>Рецепт 6. Режим рендера и проверка окружения
 
 **Задача.** Узнать, будет ли доступен worker-путь, и предупредить о переходе
 на main-режим.
 
 ```ts
-import { supportsOffscreen } from '@meerrec/core';
+import { createXlsxViewer } from '@meerrec/core';
 
-// Chrome 90+, Firefox 105+, Safari 16.4+ (README «Браузеры»).
-// Без OffscreenCanvas вьюер не падает: он сам перейдёт в main-режим
-// (парсинг всё равно в воркере), но стоит предупредить пользователя.
-if (!supportsOffscreen()) {
-  showBanner('OffscreenCanvas нет: рендер на main-потоке, один вьюер на страницу');
+async function mount(): Promise<void> {
+  try {
+    // Явный 'worker' без OffscreenCanvas — ошибка инициализации, а не тихая
+    // подмена пути: так окружение проверяется честно, без отдельной функции.
+    const viewer = await createXlsxViewer(host, { renderMode: 'worker' });
+    await viewer.open(bytes);
+  } catch (error) {
+    // Chrome 90+, Firefox 105+, Safari 16.4+ (README «Браузеры»).
+    showBanner('OffscreenCanvas нет: используйте renderMode: "auto" — рендер на main-потоке');
+    // ...и поднять вьюер с renderMode: 'auto'
+  }
 }
-void mount();
 ```
 
-**Под капотом.** `supportsOffscreen` проверяет ровно ту возможность,
-которой пользуется движок, а `assertFallbackAvailable` даёт внятное
-«doc-converter requires a browser-like environment» вместо `Worker is not
-defined` в SSR и тестах без DOM.
-
-Отсутствие `transferControlToOffscreen` — больше не ошибка: с
-`renderMode: 'auto'` (по умолчанию) вьюер сам переходит в main-режим —
-парсинг и сборка DisplayList остаются в воркере, а рисует main тем же
-Rust-painter'ом, поэтому на странице может жить только один main-вьюер.
-Явный `renderMode: 'worker'` без возможности даёт внятную ошибку
-инициализации — `supportsOffscreen()` по-прежнему годится для такой
-предварительной проверки; подробнее —
-[transports.md](transports.md#tr-08).
+**Под капотом.** Отдельных `supportsOffscreen`/`assertFallbackAvailable`
+больше нет — решение о месте рендера принимает `resolveRenderMode`
+(пакетный модуль `render/offscreen`). С `renderMode: 'auto'` (по умолчанию)
+вьюер сам переходит в main-режим: парсинг и сборка DisplayList остаются в
+воркере, а рисует main тем же Rust-painter'ом, поэтому на странице может
+жить только один main-вьюер. Явный `renderMode: 'worker'` без возможности
+даёт внятную ошибку инициализации — годится для предварительной проверки;
+подробнее — [transports.md](transports.md#tr-08).
 
 ---
 

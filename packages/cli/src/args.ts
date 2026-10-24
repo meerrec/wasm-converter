@@ -9,25 +9,11 @@
 
 import { availableParallelism } from 'node:os';
 
+import type { PdfOptions } from '@meerrec/core';
+
 import { CliError } from './errors.js';
 import { parseFormat, type OutputFormat } from './formats.js';
 import type { CliRuntime } from './runtime.js';
-
-/** Опции PDF, которые понимает wasm-модуль `pdf-wasm`. */
-export interface PdfCliOptions {
-  pageSize?: 'A4' | 'A3' | 'Letter' | 'Legal';
-  orientation?: 'portrait' | 'landscape';
-  scale?: number;
-  margins?: { top: number; right: number; bottom: number; left: number };
-  /** Экспортировать только этот лист XLSX; без него книга идёт целиком. */
-  sheetIndex?: number;
-  /** Уместить лист на одну страницу (1×1); числа ниже сильнее. */
-  fitToPage?: boolean;
-  /** Сколько страниц по ширине; 0 — без ограничения. */
-  fitToWidth?: number;
-  /** Сколько страниц по высоте; 0 — без ограничения. */
-  fitToHeight?: number;
-}
 
 export interface ConvertCommand {
   kind: 'convert';
@@ -36,7 +22,7 @@ export interface ConvertCommand {
   /** `null` — формат берётся из расширения `--out`. */
   format: OutputFormat | null;
   force: boolean;
-  pdf: PdfCliOptions;
+  pdf: PdfOptions;
 }
 
 export interface BatchCommand {
@@ -47,7 +33,7 @@ export interface BatchCommand {
   workers: number;
   force: boolean;
   quiet: boolean;
-  pdf: PdfCliOptions;
+  pdf: PdfOptions;
 }
 
 export type Command = ConvertCommand | BatchCommand | { kind: 'help' } | { kind: 'version' };
@@ -103,7 +89,7 @@ interface ScanResult {
   workers: string | null;
   force: boolean;
   quiet: boolean;
-  pdf: PdfCliOptions;
+  pdf: PdfOptions;
   help: boolean;
 }
 
@@ -271,14 +257,14 @@ export function defaultWorkers(runtime?: ParallelismSource): number {
   return Math.max(1, Math.min(8, cores));
 }
 
-function parsePageSize(value: string): NonNullable<PdfCliOptions['pageSize']> {
+function parsePageSize(value: string): NonNullable<PdfOptions['pageSize']> {
   const sizes = ['A4', 'A3', 'Letter', 'Legal'] as const;
   const found = sizes.find((size) => size.toLowerCase() === value.toLowerCase());
   if (found === undefined) throw new CliError(`unknown page size '${value}': expected ${sizes.join(', ')}`);
   return found;
 }
 
-function parseOrientation(value: string): NonNullable<PdfCliOptions['orientation']> {
+function parseOrientation(value: string): NonNullable<PdfOptions['orientation']> {
   const lower = value.toLowerCase();
   if (lower !== 'portrait' && lower !== 'landscape') {
     throw new CliError(`unknown orientation '${value}': expected portrait or landscape`);
@@ -301,7 +287,7 @@ function parseIndex(value: string, option: string): number {
 }
 
 /** `--margins top,right,bottom,left` в миллиметрах. */
-function parseMargins(value: string): NonNullable<PdfCliOptions['margins']> {
+function parseMargins(value: string): NonNullable<PdfOptions['margins']> {
   const parts = value.split(',').map((part) => part.trim());
   if (parts.length !== 4) {
     throw new CliError(`--margins needs four comma-separated millimetres (top,right,bottom,left), got '${value}'`);

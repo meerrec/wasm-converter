@@ -21,13 +21,6 @@ export type {
 } from './protocol.js';
 
 export {
-  supportsOffscreen,
-  assertFallbackAvailable,
-  type ViewerHandle,
-  type ViewerOptions,
-} from './render/offscreen';
-
-export {
   createXlsxViewer,
   type XlsxViewerHandle,
   type XlsxViewerOptions,
@@ -44,5 +37,3 @@ export {
   type PptxViewerHandle,
   type PptxViewerOptions,
 } from './render/pptx_viewer.js';
-
-export const VERSION = '0.1.0';

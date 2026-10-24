@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
-  DocxTextFormat,
+  TextExportFormat,
   DocxTextMsg,
   InMsg,
   OutMsg,
@@ -110,7 +110,7 @@ const exportPdfMsg = (id: number, options: PdfOptions): InMsg => ({
   options,
 });
 
-const exportTextMsg = (id: number, format: DocxTextFormat): InMsg => ({
+const exportTextMsg = (id: number, format: TextExportFormat): InMsg => ({
   type: 'export-docx-text',
   id,
   format,
@@ -303,7 +303,7 @@ describe('экспорт DOCX в PDF', () => {
 });
 
 /** Формат → своя функция docx-модуля и своя узнаваемая строка в ответе. */
-const TEXT_CASES: { format: DocxTextFormat; fn: string; text: string }[] = [
+const TEXT_CASES: { format: TextExportFormat; fn: string; text: string }[] = [
   { format: 'markdown', fn: 'docx_export_markdown', text: '# markdown stub' },
   {
     format: 'html',

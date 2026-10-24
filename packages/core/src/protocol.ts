@@ -74,6 +74,12 @@ export type PdfOptions = PdfOptionsWire & {
 export type FrameTransport = 'sab' | 'bytes';
 
 /**
+ * Размер слота ring по умолчанию — 1 МиБ. Столько воркер получает, если
+ * `slotCapacity` не задан в опциях вьюера.
+ */
+export const DEFAULT_SLOT_CAPACITY = 1 << 20;
+
+/**
  * Где рисуется кадр.
  *
  * - `auto` (по умолчанию) — воркер, если холст можно отдать ему через
@@ -361,8 +367,8 @@ export interface ExportPdfMsg {
   options: PdfOptions;
 }
 
-/** Формат текстовой выгрузки DOCX: какую из трёх функций модуля звать. */
-export type DocxTextFormat = 'markdown' | 'html' | 'text';
+/** Формат текстовой выгрузки DOCX/PPTX: какую из трёх функций модуля звать. */
+export type TextExportFormat = 'markdown' | 'html' | 'text';
 
 /**
  * Экспорт открытого документа DOCX в PDF. Считается в ленивом PDF-модуле: он
@@ -386,7 +392,7 @@ export interface ExportDocxPdfMsg {
 export interface ExportDocxTextMsg {
   type: 'export-docx-text';
   id: number;
-  format: DocxTextFormat;
+  format: TextExportFormat;
 }
 
 /**
@@ -419,9 +425,6 @@ export interface ExportPptxPdfMsg {
   options: PdfOptions;
 }
 
-/** Формат текстовой выгрузки PPTX: какую из трёх функций модуля звать. */
-export type PptxTextFormat = 'markdown' | 'html' | 'text';
-
 /**
  * Экспорт открытой презентации PPTX в текст: markdown, HTML или обычный текст —
  * конспект из текстовых рамок слайдов. Считается в ленивом PPTX-модуле,
@@ -430,7 +433,7 @@ export type PptxTextFormat = 'markdown' | 'html' | 'text';
 export interface ExportPptxTextMsg {
   type: 'export-pptx-text';
   id: number;
-  format: PptxTextFormat;
+  format: TextExportFormat;
 }
 
 /** Гиперссылка под точкой: те же единицы, что у `hit-test`. */

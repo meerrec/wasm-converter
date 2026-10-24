@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 // Общее ядро воркера формата: painter, транспорт кадра, SAB/пул, реестр
 // битмапов, потоки открытия и ленивый PDF-модуль. Форматная часть — разбор,
-// сборка кадра и экспорт — приходит хуками из `xlsx_worker`/`docx_worker`.
+// сборка кадра и экспорт — приходит хуками из `xlsx_worker`/`docx_worker`/`pptx_worker`.
 // Ядро не знает про `DocFormat` за пределами собственного формата: чужое
 // открытие отбрасывается ошибкой `open`.
 import init, {
@@ -74,7 +74,7 @@ export interface OpenStreamEntry {
 /** Форматная часть воркера: всё, что зависит от XLSX или DOCX. */
 export interface FormatHooks {
   /** Формат, который обслуживает воркер. */
-  readonly format: 'xlsx' | 'docx';
+  readonly format: 'xlsx' | 'docx' | 'pptx';
   /** Запомнить URL-ы формата из `init` (DOCX-модуль грузится лениво). */
   configure?: (msg: InitMsg) => void;
   /** Причина, по которой открывать нельзя (нет URL модуля), или `null`. */
@@ -165,7 +165,7 @@ export class WorkerCore {
   /** Последний запрос на кадр: перерисовка идёт по нему, а не по сообщению. */
   private pending: RenderRequest | null = null;
   /** Формат открытого документа: по нему разбирается запрос кадра. */
-  private format: 'xlsx' | 'docx' | null = null;
+  private format: 'xlsx' | 'docx' | 'pptx' | null = null;
   /** Сколько заняла сборка последнего кадра. */
   private buildMs = 0;
 

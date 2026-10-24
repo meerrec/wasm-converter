@@ -99,6 +99,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@meerrec/core':
+        specifier: workspace:*
+        version: link:../core
       '@meerrec/wasm-docx':
         specifier: workspace:*
         version: link:../wasm-docx

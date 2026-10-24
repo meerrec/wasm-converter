@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useState, type RefObject } from 'react';
 
 /**
  * Общий жизненный цикл тонких обёрток над фабриками `@meerrec/core`.
@@ -54,4 +54,27 @@ export function useViewerLifecycle<H extends { destroy(): void }>(
   }, [hostRef, create]);
 
   return viewer;
+}
+
+/**
+ * Общий хук просмотрщика одного формата поверх {@link useViewerLifecycle}:
+ * стабилизирует фабрику и настройки и отдаёт ручку вьюера.
+ *
+ * Фабрика стабилизируется `useCallback` с ключом `[create, opts]`: новая
+ * идентичность настроек (или самой фабрики) — новый эффект, старый вьюер
+ * уничтожает cleanup. Поведение то же, что у прежних отдельных хуков
+ * `useXlsxViewer`/`useDocxViewer`.
+ *
+ * @param hostRef — хост (обычно div), занимающий всю отведённую вьюеру площадь.
+ * @param create — запуск вьюера на готовом хосте с настройками.
+ * @param opts — настройки вьюера; вьюер пересоздаётся при смене идентичности.
+ * @returns ручка вьюера; `null`, пока вьюер не создан (или если хоста нет).
+ */
+export function useFormatViewer<H extends { destroy(): void }, O>(
+  hostRef: RefObject<HTMLElement | null>,
+  create: (host: HTMLElement, opts: O) => Promise<H>,
+  opts: O,
+): H | null {
+  const stableCreate = useCallback((host: HTMLElement) => create(host, opts), [create, opts]);
+  return useViewerLifecycle(hostRef, stableCreate);
 }
