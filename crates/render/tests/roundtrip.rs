@@ -1,5 +1,7 @@
 use doc_converter_render::display_list::*;
 
+mod common;
+
 #[test]
 fn build_serialize_decode_1000_rects() {
     let mut dl = DisplayList::with_capacity(1001);
@@ -76,8 +78,7 @@ fn roundtrip_line_styles_and_underline() {
 
 #[test]
 fn native_ring_fifo_cycles() {
-    use doc_converter_render::sab::reader::NativeRingReader;
-    let mut r = NativeRingReader::new();
+    let mut r = common::NativeRingReader::new();
     for _ in 0..1000 {
         assert!(r.push(b"frame"));
         assert_eq!(r.pop(), Some(&b"frame"[..]));

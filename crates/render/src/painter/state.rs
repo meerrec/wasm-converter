@@ -11,6 +11,10 @@ pub struct PaintState {
     /// `line_dash` живёт в контексте и сам не сбрасывается, поэтому штриховка
     /// входит в ключ кэша наравне с цветом и толщиной.
     current_line_style: Option<LineStyle>,
+    /// Последнее выставленное направление текста (`true` — rtl): `direction`
+    /// входит в состояние контекста и его тоже откатывает `restore()`, поэтому
+    /// кэш живёт здесь и сбрасывается вместе со стилями. `None` — неизвестно.
+    pub direction: Option<bool>,
     pub style_cache: HashMap<Color, String>,
     /// Ключ — семейство, кегль в битах, полужирный и курсив.
     pub font_cache: HashMap<(String, u32, bool, bool), String>,
@@ -25,6 +29,7 @@ impl PaintState {
             current_stroke: None,
             current_line_width: 0.0,
             current_line_style: None,
+            direction: None,
             style_cache: HashMap::with_capacity(64),
             font_cache: HashMap::with_capacity(16),
         }
@@ -42,12 +47,33 @@ impl PaintState {
     /// единственный, что не опускается.
     #[inline]
     pub fn font_css(&mut self, family: &str, size_px: f32, bold: bool, italic: bool) -> &str {
-        let key = (family.to_owned(), size_px.to_bits(), bold, italic);
-        self.font_cache.entry(key).or_insert_with(|| {
-            let style = if italic { "italic " } else { "" };
-            let weight = if bold { "bold " } else { "" };
-            format!("{style}{weight}{size_px}px {family}, sans-serif")
-        })
+        let size_bits = size_px.to_bits();
+        // Попадание ищется по заимствованной строке, без клона семейства:
+        // `HashMap::entry` требует владеющий ключ, а raw-entry API в std пока
+        // нестабилен. Кэш — единицы записей, поэтому двойной линейный просмотр
+        // (проверка + поиск) дешевле аллокации строки на каждой команде Text.
+        let hit = self.font_cache.iter().any(|(k, _)| {
+            k.0.as_str() == family && k.1 == size_bits && k.2 == bold && k.3 == italic
+        });
+        if hit {
+            // Первый проход гарантировал попадание — здесь `unwrap` невозможен.
+            return self
+                .font_cache
+                .iter()
+                .find(|(k, _)| {
+                    k.0.as_str() == family && k.1 == size_bits && k.2 == bold && k.3 == italic
+                })
+                .map(|(_, css)| css.as_str())
+                .unwrap();
+        }
+        // Промах: семейство клонируется один раз — только при вставке.
+        self.font_cache
+            .entry((family.to_owned(), size_bits, bold, italic))
+            .or_insert_with(|| {
+                let style = if italic { "italic " } else { "" };
+                let weight = if bold { "bold " } else { "" };
+                format!("{style}{weight}{size_px}px {family}, sans-serif")
+            })
     }
 
     #[inline]
@@ -76,15 +102,17 @@ impl PaintState {
     /// Забывает стили кисти, не трогая глубины клипа и трансформа: нужна там,
     /// где контекст откатился сам.
     ///
-    /// `ctx.restore()` возвращает заливку, обводку и штриховку к состоянию на
-    /// `save()`, а кэш об этом не знает — следующий `needs_fill` с тем же цветом
-    /// пропустил бы установку и нарисовал чужим цветом. Кэши строк (`style_cache`,
-    /// `font_cache`) от контекста не зависят и остаются на месте.
+    /// `ctx.restore()` возвращает заливку, обводку, штриховку и направление
+    /// текста к состоянию на `save()`, а кэш об этом не знает — следующий
+    /// `needs_fill` с тем же цветом пропустил бы установку и нарисовал чужим
+    /// цветом. Кэши строк (`style_cache`, `font_cache`) от контекста не зависят
+    /// и остаются на месте.
     pub fn invalidate_styles(&mut self) {
         self.current_fill = None;
         self.current_stroke = None;
         self.current_line_width = 0.0;
         self.current_line_style = None;
+        self.direction = None;
     }
 
     pub fn reset(&mut self) {

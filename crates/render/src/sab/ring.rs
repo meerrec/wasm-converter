@@ -181,8 +181,9 @@ mod wasm_impl {
             }
             let slot = st.writer_slot();
             let target = if slot == 0 { &self.slot0 } else { &self.slot1 };
-            let src = Uint8Array::from(bytes);
-            target.set(&src, 0);
+            // copy_from — один memcpy wasm→SAB: промежуточный JS-массив
+            // (`Uint8Array::from`) был лишней копией кадра.
+            target.copy_from(bytes);
             atomic_store(&self.header, 2 + slot as u32, bytes.len() as i32)?;
             atomic_store(&self.header, 0, st.seq_writer.wrapping_add(1) as i32)?;
             Ok(true)

@@ -5,7 +5,9 @@
 //! для тега длины, кратной 4: `Rect` 44, `Line` 28, `Text` 40, `Image` 20,
 //! `PushClip` 16, `PushTransform` 24, у `Clear`/`PopClip`/`PopTransform`
 //! payload пуст. Числа — little-endian, перечисления — одним байтом.
-//! Формат фиксирован, painter читает его напрямую из SAB без копирований.
+//! Формат фиксирован. Кадр пишется в слот SAB одной копией; painter читает
+//! слот в свой буфер — адресовать SAB из wasm-памяти нельзя, копия при чтении
+//! неизбежна.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -38,6 +40,18 @@ impl Color {
         } else {
             format!("rgba({},{},{},{:.3})", r, g, b, a as f32 / 255.0)
         }
+    }
+
+    /// Цвет из `RRGGBB`: альфа — непрозрачная.
+    #[inline]
+    pub const fn from_rgb24(rgb: u32) -> Self {
+        Self((rgb << 8) | 0xFF)
+    }
+
+    /// Цвет из `AARRGGBB` (запись OOXML): каналы переставляются в `RRGGBBAA`.
+    #[inline]
+    pub const fn from_argb32(argb: u32) -> Self {
+        Self(((argb & 0x00FF_FFFF) << 8) | (argb >> 24))
     }
 }
 
@@ -263,7 +277,9 @@ impl DisplayList {
 
     pub fn to_bytes_into(&self, out: &mut Vec<u8>) {
         out.clear();
-        out.reserve(HEADER_SIZE + self.cmds.len() * 32 + self.strings.len());
+        // Самая тяжёлая команда — Rect (тег + 44 байта): 48 на команду покрывает
+        // её с запасом, чтобы буфер вырос один раз, а не на каждом encode.
+        out.reserve(HEADER_SIZE + self.cmds.len() * 48 + self.strings.len());
 
         out.resize(HEADER_SIZE, 0);
 

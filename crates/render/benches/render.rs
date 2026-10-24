@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use doc_converter_render::display_list::*;
-use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE, DEFAULT_FONT_ID};
 use doc_converter_render::sab::RingState;
 use doc_converter_render::text_measure::measure_text;
 
@@ -104,7 +104,7 @@ fn bench_sab_state_cycle(c: &mut Criterion) {
 /// Факт (Apple Silicon, release): ~278 нс — кэш по символу убирает
 /// `cmap`-поиск с горячего пути.
 fn bench_measure_text(c: &mut Criterion) {
-    let mut fonts = FontRegistry::new(4096);
+    let mut fonts = FontRegistry::new(DEFAULT_FONT_CACHE);
     let text: String = "0".repeat(100);
     // Прогрев: первый проход наполняет кэш глифов, мерить его нечестно.
     black_box(measure_text(

@@ -1,15 +1,14 @@
 //! doc-converter-render — painter, DisplayList, SAB ring, геометрия и метрики текста.
 //!
 //! Фаза 2: OffscreenCanvas painter + двойная буферизация DisplayList.
-//! Спринт 5.5: `font`, `text_measure`, `geometry`, `viewport`, `hit_test` —
-//! общая граница с `xlsx`/`docx` (ADR-0003); `canvas` — жизненный цикл
-//! OffscreenCanvas-контекста (только wasm32).
+//! Спринт 5.5: `font`, `text_measure`, `geometry`, `viewport` — общая граница
+//! с `xlsx`/`docx` (ADR-0003); `canvas` — жизненный цикл OffscreenCanvas-
+//! контекста (только wasm32).
 
 pub mod chart;
 pub mod display_list;
 pub mod font;
 pub mod geometry;
-pub mod hit_test;
 pub mod painter;
 pub mod plugin;
 pub mod sab;

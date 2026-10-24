@@ -1,6 +1,10 @@
-//! Native-читатель ring'а для тестов и будущего дебага.
+//! Native-читатель ring'а для интеграционных тестов.
+//!
+//! Жил в `crates/render/src/sab/reader.rs`, но прод его не использует — это
+//! тестовый двойник SAB-пути painter'а на обычной памяти, — поэтому он живёт
+//! здесь, рядом с единственным потребителем (`roundtrip.rs`).
 
-use super::ring::RingState;
+use doc_converter_render::sab::RingState;
 
 pub struct NativeRingReader {
     state: RingState,

@@ -50,13 +50,20 @@ impl Painter2D {
     /// web-sys не генерирует свойство `direction` у Canvas2D-контекста, хотя
     /// оно есть в спецификации и в обоих браузерных контекстах. Пишем его
     /// напрямую: ошибка свойства не должна ронять кадр.
-    fn set_text_direction(&self, rtl: bool) {
+    fn set_text_direction(&mut self, rtl: bool) {
+        // Повторную установку того же направления пропускаем: `Reflect::set` —
+        // межязыковой вызов на каждый Text-кадр, а кэш сбрасывается вместе с
+        // состоянием контекста (`restore()`/resize), так что рассинхрон невозможен.
+        if self.state.direction == Some(rtl) {
+            return;
+        }
         let ctx: &JsValue = self.ctx.as_ref();
         let _ = js_sys::Reflect::set(
             ctx,
             &JsValue::from_str("direction"),
             &JsValue::from_str(if rtl { "rtl" } else { "ltr" }),
         );
+        self.state.direction = Some(rtl);
     }
 
     pub fn bitmaps_mut(&mut self) -> &mut BitmapCache {
@@ -127,9 +134,10 @@ impl Painter2D {
             } => {
                 self.begin_path_rounded(x, y, w, h, radius);
                 if fill.0 != 0 {
-                    let css = self.state.css_for(fill).to_owned();
-                    if self.state.needs_fill(fill) {
-                        self.ctx.set_fill_style_str(&css);
+                    let needs = self.state.needs_fill(fill);
+                    let css = self.state.css_for(fill);
+                    if needs {
+                        self.ctx.set_fill_style_str(css);
                     }
                     self.ctx.fill();
                 }
@@ -172,12 +180,13 @@ impl Painter2D {
                 };
                 self.set_text_direction(rtl);
                 let family = reader.string(font_ref);
-                let font = self.state.font_css(family, size, bold, italic).to_owned();
-                self.ctx.set_font(&font);
+                let font = self.state.font_css(family, size, bold, italic);
+                self.ctx.set_font(font);
 
-                let css = self.state.css_for(color).to_owned();
-                if self.state.needs_fill(color) {
-                    self.ctx.set_fill_style_str(&css);
+                let needs = self.state.needs_fill(color);
+                let css = self.state.css_for(color);
+                if needs {
+                    self.ctx.set_fill_style_str(css);
                 }
                 self.ctx.set_text_align(text::text_align_str(align));
 
@@ -266,9 +275,10 @@ impl Painter2D {
     /// сбрасывается, поэтому сплошная линия после пунктира обязана явно
     /// снять массив штрихов.
     fn apply_stroke(&mut self, stroke: Color, width: f32, style: LineStyle) {
-        let css = self.state.css_for(stroke).to_owned();
-        if self.state.needs_stroke(stroke, width, style) {
-            self.ctx.set_stroke_style_str(&css);
+        let needs = self.state.needs_stroke(stroke, width, style);
+        let css = self.state.css_for(stroke);
+        if needs {
+            self.ctx.set_stroke_style_str(css);
             self.ctx.set_line_width(f64::from(width));
             apply_dash(&self.ctx, style, width);
         }
