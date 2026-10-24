@@ -35,7 +35,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@meerrec/core": "^2.0.2"
+    "@meerrec/core": "workspace:*"
   },
   "peerDependencies": {
     "svelte": "^4 || ^5"
