@@ -39,8 +39,8 @@ use crate::pagination::{paginate, print_scale, PageSlice, PaintedCell, SheetPage
 use crate::pdf::content;
 use crate::pdf::export;
 use crate::pdf::ops::{
-    ExtendedGraphicsState, ExtendedGraphicsStateId, Line, LinePoint, Op, Point, Pt,
-    TextItem, TextMatrix, XObjectId,
+    ExtendedGraphicsState, ExtendedGraphicsStateId, Line, LinePoint, Op, Point, Pt, TextItem,
+    TextMatrix, XObjectId,
 };
 use crate::pdf::session::Session;
 use crate::styles::to_pdf_color;
