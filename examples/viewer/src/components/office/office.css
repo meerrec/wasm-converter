@@ -871,6 +871,46 @@
   cursor: default;
 }
 
+/* --- Строка состояния: правка ячейки ------------------------------------ */
+
+/* Поле «править ячейку»: компактный input рядом с именем ячейки, чтобы
+   вписаться в строку состояния высотой 24 px. */
+.ofc-edit-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  color: var(--ofc-text-2);
+  font-size: 12px;
+}
+
+.ofc-edit-cell input {
+  width: 72px;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--ofc-field-line);
+  border-radius: 3px;
+  background: #fff;
+  color: var(--ofc-text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.ofc-edit-cell input:focus {
+  border-color: var(--ofc-accent);
+  outline: none;
+}
+
+.ofc-edit-cell input:disabled {
+  color: var(--ofc-disabled);
+  background: var(--ofc-ribbon-bg-2);
+  cursor: default;
+}
+
+.ofc-edit-cell input::placeholder {
+  color: var(--ofc-disabled);
+}
+
 /* Позиция документа и ячейка в подвале: «Слайд 1 / 2», «ячейка A1». */
 .ofc-statusbar__page,
 .ofc-statusbar__cell {

@@ -11,8 +11,11 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use doc_converter_core::wire::{OrientationWire, PageSizeWire, PdfOptionsWire};
+use doc_converter_core::wire::{
+    CellEditWire, OrientationWire, PageSizeWire, PdfOptionsWire,
+};
 use doc_converter_pdf::{Margins, PageOrientation, PageSize, PdfExporter, PdfOptions};
+use doc_converter_xlsx::CellRef;
 use wasm_bindgen::prelude::*;
 
 /// Дополнить умолчания PDF-крейта тем, что выбрал интерфейс.
@@ -93,9 +96,36 @@ fn parse_options(options: JsValue) -> Result<PdfOptions, JsValue> {
 /// Если байты не OOXML-пакет, листа с таким индексом нет или PDF не собрался.
 #[wasm_bindgen]
 pub fn export_pdf(bytes: &[u8], sheet: usize, options: JsValue) -> Result<Vec<u8>, JsValue> {
+    export_pdf_with(bytes, sheet, options, JsValue::UNDEFINED)
+}
+
+/// [`export_pdf`] с правками интерфейса: `edits` — снимок `xlsx_edits` из
+/// основного модуля просмотрщика.
+///
+/// # Errors
+/// Те же, что у [`export_pdf`], плюс неразборчивый снимок правок.
+#[wasm_bindgen]
+pub fn export_pdf_edits(
+    bytes: &[u8],
+    sheet: usize,
+    options: JsValue,
+    edits: JsValue,
+) -> Result<Vec<u8>, JsValue> {
+    export_pdf_with(bytes, sheet, options, edits)
+}
+
+/// Общий хвост экспорта листа: правки прикладываются к разобранной книге до
+/// экспортёра.
+fn export_pdf_with(
+    bytes: &[u8],
+    sheet: usize,
+    options: JsValue,
+    edits: JsValue,
+) -> Result<Vec<u8>, JsValue> {
     let options = parse_options(options)?;
     let sheet = options.sheet_index.unwrap_or(sheet);
     let book = doc_converter_xlsx::open(bytes.to_vec()).map_err(to_js)?;
+    apply_edits(&book, edits)?;
     let mut exporter = PdfExporter::new(options);
     exporter.export_xlsx_sheet(&book, sheet).map_err(to_js)
 }
@@ -111,10 +141,48 @@ pub fn export_pdf(bytes: &[u8], sheet: usize, options: JsValue) -> Result<Vec<u8
 /// Если байты не OOXML-пакет, в книге нет листов или PDF не собрался.
 #[wasm_bindgen]
 pub fn export_pdf_book(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValue> {
+    export_pdf_book_with(bytes, options, JsValue::UNDEFINED)
+}
+
+/// [`export_pdf_book`] с правками интерфейса: `edits` — снимок `xlsx_edits`.
+///
+/// # Errors
+/// Те же, что у [`export_pdf_book`], плюс неразборчивый снимок правок.
+#[wasm_bindgen]
+pub fn export_pdf_book_edits(
+    bytes: &[u8],
+    options: JsValue,
+    edits: JsValue,
+) -> Result<Vec<u8>, JsValue> {
+    export_pdf_book_with(bytes, options, edits)
+}
+
+/// Общий хвост экспорта книги: правки прикладываются до экспортёра.
+fn export_pdf_book_with(bytes: &[u8], options: JsValue, edits: JsValue) -> Result<Vec<u8>, JsValue> {
     let options = parse_options(options)?;
     let book = doc_converter_xlsx::open(bytes.to_vec()).map_err(to_js)?;
+    apply_edits(&book, edits)?;
     let mut exporter = PdfExporter::new(options);
     exporter.export_xlsx_book(&book).map_err(to_js)
+}
+
+/// Приложить снимок правок интерфейса к разобранной книге.
+///
+/// Пустой снимок (`null`/`undefined`) — обычный экспорт без правок: путь
+/// остаётся байт-в-байт прежним.
+fn apply_edits(book: &doc_converter_xlsx::Workbook, edits: JsValue) -> Result<(), JsValue> {
+    if edits.is_undefined() || edits.is_null() {
+        return Ok(());
+    }
+    let edits: Vec<CellEditWire> = serde_wasm_bindgen::from_value(edits).map_err(to_js)?;
+    for edit in edits {
+        book.set_cell_text(
+            usize::try_from(edit.sheet).unwrap_or(usize::MAX),
+            CellRef::new(edit.row, edit.col),
+            edit.text,
+        );
+    }
+    Ok(())
 }
 
 /// Экспортировать документ DOCX в PDF. Документ приходит байтами OOXML и

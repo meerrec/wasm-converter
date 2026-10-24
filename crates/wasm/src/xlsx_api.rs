@@ -9,13 +9,13 @@ use std::cell::Cell;
 use std::cell::RefCell;
 
 use doc_converter_core::wire::{
-    HyperlinkInfoWire, ImageInfoWire, RenderOptionsWire, SheetInfoWire,
+    CellEditWire, HyperlinkInfoWire, ImageInfoWire, RenderOptionsWire, SheetInfoWire,
 };
 use doc_converter_render::display_list::DisplayList;
 use doc_converter_wasm_common::frame;
 use doc_converter_xlsx::paint::{self, PaintOptions};
 use doc_converter_xlsx::Viewport;
-use doc_converter_xlsx::Workbook;
+use doc_converter_xlsx::{CellRef, Workbook};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -309,6 +309,60 @@ pub fn xlsx_hyperlink_at(
         // `None` уезжает в JS как `null`: отсутствие ссылки — не ошибка.
         let serializer = serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true);
         link.serialize(&serializer).map_err(to_js)
+    })
+}
+
+/// Заменить показ ячейки сырым текстом, как введён интерфейс.
+///
+/// Правка живёт до следующего открытия книги: `xlsx_open` и
+/// `stream_open_xlsx` заводят новую книгу с пустой картой правок. Пустая
+/// строка — тоже правка: она гасит текст ячейки. Кадры интерфейс перерисует
+/// сам; кэши кадра сбрасываются здесь же.
+///
+/// # Errors
+/// Если книга не открыта или листа с таким номером нет.
+#[wasm_bindgen]
+pub fn xlsx_set_cell_text(
+    sheet: usize,
+    row: u32,
+    col: u32,
+    text: String,
+) -> Result<(), JsValue> {
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
+        book.sheets()
+            .get(sheet)
+            .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
+        book.set_cell_text(sheet, CellRef::new(row, col), text);
+        // Правки редки: полный сброс дешевле, чем знать, какой из кэшей кадра
+        // начнёт зависеть от текста значений.
+        paint::reset_caches();
+        Ok(())
+    })
+}
+
+/// Снимок правок открытой книги — для экспортёра PDF, который разбирает байты
+/// заново. Порядок детерминирован: лист, строка, столбец.
+///
+/// # Errors
+/// Если книга не открыта.
+#[wasm_bindgen]
+pub fn xlsx_edits() -> Result<JsValue, JsValue> {
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
+        let edits: Vec<CellEditWire> = book
+            .cell_edits()
+            .into_iter()
+            .map(|(sheet, cell, text)| CellEditWire {
+                sheet: u32::try_from(sheet).unwrap_or(u32::MAX),
+                row: cell.row,
+                col: cell.col,
+                text,
+            })
+            .collect();
+        serde_wasm_bindgen::to_value(&edits).map_err(to_js)
     })
 }
 

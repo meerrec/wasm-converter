@@ -8,10 +8,12 @@ import {
   stream_open_xlsx,
   xlsx_build_display_list_into,
   xlsx_build_display_list_sab,
+  xlsx_edits,
   xlsx_hit_test,
   xlsx_hyperlink_at,
   xlsx_images,
   xlsx_open,
+  xlsx_set_cell_text,
 } from '@meerrec/wasm';
 import type {
   BuildStatsWire,
@@ -81,6 +83,22 @@ export const hitTest = (
   x: number,
   y: number,
 ): [number, number] => xlsx_hit_test(sheet, viewport, x, y) as unknown as [number, number];
+
+/** Правка ячейки: снимок для экспортёра PDF, поля — как в Rust `CellEditWire`. */
+export interface CellEdit {
+  sheet: number;
+  row: number;
+  col: number;
+  text: string;
+}
+
+/** Заменить показ ячейки сырым текстом. Ошибки wasm — исключения JS. */
+export const setCellText = (sheet: number, row: number, col: number, text: string): void => {
+  xlsx_set_cell_text(sheet, row, col, text);
+};
+
+/** Все правки открытой книги, для экспортёра PDF. */
+export const cellEdits = (): CellEdit[] => xlsx_edits() as unknown as CellEdit[];
 
 /** Гиперссылка под точкой окна либо `null`, если её нет. */
 export const hyperlinkAt = (
@@ -164,20 +182,59 @@ export const paintBytes = (frame: Uint8Array): PaintStatsWire =>
 export const paintSab = (sab: SharedArrayBuffer, slotCapacity: number): PaintStatsWire =>
   paintStats(() => paint_display_list_sab(sab, slotCapacity));
 
-/** Экспортировать лист книги в PDF. */
+/** Экспортировать лист книги в PDF; `edits` — правки интерфейса, если есть. */
 export const exportPdf = (
   mod: PdfWasm,
   bytes: Uint8Array,
   sheet: number,
   options: PdfOptionsWire,
-): Uint8Array => mod.export_pdf(bytes, sheet, options);
+  edits: CellEdit[] = [],
+): Uint8Array => {
+  // Без правок путь прежний — байт-в-байт, как до фичи.
+  if (edits.length === 0) return mod.export_pdf(bytes, sheet, options);
+  return withEditsPdf(mod).export_pdf_edits(bytes, sheet, options, edits);
+};
 
-/** Экспортировать всю книгу в один PDF. */
+/** Экспортировать всю книгу в один PDF; `edits` — правки интерфейса, если есть. */
 export const exportPdfBook = (
   mod: PdfWasm,
   bytes: Uint8Array,
   options: PdfOptionsWire,
-): Uint8Array => mod.export_pdf_book(bytes, options);
+  edits: CellEdit[] = [],
+): Uint8Array => {
+  // Без правок путь прежний — байт-в-байт, как до фичи.
+  if (edits.length === 0) return mod.export_pdf_book(bytes, options);
+  return withEditsPdf(mod).export_pdf_book_edits(bytes, options, edits);
+};
+
+/**
+ * PDF-модуль с правками ячеек. Каст живёт здесь же, в граничном файле: срез
+ * появится в сгенерированных биндингах после сборки wasm
+ * (`scripts/build-wasm.sh`).
+ */
+function withEditsPdf(mod: PdfWasm): PdfWasm & {
+  export_pdf_edits(
+    bytes: Uint8Array,
+    sheet: number,
+    options: PdfOptionsWire,
+    edits: CellEdit[],
+  ): Uint8Array;
+  export_pdf_book_edits(bytes: Uint8Array, options: PdfOptionsWire, edits: CellEdit[]): Uint8Array;
+} {
+  return mod as PdfWasm & {
+    export_pdf_edits(
+      bytes: Uint8Array,
+      sheet: number,
+      options: PdfOptionsWire,
+      edits: CellEdit[],
+    ): Uint8Array;
+    export_pdf_book_edits(
+      bytes: Uint8Array,
+      options: PdfOptionsWire,
+      edits: CellEdit[],
+    ): Uint8Array;
+  };
+}
 
 /** Экспортировать документ DOCX в PDF. */
 export const exportDocxPdf = (

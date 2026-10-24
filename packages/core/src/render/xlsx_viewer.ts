@@ -58,6 +58,11 @@ export interface XlsxViewerHandle {
   hitTest(clientX: number, clientY: number): Promise<[number, number] | null>;
   /** Гиперссылка под точкой события мыши, в координатах страницы. */
   hyperlinkAt(clientX: number, clientY: number): Promise<HyperlinkInfo | null>;
+  /**
+   * Заменить текст ячейки сырым вводом. Правка живёт до следующего открытия,
+   * видна в кадре и попадает в PDF-экспорт; кадр перерисовывается сразу.
+   */
+  setCellText(sheet: number, row: number, col: number, text: string): void;
   /** Текущий кадр картинкой PNG — им проверяют, что нарисовалось. */
   exportPng(opts?: { signal?: AbortSignal }): Promise<Uint8Array>;
   /**
@@ -326,6 +331,15 @@ export async function createXlsxViewer(
 
     hitTest: (clientX: number, clientY: number) => hitTest(st, clientX, clientY),
     hyperlinkAt: (clientX: number, clientY: number) => hyperlinkAt(st, clientX, clientY),
+
+    setCellText(sheet: number, row: number, col: number, text: string): void {
+      // Книги нет — править нечего; воркер всё равно ответил бы ошибкой.
+      if (st.destroyed || st.data.sheets.length === 0) return;
+      st.worker.postMessage({ type: 'edit-cell', sheet, row, col, text } satisfies InMsg);
+      // Кадр перерисовывается сразу: сообщения воркер читает по порядку, и
+      // правка ляжет в книгу раньше следующего `render`.
+      st.schedule();
+    },
 
     exportPng: base.exportPng,
     exportPdf: base.exportPdf,

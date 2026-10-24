@@ -116,6 +116,13 @@ export interface XlsxPageApi {
   onShowGrid: (checked: boolean) => void;
   onShowHeaders: (checked: boolean) => void;
   /**
+   * Правка ячейки под курсором: текст из поля `#edit-cell` (Enter в нём).
+   * Цель — последняя ячейка, на которой останавливался курсор.
+   */
+  onEditCell: (text: string) => void;
+  /** Листов нет или вьюер не поднялся — править нечего. */
+  editDisabled: boolean;
+  /**
    * PDF: уместить все столбцы по ширине страницы (`fitToWidth: 1`).
    *
    * Не `fitToPage`: тот жмёт лист ещё и по высоте (1×1), и длинная таблица
@@ -152,6 +159,8 @@ export function useXlsxPage(): XlsxPageApi {
   const cellRef = useRef<HTMLSpanElement | null>(null);
   /** Номер последнего запроса `hitTest`: ответы по старым точкам не должны обгонять свежие. */
   const hitSeqRef = useRef(0);
+  /** Ячейка под курсором `(строка, столбец)`, 0-based — цель правки `#edit-cell`. */
+  const currentCellRef = useRef<[number, number] | null>(null);
 
   const { hostRef, viewer, error } = useViewer(
     async (host) =>
@@ -317,6 +326,7 @@ export function useXlsxPage(): XlsxPageApi {
         // Ответ устарел, если мышь успела перейти на другую ячейку: пишет
         // только последний запрос, иначе строка формул мигала бы задним числом.
         if (seq !== hitSeqRef.current) return;
+        currentCellRef.current = cell;
         const output = cellRef.current;
         if (!output) return;
         output.textContent = cell ? `${columnName(cell[1])}${cell[0] + 1}` : '—';
@@ -359,6 +369,10 @@ export function useXlsxPage(): XlsxPageApi {
   const onSheetChange = (value: string): void => {
     const index = Number(value);
     setSheetIndex(index);
+    // Ячейка под курсором осталась от прежнего листа: на новом листе её нет,
+    // и правка в `#edit-cell` целиться в неё не должна.
+    currentCellRef.current = null;
+    if (cellRef.current) cellRef.current.textContent = '—';
     viewer?.showSheet(index);
   };
 
@@ -366,6 +380,26 @@ export function useXlsxPage(): XlsxPageApi {
     setZoom(value);
     // Вьюер ограничивает зум сам; состояние хранит выбранное пользователем.
     viewer?.setZoom(Number(value));
+  };
+
+  /**
+   * Правка ячейки под курсором: сырой текст встаёт на место показанного
+   * значения, кадр перерисовывается сразу, PDF-экспорт видит правку. Цель —
+   * ячейка последнего `hitTest`: без курсора над листом править нечего.
+   */
+  const onEditCell = (text: string): void => {
+    const active = viewer;
+    const cell = currentCellRef.current;
+    if (!active) {
+      setStatus('вьюер не поднялся — править нечего');
+      return;
+    }
+    if (!cell) {
+      setStatus('наведите курсор на ячейку, которую правите');
+      return;
+    }
+    active.setCellText(sheetIndex, cell[0], cell[1], text);
+    setStatus(`правка ${columnName(cell[1])}${cell[0] + 1} применена`);
   };
 
   return {
@@ -398,6 +432,8 @@ export function useXlsxPage(): XlsxPageApi {
     showHeaders,
     onShowGrid: setShowGrid,
     onShowHeaders: setShowHeaders,
+    onEditCell,
+    editDisabled: viewer === null || sheets.length === 0,
     fitToWidth,
     onFitToWidth: setFitToWidth,
     exporting,

@@ -16,6 +16,7 @@ import { frameTarget, toViewport } from './frame_args.js';
 import {
   buildXlsxInto,
   buildXlsxSab,
+  cellEdits,
   exportPdf,
   exportPdfBook,
   hitTest,
@@ -23,6 +24,7 @@ import {
   images,
   openXlsx,
   openXlsxStream,
+  setCellText,
 } from './wasm_typed.js';
 import { post, postError, WorkerCore } from './worker_core.js';
 
@@ -104,6 +106,16 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       }
       break;
     }
+    case 'edit-cell': {
+      try {
+        // Правка ложится в книгу; кадр закажет интерфейс следом. Ошибка
+        // (книги нет, листа нет) — ответ, а не падение воркера.
+        setCellText(msg.sheet, msg.row, msg.col, msg.text);
+      } catch (e) {
+        postError(String(e), { code: 'internal' });
+      }
+      break;
+    }
     case 'export-pdf': {
       const urls = core.pdfModuleUrls;
       // Снимок: за время загрузки модуля книгу могли закрыть или сменить.
@@ -122,9 +134,12 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       try {
         // Первый клик платит за загрузку модуля; дальше он уже в памяти.
         const mod = await core.loadPdfWasm(urls);
+        // Правки интерфейса: экспортёр разбирает байты заново и получает их
+        // снимком из книги.
+        const edits = cellEdits();
         const bytes = msg.options.allSheets
-          ? exportPdfBook(mod, new Uint8Array(source), msg.options)
-          : exportPdf(mod, new Uint8Array(source), msg.sheet, msg.options);
+          ? exportPdfBook(mod, new Uint8Array(source), msg.options, edits)
+          : exportPdf(mod, new Uint8Array(source), msg.sheet, msg.options, edits);
         post({ type: 'pdf', id: msg.id, bytes }, [bytes.buffer]);
       } catch (e) {
         // Ошибка экспорта — ответ, а не падение воркера: книга остаётся открытой.

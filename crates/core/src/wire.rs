@@ -254,6 +254,24 @@ pub struct HyperlinkInfoWire {
     pub tooltip: Option<String>,
 }
 
+/// Правка ячейки книги, как её ввёл интерфейс: сырой текст вместо значения.
+///
+/// Снимок правок едет между wasm-модулями: просмотрщик держит их в книге, а
+/// экспортёр PDF разбирает байты заново и прикладывает снимок сам. К конверту
+/// Main ↔ Worker отношения не имеет — этот тип не входит в `InMsg`/`OutMsg`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct CellEditWire {
+    /// Индекс листа в книге (`Workbook::sheets`).
+    pub sheet: u32,
+    /// Адрес ячейки, 0-based: `A1` — это `(0, 0)`.
+    pub row: u32,
+    pub col: u32,
+    /// Сырой текст, как введён.
+    pub text: String,
+}
+
 /// Метрики одного кадра painter'а. `frameId` присваивает воркер: Rust про
 /// номера кадров ничего не знает.
 #[derive(Debug, Clone, Copy, Serialize)]

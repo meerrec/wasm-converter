@@ -551,6 +551,24 @@ export default function XlsxPage(): ReactElement {
         }
         right={
           <>
+            {/* Правка ячейки под курсором: ввод + Enter ставит сырой текст на
+                место показанного значения, кадр перерисовывается, PDF видит
+                правку. Цель — ячейка последнего `hitTest`. */}
+            <label className="ofc-edit-cell" title="Текст ячейки под курсором; Enter применяет правку">
+              править ячейку
+              <input
+                id="edit-cell"
+                type="text"
+                placeholder="ячейка"
+                disabled={page.editDisabled}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    page.onEditCell(event.currentTarget.value);
+                    event.currentTarget.value = '';
+                  }
+                }}
+              />
+            </label>
             <span id="status">{page.status}</span>
             <span className="ofc-statusbar__sep" />
             <StatusZoom

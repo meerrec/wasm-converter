@@ -24,7 +24,7 @@ use doc_converter_render::display_list::Color;
 use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE, DEFAULT_FONT_ID};
 use doc_converter_render::text_measure::measure_text;
 use doc_converter_xlsx::layout::{SheetLayout, PX_PER_POINT};
-use doc_converter_xlsx::paint::{anchor_rect, display_text};
+use doc_converter_xlsx::paint::{anchor_rect, display_text_edited};
 use doc_converter_xlsx::{
     CellValue, Orientation, Sheet, SheetState, Span, Workbook, WorkbookImage,
 };
@@ -409,6 +409,8 @@ fn segment(from: (f32, f32), to: (f32, f32)) -> Op {
 #[derive(Clone, Copy)]
 struct SheetFrame<'a> {
     book: &'a Workbook,
+    /// Индекс листа в книге: по нему painter сверяет правки интерфейса.
+    index: usize,
     layout: &'a SheetLayout,
     /// Сырые строки колонтитулов листа (коды Excel, см. [`sheet_overlay`]).
     header: &'a str,
@@ -475,16 +477,19 @@ fn draw_page(
     }
     for painted in &sheet_page.cells {
         let cell = painted.cell;
-        let Some(mut value) = display_text(book, cell, painted.style.number_format) else {
+        let Some((mut value, edited)) =
+            display_text_edited(book, sheet.index, painted.at, cell, painted.style.number_format)
+        else {
             continue;
         };
         if value.is_empty() {
             continue;
         }
         let rect = on_page(painted);
-        if matches!(cell.value, CellValue::Number(_)) {
+        if !edited && matches!(cell.value, CellValue::Number(_)) {
             // Замер — при 100 %, как и перенос в `draw_cell_text`: масштаб
-            // печати к единицам замера не относится.
+            // печати к единицам замера не относится. Правка — текст: ширину
+            // чисел ей не меряют.
             let size_px = painted.style.font_size_pt * PX_PER_POINT;
             value = text::clip_number(value, size_px, text::inner_width_px(rect), registry);
         }
@@ -1074,6 +1079,7 @@ fn write_book<W: Write>(
             &mut glyphs,
             SheetFrame {
                 book,
+                index: book.sheet_index(sheet.sheet).unwrap_or(usize::MAX),
                 layout: &sheet.layout,
                 header,
                 footer,
@@ -1203,6 +1209,7 @@ fn write_pages<W: Write>(
         let (header, footer) = sheet_overlay(options, sheet.sheet);
         let frame = SheetFrame {
             book,
+            index: book.sheet_index(sheet.sheet).unwrap_or(usize::MAX),
             layout: &sheet.layout,
             header,
             footer,

@@ -447,6 +447,19 @@ export interface HyperlinkAtMsg {
   config: RenderConfig;
 }
 
+/**
+ * Заменить текст ячейки книги сырым вводом. Правка живёт до следующего
+ * открытия, видна в кадре и попадает в PDF-экспорт. Ответа нет: интерфейс
+ * перерисовывает кадр сам, сразу после отправки.
+ */
+export interface EditCellMsg {
+  type: 'edit-cell';
+  sheet: number;
+  row: number;
+  col: number;
+  text: string;
+}
+
 export type InMsg =
   | InitMsg
   | ResizeMsg
@@ -462,6 +475,7 @@ export type InMsg =
   | RenderMsg
   | HitTestMsg
   | HyperlinkAtMsg
+  | EditCellMsg
   | ExportPngMsg
   | ExportPdfMsg
   | ExportDocxPdfMsg

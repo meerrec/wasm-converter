@@ -109,6 +109,15 @@ fn reset_frame_caches(book: &Workbook) {
     with_caches(book, |_| {});
 }
 
+/// Сбросить кэши кадра целиком.
+///
+/// Раскладка и форматы чисел от текста ячеек не зависят, но правка — событие
+/// редкое, и полный сброс страхует от кэша, который в будущем начнёт зависеть
+/// от значений.
+pub fn reset_caches() {
+    CACHES.with(|caches| *caches.borrow_mut() = FrameCaches::default());
+}
+
 /// Достать кэши потока, сбросив их при смене книги.
 fn with_caches<T>(book: &Workbook, use_caches: impl FnOnce(&mut FrameCaches) -> T) -> T {
     CACHES.with(|caches| {
@@ -518,6 +527,9 @@ pub fn build(
     cancelled: &CancelCell<bool>,
 ) -> Result<(), XlsxError> {
     reset_frame_caches(book);
+    // Правки привязаны к индексу листа в книге; `build` получает лист ссылкой.
+    // Чужой лист (не из этой книги) правок не найдёт — так и задумано.
+    let sheet_index = book.sheet_index(sheet).unwrap_or(usize::MAX);
     let Geometry {
         layout,
         scale,
@@ -620,6 +632,7 @@ pub fn build(
         draw_region(
             book,
             sheet,
+            sheet_index,
             &rules,
             &layout,
             scale,
@@ -683,6 +696,7 @@ fn visible_regions(
 fn draw_region(
     book: &Workbook,
     sheet: &Sheet,
+    sheet_index: usize,
     rules: &RuleIndex<'_>,
     layout: &SheetLayout,
     scale: f32,
@@ -757,6 +771,8 @@ fn draw_region(
             let is_link = sheet.hyperlink_at(range.first).is_some();
             draw_text(
                 book,
+                sheet_index,
+                range.first,
                 cell,
                 &style,
                 x,
@@ -801,7 +817,8 @@ fn draw_region(
             };
             let is_link = sheet.hyperlink_at(cell.at(row)).is_some();
             draw_text(
-                book, cell, &style, x, y, w, h, scale, &clip, is_link, options, frame_font, out,
+                book, sheet_index, cell.at(row), cell, &style, x, y, w, h, scale, &clip, is_link,
+                options, frame_font, out,
             );
         }
     }
@@ -1621,6 +1638,8 @@ enum TextClip {
 #[allow(clippy::too_many_arguments)]
 fn draw_text(
     book: &Workbook,
+    sheet: usize,
+    at: CellRef,
     cell: &Cell,
     style: &EffectiveStyle<'_>,
     x: f32,
@@ -1637,11 +1656,17 @@ fn draw_text(
     // Сырой `formatCode` из `dxf` перекрывает и базовый код, и его id: без
     // идентификатора он не попадает в кэш форматов и разбирается на ячейку —
     // так же, как и раньше. Обычный путь идёт по `numFmtId` через кэш.
-    let Some(text) = (match style.format_code_override() {
-        Some(code) => display_text_with_code(book, cell, code),
-        None => display_text_with(book, cell, style.format_id(book.styles())),
-    }) else {
-        return;
+    // Правка интерфейса — текст, как введён: она сильнее любого формата.
+    let (text, edited) = if let Some(text) = book.cell_text(sheet, at) {
+        (text, true)
+    } else {
+        let Some(text) = (match style.format_code_override() {
+            Some(code) => display_text_with_code(book, cell, code),
+            None => display_text_with(book, cell, style.format_id(book.styles())),
+        }) else {
+            return;
+        };
+        (text, false)
     };
     if text.is_empty() || w <= 0.0 || h <= 0.0 {
         return;
@@ -1692,8 +1717,9 @@ fn draw_text(
     // Числа Excel не выпускает за ячейку и не обрезает: не помещается —
     // показывает решётки. Ширина — настоящие метрики шрифта по умолчанию, а
     // не оценочная таблица: `FontRegistry` подключён в путь рисования
-    // (ADR-0002, ADR-0005).
-    let text = if matches!(cell.value, CellValue::Number(_))
+    // (ADR-0002, ADR-0005). Правка — текст: она следует поведению строк.
+    let text = if !edited
+        && matches!(cell.value, CellValue::Number(_))
         && FONTS.with(|fonts| {
             let mut fonts = fonts.borrow_mut();
             measure_text(&mut fonts, DEFAULT_FONT_ID, size, &text)
@@ -1704,7 +1730,9 @@ fn draw_text(
         text
     };
 
-    let (align, tx) = match horizontal(style.base().alignment.horizontal, &cell.value) {
+    // Правка — текст, как введён: общее выравнивание ведёт себя как у строки.
+    let value = if edited { &CellValue::Empty } else { &cell.value };
+    let (align, tx) = match horizontal(style.base().alignment.horizontal, value) {
         HorizontalAlign::Center | HorizontalAlign::CenterContinuous => {
             (TextAlign::Center, x + w / 2.0)
         }
@@ -1817,10 +1845,37 @@ const HASHES: &str = "#####";
 ///
 /// Числа и даты проводит через формат: в файле лежит серийный номер, а видно
 /// «31.01.2024». Строки и коды ошибок берутся как есть, логические — словами,
-/// как их пишет Excel.
+/// как их пишет Excel. Правка интерфейса ([`Workbook::set_cell_text`]) сильнее
+/// формата: `sheet` — индекс листа в книге, `at` — адрес ячейки.
 #[must_use]
-pub fn display_text(book: &Workbook, cell: &Cell, num_fmt: u32) -> Option<String> {
-    display_text_with(book, cell, num_fmt)
+pub fn display_text(
+    book: &Workbook,
+    sheet: usize,
+    at: CellRef,
+    cell: &Cell,
+    num_fmt: u32,
+) -> Option<String> {
+    display_text_edited(book, sheet, at, cell, num_fmt).map(|(text, _)| text)
+}
+
+/// Текст ячейки с учётом правок интерфейса.
+///
+/// Второй элемент пары — признак правки: `true`, если текст пришёл из
+/// [`Workbook::cell_text`] сырым, без формата числа. Тогда показ обязан вести
+/// себя как со строкой (левое выравнивание, без обрезки числовой ширины), а не
+/// как с исходным значением ячейки.
+#[must_use]
+pub fn display_text_edited(
+    book: &Workbook,
+    sheet: usize,
+    at: CellRef,
+    cell: &Cell,
+    num_fmt: u32,
+) -> Option<(String, bool)> {
+    if let Some(text) = book.cell_text(sheet, at) {
+        return Some((text, true));
+    }
+    display_text_with(book, cell, num_fmt).map(|text| (text, false))
 }
 
 /// Текст ячейки по идентификатору формата числа.
@@ -2326,6 +2381,41 @@ mod tests {
             })
             .collect();
         assert_eq!(texts, vec!["3", "4", "6", "7"]);
+    }
+
+    #[test]
+    fn cell_edit_overrides_display_text() {
+        let book = book_with(numbers(), StyleTable::default());
+        let at = CellRef::new(0, 0);
+        let cell = book.sheets()[0].cells.cell(at).expect("ячейка есть");
+
+        // Без правки — число форматируется, как и раньше.
+        assert_eq!(display_text(&book, 0, at, cell, 0).as_deref(), Some("0"));
+        assert_eq!(book.cell_text(0, at), None);
+
+        book.set_cell_text(0, at, "введённый текст".to_owned());
+        // Правка — сырой текст, формат числа не применяется.
+        assert_eq!(
+            display_text(&book, 0, at, cell, 0).as_deref(),
+            Some("введённый текст")
+        );
+        assert_eq!(
+            display_text_edited(&book, 0, at, cell, 0),
+            Some(("введённый текст".to_owned(), true))
+        );
+        assert_eq!(book.cell_text(0, at).as_deref(), Some("введённый текст"));
+
+        // Другие лист и ячейка правку не видят.
+        assert_eq!(book.cell_text(1, at), None);
+        assert_eq!(book.cell_text(0, CellRef::new(1, 0)), None);
+        let untouched = book.sheets()[0]
+            .cells
+            .cell(CellRef::new(1, 0))
+            .expect("ячейка есть");
+        assert_eq!(
+            display_text(&book, 0, CellRef::new(1, 0), untouched, 0).as_deref(),
+            Some("3")
+        );
     }
 
     #[test]

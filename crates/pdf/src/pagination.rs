@@ -92,6 +92,8 @@ pub struct PageSlice {
 /// после вычитания оказывается в начале координат страницы.
 pub struct PaintedCell<'a> {
     pub cell: &'a Cell,
+    /// Адрес ячейки: по нему painter сверяет правки интерфейса.
+    pub at: CellRef,
     pub rect: RectPx,
     pub style: CellStyle,
 }
@@ -252,6 +254,9 @@ pub fn paginate<'a>(
     };
     let header_rows = 0..repeat_count(cfg.repeat_header_rows, used.last.row);
     let repeat_cols = 0..repeat_count(cfg.repeat_first_columns, used.last.col);
+    // Правки привязаны к индексу листа в книге: счётчик содержимого страниц
+    // обязан видеть их тем же ключом, что и painter.
+    let sheet_index = book.sheet_index(sheet).unwrap_or(usize::MAX);
     // Верх шапки и левый край повторяемых столбцов — начало листа: отсчёт
     // повторяемых частей идёт от первой строки и первого столбца.
     let header_h_px = layout.row_y(header_rows.end);
@@ -316,7 +321,7 @@ pub fn paginate<'a>(
                 column_bands_over(&bands_x, &col_span)
             };
             let style = styles::resolve(book, cell);
-            if !has_visible_content(book, cell, &style) {
+            if !has_visible_content(book, sheet_index, at, cell, &style) {
                 continue;
             }
             faces.insert(Face::of(style.bold, style.italic));
@@ -331,6 +336,7 @@ pub fn paginate<'a>(
                     }
                     buckets[bx * bands_y.len() + by].push(PaintedCell {
                         cell,
+                        at,
                         rect: pinned,
                         style: style.clone(),
                     });
@@ -370,11 +376,18 @@ pub fn paginate<'a>(
 /// которых Excel и `LibreOffice` не печатают. Формула содержимым остаётся — её
 /// результата модель не считает, но по контракту `visible_used_range` она
 /// принадлежит листу.
-fn has_visible_content(book: &Workbook, cell: &Cell, style: &CellStyle) -> bool {
+fn has_visible_content(
+    book: &Workbook,
+    sheet: usize,
+    at: CellRef,
+    cell: &Cell,
+    style: &CellStyle,
+) -> bool {
     style.fill.is_some()
         || border::is_visible(&style.border)
         || cell.formula.is_some()
-        || display_text(book, cell, style.number_format).is_some_and(|text| !text.is_empty())
+        || display_text(book, sheet, at, cell, style.number_format)
+            .is_some_and(|text| !text.is_empty())
 }
 
 /// Сколько первых строк (столбцов) листа повторять.

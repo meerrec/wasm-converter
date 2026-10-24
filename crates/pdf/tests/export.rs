@@ -21,6 +21,7 @@ use doc_converter_pdf::{PageConfig, PdfExporter, PdfOptions};
 use doc_converter_render::display_list::{DisplayList, DrawCommand};
 use doc_converter_render::viewport::Viewport;
 use doc_converter_xlsx::paint::PaintOptions;
+use doc_converter_xlsx::CellRef;
 
 /// Путь к книге в `test-fixtures/xlsx`.
 fn fixture(name: &str) -> PathBuf {
@@ -401,6 +402,27 @@ fn cell_text_reaches_the_page() {
     assert!(
         text.contains("Hello, world"),
         "текст ячейки потерялся: {text:?}"
+    );
+}
+
+#[test]
+fn cell_edit_reaches_the_page() {
+    // Правка интерфейса перекрывает значение: PDF печатает сырой текст, как
+    // его ввёл пользователь, — тем же путём, каким его видит кадр.
+    let book = doc_converter_xlsx::open(
+        std::fs::read(fixture("values-strings.xlsx")).expect("фикстура читается"),
+    )
+    .expect("книга открывается");
+    book.set_cell_text(0, CellRef::new(0, 0), "правка ячейки A1".to_owned());
+
+    let bytes = PdfExporter::new(PdfOptions::default())
+        .export_xlsx_sheet(&book, 0)
+        .expect("PDF собирается");
+    let text = decoded_text(&bytes);
+
+    assert!(
+        text.contains("правка ячейки A1"),
+        "правка потерялась в PDF: {text:?}"
     );
 }
 

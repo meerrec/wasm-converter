@@ -6,9 +6,9 @@
 //! строки не занимают памяти вовсе, а ячейки внутри строки отсортированы по
 //! столбцу, поэтому поиск идёт двоичным поиском.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::cellref::{CellRef, Range, MAX_COL, MAX_ROW};
 use crate::comments::Comment;
@@ -1470,7 +1470,7 @@ pub struct WorkbookImage {
 }
 
 /// Книга: листы и общие для них таблицы.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Default)]
 pub struct Workbook {
     sheets: Vec<Sheet>,
     shared_strings: SharedStrings,
@@ -1478,6 +1478,48 @@ pub struct Workbook {
     theme: Theme,
     date1904: bool,
     images: Vec<WorkbookImage>,
+    /// Правки ячеек интерфейсом: сырой текст вместо показанного значения.
+    ///
+    /// Ключ — индекс листа в [`Workbook::sheets`] и адрес ячейки. Книга живёт
+    /// за общей `Sync`-ссылкой ([`crate::plugin::DocumentModel`]), поэтому
+    /// замок — `std::sync::Mutex`; правки приходят из интерфейса уже после
+    /// `open`, и он разрешает их с общими ссылками. Новая книга (следующий
+    /// `open`) начинает с пустой карты.
+    pub edits: Mutex<HashMap<(usize, CellRef), String>>,
+}
+
+impl PartialEq for Workbook {
+    fn eq(&self, other: &Self) -> bool {
+        // Правки — рантайм-состояние интерфейса, а не модель файла: в
+        // сравнение они не входят (у `Mutex` и сравнения-то нет), и две книги
+        // из одних байтов равны, сколько бы правок в них ни внесли.
+        self.sheets == other.sheets
+            && self.shared_strings == other.shared_strings
+            && self.styles == other.styles
+            && self.theme == other.theme
+            && self.date1904 == other.date1904
+            && self.images == other.images
+    }
+}
+
+impl Clone for Workbook {
+    fn clone(&self) -> Self {
+        Self {
+            sheets: self.sheets.clone(),
+            shared_strings: self.shared_strings.clone(),
+            styles: Arc::clone(&self.styles),
+            theme: self.theme.clone(),
+            date1904: self.date1904,
+            images: self.images.clone(),
+            // Правки копируются вместе с книгой: копия — та же книга.
+            edits: Mutex::new(
+                self.edits
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+            ),
+        }
+    }
 }
 
 impl Workbook {
@@ -1511,6 +1553,7 @@ impl Workbook {
             theme,
             date1904,
             images: Vec::new(),
+            edits: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1518,6 +1561,69 @@ impl Workbook {
     #[must_use]
     pub fn sheets(&self) -> &[Sheet] {
         &self.sheets
+    }
+
+    /// Индекс листа в [`Workbook::sheets`] по ссылке на него.
+    ///
+    /// Сначала сравниваются адреса: листы книги лежат одним массивом и после
+    /// `open` не переезжают. Запасное сравнение по части пакета — для копии
+    /// листа, собранной вызывающим: правки привязаны к месту в книге, а не к
+    /// адресу структуры.
+    #[must_use]
+    pub fn sheet_index(&self, sheet: &Sheet) -> Option<usize> {
+        self.sheets
+            .iter()
+            .position(|candidate| std::ptr::eq(candidate, sheet))
+            .or_else(|| {
+                self.sheets
+                    .iter()
+                    .position(|candidate| candidate.meta.part == sheet.meta.part)
+            })
+    }
+
+    /// Заменить показ ячейки сырым текстом.
+    ///
+    /// Правка не трогает ни значение, ни формат: [`crate::paint::display_text`]
+    /// показывает её как есть, поэтому введённое в числовую ячейку остаётся
+    /// текстом. Пустая строка — тоже правка: она гасит текст ячейки.
+    pub fn set_cell_text(&self, sheet: usize, cell: CellRef, text: String) {
+        self.edits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert((sheet, cell), text);
+    }
+
+    /// Текст правки ячейки; `None` — ячейку не правили.
+    ///
+    /// Возвращается копия: замок не выпускает заём наружу.
+    #[must_use]
+    pub fn cell_text(&self, sheet: usize, cell: CellRef) -> Option<String> {
+        let edits = self
+            .edits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if edits.is_empty() {
+            return None;
+        }
+        edits.get(&(sheet, cell)).cloned()
+    }
+
+    /// Все правки книги: лист, ячейка и текст, по возрастанию ключа.
+    ///
+    /// Снимок нужен потребителям за пределами книги — экспортёру PDF, который
+    /// разбирает байты заново, — поэтому порядок детерминирован.
+    #[must_use]
+    pub fn cell_edits(&self) -> Vec<(usize, CellRef, String)> {
+        let edits = self
+            .edits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut list: Vec<(usize, CellRef, String)> = edits
+            .iter()
+            .map(|(&(sheet, cell), text)| (sheet, cell, text.clone()))
+            .collect();
+        list.sort_by_key(|&(sheet, cell, _)| (sheet, cell));
+        list
     }
 
     /// Число листов.
