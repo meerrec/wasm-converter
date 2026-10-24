@@ -22,7 +22,6 @@ quick-xml  = { workspace = true }
 serde      = { workspace = true }
 thiserror  = { workspace = true }
 miette     = { workspace = true }
-chrono     = { workspace = true }
 smallvec   = { workspace = true }
 # 10.1 — сознательный пин проверенной ветки; MSRV проекта с zip 9 — 1.88,
 # апгрейд ts-rs — отдельной задачей.

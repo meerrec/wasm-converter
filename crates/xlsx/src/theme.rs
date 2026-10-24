@@ -1,9 +1,8 @@
 //! Разбор `xl/theme/theme1.xml`.
 //!
 //! Тема — часть `DrawingML`, а не `SpreadsheetML`: элементы приходят с префиксом
-//! `a:`. Из всей темы нужны палитра `<a:clrScheme>` и схема шрифтов
-//! `<a:fontScheme>`; остальное (`fmtScheme`, `objectDefaults`, `extLst`)
-//! пропускается.
+//! `a:`. Из всей темы нужна только палитра `<a:clrScheme>`; остальное
+//! (`fontScheme`, `fmtScheme`, `objectDefaults`, `extLst`) пропускается.
 //!
 //! Порядок элементов в `<a:clrScheme>` не совпадает с порядком индексов
 //! `SpreadsheetML`, к которым отсылает `theme="n"` в `styles.xml`: в файле `dk1`
@@ -53,23 +52,13 @@ pub fn parse(bytes: &[u8], part: impl Into<String>) -> Result<Theme> {
     Ok(parser.finish())
 }
 
-/// Схема шрифтов, внутри которой находимся.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FontSlot {
-    Major,
-    Minor,
-}
-
-/// Состояние разбора: какой слот палитры открыт и какую схему читаем.
+/// Состояние разбора: какой слот палитры открыт.
 #[derive(Debug)]
 struct Parser {
     part: String,
     colors: [Color; THEME_COLOR_COUNT],
-    major_font: Option<String>,
-    minor_font: Option<String>,
     /// Индекс открытого слота `<a:clrScheme>`; цвет придёт вложенным элементом.
     slot: Option<usize>,
-    font_slot: Option<FontSlot>,
 }
 
 impl Parser {
@@ -77,10 +66,7 @@ impl Parser {
         Self {
             part,
             colors: [Color::None; THEME_COLOR_COUNT],
-            major_font: None,
-            minor_font: None,
             slot: None,
-            font_slot: None,
         }
     }
 
@@ -114,21 +100,6 @@ impl Parser {
         match name.as_ref() {
             b"srgbClr" => self.set_color(srgb_color(&attrs)),
             b"sysClr" => self.set_color(Some(sys_color(&attrs))),
-            b"majorFont" => {
-                self.font_slot = if is_start {
-                    Some(FontSlot::Major)
-                } else {
-                    None
-                };
-            }
-            b"minorFont" => {
-                self.font_slot = if is_start {
-                    Some(FontSlot::Minor)
-                } else {
-                    None
-                };
-            }
-            b"latin" => self.set_font(find(&attrs, "typeface")),
             _ => {}
         }
         Ok(())
@@ -143,36 +114,16 @@ impl Parser {
         }
     }
 
-    /// Записать латинскую гарнитуру открытой схемы шрифтов.
-    fn set_font(&mut self, typeface: Option<&str>) {
-        let (Some(slot), Some(typeface)) = (self.font_slot, typeface) else {
-            return;
-        };
-        // `<a:ea typeface=""/>` — пустое имя; пустая гарнитура не значит ничего.
-        if typeface.is_empty() {
-            return;
-        }
-        let typeface = typeface.to_owned();
-        match slot {
-            FontSlot::Major => self.major_font = Some(typeface),
-            FontSlot::Minor => self.minor_font = Some(typeface),
-        }
-    }
-
-    /// Закрывающий элемент: слот палитры или схема шрифтов кончились.
+    /// Закрывающий элемент: слот палитры кончился.
     fn end(&mut self, element: &BytesEnd<'_>) {
         let name = element.local_name();
         if slot_index(name.as_ref()).is_some() {
             self.slot = None;
-            return;
-        }
-        if matches!(name.as_ref(), b"majorFont" | b"minorFont") {
-            self.font_slot = None;
         }
     }
 
     fn finish(self) -> Theme {
-        Theme::new(self.colors, self.major_font, self.minor_font)
+        Theme::new(self.colors)
     }
 }
 
@@ -305,14 +256,6 @@ mod tests {
     }
 
     #[test]
-    fn font_scheme_is_parsed() {
-        let theme = theme();
-
-        assert_eq!(theme.major_font(), Some("Cambria"));
-        assert_eq!(theme.minor_font(), Some("Calibri"));
-    }
-
-    #[test]
     fn missing_elements_leave_an_empty_theme() {
         let theme = parse(
             br#"<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
@@ -324,8 +267,6 @@ mod tests {
 
         assert_eq!(theme, Theme::default());
         assert_eq!(theme.color(1), None);
-        assert_eq!(theme.major_font(), None);
-        assert_eq!(theme.minor_font(), None);
     }
 
     #[test]

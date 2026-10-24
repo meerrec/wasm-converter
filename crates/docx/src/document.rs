@@ -9,10 +9,6 @@
 //! Разбор потоковый, одним проходом. Читатель — [`XmlReader::preserving`]:
 //! пробелы в `w:t` это данные (`xml:space="preserve"`), а не отступы разметки.
 
-// Вызывающего у парсера ещё нет: его подключит `parse.rs` (слайс S12). До тех
-// пор `dead_code` срабатывал бы на каждом элементе модуля — как в `xml.rs`.
-#![allow(dead_code)]
-
 use std::borrow::Cow;
 
 use doc_converter_core::xml::XmlReader;
@@ -4905,10 +4901,11 @@ mod tests {
             let sidecar: serde_json::Value =
                 serde_json::from_str(&sidecar).unwrap_or_else(|e| panic!("{name}: сайкар: {e}"));
             let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
-            let mut archive = doc_converter_core::Archive::new(bytes)
-                .unwrap_or_else(|e| panic!("{name}: пакет не открывается: {e}"));
+            let mut archive =
+                doc_converter_core::Archive::new(bytes, doc_converter_core::ZipLimits::default())
+                    .unwrap_or_else(|e| panic!("{name}: пакет не открывается: {e}"));
             let xml = archive
-                .read("word/document.xml")
+                .part("word/document.xml")
                 .unwrap_or_else(|e| panic!("{name}: `word/document.xml`: {e}"));
             let mut rels_ctx = ParseCtx::new();
             let rels = crate::rels::load(&mut archive, PART, &mut rels_ctx)

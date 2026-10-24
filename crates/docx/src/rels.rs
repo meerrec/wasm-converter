@@ -6,11 +6,6 @@
 //! Отсутствие `_rels`-части — предупреждение [`WarningKind::MissingRels`], а не
 //! отказ: часть без rels теряет только ссылки (ADR-0016 §2).
 
-// Вызывающих у парсера ещё нет: их добавит сборка `parse.rs` (S12). До тех пор
-// `dead_code` срабатывал бы на каждом элементе модуля; `allow` снимается вместе
-// с подключением — как в `context.rs` и `xml.rs`.
-#![allow(dead_code)]
-
 use doc_converter_core::rels::{rels_part, Relationship};
 use doc_converter_core::{Archive, WarningKind};
 
@@ -74,7 +69,7 @@ mod tests {
     use std::path::PathBuf;
 
     use doc_converter_core::rels::RelMap;
-    use doc_converter_core::Archive;
+    use doc_converter_core::{Archive, ZipLimits};
     use serde_json::Value;
 
     use super::*;
@@ -96,7 +91,7 @@ mod tests {
     fn archive(name: &str) -> Archive {
         let path = fixtures_dir().join(format!("{name}.docx"));
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{path:?}: {e}"));
-        Archive::new(bytes).expect("пакет открывается")
+        Archive::new(bytes, ZipLimits::default()).expect("пакет открывается")
     }
 
     fn sidecar(name: &str) -> Value {
@@ -204,8 +199,11 @@ mod tests {
 
     #[test]
     fn a_part_without_rels_warns_and_gives_an_empty_map() {
-        let mut archive = Archive::new(zip(&[("word/document.xml", "<w:document/>")]))
-            .expect("пакет открывается");
+        let mut archive = Archive::new(
+            zip(&[("word/document.xml", "<w:document/>")]),
+            ZipLimits::default(),
+        )
+        .expect("пакет открывается");
         let mut ctx = ParseCtx::new();
 
         let rels = load(&mut archive, DOCUMENT, &mut ctx).expect("отсутствие rels не фатально");
@@ -226,10 +224,11 @@ mod tests {
     #[test]
     fn broken_rels_xml_is_fatal() {
         // Битый XML приходит из ядра как `Malformed`: часть есть, но не читается.
-        let mut archive = Archive::new(zip(&[(
-            "word/_rels/document.xml.rels",
-            "<Relationships><Relationship Id=\"rId1\" Type=\"x\" Target=\"styles.xml\"</Relationships>",
-        )]))
+        let xml = "<Relationships><Relationship Id=\"rId1\" Type=\"x\" Target=\"styles.xml\"</Relationships>";
+        let mut archive = Archive::new(
+            zip(&[("word/_rels/document.xml.rels", xml)]),
+            ZipLimits::default(),
+        )
         .expect("пакет открывается");
         let mut ctx = ParseCtx::new();
 
@@ -243,10 +242,11 @@ mod tests {
 
     #[test]
     fn a_mismatched_tag_in_rels_is_fatal() {
-        let mut archive = Archive::new(zip(&[(
-            "word/_rels/document.xml.rels",
-            "<Relationships><Relationship Id=\"rId1\" Type=\"x\" Target=\"y\"></Wrong></Relationships>",
-        )]))
+        let xml = "<Relationships><Relationship Id=\"rId1\" Type=\"x\" Target=\"y\"></Wrong></Relationships>";
+        let mut archive = Archive::new(
+            zip(&[("word/_rels/document.xml.rels", xml)]),
+            ZipLimits::default(),
+        )
         .expect("пакет открывается");
         let mut ctx = ParseCtx::new();
 

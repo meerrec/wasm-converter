@@ -100,38 +100,10 @@ impl From<String> for StyleId {
 }
 
 /// Тумблер свойства (`w:b`, `w:keepNext`, …): элемент с `w:val`, но без полезной нагрузки.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum Toggle {
-    /// Включено; элемент без `w:val` значит то же самое — потому `On` и есть `Default`.
-    #[default]
-    On,
-    /// Выключено явно (`w:val` = `0`, `false`, `off`).
-    Off,
-    /// Наследуется от стиля (`w:val="inherit"`).
-    Inherit,
-}
-
-impl Toggle {
-    /// Разбирает `w:val` тумблера.
-    ///
-    /// `None` → `Some(On)` (элемент без `w:val` включён); `"0"`, `"false"`, `"off"` → `Off`;
-    /// `"inherit"` → `Inherit`; `"1"`, `"true"`, `"on"` → `On`; прочее → `None`
-    /// (парсер обязан выдать `InvalidAttribute` и взять `On`).
-    /// Регистр не важен, пробелы по краям обрезаются.
-    #[must_use]
-    pub fn from_val(value: Option<&str>) -> Option<Self> {
-        let Some(raw) = value else {
-            return Some(Self::On);
-        };
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "1" | "true" | "on" => Some(Self::On),
-            "0" | "false" | "off" => Some(Self::Off),
-            "inherit" => Some(Self::Inherit),
-            _ => None,
-        }
-    }
-}
+///
+/// Канон — `doc_converter_core::xml::Toggle`: тумблер общий с другими OOXML-
+/// помощниками, DOCX его только переэкспортирует под прежним путём.
+pub use doc_converter_core::xml::Toggle;
 
 /// Цвет в записи файла: `RRGGBB` без альфы.
 ///

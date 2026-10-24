@@ -390,20 +390,22 @@ fn fill_rect(out: &mut DisplayList, x: f32, y: f32, w: f32, h: f32, fill: Color)
 }
 
 /// Цвет знака: раскладка хранит `w:color` как `RRGGBB`, `DisplayList` ждёт
-/// `RRGGBBAA` — каналы меняются местами, альфа добавляется непрозрачная.
+/// `RRGGBBAA` — перестановку каналов и непрозрачную альфу выполняет
+/// `Color::from_rgb24`.
 ///
 /// Значение без `w:color` — чёрный: `auto` в OOXML и есть цвет текста по
 /// умолчанию.
 fn text_color(rgb: Option<u32>) -> Color {
     match rgb {
-        Some(rgb) => Color(((rgb & 0x00FF_FFFF) << 8) | 0xFF),
+        Some(rgb) => Color::from_rgb24(rgb),
         None => Color::BLACK,
     }
 }
 
-/// Цвет подсветки `RRGGBB` → `RRGGBBAA` — те же каналы, что у [`text_color`].
+/// Цвет подсветки `RRGGBB` → `RRGGBBAA` — те же каналы, что у [`text_color`];
+/// перестановку выполняет `Color::from_rgb24`.
 fn highlight_color(rgb: u32) -> Color {
-    Color(((rgb & 0x00FF_FFFF) << 8) | 0xFF)
+    Color::from_rgb24(rgb)
 }
 
 /// Точка раскладки → физические пиксели canvas.

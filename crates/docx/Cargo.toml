@@ -16,6 +16,8 @@ thiserror            = { workspace = true }
 miette               = { workspace = true }
 tracing              = { workspace = true }
 unicode-bidi         = { workspace = true }
+# Обёртки над core::xml возвращают SmallVec (как и сам core).
+smallvec             = { workspace = true }
 
 [dev-dependencies]
 # Сквозные тесты собирают пакеты в памяти, как это делает Word.

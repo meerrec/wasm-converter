@@ -5,11 +5,6 @@
 //! предупреждения (в отличие от отсутствующих rels, где ссылки терялись бы).
 //! Битый XML уже фатален: часть есть, но прочитать её нельзя.
 
-// Вызывающих у парсера ещё нет: их добавит сборка `parse.rs` (S12). До тех пор
-// `dead_code` срабатывал бы на каждом элементе модуля; `allow` снимается вместе
-// с подключением — как в `context.rs` и `xml.rs`.
-#![allow(dead_code)]
-
 use doc_converter_core::xml::XmlReader;
 use doc_converter_core::{Archive, WarningKind};
 use quick_xml::events::Event;
@@ -167,7 +162,7 @@ fn next_event(reader: &mut XmlReader<'_>, part: &str) -> Result<Option<Event<'st
 mod tests {
     use std::path::PathBuf;
 
-    use doc_converter_core::Archive;
+    use doc_converter_core::{Archive, ZipLimits};
     use serde_json::Value;
 
     use super::*;
@@ -187,7 +182,7 @@ mod tests {
     fn fixture(name: &str) -> Archive {
         let path = fixtures_dir().join(format!("{name}.docx"));
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{path:?}: {e}"));
-        Archive::new(bytes).expect("пакет открывается")
+        Archive::new(bytes, ZipLimits::default()).expect("пакет открывается")
     }
 
     fn sidecar(name: &str) -> Value {
@@ -238,8 +233,11 @@ mod tests {
 
     #[test]
     fn a_package_without_doc_props_yields_the_default_without_warnings() {
-        let mut empty = Archive::new(zip(&[("word/document.xml", "<w:document/>")]))
-            .expect("пакет открывается");
+        let mut empty = Archive::new(
+            zip(&[("word/document.xml", "<w:document/>")]),
+            ZipLimits::default(),
+        )
+        .expect("пакет открывается");
         let mut ctx = ParseCtx::new();
 
         let metadata = parse(&mut empty, &mut ctx).expect("отсутствие свойств не фатально");

@@ -15,7 +15,7 @@ use doc_converter_docx::layout::{
 };
 use doc_converter_docx::{Border, BorderStyle, Color as DocColor, Document, ShadingPattern};
 use doc_converter_pdf::{PdfExporter, PdfOptions};
-use doc_converter_render::font::{default_font_bytes, FontRegistry};
+use doc_converter_render::font::{default_font_bytes, FontRegistry, DEFAULT_FONT_CACHE};
 use lopdf::content::{Content, Operation};
 use lopdf::Document as Pdf;
 use lopdf::Object;
@@ -25,8 +25,6 @@ use skrifa::raw::TableProvider;
 const PX_PER_POINT: f32 = 96.0 / 72.0;
 /// Допуск сверки координат и толщины — доли точки.
 const EPS: f32 = 1e-3;
-/// Размер LRU-кэша метрик — как у крейта (`painter::FONT_CACHE`).
-const FONT_CACHE: usize = 4096;
 
 /// Путь к фикстуре в `test-fixtures/docx`.
 fn fixture(name: &str) -> PathBuf {
@@ -47,7 +45,7 @@ fn layout(doc: &Document) -> PageLayout {
     layout_document(
         doc,
         &LayoutOptions::default(),
-        &mut FontRegistry::new(FONT_CACHE),
+        &mut FontRegistry::new(DEFAULT_FONT_CACHE),
     )
     .expect("раскладка собирается")
 }

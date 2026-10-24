@@ -4,10 +4,6 @@
 //! [`parse_blocks`], а не второй блочный парсер. Автор, инициалы и дата лежат
 //! атрибутами `w:comment` и переносятся в модель как есть.
 
-// Вызывающего у парсера ещё нет: его подключит `parse.rs` (слайс S12). До тех
-// пор `dead_code` срабатывал бы на каждом элементе модуля — как в `document.rs`.
-#![allow(dead_code)]
-
 use std::collections::HashSet;
 
 use doc_converter_core::xml::XmlReader;
@@ -196,10 +192,11 @@ mod tests {
     fn fixture(name: &str, part: &str) -> (Vec<u8>, serde_json::Value) {
         let path = fixtures_root().join(format!("{name}.docx"));
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        let mut archive = doc_converter_core::Archive::new(bytes)
-            .unwrap_or_else(|e| panic!("{name}: пакет не открывается: {e}"));
+        let mut archive =
+            doc_converter_core::Archive::new(bytes, doc_converter_core::ZipLimits::default())
+                .unwrap_or_else(|e| panic!("{name}: пакет не открывается: {e}"));
         let xml = archive
-            .read(part)
+            .part(part)
             .unwrap_or_else(|e| panic!("{name}: `{part}`: {e}"));
         let path = fixtures_root().join(format!("{name}.json"));
         let sidecar =

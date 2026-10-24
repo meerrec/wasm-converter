@@ -11,11 +11,6 @@
 //! их вместо второго разбора `w:pPr`/`w:rPr` (слайс S7 пишет свой, чтобы
 //! не блокироваться на этом файле).
 
-// Парсер подключит сборка документа (слайс S12): до тех пор `dead_code`
-// срабатывал бы на всём модуле; `allow` снимается вместе с подключением —
-// как в `context.rs` и `xml.rs`.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use doc_converter_core::xml::XmlReader;
@@ -1588,7 +1583,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use doc_converter_core::Archive;
+    use doc_converter_core::{Archive, ZipLimits};
 
     use super::*;
 
@@ -2638,10 +2633,11 @@ mod tests {
     fn fixture(dir: &Path, name: &str) -> (StyleTable, Vec<WarningKind>, serde_json::Value) {
         let mut archive = Archive::new(
             fs::read(dir.join(format!("{name}.docx"))).expect("the fixture is readable"),
+            ZipLimits::default(),
         )
         .expect("the fixture is an OOXML package");
         let bytes = archive
-            .read("word/styles.xml")
+            .part("word/styles.xml")
             .expect("the fixture has word/styles.xml");
         let mut ctx = ParseCtx::new();
         let table = parse(&bytes, &mut ctx, "word/styles.xml").expect("the fixture parses");

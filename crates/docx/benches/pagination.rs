@@ -18,7 +18,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughpu
 use doc_converter_core::ZipLimits;
 use doc_converter_docx::layout::{layout_document, LayoutOptions, PageLayout};
 use doc_converter_docx::{parse_docx, Document};
-use doc_converter_render::font::FontRegistry;
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE};
 
 /// Бюджет DoD Спринта 9: раскладка 100 страниц — быстрее 500 мс.
 const BUDGET: Duration = Duration::from_millis(500);
@@ -29,9 +29,6 @@ const HUNDRED_PAGES: &str = "tables/table_100_pages.docx";
 /// Малая фикстура: 60 строк, заведомо больше страницы — видно поведение
 /// раскладки на таблице, где страница пересекается несколько раз.
 const LONG_TABLE: &str = "tables/long_table.docx";
-
-/// Размер LRU-кэша метрик — как у крейта и как в `crates/pdf/tests/docx_budgets.rs`.
-const FONT_CACHE: usize = 4096;
 
 /// Прогонов ручного замера медианы — как в бенче `open`. В release раскладка
 /// сотни страниц идёт десятками миллисекунд, в debug — сотнями; сотня прогонов
@@ -88,7 +85,7 @@ fn median_layout_ms(document: &Document, fonts: &mut FontRegistry) -> u64 {
 fn bench_pagination_hundred_pages(c: &mut Criterion) {
     let bytes = read_fixture(HUNDRED_PAGES);
     let document = parse(&bytes);
-    let mut fonts = FontRegistry::new(FONT_CACHE);
+    let mut fonts = FontRegistry::new(DEFAULT_FONT_CACHE);
     let pages = layout(&document, &mut fonts).pages.len();
 
     let mut group = c.benchmark_group("pagination");
@@ -126,7 +123,7 @@ fn bench_pagination_hundred_pages(c: &mut Criterion) {
 fn bench_pagination_long_table(c: &mut Criterion) {
     let bytes = read_fixture(LONG_TABLE);
     let document = parse(&bytes);
-    let mut fonts = FontRegistry::new(FONT_CACHE);
+    let mut fonts = FontRegistry::new(DEFAULT_FONT_CACHE);
     let pages = layout(&document, &mut fonts).pages.len();
 
     let mut group = c.benchmark_group("pagination_long_table");

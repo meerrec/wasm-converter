@@ -36,12 +36,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use doc_converter_pdf::{PdfExporter, PdfOptions};
-use doc_converter_render::font::FontRegistry;
-
-/// Размер LRU-кэша метрик: тот же, что у PDF-экспорта DOCX
-/// (`crates/pdf/src/docx/mod.rs`, `FONT_CACHE`), — иначе пример мерил бы не ту
-/// раскладку, которую делает экспорт.
-const FONT_CACHE: usize = 4096;
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE};
 
 /// Аргумент — путь до `.docx`; если файла по такому пути нет, он ищется в
 /// `test-fixtures/docx`, затем в `target/fixtures/docx-large` (крупные фикстуры
@@ -90,7 +85,7 @@ fn main() {
     // Раскладка — источник числа страниц; экспорт ниже раскладывает документ
     // ещё раз, поэтому обе величины времени в контракте стоят рядом, а не
     // складываются в «одно измерение».
-    let mut fonts = FontRegistry::new(FONT_CACHE);
+    let mut fonts = FontRegistry::new(DEFAULT_FONT_CACHE);
     let started = Instant::now();
     let layout = doc_converter_docx::layout::layout_document(
         &document,

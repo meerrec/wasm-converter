@@ -9,11 +9,6 @@
 //! незнакомый `w:suff` и лишние элементы. Фатально только то, что мешает читать
 //! сам XML: [`Error::malformed`] и ошибки ридера.
 
-// Вызывающего у `parse` ещё нет: его подключит сборка документа (слайс S12).
-// До тех пор `dead_code` срабатывал бы на каждом элементе модуля; `allow`
-// снимается вместе с подключением — как в `context.rs` и `xml.rs`.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use doc_converter_core::xml::XmlReader;
@@ -1364,7 +1359,7 @@ fn verbatim_empty(element: &BytesStart<'_>, part: &str) -> Result<String> {
 mod tests {
     use super::*;
     use crate::model::raw::Toggle;
-    use doc_converter_core::Archive;
+    use doc_converter_core::{Archive, ZipLimits};
 
     const PART: &str = "word/numbering.xml";
 
@@ -2605,8 +2600,8 @@ mod tests {
     fn parse_fixture(relative: &str) -> (NumberingTable, Vec<WarningKind>) {
         let path = format!("{FIXTURES}/{relative}.docx");
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
-        let mut archive = Archive::new(bytes).expect("архив открывается");
-        let part = archive.read(PART).expect("`word/numbering.xml` есть");
+        let mut archive = Archive::new(bytes, ZipLimits::default()).expect("архив открывается");
+        let part = archive.part(PART).expect("`word/numbering.xml` есть");
         let mut ctx = ParseCtx::new();
         let table = parse(&part, &mut ctx, PART).expect("часть разбирается");
         (table, ctx.warnings().iter().map(|w| w.kind).collect())

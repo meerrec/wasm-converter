@@ -59,7 +59,7 @@ pub fn parse(bytes: &[u8], limits: &ZipLimits) -> Result<Presentation> {
 /// # Errors
 /// То же, что у [`parse`].
 pub fn parse_owned(bytes: Vec<u8>, limits: ZipLimits) -> Result<Presentation> {
-    let archive = Archive::open_with_limits(bytes, limits)?;
+    let archive = Archive::new(bytes, limits)?;
     parse_archive(archive, &Cell::new(false))
 }
 
@@ -68,7 +68,7 @@ pub fn parse_owned(bytes: Vec<u8>, limits: ZipLimits) -> Result<Presentation> {
 /// # Errors
 /// То же, что у [`parse`].
 pub fn parse_segmented(buf: SegmentedBuffer, limits: ZipLimits) -> Result<Presentation> {
-    let archive = Archive::from_segmented_with_limits(buf, limits)?;
+    let archive = Archive::from_segmented(buf, limits)?;
     parse_archive(archive, &Cell::new(false))
 }
 
@@ -82,14 +82,14 @@ pub fn parse_with_cancel(
     limits: &ZipLimits,
     cancelled: &Cell<bool>,
 ) -> Result<Presentation> {
-    let archive = Archive::open_with_limits(bytes.to_vec(), limits.clone())?;
+    let archive = Archive::new(bytes.to_vec(), limits.clone())?;
     parse_archive(archive, cancelled)
 }
 
 /// Общий разбор открытого архива.
 fn parse_archive(mut archive: Archive, cancelled: &Cell<bool>) -> Result<Presentation> {
     let office_part = office_document_part(&mut archive)?;
-    let pres_xml = archive.read(&office_part)?;
+    let pres_xml = archive.part(&office_part)?;
     let pres_dom = parse_dom(&pres_xml, &office_part)?;
     let pres_dom = doc_element(&pres_dom, "presentation");
     let pres_rels = archive.rels_for(&office_part)?.unwrap_or_default();
@@ -125,7 +125,7 @@ fn parse_archive(mut archive: Archive, cancelled: &Cell<bool>) -> Result<Present
                 ctx.warn(format!("slide {index}: external target, skipped"));
                 continue;
             };
-            let xml = match archive.read(&part) {
+            let xml = match archive.part(&part) {
                 Ok(xml) => xml,
                 Err(error) => {
                     ctx.warn(format!("slide {index}: {error}"));
@@ -193,7 +193,7 @@ impl Ctx<'_> {
 /// Найти часть `presentation.xml` через `_rels/.rels`; без связей —
 /// стандартное имя части.
 fn office_document_part(archive: &mut Archive) -> Result<String> {
-    if let Ok(rels_bytes) = archive.read("_rels/.rels") {
+    if let Ok(rels_bytes) = archive.part("_rels/.rels") {
         let rels = RelMap::parse(&rels_bytes)?;
         for rel in rels.items.values() {
             if rel.rel_type.ends_with(REL_OFFICE_DOCUMENT) {
@@ -284,7 +284,7 @@ fn read_master(
     let Some(part) = rel.part(office_part) else {
         return MasterInfo::default();
     };
-    let Ok(xml) = archive.read(&part) else {
+    let Ok(xml) = archive.part(&part) else {
         return MasterInfo::default();
     };
     let Ok(dom) = parse_dom(&xml, &part) else {
@@ -297,7 +297,7 @@ fn read_master(
         for rel in master_rels.items.values() {
             if rel.rel_type.ends_with(REL_THEME) {
                 if let Some(theme_part) = rel.part(&part) {
-                    if let Ok(theme_xml) = archive.read(&theme_part) {
+                    if let Ok(theme_xml) = archive.part(&theme_part) {
                         if let Ok(theme_dom) = parse_dom(&theme_xml, &theme_part) {
                             *theme = parse_theme(doc_element(&theme_dom, "theme"));
                         }
@@ -352,7 +352,7 @@ fn read_layout(
     let Some(part) = rel.part(slide_part) else {
         return LayoutInfo::default();
     };
-    let xml = match archive.read(&part) {
+    let xml = match archive.part(&part) {
         Ok(xml) => xml,
         Err(error) => {
             ctx.warn(format!("slide layout: {error}"));
@@ -874,7 +874,7 @@ fn parse_graphic_frame(
         .attr("r:id")?;
     let rel = slide_rels.get(rid)?;
     let chart_part = rel.part(part)?;
-    let xml = archive.read(&chart_part).ok()?;
+    let xml = archive.part(&chart_part).ok()?;
     let dom = parse_dom(&xml, &chart_part).ok()?;
     let data = parse_chart(&dom)?;
 
@@ -900,7 +900,7 @@ fn resolve_image(
     if let Some(&id) = ctx.image_by_part.get(&target) {
         return Some(id);
     }
-    let bytes = match archive.read(&target) {
+    let bytes = match archive.part(&target) {
         Ok(bytes) => bytes,
         Err(error) => {
             ctx.warn(format!("image {target}: {error}"));

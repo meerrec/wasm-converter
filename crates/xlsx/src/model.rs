@@ -578,38 +578,24 @@ pub enum Color {
 /// Число цветов в палитре темы.
 pub const THEME_COLOR_COUNT: usize = 12;
 
-/// Тема книги (`xl/theme/theme1.xml`): палитра и схема шрифтов.
+/// Тема книги (`xl/theme/theme1.xml`): палитра.
 ///
 /// Цвета палитры лежат в порядке индексов `SpreadsheetML`, а не в порядке
 /// элементов `<a:clrScheme>`: 0 — `lt1`, 1 — `dk1`, 2 — `lt2`, 3 — `dk2`,
 /// 4–9 — `accent1`–`accent6`, 10 — `hlink`, 11 — `folHlink`. Именно к этому
 /// порядку отсылает `theme="n"` в `styles.xml`; если взять порядок как в XML,
 /// цвет текста по умолчанию (`theme="1"`) станет белым вместо чёрного.
-///
-/// Схема шрифтов пока никем не читается: у [`Font`] нет поля `scheme`, и
-/// рендер гарнитуру из темы не подставляет. Она хранится разобранной, чтобы
-/// данные не терялись.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Theme {
     colors: [Color; THEME_COLOR_COUNT],
-    major_font: Option<String>,
-    minor_font: Option<String>,
 }
 
 impl Theme {
     /// Собрать тему из палитры в порядке индексов `SpreadsheetML` (см. описание
-    /// [`Theme`]) и гарнитур схемы шрифтов — заголовков и основного текста.
+    /// [`Theme`]).
     #[must_use]
-    pub fn new(
-        colors: [Color; THEME_COLOR_COUNT],
-        major_font: Option<String>,
-        minor_font: Option<String>,
-    ) -> Self {
-        Self {
-            colors,
-            major_font,
-            minor_font,
-        }
+    pub fn new(colors: [Color; THEME_COLOR_COUNT]) -> Self {
+        Self { colors }
     }
 
     /// Цвет по индексу темы (`theme="n"`; порядок — в описании [`Theme`]).
@@ -621,18 +607,6 @@ impl Theme {
             .get(usize::try_from(index).ok()?)
             .copied()
             .filter(|color| *color != Color::None)
-    }
-
-    /// Гарнитура заголовков (`<a:majorFont><a:latin typeface="…"/>`).
-    #[must_use]
-    pub fn major_font(&self) -> Option<&str> {
-        self.major_font.as_deref()
-    }
-
-    /// Гарнитура основного текста (`<a:minorFont><a:latin typeface="…"/>`).
-    #[must_use]
-    pub fn minor_font(&self) -> Option<&str> {
-        self.minor_font.as_deref()
     }
 }
 

@@ -29,19 +29,7 @@ pub struct Archive {
 }
 
 impl Archive {
-    /// Открывает OOXML-пакет из байтов ZIP с лимитами по умолчанию (ADR-0015 §1).
-    ///
-    /// # Errors
-    /// [`Error::ZipInvalidPath`], [`Error::ZipNameTooLong`], [`Error::ZipPathTooDeep`],
-    /// [`Error::ZipTooManyParts`], [`Error::ZipPartTooLarge`],
-    /// [`Error::ZipRatioExceeded`] или [`Error::ZipArchiveTooLarge`] — пакет
-    /// нарушает лимиты ADR-0015; [`Error::Zip`] — байты не являются корректным
-    /// ZIP-архивом.
-    pub fn new(bytes: Vec<u8>) -> Result<Self> {
-        Self::open(Cursor::new(bytes), ZipLimits::default())
-    }
-
-    /// Открывает OOXML-пакет из байтов ZIP с заданными лимитами.
+    /// Открывает OOXML-пакет из байтов ZIP с заданными лимитами (ADR-0015 §1).
     ///
     /// Имена, число частей и размеры проверяются по заголовкам центрального
     /// каталога; сами данные не распаковываются.
@@ -50,30 +38,22 @@ impl Archive {
     /// [`Error::ZipInvalidPath`], [`Error::ZipNameTooLong`], [`Error::ZipPathTooDeep`],
     /// [`Error::ZipTooManyParts`], [`Error::ZipPartTooLarge`],
     /// [`Error::ZipRatioExceeded`] или [`Error::ZipArchiveTooLarge`] — пакет
-    /// нарушает лимиты; [`Error::Zip`] — байты не являются корректным
+    /// нарушает лимиты ADR-0015; [`Error::Zip`] — байты не являются корректным
     /// ZIP-архивом.
-    pub fn open_with_limits(bytes: Vec<u8>, limits: ZipLimits) -> Result<Self> {
+    pub fn new(bytes: Vec<u8>, limits: ZipLimits) -> Result<Self> {
         Self::open(Cursor::new(bytes), limits)
     }
 
     /// Открывает OOXML-пакет из потокового буфера чанков (ADR-0031) с
-    /// лимитами по умолчанию.
+    /// заданными лимитами.
     ///
     /// Буфер переходит во владение архива: парс одноразовый, а заимствование
     /// потребовало бы lifetime в [`Archive`] и во всех его потребителях.
     /// Лимиты проверяются так же, как у [`Archive::new`].
     ///
     /// # Errors
-    /// Тот же набор, что у [`Archive::open_with_limits`].
-    pub fn from_segmented(buf: SegmentedBuffer) -> Result<Self> {
-        Self::from_segmented_with_limits(buf, ZipLimits::default())
-    }
-
-    /// Открывает OOXML-пакет из потокового буфера чанков с заданными лимитами.
-    ///
-    /// # Errors
-    /// Тот же набор, что у [`Archive::open_with_limits`].
-    pub fn from_segmented_with_limits(buf: SegmentedBuffer, limits: ZipLimits) -> Result<Self> {
+    /// Тот же набор, что у [`Archive::new`].
+    pub fn from_segmented(buf: SegmentedBuffer, limits: ZipLimits) -> Result<Self> {
         Self::open(buf, limits)
     }
 
@@ -151,7 +131,7 @@ impl Archive {
     ///
     /// `file_names()` в zip 9 отдаёт `Result`: имя декодируется из UTF-8/Cp437 и
     /// может не декодироваться. Такая запись уже отвергнута при открытии
-    /// (`open_with_limits` зовёт `name()?` на каждой части), поэтому здесь
+    /// (`new` зовёт `name()?` на каждой части), поэтому здесь
     /// остаются только корректные имена.
     pub fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
         self.inner
@@ -167,12 +147,15 @@ impl Archive {
 
     /// Читает part целиком, соблюдая лимиты при распаковке.
     ///
+    /// Единственный способ прочитать часть пакета: и [`Archive::rels_for`], и
+    /// парсеры крейтов ходят сюда.
+    ///
     /// # Errors
     /// [`Error::MissingPart`] — part отсутствует в пакете или это symlink;
     /// [`Error::ZipPartTooLarge`] / [`Error::ZipArchiveTooLarge`] — распакованные
     /// данные превысили лимиты (в том числе если размер в заголовке занижен);
     /// [`Error::Zip`] / [`Error::Io`] — данные не распаковываются.
-    pub fn read(&mut self, name: &str) -> Result<Vec<u8>> {
+    pub fn part(&mut self, name: &str) -> Result<Vec<u8>> {
         if self.symlinks.contains(name) {
             return Err(Error::MissingPart(name.to_string()));
         }
@@ -204,37 +187,20 @@ impl Archive {
         Ok(buf)
     }
 
-    /// Читает part как UTF-8 строку.
-    ///
-    /// # Errors
-    /// Если part отсутствует, содержит невалидный UTF-8 или превышает лимиты.
-    pub fn read_string(&mut self, name: &str) -> Result<String> {
-        let bytes = self.read(name)?;
-        String::from_utf8(bytes).map_err(|e| Error::Malformed(e.to_string()))
-    }
-
-    /// Имя из ADR-0015 §5; синоним [`Archive::read`] — точка входа для docx.
-    ///
-    /// # Errors
-    /// Те же, что у [`Archive::read`].
-    pub fn part(&mut self, name: &str) -> Result<Vec<u8>> {
-        self.read(name)
-    }
-
     /// Читает `_rels/<part>.rels`, если он есть в пакете.
     ///
     /// `None` — части rels нет; это не ошибка, а повод для предупреждения у
     /// вызывающего парсера.
     ///
     /// # Errors
-    /// [`Error::MissingPart`], [`Error::Zip`], [`Error::Io`] — как у [`Archive::read`];
+    /// [`Error::MissingPart`], [`Error::Zip`], [`Error::Io`] — как у [`Archive::part`];
     /// [`Error::Malformed`] / [`Error::Xml`] — rels не разбирается.
     pub fn rels_for(&mut self, source_part: &str) -> Result<Option<crate::rels::RelMap>> {
         let name = crate::rels::rels_part(source_part);
         if !self.contains(&name) {
             return Ok(None);
         }
-        let bytes = self.read(&name)?;
+        let bytes = self.part(&name)?;
         Ok(Some(crate::rels::RelMap::parse(&bytes)?))
     }
 
@@ -321,8 +287,8 @@ mod tests {
     #[test]
     fn reads_entry() {
         let bytes = make_zip(&[("[Content_Types].xml", b"<Types/>")]);
-        let mut a = Archive::new(bytes).unwrap();
-        assert_eq!(a.read_string("[Content_Types].xml").unwrap(), "<Types/>");
+        let mut a = Archive::new(bytes, ZipLimits::default()).unwrap();
+        assert_eq!(a.part("[Content_Types].xml").unwrap(), b"<Types/>".to_vec());
     }
 
     #[test]
@@ -338,9 +304,12 @@ mod tests {
         for chunk in bytes.chunks(7) {
             buf.append(chunk);
         }
-        let mut a = Archive::from_segmented(buf).unwrap();
+        let mut a = Archive::from_segmented(buf, ZipLimits::default()).unwrap();
         a.validate_ooxml().unwrap();
-        assert_eq!(a.read_string("word/document.xml").unwrap(), "<w:document/>");
+        assert_eq!(
+            a.part("word/document.xml").unwrap(),
+            b"<w:document/>".to_vec()
+        );
     }
 
     #[test]
@@ -354,15 +323,15 @@ mod tests {
             per_part_uncompressed: 2,
             ..ZipLimits::default()
         };
-        let err = open_err(Archive::from_segmented_with_limits(buf, limits));
+        let err = open_err(Archive::from_segmented(buf, limits));
         assert!(matches!(err, Error::ZipPartTooLarge { .. }));
     }
 
     #[test]
     fn missing_part_is_error() {
         let bytes = make_zip(&[("a.xml", b"")]);
-        let mut a = Archive::new(bytes).unwrap();
-        assert!(matches!(a.read("b.xml"), Err(Error::MissingPart(_))));
+        let mut a = Archive::new(bytes, ZipLimits::default()).unwrap();
+        assert!(matches!(a.part("b.xml"), Err(Error::MissingPart(_))));
     }
 
     #[test]
@@ -370,14 +339,14 @@ mod tests {
         // 20 МиБ нулей deflate сжимает в сотни раз — классическая бомба.
         let bytes = make_zip(&[("word/document.xml", &vec![0u8; 20 * 1024 * 1024])]);
 
-        let err = open_err(Archive::new(bytes.clone()));
+        let err = open_err(Archive::new(bytes.clone(), ZipLimits::default()));
         assert!(
             matches!(err, Error::ZipRatioExceeded { ref name, .. } if name == "word/document.xml"),
             "ожидали ZipRatioExceeded, получили {err:?}"
         );
 
-        let mut a = Archive::open_with_limits(bytes, ZipLimits::unlimited()).unwrap();
-        assert_eq!(a.read("word/document.xml").unwrap().len(), 20 * 1024 * 1024);
+        let mut a = Archive::new(bytes, ZipLimits::unlimited()).unwrap();
+        assert_eq!(a.part("word/document.xml").unwrap().len(), 20 * 1024 * 1024);
     }
 
     #[test]
@@ -389,7 +358,7 @@ mod tests {
             ..ZipLimits::default()
         };
 
-        let err = open_err(Archive::open_with_limits(bytes, limits));
+        let err = open_err(Archive::new(bytes, limits));
         assert!(
             matches!(err, Error::ZipPartTooLarge { size: 4096, .. }),
             "ожидали ZipPartTooLarge, получили {err:?}"
@@ -400,7 +369,7 @@ mod tests {
     fn zip_slip_names_are_rejected() {
         for name in ["../evil.xml", "/abs.xml", "a\\b.xml"] {
             let bytes = make_zip(&[(name, b"<x/>")]);
-            let err = open_err(Archive::new(bytes));
+            let err = open_err(Archive::new(bytes, ZipLimits::default()));
             assert!(
                 matches!(err, Error::ZipInvalidPath { .. }),
                 "имя {name:?}: ожидали ZipInvalidPath, получили {err:?}"
@@ -411,14 +380,20 @@ mod tests {
     #[test]
     fn long_and_deep_names_are_rejected() {
         let long = format!("{}.xml", "a".repeat(300));
-        let err = open_err(Archive::new(make_zip(&[(&long, b"<x/>")])));
+        let err = open_err(Archive::new(
+            make_zip(&[(&long, b"<x/>")]),
+            ZipLimits::default(),
+        ));
         assert!(
             matches!(err, Error::ZipNameTooLong { .. }),
             "ожидали ZipNameTooLong, получили {err:?}"
         );
 
         let deep = vec!["a"; 17].join("/");
-        let err = open_err(Archive::new(make_zip(&[(&deep, b"<x/>")])));
+        let err = open_err(Archive::new(
+            make_zip(&[(&deep, b"<x/>")]),
+            ZipLimits::default(),
+        ));
         assert!(
             matches!(err, Error::ZipPathTooDeep { .. }),
             "ожидали ZipPathTooDeep, получили {err:?}"
@@ -433,7 +408,7 @@ mod tests {
             ..ZipLimits::default()
         };
 
-        let err = open_err(Archive::open_with_limits(bytes, limits));
+        let err = open_err(Archive::new(bytes, limits));
         assert!(
             matches!(err, Error::ZipTooManyParts { count: 3 }),
             "ожидали ZipTooManyParts, получили {err:?}"
@@ -443,13 +418,12 @@ mod tests {
     #[test]
     fn symlink_parts_are_ignored() {
         let bytes = make_symlink_zip("evil.xml", "../../etc/passwd");
-        let mut a = Archive::new(bytes).unwrap();
+        let mut a = Archive::new(bytes, ZipLimits::default()).unwrap();
 
         assert_eq!(a.len(), 0);
         assert!(a.is_empty());
         assert!(!a.contains("evil.xml"));
         assert_eq!(a.names().count(), 0);
-        assert!(matches!(a.read("evil.xml"), Err(Error::MissingPart(_))));
         assert!(matches!(a.part("evil.xml"), Err(Error::MissingPart(_))));
 
         let warnings = a.warnings();
@@ -476,11 +450,11 @@ mod tests {
             per_part_uncompressed: 1024,
             ..ZipLimits::default()
         };
-        let mut a = Archive::open_with_limits(bytes, limits).unwrap();
+        let mut a = Archive::new(bytes, limits).unwrap();
 
-        let err = a.read("word/document.xml").unwrap_err();
+        let err = a.part("word/document.xml").unwrap_err();
         // zip 9 сам сверяет поток с заявленным размером и отвергает такой part
-        // раньше нашего счётчика; лимит `read` остаётся вторым рубежом на случай,
+        // раньше нашего счётчика; лимит `part` остаётся вторым рубежом на случай,
         // если архивный слой пропустит враньё (ADR-0015). Оба отказа безопасны.
         assert!(
             matches!(
@@ -499,10 +473,10 @@ mod tests {
             per_archive_uncompressed: 1500,
             ..ZipLimits::default()
         };
-        let mut a = Archive::open_with_limits(bytes, limits).unwrap();
+        let mut a = Archive::new(bytes, limits).unwrap();
 
-        assert_eq!(a.read("a.xml").unwrap().len(), 1000);
-        let err = a.read("a.xml").unwrap_err();
+        assert_eq!(a.part("a.xml").unwrap().len(), 1000);
+        let err = a.part("a.xml").unwrap_err();
         assert!(
             matches!(err, Error::ZipArchiveTooLarge { size: 2000 }),
             "ожидали ZipArchiveTooLarge, получили {err:?}"
@@ -514,7 +488,7 @@ mod tests {
         let mut bytes = make_zip(&[("a.xml", b"<x/>")]);
         bytes.truncate(bytes.len() - 100);
 
-        let err = open_err(Archive::new(bytes));
+        let err = open_err(Archive::new(bytes, ZipLimits::default()));
         assert!(
             matches!(err, Error::Zip(_)),
             "ожидали Error::Zip, получили {err:?}"
@@ -528,7 +502,7 @@ mod tests {
             ("word/document.xml", b"<w:document/>"),
             ("word/_rels/document.xml.rels", rels),
         ]);
-        let mut a = Archive::new(bytes).unwrap();
+        let mut a = Archive::new(bytes, ZipLimits::default()).unwrap();
 
         let map = a.rels_for("word/document.xml").unwrap().unwrap();
         assert_eq!(map.get("rId1").unwrap().target, "styles.xml");
@@ -538,7 +512,7 @@ mod tests {
     #[test]
     fn validate_ooxml_needs_content_types() {
         let bytes = make_zip(&[("a.xml", b"")]);
-        let a = Archive::new(bytes).unwrap();
+        let a = Archive::new(bytes, ZipLimits::default()).unwrap();
         assert!(matches!(
             a.validate_ooxml(),
             Err(Error::MissingPart(part)) if part == crate::CONTENT_TYPES

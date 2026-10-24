@@ -7,11 +7,6 @@
 //! Модуль несёт общий для частей S10b маппер ошибок XML ([`xml_error`]): `error.rs`
 //! закрыт для правок слайса, а дублировать его в трёх файлах хуже, чем держать в одном.
 
-// Вызывающих у парсера ещё нет: их добавит сборка `parse.rs` (S12). До тех пор
-// `dead_code` срабатывал бы на каждом элементе модуля; `allow` снимается вместе
-// с подключением — как в `context.rs` и `xml.rs`.
-#![allow(dead_code)]
-
 use doc_converter_core::xml::XmlReader;
 use quick_xml::events::{BytesStart, Event};
 
@@ -354,7 +349,7 @@ fn num_restart(raw: &str) -> NumRestart {
 mod tests {
     use std::path::PathBuf;
 
-    use doc_converter_core::Archive;
+    use doc_converter_core::{Archive, ZipLimits};
 
     use super::*;
     use crate::model::raw::Twips;
@@ -378,7 +373,7 @@ mod tests {
     fn even_odd_fixture_settings_are_read() {
         let path = fixtures_dir().join("even_odd.docx");
         let bytes = std::fs::read(&path).expect("фикстура читается");
-        let mut archive = Archive::new(bytes).expect("пакет открывается");
+        let mut archive = Archive::new(bytes, ZipLimits::default()).expect("пакет открывается");
         let bytes = archive.part(PART).expect("часть есть в пакете");
 
         let mut ctx = ParseCtx::new();

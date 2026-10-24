@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use doc_converter_docx::layout::{layout_document, LayoutOptions};
 use doc_converter_docx::{BlockItem, Document};
 use doc_converter_pdf::{PdfExporter, PdfOptions};
-use doc_converter_render::font::FontRegistry;
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE};
 
 /// Бюджет DoD Спринта 10: 200 страниц — быстрее 2 с.
 const TIME_BUDGET: Duration = Duration::from_millis(2_000);
@@ -38,9 +38,6 @@ const MIN_PAGES: usize = 200;
 /// документ «на 200 страниц», а не на тысячу, — иначе гейт мерил бы не то,
 /// что обещано. Ожидаемый размер печатает сам тест.
 const COPIES: usize = 1_350;
-
-/// Размер LRU-кэша метрик — как у крейта (`painter::FONT_CACHE`).
-const FONT_CACHE: usize = 4096;
 
 /// Путь к фикстуре в `test-fixtures/docx`.
 fn fixture(name: &str) -> PathBuf {
@@ -108,7 +105,7 @@ fn layout(doc: &Document) -> Vec<doc_converter_docx::layout::Page> {
     layout_document(
         doc,
         &LayoutOptions::default(),
-        &mut FontRegistry::new(FONT_CACHE),
+        &mut FontRegistry::new(DEFAULT_FONT_CACHE),
     )
     .expect("раскладка собирается")
     .pages

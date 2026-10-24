@@ -9,17 +9,12 @@
 
 use doc_converter_core::ZipLimits;
 use doc_converter_render::display_list::DisplayList;
-use doc_converter_render::font::FontRegistry;
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE};
 use doc_converter_render::plugin::{DocumentModel, EngineError, FormatPlugin, RenderContext};
 use doc_converter_render::viewport::Viewport;
 
 use crate::layout::engine::{layout_document, LayoutOptions, PageLayout};
 use crate::model::Document;
-
-/// Размер LRU-кэша метрик шрифта — как у `docx-wasm` (`FONT_CACHE`): больше,
-/// чем символов в документе, поэтому кэш не промахивается на повторах и не
-/// растёт вместе с документом.
-const FONT_CACHE: usize = 4096;
 
 /// Плагин DOCX: `id()` → `"docx"`, как `DocFormat` протокола TS.
 #[derive(Debug, Default)]
@@ -45,7 +40,7 @@ impl FormatPlugin for DocxPlugin {
         // страницей, а не окном, поэтому окно и зум приходят только с кадром.
         // Шрифты — свежий реестр без зарегистрированных гарнитур: раскладка
         // использует fallback-метрики, как wasm-клей до `registerPaintFonts`.
-        let mut fonts = FontRegistry::new(FONT_CACHE);
+        let mut fonts = FontRegistry::new(DEFAULT_FONT_CACHE);
         let layout = layout_document(&document, &LayoutOptions::default(), &mut fonts)
             .map_err(|e| EngineError::Layout(e.to_string()))?;
         Ok(Box::new(DocxDocument { document, layout }))
@@ -126,7 +121,7 @@ mod tests {
             "тот же набор предупреждений"
         );
         let pages_of = |document: &crate::Document| {
-            let mut fonts = FontRegistry::new(FONT_CACHE);
+            let mut fonts = FontRegistry::new(DEFAULT_FONT_CACHE);
             layout_document(document, &LayoutOptions::default(), &mut fonts)
                 .unwrap()
                 .pages

@@ -23,18 +23,18 @@ fn read_parts(archive: &mut Archive) {
     // читать part'ы можно только по `&mut`.
     let names: Vec<String> = archive.names().map(|n| n.into_owned()).take(64).collect();
     for name in names {
-        let _ = archive.read(&name);
+        let _ = archive.part(&name);
     }
 }
 
 fuzz_target!(|data: &[u8]| {
-    let Ok(mut archive) = Archive::new(data.to_vec()) else {
+    let Ok(mut archive) = Archive::new(data.to_vec(), ZipLimits::default()) else {
         return;
     };
     read_parts(&mut archive);
 
     // Лимиты на размер распакованной части проверяются только здесь.
-    let Ok(mut archive) = Archive::open_with_limits(data.to_vec(), TIGHT_LIMITS) else {
+    let Ok(mut archive) = Archive::new(data.to_vec(), TIGHT_LIMITS) else {
         return;
     };
     read_parts(&mut archive);

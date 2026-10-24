@@ -74,6 +74,7 @@ pub type Result<T> = std::result::Result<T, XlsxError>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use doc_converter_core::{Archive, ZipLimits};
 
     #[test]
     fn core_error_passes_through() {
@@ -99,8 +100,9 @@ mod tests {
     #[test]
     fn question_mark_converts_core_error() {
         fn read_missing() -> Result<String> {
-            let mut archive = doc_converter_core::Archive::new(Vec::new())?;
-            Ok(archive.read_string("nope.xml")?)
+            let mut archive = Archive::new(Vec::new(), ZipLimits::default())?;
+            let bytes = archive.part("nope.xml")?;
+            Ok(String::from_utf8_lossy(&bytes).into_owned())
         }
 
         assert!(matches!(read_missing(), Err(XlsxError::Core(_))));

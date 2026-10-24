@@ -12,7 +12,6 @@ use doc_converter_render::display_list::DisplayList;
 use doc_converter_render::plugin::{DocumentModel, EngineError, FormatPlugin, RenderContext};
 use doc_converter_render::viewport::Viewport;
 
-use doc_converter_pptx::model::Presentation;
 use doc_converter_pptx_layout::{layout_slide, SlideLayout};
 
 /// Плагин PPTX: `id()` → `"pptx"`, как `DocFormat` протокола TS.
@@ -41,32 +40,14 @@ impl FormatPlugin for PptxPlugin {
             .map(|index| layout_slide(&presentation, index))
             .collect::<doc_converter_pptx::Result<Vec<_>>>()
             .map_err(|e| EngineError::Layout(e.to_string()))?;
-        Ok(Box::new(PptxDocument {
-            presentation,
-            layouts,
-        }))
+        Ok(Box::new(PptxDocument { layouts }))
     }
 }
 
 /// Презентация как `DocumentModel`: число единиц рендера — число слайдов,
 /// первый кадр — первый слайд от начала координат.
 pub struct PptxDocument {
-    presentation: Presentation,
     layouts: Vec<SlideLayout>,
-}
-
-impl PptxDocument {
-    /// Модель презентации — слайды, шейпы, media-части — в обход trait-слоя.
-    #[must_use]
-    pub fn presentation(&self) -> &Presentation {
-        &self.presentation
-    }
-
-    /// Готовая раскладка слайда.
-    #[must_use]
-    pub fn layout(&self, index: usize) -> Option<&SlideLayout> {
-        self.layouts.get(index)
-    }
 }
 
 impl DocumentModel for PptxDocument {

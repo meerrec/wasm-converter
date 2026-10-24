@@ -31,8 +31,8 @@ use crate::model::{
 };
 use crate::{Columns, Twips};
 
-/// Пикселей в типографском пункте: 96 DPI / 72 DPI = 4/3.
-pub const PX_PER_POINT: f32 = 96.0 / 72.0;
+/// Пикселей в типографском пункте — канон в `doc_converter_core::units`.
+pub use doc_converter_core::units::PX_PER_POINT;
 
 /// Кегль по умолчанию, пока каскад не отдаёт размер знака: 12 pt.
 ///
@@ -46,7 +46,7 @@ const DEFAULT_HALF_POINTS: i32 = 24;
 #[allow(clippy::cast_precision_loss)]
 #[allow(clippy::cast_possible_truncation)]
 pub fn twips_to_px(twips: Twips) -> f32 {
-    twips.value() as f32 / 15.0
+    doc_converter_core::units::twips_to_px(twips.value() as f32)
 }
 
 /// Преобразовать полупункты в пиксели: 1 pt = 1/72 дюйма, 1 px = 1/96 дюйма.
@@ -55,7 +55,7 @@ pub fn twips_to_px(twips: Twips) -> f32 {
 #[allow(clippy::cast_precision_loss)]
 #[allow(clippy::cast_possible_truncation)]
 pub fn half_points_to_px(half_points: i32) -> f32 {
-    (half_points as f32 / 2.0) * PX_PER_POINT
+    doc_converter_core::units::half_points_to_px(half_points as f32)
 }
 
 /// Прямоугольник в пикселях от левого верхнего угла страницы.

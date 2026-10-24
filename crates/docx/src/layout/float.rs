@@ -16,7 +16,6 @@
 use crate::model::drawing::{
     AlignH, AlignV, Anchor, PositionH, PositionV, RelFromH, RelFromV, WrapKind,
 };
-use crate::{HalfPoint, Twips};
 
 use super::engine::{Page, Rect};
 
@@ -27,27 +26,14 @@ const MAX_COLLISION_SHIFTS: usize = 16;
 /// Преобразовать EMU в пиксели.
 /// `1 EMU = 1/914_400` дюйма, `1` пиксель = `1/96` дюйма.
 /// Отношение: (`1/914_400`) / (`1/96`) = `96/914_400` = `1/9525`.
+///
+/// Канон — `doc_converter_core::units::emu_to_px`; обёртка держит `i64`-вход
+/// этой раскладки и его clippy-allow'ы.
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 #[allow(clippy::cast_possible_truncation)]
 pub fn emu_to_px(emu: i64) -> f32 {
-    emu as f32 / 9525.0
-}
-
-/// Преобразовать twips в пиксели.
-#[must_use]
-#[allow(clippy::cast_precision_loss)]
-#[allow(clippy::cast_possible_truncation)]
-pub fn twips_to_px(twips: Twips) -> f32 {
-    twips.value() as f32 / 15.0
-}
-
-/// Преобразовать полупункты в пиксели.
-#[must_use]
-#[allow(clippy::cast_precision_loss)]
-#[allow(clippy::cast_possible_truncation)]
-pub fn half_points_to_px(half_points: HalfPoint) -> f32 {
-    (half_points.value() as f32 / 2.0) * (96.0 / 72.0)
+    doc_converter_core::units::emu_to_px(emu as f32)
 }
 
 /// Плавающий элемент на странице.
@@ -388,7 +374,7 @@ pub fn layout_floats_on_page(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::engine::MarginsLayout;
+    use crate::layout::engine::{half_points_to_px, twips_to_px, MarginsLayout};
     use crate::model::drawing::{
         AlignH, AlignV, Extent, PositionH, PositionV, RelFromH, RelFromV, WrapKind,
     };
@@ -528,7 +514,7 @@ mod tests {
     fn test_half_points_to_px() {
         // 24 half-points = 12 points
         let half_points = HalfPoint::new(24);
-        let px = half_points_to_px(half_points);
+        let px = half_points_to_px(half_points.value());
         // 12 pt * (96/72) = 16 px
         assert!((px - 16.0).abs() < 0.01);
     }

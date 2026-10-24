@@ -40,6 +40,20 @@ pub enum Error {
     #[error("missing required OOXML part: `{0}`")]
     MissingPart(String),
 
+    /// Namespace корня главной части не Transitional и не Strict.
+    ///
+    /// Поддержаны оба варианта OOXML (ADR-0034); всё остальное — либо не
+    /// OOXML, либо вариант, которого не существует.
+    #[error(
+        "unsupported OOXML namespace `{namespace}` in `{part}`; expected Transitional or Strict"
+    )]
+    UnknownVariant {
+        /// Часть, по корню которой определялся вариант.
+        part: String,
+        /// Namespace, который объявил корневой элемент.
+        namespace: String,
+    },
+
     #[error("unresolved relationship target: `{0}`")]
     UnresolvedRel(String),
 

@@ -366,8 +366,6 @@ fn theme_is_found_through_workbook_rels() {
     assert_eq!(theme.color(1), Some(Color::Rgb(0xFF00_0000)));
     assert_eq!(theme.color(4), Some(Color::Rgb(0xFF4F_81BD)));
     assert_eq!(theme.color(11), Some(Color::Rgb(0xFF80_0080)));
-    assert_eq!(theme.major_font(), Some("Cambria"));
-    assert_eq!(theme.minor_font(), Some("Calibri"));
 }
 
 #[test]

@@ -17,15 +17,13 @@ use std::path::{Path, PathBuf};
 use doc_converter_docx::layout::{layout_document, LayoutItem, LayoutOptions, PageLayout};
 use doc_converter_docx::{BlockItem, Document, Inline, Margins, PageSize, Toggle, Twips};
 use doc_converter_pdf::{PdfExporter, PdfOptions};
-use doc_converter_render::font::FontRegistry;
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE};
 use lopdf::Document as Pdf;
 
 /// Пикселей раскладки в точке PDF: 96 dpi против 72 dpi.
 const PX_PER_POINT: f32 = 96.0 / 72.0;
 /// Допуск сверки размера страницы, точки (приёмка спринта — 1 pt).
 const SIZE_TOLERANCE_PT: f32 = 1.0;
-/// Размер LRU-кэша метрик — как у крейта (`painter::FONT_CACHE`).
-const FONT_CACHE: usize = 4096;
 
 /// Путь к фикстуре в `test-fixtures/docx`.
 fn fixture(name: &str) -> PathBuf {
@@ -46,7 +44,7 @@ fn layout(doc: &Document) -> PageLayout {
     layout_document(
         doc,
         &LayoutOptions::default(),
-        &mut FontRegistry::new(FONT_CACHE),
+        &mut FontRegistry::new(DEFAULT_FONT_CACHE),
     )
     .expect("раскладка собирается")
 }
@@ -518,7 +516,7 @@ fn every_fixture_exports_or_fails_without_panic() {
         };
         checked += 1;
 
-        let mut registry = FontRegistry::new(FONT_CACHE);
+        let mut registry = FontRegistry::new(DEFAULT_FONT_CACHE);
         let Ok(layout) = layout_document(&doc, &LayoutOptions::default(), &mut registry) else {
             assert!(
                 PdfExporter::new(PdfOptions::default())

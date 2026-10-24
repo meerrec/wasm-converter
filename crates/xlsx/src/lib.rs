@@ -36,7 +36,6 @@ pub mod drawing;
 pub mod error;
 pub mod layout;
 pub mod model;
-pub mod ns;
 pub mod numfmt;
 pub mod paint;
 pub mod plugin;
@@ -74,8 +73,9 @@ pub use workbook::WorkbookMeta;
 
 use std::collections::HashMap;
 
+use doc_converter_core::ns::OoxmlVariant;
 use doc_converter_core::rels::{rels_part, RelMap};
-use doc_converter_core::{Archive, SegmentedBuffer};
+use doc_converter_core::{Archive, SegmentedBuffer, ZipLimits};
 
 /// Часть с каталогом листов.
 pub const WORKBOOK_PART: &str = "xl/workbook.xml";
@@ -175,7 +175,7 @@ impl MediaRegistry {
             return Ok(*id);
         }
 
-        let bytes = archive.read(media)?;
+        let bytes = archive.part(media)?;
         let fits = bytes.len() <= self.max_image_bytes
             && self.bytes_used + bytes.len() <= self.max_total_bytes;
         let id = if fits {
@@ -209,7 +209,7 @@ impl MediaRegistry {
 /// Если байты не OOXML-пакет, в нём нет `xl/workbook.xml` или какая-то из
 /// частей не разбирается.
 pub fn open(bytes: Vec<u8>) -> Result<Workbook> {
-    open_archive(Archive::new(bytes)?)
+    open_archive(Archive::new(bytes, ZipLimits::default())?)
 }
 
 /// Открыть XLSX из потокового буфера чанков (ADR-0031).
@@ -221,28 +221,43 @@ pub fn open(bytes: Vec<u8>) -> Result<Workbook> {
 /// # Errors
 /// Тот же набор, что у [`open`].
 pub fn open_segmented(buf: SegmentedBuffer) -> Result<Workbook> {
-    open_archive(Archive::from_segmented(buf)?)
+    open_archive(Archive::from_segmented(buf, ZipLimits::default())?)
+}
+
+/// Определить вариант OOXML по корню `xl/workbook.xml` (ADR-0034).
+///
+/// Канон — `doc_converter_core::ns::detect`; ошибки core мапятся в `XlsxError`:
+/// `UnknownVariant` — в свой вариант, `Malformed` — с именем части, остальное —
+/// в `Core`.
+fn detect_variant(xml: &[u8], part: &str) -> Result<OoxmlVariant> {
+    doc_converter_core::ns::detect(xml, part).map_err(|e| match e {
+        doc_converter_core::Error::UnknownVariant { part, namespace } => {
+            XlsxError::UnknownVariant { part, namespace }
+        }
+        doc_converter_core::Error::Malformed(reason) => XlsxError::malformed(part, reason),
+        other => XlsxError::Core(other),
+    })
 }
 
 /// Общее тело открытия книги: разбор один и тот же, источник байтов — разный.
 fn open_archive(mut archive: Archive) -> Result<Workbook> {
     archive.validate_ooxml()?;
 
-    let rels = RelMap::parse(&archive.read(&rels_part(WORKBOOK_PART))?)?;
-    let workbook_xml = archive.read(WORKBOOK_PART)?;
+    let rels = RelMap::parse(&archive.part(&rels_part(WORKBOOK_PART))?)?;
+    let workbook_xml = archive.part(WORKBOOK_PART)?;
     // Вариант OOXML — по namespace корня `xl/workbook.xml` (ADR-0034); парсеры
     // частей сравнивают локальные имена, и таблица варианта им не нужна.
-    crate::ns::detect(&workbook_xml, WORKBOOK_PART)?;
+    detect_variant(&workbook_xml, WORKBOOK_PART)?;
     let catalog = WorkbookMeta::parse(&workbook_xml, &rels, WORKBOOK_PART)?;
 
     let shared_strings = if archive.contains(SHARED_STRINGS_PART) {
-        SharedStrings::parse(&archive.read(SHARED_STRINGS_PART)?, SHARED_STRINGS_PART)?
+        SharedStrings::parse(&archive.part(SHARED_STRINGS_PART)?, SHARED_STRINGS_PART)?
     } else {
         SharedStrings::default()
     };
 
     let style_table = if archive.contains(STYLES_PART) {
-        styles::parse(&archive.read(STYLES_PART)?, STYLES_PART)?
+        styles::parse(&archive.part(STYLES_PART)?, STYLES_PART)?
     } else {
         StyleTable::default()
     };
@@ -260,7 +275,7 @@ fn open_archive(mut archive: Archive) -> Result<Workbook> {
         // Связи листа нужны гиперссылкам и изображениям: их цели живут
         // в отдельных частях.
         let rels = read_rels(&mut archive, &meta.part)?;
-        let mut content = worksheet::parse(&archive.read(&meta.part)?, &meta.part, rels.as_ref())?;
+        let mut content = worksheet::parse(&archive.part(&meta.part)?, &meta.part, rels.as_ref())?;
         // Печатаемые заголовки лежат в `definedNames` книги, а не в листе.
         apply_print_titles(&mut content.print, &print_titles, &meta.name);
         // Чертёж — отдельная часть: сам лист на него только ссылается.
@@ -314,7 +329,7 @@ fn read_theme(archive: &mut Archive, rels: &RelMap) -> Result<Theme> {
     if !archive.contains(&part) {
         return Ok(Theme::default());
     }
-    theme::parse(&archive.read(&part)?, part)
+    theme::parse(&archive.part(&part)?, part)
 }
 
 /// Связи части пакета, если они есть: у листа без гиперссылок и картинок
@@ -324,7 +339,7 @@ fn read_rels(archive: &mut Archive, source_part: &str) -> Result<Option<RelMap>>
     if !archive.contains(&part) {
         return Ok(None);
     }
-    Ok(Some(RelMap::parse(&archive.read(&part)?)?))
+    Ok(Some(RelMap::parse(&archive.part(&part)?)?))
 }
 
 /// Примечания листа: классические примечания лежат в отдельной части
@@ -350,7 +365,7 @@ fn read_comments(
     if !archive.contains(&part) {
         return Ok(Vec::new());
     }
-    comments::parse(&archive.read(&part)?, part)
+    comments::parse(&archive.part(&part)?, part)
 }
 
 /// Объекты чертежа листа: картинки и диаграммы. Чертёж ищется по связи листа,
@@ -379,7 +394,7 @@ fn read_drawing_objects(
     }
 
     let drawing_rels = read_rels(archive, &part)?;
-    let drawing = drawing::parse_drawing(&archive.read(&part)?, &part, drawing_rels.as_ref())?;
+    let drawing = drawing::parse_drawing(&archive.part(&part)?, &part, drawing_rels.as_ref())?;
 
     let mut images = drawing.images;
     // Ссылка на media без самой части — битая: рисовать по ней нечего.
@@ -405,7 +420,7 @@ fn read_drawing_objects(
         if !archive.contains(&chart_part) {
             continue;
         }
-        let Ok(bytes) = archive.read(&chart_part) else {
+        let Ok(bytes) = archive.part(&chart_part) else {
             continue;
         };
         if let Ok(chart) = chart::parse(&bytes, &chart_part) {
@@ -436,7 +451,7 @@ mod tests {
             }
             zip.finish().unwrap();
         }
-        Archive::new(buf).unwrap()
+        Archive::new(buf, ZipLimits::default()).unwrap()
     }
 
     /// Повторная ссылка на ту же часть получает тот же id: картинок две,

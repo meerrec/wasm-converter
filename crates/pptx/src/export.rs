@@ -4,31 +4,7 @@
 //! слайда, абзацы, маркеры списков. Картинки и диаграммы в текстовый конспект
 //! не входят — они остаются в просмотре и PDF.
 
-use crate::model::{Bullet, Paragraph, Presentation, Run, ShapeKind};
-
-/// Формат текстовой выгрузки.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextFormat {
-    /// Markdown: заголовки, списки.
-    Markdown,
-    /// Самостоятельная HTML-страница со встроенными стилями.
-    Html,
-    /// Обычный текст без разметки.
-    Text,
-}
-
-impl TextFormat {
-    /// Формат по строке из интерфейса (`markdown`/`md`, `html`, `text`/`txt`).
-    #[must_use]
-    pub fn from_name(value: &str) -> Option<Self> {
-        match value {
-            "markdown" | "md" => Some(Self::Markdown),
-            "html" => Some(Self::Html),
-            "text" | "txt" => Some(Self::Text),
-            _ => None,
-        }
-    }
-}
+use crate::model::{Bullet, Paragraph, Presentation, ShapeKind};
 
 /// Экспортировать презентацию в Markdown.
 ///
@@ -165,12 +141,6 @@ pub fn paragraph_text(paragraph: &Paragraph) -> String {
     out
 }
 
-/// Текст прогона (для будущих экспортёров начертаний).
-#[must_use]
-pub fn run_text(run: &Run) -> &str {
-    &run.text
-}
-
 /// Экранировать HTML-метасимволы.
 fn escape_html(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -189,7 +159,7 @@ fn escape_html(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Frame, Shape, Slide, SlideSize, TextBody, TextBox};
+    use crate::model::{Frame, Run, Shape, Slide, SlideSize, TextBody, TextBox};
 
     fn presentation() -> Presentation {
         Presentation {
@@ -259,16 +229,5 @@ mod tests {
         assert!(text.starts_with("First\n"));
         assert!(text.contains("  - point"));
         assert!(text.contains("Second\n"));
-    }
-
-    #[test]
-    fn format_names_parse() {
-        assert_eq!(
-            TextFormat::from_name("markdown"),
-            Some(TextFormat::Markdown)
-        );
-        assert_eq!(TextFormat::from_name("html"), Some(TextFormat::Html));
-        assert_eq!(TextFormat::from_name("txt"), Some(TextFormat::Text));
-        assert_eq!(TextFormat::from_name("csv"), None);
     }
 }

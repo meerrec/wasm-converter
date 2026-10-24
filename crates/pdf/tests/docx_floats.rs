@@ -15,14 +15,12 @@ use doc_converter_docx::layout::{
 };
 use doc_converter_docx::{BlockItem, Document, Inline, Rect, RunContent};
 use doc_converter_pdf::{PdfExporter, PdfOptions};
-use doc_converter_render::font::FontRegistry;
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE};
 use lopdf::content::Content;
 use lopdf::{Document as Pdf, Object};
 
 /// Пикселей раскладки в точке PDF: 96 dpi против 72 dpi.
 const PX_PER_POINT: f32 = 96.0 / 72.0;
-/// Размер LRU-кэша метрик — как у крейта (`painter::FONT_CACHE`).
-const FONT_CACHE: usize = 4096;
 /// Допуск сверки координат, точки: `f32`-арифметика раскладки против PDF.
 const TOLERANCE_PT: f32 = 0.1;
 
@@ -45,7 +43,7 @@ fn layout(doc: &Document) -> PageLayout {
     layout_document(
         doc,
         &LayoutOptions::default(),
-        &mut FontRegistry::new(FONT_CACHE),
+        &mut FontRegistry::new(DEFAULT_FONT_CACHE),
     )
     .expect("раскладка собирается")
 }

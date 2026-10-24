@@ -1,10 +1,5 @@
 //! Контекст разбора: один аллокатор ID и один накопитель предупреждений на документ.
 
-// Вызывающих у контекста ещё нет: их добавят парсеры частей (слайсы S6–S12), а
-// сборка начнётся с `parse.rs` (S12). До тех пор `dead_code` срабатывал бы на
-// каждом элементе модуля; `allow` снимается вместе с подключением.
-#![allow(dead_code)]
-
 use std::collections::BTreeSet;
 
 use doc_converter_core::{NodeId, NodeIdAllocator, ParseWarning, WarningKind, Warnings};
@@ -135,6 +130,7 @@ impl ParseCtx {
 
     /// Предупреждения в порядке появления.
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn warnings(&self) -> &[ParseWarning] {
         self.warnings.as_slice()
     }

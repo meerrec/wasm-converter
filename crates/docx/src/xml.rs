@@ -1,31 +1,26 @@
-//! Общие XML-хелперы парсеров DOCX (слайс S6) и разбор `mc:AlternateContent` (ADR-0014).
+//! DOCX-специфичный разбор XML: `mc:AlternateContent` (ADR-0014) и сохранение
+//! поддеревьев.
 //!
-//! От `crates/xlsx/src/xml.rs` отличает толерантность: незнакомый атрибут или
-//! элемент — это данные, а не ошибка (ADR-0016), фатально только то, что мешает
-//! читать сам XML. Поэтому здесь [`Error::malformed`] — про битые байты и
-//! обрыв потока, а всё восстановимое уходит предупреждениями в [`ParseCtx`].
+//! Общие хелперы атрибутов и числовых значений — в `doc_converter_core::xml`
+//! (ADR-0017); обёртки ниже добавляют к их ошибкам имя части (ADR-0016 §2).
+//! Незнакомый атрибут или элемент — это данные, а не ошибка (ADR-0016),
+//! фатально только то, что мешает читать сам XML. Поэтому [`Error::malformed`]
+//! — про битые байты и обрыв потока, а всё восстановимое уходит
+//! предупреждениями в [`ParseCtx`].
 //!
 //! События приходят из `XmlReader` уже owned (`Event<'static>`), так что
 //! буферизовать их можно свободно — на этом стоит разбор `mc:AlternateContent`:
 //! ветку нельзя выбрать, не дочитав блок до конца.
 
-// Потребителей у хелперов ещё нет: их подключат парсеры частей (слайсы S7–S12).
-// До тех пор `dead_code` срабатывал бы на каждом элементе модуля; `allow`
-// снимается вместе с подключением — как в `context.rs`.
-#![allow(dead_code)]
-
-use std::borrow::Cow;
-use std::str::FromStr;
-
 use doc_converter_core::xml::XmlReader;
 use doc_converter_core::WarningKind;
-use quick_xml::escape::resolve_predefined_entity;
 use quick_xml::events::{BytesRef, BytesStart, Event};
-use quick_xml::XmlVersion;
+use smallvec::SmallVec;
 
 use crate::context::ParseCtx;
 use crate::error::{Error, Result};
 use crate::model::raw::Toggle;
+use crate::settings::xml_error;
 
 /// Предел вложенности `mc:AlternateContent` (ADR-0014 §4).
 const MAX_ALTERNATE_DEPTH: u32 = 16;
@@ -43,102 +38,33 @@ const MAX_CAPTURE_DEPTH: u32 = 32;
 const SUPPORTED_REQUIRES: [&str; 5] = ["wps", "wpg", "wpc", "w14", "wp14"];
 
 // ---------------------------------------------------------------------------
-// Атрибуты
+// Атрибуты и значения свойств
 // ---------------------------------------------------------------------------
 
-/// Атрибут: локальное имя без префикса (`r:id` → `id`) и значение с развёрнутыми сущностями.
-#[derive(Debug)]
-pub(crate) struct Attr<'a> {
-    pub(crate) name: &'a [u8],
-    pub(crate) value: Cow<'a, str>,
-}
+// Общие хелперы живут в `doc_converter_core::xml`; здесь — re-экспорты под
+// привычными именами и обёртки, добавляющие к ошибкам имя части (ADR-0016 §2).
+pub(crate) use doc_converter_core::xml::{find, is_true, local_name, Attr};
 
-/// Разобрать атрибуты элемента.
-///
-/// Имя теряет префикс пространства имён, значение получает развёрнутые
-/// сущности и приведённые к пробелам переводы строк — как того требует XML для
-/// значений атрибутов. Незнакомое имя атрибута ошибкой не считается: OOXML из
-/// реального мира несёт лишние атрибуты, и терять из-за них документ нельзя.
-///
-/// Возвращается `Vec`, а не `SmallVec`: список живёт ровно до конца разбора
-/// элемента, а тип `Vec` — тот, что записан в контракте слайса.
+/// Разобрать атрибуты элемента (обёртка над `doc_converter_core::xml::attributes`).
 ///
 /// # Errors
 /// [`Error::malformed`] — атрибут не читается: битые байты, дубликат имени или
 /// некорректная XML-сущность в значении.
-pub(crate) fn attributes<'a>(element: &'a BytesStart<'a>, part: &str) -> Result<Vec<Attr<'a>>> {
-    let mut attrs = Vec::new();
-    for attr in element.attributes() {
-        let attr = attr.map_err(|e| Error::malformed(part, format!("bad attribute: {e}")))?;
-        // XML-декларацию ридер пропускает, поэтому версия — 1.0.
-        let value = attr
-            .normalized_value(XmlVersion::Implicit1_0)
-            .map_err(|e| Error::malformed(part, format!("bad attribute value: {e}")))?;
-        // `into_inner` отдаёт срез данных элемента, а не `attr`: иначе имя
-        // ссылалось бы на локальную переменную цикла и не пережило бы его.
-        attrs.push(Attr {
-            name: local_name(attr.key.into_inner()),
-            value,
-        });
-    }
-    Ok(attrs)
-}
-
-/// Значение атрибута по локальному имени: `r:id` и `w:id` находятся оба.
-#[must_use]
-pub(crate) fn find<'a>(attrs: &'a [Attr<'_>], name: &str) -> Option<&'a str> {
-    attrs
-        .iter()
-        .find(|attr| attr.name == name.as_bytes())
-        .map(|attr| attr.value.as_ref())
-}
-
-/// `xsd:boolean` OOXML: истина — `1`, `true`, `on`.
-///
-/// `on` схема допускает наравне с `true`, а Word пишет и так, и так.
-#[must_use]
-pub(crate) fn is_true(value: &str) -> bool {
-    matches!(value, "1" | "true" | "on")
-}
-
-/// Локальное имя без префикса пространства имён: `w:p` → `p`.
-#[must_use]
-pub(crate) fn local_name(name: &[u8]) -> &[u8] {
-    match name.iter().position(|&b| b == b':') {
-        Some(colon) => &name[colon + 1..],
-        None => name,
-    }
+pub(crate) fn attributes<'a>(
+    element: &'a BytesStart<'a>,
+    part: &str,
+) -> Result<SmallVec<[Attr<'a>; 4]>> {
+    doc_converter_core::xml::attributes(element).map_err(|e| xml_error(part, e))
 }
 
 /// Развернуть ссылку на сущность (`&amp;`, `&#65;`, `&#x41;`) в текст.
-///
-/// Начиная с quick-xml 0.41 ссылки приходят отдельным событием, и разворачивать
-/// их должен вызывающий. В OOXML встречаются только пять предопределённых
-/// сущностей и числовые ссылки: внешние потребовали бы DTD, которого в этих
-/// файлах не бывает, — поэтому незнакомая ссылка означает порчу файла, а не
-/// повод что-то додумывать.
 ///
 /// # Errors
 /// [`Error::malformed`] — ссылка не декодируется, содержит недопустимый код
 /// символа или ссылается на неизвестную сущность.
 pub(crate) fn resolve_reference(reference: &BytesRef<'_>, part: &str) -> Result<String> {
-    let name = reference
-        .decode()
-        .map_err(|e| Error::malformed(part, format!("bad reference: {e}")))?;
-    if let Some(ch) = reference
-        .resolve_char_ref()
-        .map_err(|e| Error::malformed(part, format!("bad character reference: {e}")))?
-    {
-        return Ok(ch.to_string());
-    }
-    resolve_predefined_entity(&name)
-        .map(str::to_owned)
-        .ok_or_else(|| Error::malformed(part, format!("unknown entity `&{name};`")))
+    doc_converter_core::xml::resolve_reference(reference).map_err(|e| xml_error(part, e))
 }
-
-// ---------------------------------------------------------------------------
-// Значения свойств
-// ---------------------------------------------------------------------------
 
 /// Тоггл (`w:b`, `w:i`, …): отсутствие `w:val` → [`Toggle::On`].
 ///
@@ -156,18 +82,9 @@ pub(crate) fn attr_toggle(
     part: &str,
     element: &str,
 ) -> Result<Option<Toggle>> {
-    let Some(raw) = find(attrs, "val") else {
-        return Ok(Some(Toggle::On));
-    };
-    if let Some(toggle) = Toggle::from_val(Some(raw)) {
-        return Ok(Some(toggle));
-    }
-    ctx.warn(
-        WarningKind::InvalidAttribute,
-        part,
-        format!("`{element}`: unrecognized `w:val` `{raw}`, the property counts as on"),
-    )?;
-    Ok(Some(Toggle::On))
+    doc_converter_core::xml::attr_toggle(attrs, element, |msg| {
+        ctx.warn(WarningKind::InvalidAttribute, part, msg.to_owned())
+    })
 }
 
 /// Целочисленный атрибут (`w:val`, `w:w`, …).
@@ -180,7 +97,9 @@ pub(crate) fn attr_i32(
     ctx: &mut ParseCtx,
     part: &str,
 ) -> Result<Option<i32>> {
-    parse_attr(attrs, name, ctx, part)
+    doc_converter_core::xml::attr_i32(attrs, name, |msg| {
+        ctx.warn(WarningKind::InvalidAttribute, part, msg.to_owned())
+    })
 }
 
 /// Атрибут-счётчик.
@@ -193,7 +112,9 @@ pub(crate) fn attr_u32(
     ctx: &mut ParseCtx,
     part: &str,
 ) -> Result<Option<u32>> {
-    parse_attr(attrs, name, ctx, part)
+    doc_converter_core::xml::attr_u32(attrs, name, |msg| {
+        ctx.warn(WarningKind::InvalidAttribute, part, msg.to_owned())
+    })
 }
 
 /// Атрибут-мера (pt, доля, множитель).
@@ -209,41 +130,9 @@ pub(crate) fn attr_f32(
     ctx: &mut ParseCtx,
     part: &str,
 ) -> Result<Option<f32>> {
-    let Some(raw) = find(attrs, name) else {
-        return Ok(None);
-    };
-    match raw.trim().parse::<f32>() {
-        Ok(value) if value.is_finite() => Ok(Some(value)),
-        Ok(_) | Err(_) => {
-            ctx.warn(
-                WarningKind::InvalidAttribute,
-                part,
-                format!("`{name}`: `{raw}` is not a number, ignored"),
-            )?;
-            Ok(None)
-        }
-    }
-}
-
-/// Разобрать числовой атрибут: нет атрибута → `None`, мусор → предупреждение и `None`.
-fn parse_attr<T: FromStr>(
-    attrs: &[Attr<'_>],
-    name: &str,
-    ctx: &mut ParseCtx,
-    part: &str,
-) -> Result<Option<T>> {
-    let Some(raw) = find(attrs, name) else {
-        return Ok(None);
-    };
-    if let Ok(value) = raw.trim().parse::<T>() {
-        return Ok(Some(value));
-    }
-    ctx.warn(
-        WarningKind::InvalidAttribute,
-        part,
-        format!("`{name}`: `{raw}` is not a number, ignored"),
-    )?;
-    Ok(None)
+    doc_converter_core::xml::attr_f32(attrs, name, |msg| {
+        ctx.warn(WarningKind::InvalidAttribute, part, msg.to_owned())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -587,7 +476,7 @@ pub(crate) fn wrap_fragment(fragment: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use doc_converter_core::Archive;
+    use doc_converter_core::{Archive, ZipLimits};
 
     const PART: &str = "word/document.xml";
     const PATH: &str = "w:document/w:body/mc:AlternateContent";
@@ -1178,9 +1067,10 @@ mod tests {
             .join(name);
         let bytes =
             std::fs::read(&path).unwrap_or_else(|e| panic!("{} не читается: {e}", path.display()));
-        let mut archive = Archive::new(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let mut archive =
+            Archive::new(bytes, ZipLimits::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
         archive
-            .read("word/document.xml")
+            .part("word/document.xml")
             .unwrap_or_else(|e| panic!("{name}: {e}"))
     }
 

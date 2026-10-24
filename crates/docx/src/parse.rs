@@ -16,15 +16,29 @@ use doc_converter_core::{
 use quick_xml::events::Event;
 
 use crate::context::ParseCtx;
+use doc_converter_core::ns::OoxmlVariant;
+
 use crate::error::{Error, Result};
 use crate::model::{
     BlockItem, Body, Document, Footnote, HeaderFooter, Inline, MediaPart, NoteKind, NumberingTable,
     Paragraph, PartRef, Relationships, Settings, StyleId, StyleTable, Table,
 };
-use crate::ns;
 use crate::settings::xml_error;
 use crate::xml::local_name;
 use crate::{comments, document, footnotes, metadata, numbering, rels, settings, styles};
+
+/// Определить вариант OOXML по корню главной части (ADR-0034).
+///
+/// Канон — `doc_converter_core::ns::detect`; ошибки core мапятся в `Error`:
+/// `UnknownVariant` — в свой вариант, остальное — как XML-ошибки с именем части.
+fn detect_variant(xml: &[u8], part: &str) -> Result<OoxmlVariant> {
+    doc_converter_core::ns::detect(xml, part).map_err(|e| match e {
+        doc_converter_core::Error::UnknownVariant { part, namespace } => {
+            Error::UnknownVariant { part, namespace }
+        }
+        other => xml_error(part, other),
+    })
+}
 
 // ---------------------------------------------------------------------------
 // Ранние отказы по сигнатуре файла
@@ -756,7 +770,7 @@ pub fn parse_docx(bytes: &[u8], limits: ZipLimits) -> Result<Document> {
 pub fn parse_docx_owned(bytes: Vec<u8>, limits: ZipLimits) -> Result<Document> {
     reject_ole_container(&bytes)?;
 
-    parse_archive(Archive::open_with_limits(bytes, limits)?)
+    parse_archive(Archive::new(bytes, limits)?)
 }
 
 /// Разбирает пакет DOCX из потокового буфера чанков (ADR-0031).
@@ -777,7 +791,7 @@ pub fn parse_docx_owned(bytes: Vec<u8>, limits: ZipLimits) -> Result<Document> {
 pub fn parse_docx_segmented(buf: SegmentedBuffer, limits: ZipLimits) -> Result<Document> {
     reject_ole_window(&buf.peek(SIGNATURE_SCAN))?;
 
-    parse_archive(Archive::from_segmented_with_limits(buf, limits)?)
+    parse_archive(Archive::from_segmented(buf, limits)?)
 }
 
 /// Общее тело разбора: модель собирается одинаково, источник байтов — разный.
@@ -804,7 +818,7 @@ fn parse_archive(mut archive: Archive) -> Result<Document> {
     let body_xml = read_part(&mut archive, &document_part)?;
     // Вариант OOXML — по namespace корня главной части (ADR-0034); парсеры
     // частей сравнивают локальные имена, и таблица варианта им не нужна.
-    ns::detect(&body_xml, &document_part)?;
+    detect_variant(&body_xml, &document_part)?;
     let rels = rels::load(&mut archive, &document_part, &mut ctx)?;
 
     let tables = parse_tables(&mut archive, &rels, &document_part, &mut ctx)?;
@@ -1323,8 +1337,11 @@ mod tests {
 
     #[test]
     fn a_frame_part_is_parsed_from_its_reference() {
-        let mut archive =
-            Archive::new(fixture("headers_footers/even_odd.docx")).expect("пакет открывается");
+        let mut archive = Archive::new(
+            fixture("headers_footers/even_odd.docx"),
+            ZipLimits::default(),
+        )
+        .expect("пакет открывается");
         let mut ctx = ParseCtx::new();
         let reference = part_ref("rIdHeader1", "word/header1.xml");
 
@@ -1346,8 +1363,11 @@ mod tests {
     /// предупреждение, а не отказ (ADR-0016 §2).
     #[test]
     fn a_missing_frame_part_warns() {
-        let mut archive =
-            Archive::new(fixture("headers_footers/even_odd.docx")).expect("пакет открывается");
+        let mut archive = Archive::new(
+            fixture("headers_footers/even_odd.docx"),
+            ZipLimits::default(),
+        )
+        .expect("пакет открывается");
         let mut ctx = ParseCtx::new();
         let reference = part_ref("rIdHeader9", "word/header9.xml");
 
