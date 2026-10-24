@@ -1,5 +1,21 @@
 # @doc-converter/core
 
+## 2.0.0
+
+### Major Changes
+
+- Мажорный релиз 2.0.0 — lockstep для всех десяти пакетов.
+- Дедупликация: общие примитивы core (`ns`/`xml`/`units`) вынесены в крейт
+  `doc-converter-wasm-common`, общий `WorkerCore`/`viewer_core` в TypeScript;
+  удалён мёртвый код.
+- Оптимизации: кэши раскладки и форматов XLSX (5,63 → 3,98 мс на условном
+  форматировании), SAB-транспорт — три → две копии кадра, painter без
+  аллокаций на команду, PDF быстрее за счёт владения контентом (6,08 → 5,03
+  мс), кэш блобов диаграмм PPTX.
+- BREAKING: удалены legacy offscreen-экспорты (`createViewer`/`initOffscreen`/
+  `supportsOffscreen`/`assertFallbackAvailable`, типы `ViewerHandle`/
+  `ViewerOptions`) и `VERSION`.
+
 ## 1.4.3
 
 ### Patch Changes
