@@ -23,7 +23,7 @@ members = [
 exclude = ["crates/fuzz"]
 
 [workspace.package]
-version      = "2.0.1"
+version      = "2.0.2"
 edition      = "2021"
 license      = "Apache-2.0"
 repository   = "https://github.com/meerrec/wasm-converter"
@@ -31,17 +31,17 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 # ── internal ────────────────────────────────────────────────
-doc-converter-core   = { path = "crates/core",   version = "2.0.1" }
-doc-converter-render = { path = "crates/render", version = "2.0.1" }
-doc-converter-docx   = { path = "crates/docx",   version = "2.0.1" }
-doc-converter-xlsx   = { path = "crates/xlsx",   version = "2.0.1" }
-doc-converter-pptx   = { path = "crates/pptx",   version = "2.0.1" }
-doc-converter-pptx-layout = { path = "crates/pptx-layout", version = "2.0.1" }
-doc-converter-pptx-render = { path = "crates/pptx-render", version = "2.0.1" }
-doc-converter-pptx-pdf    = { path = "crates/pptx-pdf",    version = "2.0.1" }
-doc-converter-pptx-pdf-wasm = { path = "crates/pptx-pdf-wasm", version = "2.0.1" }
-doc-converter-wasm-common = { path = "crates/wasm-common", version = "2.0.1" }
-doc-converter-pdf    = { path = "crates/pdf",    version = "2.0.1" }
+doc-converter-core   = { path = "crates/core",   version = "2.0.2" }
+doc-converter-render = { path = "crates/render", version = "2.0.2" }
+doc-converter-docx   = { path = "crates/docx",   version = "2.0.2" }
+doc-converter-xlsx   = { path = "crates/xlsx",   version = "2.0.2" }
+doc-converter-pptx   = { path = "crates/pptx",   version = "2.0.2" }
+doc-converter-pptx-layout = { path = "crates/pptx-layout", version = "2.0.2" }
+doc-converter-pptx-render = { path = "crates/pptx-render", version = "2.0.2" }
+doc-converter-pptx-pdf    = { path = "crates/pptx-pdf",    version = "2.0.2" }
+doc-converter-pptx-pdf-wasm = { path = "crates/pptx-pdf-wasm", version = "2.0.2" }
+doc-converter-wasm-common = { path = "crates/wasm-common", version = "2.0.2" }
+doc-converter-pdf    = { path = "crates/pdf",    version = "2.0.2" }
 
 # ── external ────────────────────────────────────────────────
 wasm-bindgen         = "0.2"

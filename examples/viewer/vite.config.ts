@@ -11,22 +11,28 @@ const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
 const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
 
 /**
- * Имена фикстур DOCX — пути от корня фикстур, с категорией (`simple/one_paragraph.docx`):
- * документы лежат по подкаталогам, а не в один уровень, как книги XLSX.
- * Отбор и порядок одинаковы у dev-сервера и сборки.
+ * Рекурсивно обходит каталог фикстур и возвращает имена файлов с расширением
+ * `ext` — пути от корня фикстур, с категорией (`simple/one_paragraph.docx`):
+ * документы и презентации лежат по подкаталогам, а не в один уровень, как
+ * книги XLSX. Отбор и порядок одинаковы у dev-сервера и сборки.
  */
-async function docxFixtureNames(dir = DOCX_ROOT, prefix = ''): Promise<string[]> {
+async function walkFixtureNames(dir: string, prefix = '', ext: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const names: string[] = [];
   for (const entry of entries) {
     const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
-      names.push(...(await docxFixtureNames(path.join(dir, entry.name), relative)));
-    } else if (entry.name.endsWith('.docx')) {
+      names.push(...(await walkFixtureNames(path.join(dir, entry.name), relative, ext)));
+    } else if (entry.name.endsWith(ext)) {
       names.push(relative);
     }
   }
   return names.sort();
+}
+
+/** Имена фикстур DOCX — рекурсивный обход DOCX_ROOT с фильтром `.docx`. */
+async function docxFixtureNames(): Promise<string[]> {
+  return walkFixtureNames(DOCX_ROOT, '', '.docx');
 }
 
 /**
@@ -36,6 +42,11 @@ async function docxFixtureNames(dir = DOCX_ROOT, prefix = ''): Promise<string[]>
 async function xlsxFixtureNames(): Promise<string[]> {
   const names = await readdir(XLSX_ROOT);
   return names.filter((n) => n.endsWith('.xlsx')).sort();
+}
+
+/** Имена фикстур PPTX — рекурсивный обход PPTX_ROOT с фильтром `.pptx`. */
+async function pptxFixtureNames(): Promise<string[]> {
+  return walkFixtureNames(PPTX_ROOT, '', '.pptx');
 }
 
 /** Корень фикстур: каталог на диске, MIME его файлов и отбор имён. */
@@ -48,7 +59,7 @@ interface FixtureRoot {
 const ROOTS: Record<string, FixtureRoot> = {
   docx: { dir: DOCX_ROOT, mime: DOCX_MIME, names: () => docxFixtureNames() },
   xlsx: { dir: XLSX_ROOT, mime: XLSX_MIME, names: xlsxFixtureNames },
-  pptx: { dir: PPTX_ROOT, mime: PPTX_MIME, names: () => docxFixtureNames(PPTX_ROOT) },
+  pptx: { dir: PPTX_ROOT, mime: PPTX_MIME, names: () => pptxFixtureNames() },
 };
 
 /** Путь к фикстуре по имени из запроса; `null` — имени нельзя доверять. */
@@ -60,11 +71,12 @@ function fixturePath(root: string, name: string): string | null {
 }
 
 /**
- * Отдаёт фикстуры обоих примеров: `/fixtures/docx/<категория>/<имя>.docx` и
- * `/fixtures/xlsx/<имя>.xlsx`.
+ * Отдаёт фикстуры трёх примеров: `/fixtures/docx/<категория>/<имя>.docx`,
+ * `/fixtures/pptx/<категория>/<имя>.pptx` и `/fixtures/xlsx/<имя>.xlsx`.
  *
- * Складывать сотни документов и книг в `public/` незачем: они и так лежат в
- * репозитории, и примеру нужен только доступ на чтение во время разработки.
+ * Складывать сотни документов, презентаций и книг в `public/` незачем: они и
+ * так лежат в репозитории, и примеру нужен только доступ на чтение во время
+ * разработки.
  */
 function fixtures(): Plugin {
   return {

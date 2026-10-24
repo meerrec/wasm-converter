@@ -1,6 +1,6 @@
 {
   "name": "@meerrec/core",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Core primitives: worker protocol, OffscreenCanvas glue, DisplayList transport.",
   "license": "Apache-2.0",
   "repository": {
@@ -56,15 +56,15 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@meerrec/wasm": "workspace:*",
+    "@meerrec/wasm": "^2.0.2",
     "@opentelemetry/api": "^1.0.0"
   },
   "devDependencies": {
-    "@meerrec/wasm-docx": "workspace:*",
-    "@meerrec/wasm-pdf": "workspace:*",
+    "@meerrec/wasm-docx": "^2.0.2",
+    "@meerrec/wasm-pdf": "^2.0.2",
     "@opentelemetry/sdk-trace-base": "^1.0.0",
-    "@meerrec/wasm-pptx": "workspace:*",
-    "@meerrec/wasm-pptx-pdf": "workspace:*",
+    "@meerrec/wasm-pptx": "^2.0.2",
+    "@meerrec/wasm-pptx-pdf": "^2.0.2",
     "tsup": "^8.3.5",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"

@@ -1,5 +1,11 @@
 # @meerrec/react
 
+## 2.0.2
+
+### Patch Changes
+
+- внутренние зависимости больше не публикуются как workspace:* — npm install ставит пакеты без ошибки “Unsupported URL Type”.
+
 ## 2.0.1
 
 ### Patch Changes

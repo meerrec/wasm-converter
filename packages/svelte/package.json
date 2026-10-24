@@ -1,6 +1,6 @@
 {
   "name": "@meerrec/svelte",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Svelte-обёртки (компонент и store) над просмотрщиками @meerrec/core.",
   "license": "Apache-2.0",
   "repository": {
@@ -35,7 +35,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@meerrec/core": "workspace:*"
+    "@meerrec/core": "^2.0.2"
   },
   "peerDependencies": {
     "svelte": "^4 || ^5"

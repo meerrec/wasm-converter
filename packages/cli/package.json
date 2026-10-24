@@ -1,6 +1,6 @@
 {
   "name": "@meerrec/cli",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Command-line converter: DOCX to PDF/Markdown/HTML/text, XLSX to PDF, with a worker pool for batch runs.",
   "license": "Apache-2.0",
   "repository": {
@@ -41,9 +41,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@meerrec/core": "workspace:*",
-    "@meerrec/wasm-docx": "workspace:*",
-    "@meerrec/wasm-pdf": "workspace:*"
+    "@meerrec/core": "^2.0.2",
+    "@meerrec/wasm-docx": "^2.0.2",
+    "@meerrec/wasm-pdf": "^2.0.2"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
