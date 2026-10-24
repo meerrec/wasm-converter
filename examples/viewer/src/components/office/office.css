@@ -649,24 +649,12 @@
   cursor: default;
 }
 
-.ofc-statusbar__zoom,
-.ofc-statusbar__check,
 .ofc-statusbar__sheet {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 12px;
   color: var(--ofc-text-2);
-}
-
-/* Зум в подвале — только показание: сама ручка живёт в ленте, поэтому здесь
-   ни id, ни отклика на курсор, как у величины в Office. */
-.ofc-statusbar__zoom {
-  cursor: default;
-}
-
-.ofc-statusbar__zoom svg {
-  color: var(--ofc-disabled);
 }
 
 /* Подсказка «перетащите файл» живёт в подвале и уступает место метрикам:
@@ -715,4 +703,186 @@
   .ofc-loading__spinner {
     animation: none;
   }
+}
+
+/* --- Открыть: файл и фикстура в ленте ----------------------------------- */
+
+.ofc-open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ofc-open .ofc-file {
+  flex: 0 0 auto;
+}
+
+/* Список фикстур в ленте — тот же вид, что у полей титульной строки, но
+   высотой в строку группы. */
+.ofc-open select {
+  height: 24px;
+  min-width: 132px;
+  max-width: 220px;
+  padding: 0 6px;
+  border: 1px solid var(--ofc-field-line);
+  border-radius: 3px;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ofc-text);
+}
+
+.ofc-open select:disabled {
+  color: var(--ofc-disabled);
+  background: var(--ofc-ribbon-bg-2);
+  cursor: default;
+}
+
+/* --- Лента: переключатели вида и кнопки навигации ------------------------ */
+
+/* Чекбокс с подписью в группе ленты: «сетка», «заголовки», «вписать». */
+.ofc-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--ofc-text);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ofc-check:hover {
+  background: var(--ofc-hover);
+}
+
+.ofc-check input {
+  margin: 0;
+  accent-color: var(--ofc-accent);
+}
+
+.ofc-check:has(input:disabled) {
+  color: var(--ofc-disabled);
+  background: transparent;
+  cursor: default;
+}
+
+/* Кнопки перехода (слайды/страницы/листы) — без рамки, как команды ленты. */
+.ofc-navbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ofc-text);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ofc-navbtn:hover:not(:disabled) {
+  background: var(--ofc-hover);
+  border-color: var(--ofc-field-line);
+}
+
+.ofc-navbtn:disabled {
+  color: var(--ofc-disabled);
+  cursor: default;
+}
+
+/* Подпись рядом с кнопками перехода: «слайд 2 / 5», «страниц: 3». */
+.ofc-navlabel {
+  font-size: 12px;
+  color: var(--ofc-text-2);
+  white-space: nowrap;
+}
+
+.ofc-navlabel b {
+  color: var(--ofc-text);
+  font-weight: 600;
+}
+
+/* --- Строка состояния: масштаб ------------------------------------------ */
+
+/* Ручка масштаба в подвале: «−», список процентов, «+». Список — тот же
+   `#zoom`, что и раньше, поэтому контракт и значения не меняются. */
+.ofc-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+}
+
+.ofc-zoom__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ofc-text-2);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ofc-zoom__btn:hover:not(:disabled) {
+  background: var(--ofc-hover);
+  color: var(--ofc-text);
+}
+
+.ofc-zoom__btn:disabled {
+  color: var(--ofc-disabled);
+  cursor: default;
+}
+
+/* Специфичность выше, чем у `.ofc-statusbar select`: список в подвале
+   компактнее обычных полей и без рамки, пока его не трогают. */
+.ofc-statusbar .ofc-zoom__select {
+  height: 20px;
+  min-width: 58px;
+  padding: 0 2px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ofc-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ofc-statusbar .ofc-zoom__select:hover:not(:disabled),
+.ofc-statusbar .ofc-zoom__select:focus-visible {
+  background: #fff;
+  border-color: var(--ofc-field-line);
+}
+
+.ofc-statusbar .ofc-zoom__select:disabled {
+  color: var(--ofc-disabled);
+  cursor: default;
+}
+
+/* Позиция документа и ячейка в подвале: «Слайд 1 / 2», «ячейка A1». */
+.ofc-statusbar__page,
+.ofc-statusbar__cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.ofc-statusbar__page b,
+.ofc-statusbar__cell b,
+.ofc-statusbar__cell span {
+  color: var(--ofc-text);
+  font-weight: 600;
 }

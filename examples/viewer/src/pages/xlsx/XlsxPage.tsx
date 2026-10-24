@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import type { ChangeEvent, ReactElement } from 'react';
 import { FrameMeters } from '../../components/FrameMeters.js';
 import {
   FormulaBar,
@@ -12,9 +12,11 @@ import {
   RibbonTile,
   RibbonToggle,
   StatusBar,
+  StatusZoom,
   TitleBar,
   type IconName,
   type RibbonTab,
+  type StatusZoomOption,
 } from '../../components/office/index.js';
 import { useXlsxPage } from './use_xlsx_page.js';
 
@@ -52,8 +54,11 @@ const ZOOM = [
   { value: '2', label: '200 %' },
 ];
 
-/** Подписи для списка «Масштаб»: в списке ленты живут они, а не множители. */
-const ZOOM_LABELS = ZOOM.map((option) => option.label);
+/** Значения списка масштаба в подвале: подписи Office и есть значения `#zoom`. */
+const ZOOM_OPTIONS: readonly StatusZoomOption[] = ZOOM.map((option) => ({
+  value: option.label,
+  label: option.label,
+}));
 
 /** Множитель по подписи из списка; отбор идёт по своему же списку. */
 function zoomByLabel(label: string): string {
@@ -200,22 +205,66 @@ const OTHER_RIBBONS: Record<string, RibbonSpec[]> = {
 
 /** Пропсы ленты «Главная»: команды вьюера, которые лента показывает. */
 interface HomeRibbonProps {
-  zoom: string;
-  /** Зум — команда вьюера: без него крутить нечего. */
-  zoomDisabled: boolean;
-  onZoom: (value: string) => void;
+  /** Вьюер не поднялся — открывать и переключать вид нечем. */
+  controlsDisabled: boolean;
+  fixtures: string[];
+  fixture: string;
+  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onFixtureChange: (name: string) => void;
+  /** Показ листа: сетка, заголовки и «вписать по ширине». */
+  showGrid: boolean;
+  showHeaders: boolean;
+  onShowGrid: (checked: boolean) => void;
+  onShowHeaders: (checked: boolean) => void;
   exportDisabled: boolean;
   /** Вписать столбцы по ширине страницы; строки при этом переносятся. */
   fitToWidth: boolean;
   onFitToWidth: (checked: boolean) => void;
   onExportSheet: () => void;
   onExportBook: () => void;
+  /** Переход между листами в группе «Листы». */
+  sheetIndex: number;
+  sheetCount: number;
+  onStepSheet: (delta: number) => void;
 }
 
 /** Лента «Главная»: та же, что в Excel, и так же разложена по группам. */
 function HomeRibbon(props: HomeRibbonProps): ReactElement {
   return (
     <div className="ofc-ribbon-body">
+      {/* Открыть — первое, что делает страница: книга с диска или фикстура из
+          списка. Без вьюера открывать нечего, поэтому контролы ждут его. */}
+      <RibbonGroup label="Открыть">
+        <div className="ofc-open">
+          <label className="ofc-file" title="Открыть книгу с диска">
+            <input
+              id="file"
+              type="file"
+              accept=".xlsx"
+              disabled={props.controlsDisabled}
+              onChange={props.onFileChange}
+            />
+            <Icon name="file" size={14} />
+            Открыть
+          </label>
+          <select
+            id="fixture"
+            title="Фикстура"
+            value={props.fixture}
+            disabled={props.controlsDisabled}
+            onChange={(event) => {
+              props.onFixtureChange(event.target.value);
+            }}
+          >
+            <option value="">— фикстура —</option>
+            {props.fixtures.map((name) => (
+              <option key={name} value={name}>
+                {name.replace(/\.xlsx$/, '')}
+              </option>
+            ))}
+          </select>
+        </div>
+      </RibbonGroup>
       <RibbonGroup label="Буфер обмена">
         <RibbonButton icon="paste" label="Вставить" large disabled />
         <div className="ofc-stack">
@@ -324,38 +373,84 @@ function HomeRibbon(props: HomeRibbonProps): ReactElement {
           disabled={props.exportDisabled}
           onClick={props.onExportBook}
         />
-        <label
-          className="ofc-statusbar__check"
-          title="Уместить столбцы по ширине страницы: широкие таблицы не рвутся по столбцам, строки переходят на следующие страницы"
-          style={{ marginLeft: 8 }}
-        >
-          <input
-            id="fit-to-width"
-            type="checkbox"
-            checked={props.fitToWidth}
-            disabled={props.exportDisabled}
-            onChange={(event) => {
-              props.onFitToWidth(event.target.checked);
-            }}
-          />{' '}
-          вписать по ширине
-        </label>
       </RibbonGroup>
-      {/* Масштаб — тоже команда вьюера, а не каркаса: она переживает отказ
-          книги и остаётся доступной, когда остальная лента пуста. */}
-      <RibbonGroup label="Масштаб">
-        <RibbonSelect
-          id="zoom"
-          options={ZOOM_LABELS}
-          value={zoomLabel(props.zoom)}
-          ariaLabel="Масштаб"
-          title="Масштаб книги"
-          width={88}
-          disabled={props.zoomDisabled}
-          onChange={(label) => {
-            props.onZoom(zoomByLabel(label));
-          }}
-        />
+      {/* Вид — то, как показан лист и как он ляжет на страницы PDF. */}
+      <RibbonGroup label="Вид">
+        <div className="ofc-stack">
+          <label className="ofc-check">
+            <input
+              id="grid"
+              type="checkbox"
+              checked={props.showGrid}
+              disabled={props.controlsDisabled}
+              onChange={(event) => {
+                props.onShowGrid(event.target.checked);
+              }}
+            />{' '}
+            сетка
+          </label>
+          <label className="ofc-check">
+            <input
+              id="headers"
+              type="checkbox"
+              checked={props.showHeaders}
+              disabled={props.controlsDisabled}
+              onChange={(event) => {
+                props.onShowHeaders(event.target.checked);
+              }}
+            />{' '}
+            заголовки
+          </label>
+          <label
+            className="ofc-check"
+            title="Уместить столбцы по ширине страницы: широкие таблицы не рвутся по столбцам, строки переходят на следующие страницы"
+          >
+            <input
+              id="fit-to-width"
+              type="checkbox"
+              checked={props.fitToWidth}
+              disabled={props.exportDisabled}
+              onChange={(event) => {
+                props.onFitToWidth(event.target.checked);
+              }}
+            />{' '}
+            вписать по ширине
+          </label>
+        </div>
+      </RibbonGroup>
+      {/* Листы — переход между листами книги; сам список листов живёт в
+          строке состояния. */}
+      <RibbonGroup label="Листы">
+        <div className="ofc-row">
+          <button
+            type="button"
+            className="ofc-navbtn"
+            title="Предыдущий лист"
+            disabled={props.sheetIndex <= 0}
+            onClick={() => {
+              props.onStepSheet(-1);
+            }}
+          >
+            ←
+          </button>
+          <span className="ofc-navlabel">
+            лист{' '}
+            <b>
+              {props.sheetCount === 0 ? '—' : `${props.sheetIndex + 1} / ${props.sheetCount}`}
+            </b>
+          </span>
+          <button
+            type="button"
+            className="ofc-navbtn"
+            title="Следующий лист"
+            disabled={props.sheetIndex + 1 >= props.sheetCount}
+            onClick={() => {
+              props.onStepSheet(1);
+            }}
+          >
+            →
+          </button>
+        </div>
       </RibbonGroup>
     </div>
   );
@@ -371,47 +466,30 @@ export default function XlsxPage(): ReactElement {
         logo={<LogoExcel size={20} />}
         app="ДваИксель"
         documentName={page.documentName}
-      >
-        <label className="ofc-file" title="Открыть книгу с диска">
-          <input
-            id="file"
-            type="file"
-            accept=".xlsx"
-            disabled={page.controlsDisabled}
-            onChange={page.onFileChange}
-          />
-          <Icon name="file" size={14} />
-          Открыть
-        </label>
-        <select
-          id="fixture"
-          title="Фикстура"
-          value={page.fixture}
-          disabled={page.controlsDisabled}
-          onChange={(event) => {
-            page.onFixtureChange(event.target.value);
-          }}
-        >
-          <option value="">— фикстура —</option>
-          {page.fixtures.map((name) => (
-            <option key={name} value={name}>
-              {name.replace(/\.xlsx$/, '')}
-            </option>
-          ))}
-        </select>
-      </TitleBar>
+      />
       <div className="ofc-ribbon">
         <RibbonTabs tabs={TABS} activeId={page.tab} onSelect={page.onTabSelect} />
         {page.tab === 'home' ? (
           <HomeRibbon
-            zoom={page.zoom}
-            zoomDisabled={page.controlsDisabled}
-            onZoom={page.onZoomChange}
+            controlsDisabled={page.controlsDisabled}
+            fixtures={page.fixtures}
+            fixture={page.fixture}
+            onFileChange={page.onFileChange}
+            onFixtureChange={page.onFixtureChange}
+            showGrid={page.showGrid}
+            showHeaders={page.showHeaders}
+            onShowGrid={page.onShowGrid}
+            onShowHeaders={page.onShowHeaders}
             exportDisabled={page.exportDisabled}
             fitToWidth={page.fitToWidth}
             onFitToWidth={page.onFitToWidth}
             onExportSheet={page.onExportSheet}
             onExportBook={page.onExportBook}
+            sheetIndex={page.sheetIndex}
+            sheetCount={page.sheets.length}
+            onStepSheet={(delta) => {
+              page.onSheetChange(String(page.sheetIndex + delta));
+            }}
           />
         ) : (
           <div className="ofc-ribbon-body">
@@ -425,13 +503,9 @@ export default function XlsxPage(): ReactElement {
           </div>
         )}
       </div>
-      <FormulaBar
-        cellRef={
-          <span id="cell" ref={page.cellRef}>
-            —
-          </span>
-        }
-      />
+      {/* Строка формул остаётся каркасом Excel: имя активной ячейки теперь
+          живёт в строке состояния рядом с листом. */}
+      <FormulaBar />
       {/* Хост вьюера пуст: разметку внутри собирает сам вьюер, и React в неё
           не вмешивается — иначе он сносил бы чужие узлы при перерисовке. */}
       <main
@@ -469,42 +543,25 @@ export default function XlsxPage(): ReactElement {
                 )}
               </select>
             </label>
+            <span className="ofc-statusbar__cell">
+              ячейка <span id="cell" ref={page.cellRef}>—</span>
+            </span>
             <span id="hint">перетащите .xlsx в окно</span>
           </>
         }
         right={
           <>
-            <label className="ofc-statusbar__check">
-              <input
-                id="grid"
-                type="checkbox"
-                checked={page.showGrid}
-                disabled={page.controlsDisabled}
-                onChange={(event) => {
-                  page.onShowGrid(event.target.checked);
-                }}
-              />{' '}
-              сетка
-            </label>
-            <label className="ofc-statusbar__check">
-              <input
-                id="headers"
-                type="checkbox"
-                checked={page.showHeaders}
-                disabled={page.controlsDisabled}
-                onChange={(event) => {
-                  page.onShowHeaders(event.target.checked);
-                }}
-              />{' '}
-              заголовки
-            </label>
-            <span className="ofc-statusbar__sep" />
             <span id="status">{page.status}</span>
-            {/* Масштаб показывается, но не правится: ручка — в ленте. */}
-            <span className="ofc-statusbar__zoom" title="Масштаб">
-              <Icon name="zoom-out" size={14} />
-              {zoomLabel(page.zoom)}
-            </span>
+            <span className="ofc-statusbar__sep" />
+            <StatusZoom
+              id="zoom"
+              options={ZOOM_OPTIONS}
+              value={zoomLabel(page.zoom)}
+              disabled={page.controlsDisabled}
+              onChange={(label) => {
+                page.onZoomChange(zoomByLabel(label));
+              }}
+            />
           </>
         }
       >

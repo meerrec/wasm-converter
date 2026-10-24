@@ -1,11 +1,12 @@
 import type { ReactElement } from 'react';
 
 /**
- * Логотипы приложений каркаса: «Слово» (документ) и «ДваИксель» (книга).
+ * Логотипы приложений каркаса: «Слово» (документ), «ДваИксель» (книга) и
+ * «PowerPoint» (презентация).
  *
- * Нарисованы своей геометрией, а не сняты с товарных знаков Microsoft: у обоих
+ * Нарисованы своей геометрией, а не сняты с товарных знаков Microsoft: у всех
  * общий приём — скруглённый квадрат и белый знак внутри, — но знаки разные
- * (литера «С» против «XXL»), и пропорции заданы здесь, а не скопированы.
+ * (литера «С», «XXL» и слайд), и пропорции заданы здесь, а не скопированы.
  */
 
 /** Размер холста логотипа: viewBox один на оба знака, чтобы их было видно рядом. */
@@ -75,6 +76,34 @@ export function LogoExcel(props: { size?: number }): ReactElement {
         <path d="M29 17 L21.5 31" />
         <path d="M32 17 L32 31 L39 31" />
       </g>
+    </svg>
+  );
+}
+
+/**
+ * Логотип «PowerPoint»: оранжевый слайд с белой литерой «P».
+ *
+ * @param props.size — сторона квадрата в пикселях (по умолчанию 24).
+ */
+export function LogoPowerPoint(props: { size?: number }): ReactElement {
+  const size = props.size ?? 24;
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${VIEW} ${VIEW}`}
+      role="img"
+      aria-label="PowerPoint"
+    >
+      <rect width={VIEW} height={VIEW} rx={ROUND} fill="#c43e1c" />
+      <path
+        d="M19 15 V33 M19 15 H26.5 A5 5 0 0 1 26.5 25 H19"
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth={4}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

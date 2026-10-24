@@ -10,11 +10,12 @@ import './office.css';
 
 export { Icon } from './icons.js';
 export type { IconName } from './icons.js';
-export { LogoExcel, LogoWord } from './logos.js';
+export { LogoExcel, LogoPowerPoint, LogoWord } from './logos.js';
 export { RibbonButton, RibbonGroup, RibbonSelect, RibbonTabs, RibbonTile, RibbonToggle } from './Ribbon.js';
 export type { RibbonTab } from './Ribbon.js';
 export { TitleBar } from './TitleBar.js';
-export { StatusBar } from './StatusBar.js';
+export { StatusBar, StatusZoom } from './StatusBar.js';
+export type { StatusZoomOption } from './StatusBar.js';
 export { Ruler } from './Ruler.js';
 export { FormulaBar } from './FormulaBar.js';
 export { LoadingOverlay } from './LoadingOverlay.js';

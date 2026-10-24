@@ -80,7 +80,7 @@ export interface XlsxPageApi {
   viewer: XlsxViewerHandle | null;
   /** Хост вьюера: на `<main id="viewer">`, всегда пустой. */
   hostRef: RefObject<HTMLElement | null>;
-  /** Поле имени ячейки в строке формул: на `<span id="cell">`. */
+  /** Поле имени ячейки в строке состояния: на `<span id="cell">`. */
   cellRef: RefObject<HTMLSpanElement | null>;
   /** Наведение: адрес ячейки под курсором. */
   onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
