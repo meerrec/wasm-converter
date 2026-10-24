@@ -458,7 +458,6 @@ dependencies = [
 name = "doc-converter-core"
 version = "1.4.3"
 dependencies = [
- "chrono",
  "flate2",
  "insta",
  "miette",
@@ -485,6 +484,7 @@ dependencies = [
  "quick-xml",
  "serde",
  "serde_json",
+ "smallvec",
  "thiserror",
  "tracing",
  "unicode-bidi",
@@ -498,6 +498,7 @@ dependencies = [
  "doc-converter-core",
  "doc-converter-docx",
  "doc-converter-render",
+ "doc-converter-wasm-common",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",
@@ -562,6 +563,7 @@ dependencies = [
 name = "doc-converter-pptx-pdf"
 version = "1.4.3"
 dependencies = [
+ "doc-converter-core",
  "doc-converter-pdf",
  "doc-converter-pptx",
  "doc-converter-pptx-layout",
@@ -604,6 +606,7 @@ dependencies = [
  "doc-converter-pptx",
  "doc-converter-pptx-render",
  "doc-converter-render",
+ "doc-converter-wasm-common",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",
@@ -633,6 +636,7 @@ version = "1.4.3"
 dependencies = [
  "doc-converter-core",
  "doc-converter-render",
+ "doc-converter-wasm-common",
  "doc-converter-xlsx",
  "js-sys",
  "serde",
@@ -640,6 +644,17 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-test",
  "web-sys",
+]
+
+[[package]]
+name = "doc-converter-wasm-common"
+version = "1.4.3"
+dependencies = [
+ "doc-converter-core",
+ "doc-converter-render",
+ "js-sys",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
 ]
 
 [[package]]

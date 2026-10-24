@@ -13,22 +13,14 @@
 use std::cell::Cell;
 use std::cell::RefCell;
 
-use doc_converter_core::wire::{BuildStatsWire, ImageInfoWire, PageInfoWire, ViewportWire};
+use doc_converter_core::wire::{ImageInfoWire, PageInfoWire};
 use doc_converter_docx::layout::layout_document_with_cancel;
 use doc_converter_docx::{Document, LayoutError, LayoutOptions, MediaPart, PageLayout};
 use doc_converter_render::display_list::DisplayList;
-use doc_converter_render::font::FontRegistry;
-use doc_converter_render::sab::SabRing;
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE};
 use doc_converter_render::viewport::Viewport;
+use doc_converter_wasm_common::frame;
 use wasm_bindgen::prelude::*;
-
-/// Размер LRU-кэша метрик шрифта.
-///
-/// Раскладка меряет текст одним шрифтом по умолчанию, но на нескольких кеглях
-/// и со сотнями различных символов на страницу: 4096 записей — это уже
-/// «больше, чем символов в документе», и кэш перестаёт промахиваться на
-/// повторяющихся буквах, не вырастая вместе с документом.
-const FONT_CACHE: usize = 4096;
 
 thread_local! {
     /// Открытый документ: `None`, пока ничего не открыто.
@@ -84,7 +76,9 @@ pub fn docx_open(bytes: Vec<u8>) -> Result<JsValue, JsValue> {
 /// Раскладывает готовый документ, ставит его в `DOC` и сериализует ответ
 /// открытия — общий хвост `docx_open` и `stream_open_docx` (ADR-0031).
 pub(crate) fn install_document(document: Document) -> Result<JsValue, JsValue> {
-    let mut fonts = FontRegistry::new(FONT_CACHE);
+    // Размер LRU-кэша метрик — общий `DEFAULT_FONT_CACHE` из
+    // `doc_converter_render::font`.
+    let mut fonts = FontRegistry::new(DEFAULT_FONT_CACHE);
     let laid_out = CANCEL.with(|cancelled| {
         layout_document_with_cancel(&document, &LayoutOptions::default(), &mut fonts, cancelled)
     });
@@ -178,66 +172,23 @@ pub fn docx_image_bytes(id: u32) -> Result<js_sys::Uint8Array, JsValue> {
     })
 }
 
-/// Собрать кадр стопки страниц и отдать его байты транспорту вызывающего.
+/// Собрать кадр стопки страниц в `frame` и вернуть число команд.
 ///
 /// Кадр несёт страницы вокруг окна, а не одну текущую: прокрутка отсчитывается
 /// от верха стопки, страницы стоят друг под другом через `gap` (см.
 /// [`doc_converter_docx::render::build_stack`]). Пустой документ даёт пустой
-/// кадр, а не ошибку. Сборка и сериализация у обоих путей (SAB и без него)
-/// общие — разница только в том, куда байты деваются.
+/// кадр, а не ошибку. Сериализация и транспорт общие с XLSX/PPTX —
+/// `doc_converter_wasm_common::frame`, — сюда входит только сборка формата.
 ///
 /// # Errors
-/// Если документ не открыт, окно описано неверно или запись не удалась.
-fn with_frame_bytes(
-    viewport: Viewport,
-    gap: f32,
-    write: impl FnOnce(&[u8]) -> Result<bool, JsValue>,
-) -> Result<BuildStatsWire, JsValue> {
-    let started = js_sys::Date::now();
-    DOC.with(|doc| -> Result<BuildStatsWire, JsValue> {
+/// Если документ не открыт.
+fn build_frame(viewport: Viewport, gap: f32, frame: &mut DisplayList) -> Result<u32, JsValue> {
+    DOC.with(|doc| {
         let doc = doc.borrow();
         let open = doc.as_ref().ok_or_else(|| to_js("no document is open"))?;
-
-        FRAME.with(|frame| {
-            let mut frame = frame.borrow_mut();
-            doc_converter_docx::render::build_stack(&open.layout, viewport, gap, &mut frame);
-            let cmds = u32::try_from(frame.len()).unwrap_or(u32::MAX);
-
-            SCRATCH.with(|scratch| {
-                let mut scratch = scratch.borrow_mut();
-                frame.to_bytes_into(&mut scratch);
-                let bytes = u32::try_from(scratch.len()).unwrap_or(u32::MAX);
-                Ok(BuildStatsWire {
-                    written: write(&scratch)?,
-                    cmds,
-                    bytes,
-                    build_ms: js_sys::Date::now() - started,
-                })
-            })
-        })
+        doc_converter_docx::render::build_stack(&open.layout, viewport, gap, frame);
+        Ok(u32::try_from(frame.len()).unwrap_or(u32::MAX))
     })
-}
-
-/// Собрать кадр стопки страниц и вернуть его байты.
-///
-/// Годится тому, кто рисует кадр в другом модуле wasm: кадр самодостаточен.
-/// Просмотрщик ходит через [`docx_build_display_list_into`] — там буфер
-/// вызывающего переиспользуется, а тут кадр каждый раз новый массив.
-///
-/// `viewport.y` — прокрутка от верха стопки страниц, `gap` — зазор между
-/// страницами в пикселях раскладки.
-///
-/// # Errors
-/// Если документ не открыт или окно описано неверно.
-#[wasm_bindgen]
-pub fn docx_build_display_list(viewport: JsValue, gap: f32) -> Result<Vec<u8>, JsValue> {
-    let viewport = viewport_of(viewport)?;
-    let mut out = Vec::new();
-    with_frame_bytes(viewport, gap, |bytes| {
-        out.extend_from_slice(bytes);
-        Ok(true)
-    })?;
-    Ok(out)
 }
 
 /// Собрать кадр стопки страниц сразу в слот ring'а.
@@ -257,9 +208,8 @@ pub fn docx_build_display_list_sab(
     gap: f32,
 ) -> Result<JsValue, JsValue> {
     let viewport = viewport_of(viewport)?;
-    let stats = with_frame_bytes(viewport, gap, |bytes| {
-        let mut ring = SabRing::from_sab(sab, slot_capacity as usize)?;
-        ring.try_write(bytes)
+    let stats = frame::build_sab(sab, slot_capacity, &FRAME, &SCRATCH, |frame| {
+        build_frame(viewport, gap, frame)
     })?;
     serde_wasm_bindgen::to_value(&stats).map_err(to_js)
 }
@@ -281,13 +231,8 @@ pub fn docx_build_display_list_into(
     gap: f32,
 ) -> Result<JsValue, JsValue> {
     let viewport = viewport_of(viewport)?;
-    let stats = with_frame_bytes(viewport, gap, |bytes| {
-        let length = bytes.len() as u32;
-        if length > out.length() {
-            return Ok(false);
-        }
-        out.subarray(0, length).copy_from(bytes);
-        Ok(true)
+    let stats = frame::build_into(out, &FRAME, &SCRATCH, |frame| {
+        build_frame(viewport, gap, frame)
     })?;
     serde_wasm_bindgen::to_value(&stats).map_err(to_js)
 }
@@ -316,17 +261,11 @@ pub(crate) fn with_layout<T>(read: impl FnOnce(&PageLayout) -> T) -> Option<T> {
     DOC.with(|doc| doc.borrow().as_ref().map(|doc| read(&doc.layout)))
 }
 
-/// Перевести окно из JS в представление рендера.
+/// Перевести окно из JS в представление рендера. Форма окна общая с XLSX/PPTX,
+/// разбор — общий в `doc_converter_wasm_common::frame`.
 ///
 /// У DOCX `scrollY` отсчитывается от верха стопки страниц, а не от верха
 /// текущей: страницы стоят друг под другом, и кадр несёт те из них, что видны.
 fn viewport_of(value: JsValue) -> Result<Viewport, JsValue> {
-    let js: ViewportWire = serde_wasm_bindgen::from_value(value).map_err(to_js)?;
-    Ok(Viewport::new(
-        js.scroll_x,
-        js.scroll_y,
-        js.width,
-        js.height,
-        js.scale,
-    ))
+    frame::viewport_of(value)
 }

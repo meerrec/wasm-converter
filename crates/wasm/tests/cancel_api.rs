@@ -40,11 +40,18 @@ fn frame_args() -> (JsValue, JsValue) {
 fn cancel_stops_frame_build_and_worker_stays_healthy() {
     doc_converter_wasm::xlsx_api::xlsx_open(BOOK.to_vec()).expect("книга открывается");
 
+    // Буфер вызывающего размером с воркерный (1 МиБ); кадр пишется в него.
+    let out = js_sys::Uint8Array::new_with_length(1_048_576);
+
     let (viewport, options) = frame_args();
     doc_converter_wasm::xlsx_api::set_cancel(true);
-    let err =
-        doc_converter_wasm::xlsx_api::xlsx_build_display_list(0, viewport.clone(), options.clone())
-            .expect_err("взведённый флаг отменяет сборку кадра");
+    let err = doc_converter_wasm::xlsx_api::xlsx_build_display_list_into(
+        &out,
+        0,
+        viewport.clone(),
+        options.clone(),
+    )
+    .expect_err("взведённый флаг отменяет сборку кадра");
     assert!(
         err.as_string()
             .is_some_and(|m| m.starts_with("[cancelled]")),
@@ -52,8 +59,18 @@ fn cancel_stops_frame_build_and_worker_stays_healthy() {
     );
 
     doc_converter_wasm::xlsx_api::set_cancel(false);
-    let frame = doc_converter_wasm::xlsx_api::xlsx_build_display_list(0, viewport, options)
-        .expect("после снятия флага кадр собирается");
+    let stats =
+        doc_converter_wasm::xlsx_api::xlsx_build_display_list_into(&out, 0, viewport, options)
+            .expect("после снятия флага кадр собирается");
+    let written = js_sys::Reflect::get(&stats, &JsValue::from_str("written"))
+        .ok()
+        .and_then(|value| value.as_bool());
+    assert_eq!(written, Some(true), "кадр уложился в буфер");
+    let length = js_sys::Reflect::get(&stats, &JsValue::from_str("bytes"))
+        .ok()
+        .and_then(|value| value.as_f64())
+        .expect("статистика кадра несёт размер в байтах") as u32;
+    let frame = out.subarray(0, length).to_vec();
     assert!(frame.len() >= 20, "кадр несёт заголовок DisplayList");
 
     doc_converter_wasm::xlsx_api::xlsx_close();

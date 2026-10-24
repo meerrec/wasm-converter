@@ -12,12 +12,12 @@
 use std::cell::Cell;
 use std::cell::RefCell;
 
-use doc_converter_core::wire::{BuildStatsWire, ImageInfoWire, SlideInfoWire, ViewportWire};
+use doc_converter_core::wire::{ImageInfoWire, SlideInfoWire};
 use doc_converter_pptx::model::Presentation;
 use doc_converter_pptx_render::{layout_slide, SlideLayout};
 use doc_converter_render::display_list::DisplayList;
-use doc_converter_render::sab::SabRing;
 use doc_converter_render::viewport::Viewport;
+use doc_converter_wasm_common::frame;
 use wasm_bindgen::prelude::*;
 
 thread_local! {
@@ -167,23 +167,17 @@ pub fn pptx_image_bytes(id: u32) -> Result<js_sys::Uint8Array, JsValue> {
     })
 }
 
-/// Собрать кадр слайда и отдать его байты транспорту вызывающего.
+/// Собрать кадр слайда в `frame` и вернуть число команд.
 ///
 /// Слайд — одна страница рендера: кадр несёт сам слайд, а не стопку, поэтому
 /// `viewport.x`/`viewport.y` — прокрутка внутри слайда (обычно нулевая), а не
-/// смещение по стопке. Сборка и сериализация у обоих путей (SAB и без него)
-/// общие — разница только в том, куда байты деваются.
+/// смещение по стопке. Сериализация и транспорт общие с XLSX/DOCX —
+/// `doc_converter_wasm_common::frame`, — сюда входит только сборка формата.
 ///
 /// # Errors
-/// Если презентация не открыта, слайда с таким индексом нет, окно описано
-/// неверно или запись не удалась.
-fn with_frame_bytes(
-    slide: u32,
-    viewport: Viewport,
-    write: impl FnOnce(&[u8]) -> Result<bool, JsValue>,
-) -> Result<BuildStatsWire, JsValue> {
-    let started = js_sys::Date::now();
-    PRES.with(|pres| -> Result<BuildStatsWire, JsValue> {
+/// Если презентация не открыта или слайда с таким индексом нет.
+fn build_frame(slide: u32, viewport: Viewport, frame: &mut DisplayList) -> Result<u32, JsValue> {
+    PRES.with(|pres| {
         let pres = pres.borrow();
         let open = pres
             .as_ref()
@@ -193,45 +187,9 @@ fn with_frame_bytes(
             .layouts
             .get(index)
             .ok_or_else(|| to_js(format!("slide index {index} is out of range")))?;
-
-        FRAME.with(|frame| {
-            let mut frame = frame.borrow_mut();
-            doc_converter_pptx_render::render::build(layout, &viewport, &mut frame);
-            let cmds = u32::try_from(frame.len()).unwrap_or(u32::MAX);
-
-            SCRATCH.with(|scratch| {
-                let mut scratch = scratch.borrow_mut();
-                frame.to_bytes_into(&mut scratch);
-                let bytes = u32::try_from(scratch.len()).unwrap_or(u32::MAX);
-                Ok(BuildStatsWire {
-                    written: write(&scratch)?,
-                    cmds,
-                    bytes,
-                    build_ms: js_sys::Date::now() - started,
-                })
-            })
-        })
+        doc_converter_pptx_render::render::build(layout, &viewport, frame);
+        Ok(u32::try_from(frame.len()).unwrap_or(u32::MAX))
     })
-}
-
-/// Собрать кадр слайда и вернуть его байты.
-///
-/// Годится тому, кто рисует кадр в другом модуле wasm: кадр самодостаточен.
-/// Просмотрщик ходит через [`pptx_build_display_list_into`] — там буфер
-/// вызывающего переиспользуется, а тут кадр каждый раз новый массив.
-///
-/// # Errors
-/// Если презентация не открыта, слайда с таким индексом нет или окно описано
-/// неверно.
-#[wasm_bindgen]
-pub fn pptx_build_display_list(viewport: JsValue, slide: u32) -> Result<Vec<u8>, JsValue> {
-    let viewport = viewport_of(viewport)?;
-    let mut out = Vec::new();
-    with_frame_bytes(slide, viewport, |bytes| {
-        out.extend_from_slice(bytes);
-        Ok(true)
-    })?;
-    Ok(out)
 }
 
 /// Собрать кадр слайда сразу в слот ring'а.
@@ -252,9 +210,8 @@ pub fn pptx_build_display_list_sab(
     slide: u32,
 ) -> Result<JsValue, JsValue> {
     let viewport = viewport_of(viewport)?;
-    let stats = with_frame_bytes(slide, viewport, |bytes| {
-        let mut ring = SabRing::from_sab(sab, slot_capacity as usize)?;
-        ring.try_write(bytes)
+    let stats = frame::build_sab(sab, slot_capacity, &FRAME, &SCRATCH, |frame| {
+        build_frame(slide, viewport, frame)
     })?;
     serde_wasm_bindgen::to_value(&stats).map_err(to_js)
 }
@@ -277,13 +234,8 @@ pub fn pptx_build_display_list_into(
     slide: u32,
 ) -> Result<JsValue, JsValue> {
     let viewport = viewport_of(viewport)?;
-    let stats = with_frame_bytes(slide, viewport, |bytes| {
-        let length = bytes.len() as u32;
-        if length > out.length() {
-            return Ok(false);
-        }
-        out.subarray(0, length).copy_from(bytes);
-        Ok(true)
+    let stats = frame::build_into(out, &FRAME, &SCRATCH, |frame| {
+        build_frame(slide, viewport, frame)
     })?;
     serde_wasm_bindgen::to_value(&stats).map_err(to_js)
 }
@@ -304,17 +256,11 @@ pub(crate) fn to_js(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 
-/// Перевести окно из JS в представление рендера.
+/// Перевести окно из JS в представление рендера. Форма окна общая с
+/// XLSX/DOCX, разбор — общий в `doc_converter_wasm_common::frame`.
 ///
 /// У PPTX `scrollX`/`scrollY` отсчитываются от левого верхнего угла слайда;
 /// при показе слайда целиком они нулевые.
 fn viewport_of(value: JsValue) -> Result<Viewport, JsValue> {
-    let js: ViewportWire = serde_wasm_bindgen::from_value(value).map_err(to_js)?;
-    Ok(Viewport::new(
-        js.scroll_x,
-        js.scroll_y,
-        js.width,
-        js.height,
-        js.scale,
-    ))
+    frame::viewport_of(value)
 }

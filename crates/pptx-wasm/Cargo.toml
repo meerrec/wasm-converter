@@ -18,6 +18,7 @@ doc-converter-pptx        = { workspace = true }
 # из готовых `SlideLayout`.
 doc-converter-pptx-render = { workspace = true }
 doc-converter-render      = { workspace = true }
+doc-converter-wasm-common = { workspace = true }
 wasm-bindgen              = "0.2"
 js-sys                    = "0.3"
 serde                     = { version = "1", features = ["derive"] }

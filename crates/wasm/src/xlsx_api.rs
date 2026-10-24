@@ -9,11 +9,10 @@ use std::cell::Cell;
 use std::cell::RefCell;
 
 use doc_converter_core::wire::{
-    BuildStatsWire, HyperlinkInfoWire, ImageInfoWire, RenderOptionsWire, SheetInfoWire,
-    ViewportWire,
+    HyperlinkInfoWire, ImageInfoWire, RenderOptionsWire, SheetInfoWire,
 };
 use doc_converter_render::display_list::DisplayList;
-use doc_converter_render::sab::SabRing;
+use doc_converter_wasm_common::frame;
 use doc_converter_xlsx::paint::{self, PaintOptions};
 use doc_converter_xlsx::Viewport;
 use doc_converter_xlsx::Workbook;
@@ -145,16 +144,10 @@ pub fn xlsx_image_bytes(id: u32) -> Result<js_sys::Uint8Array, JsValue> {
     })
 }
 
-/// Перевести окно из JS в представление рендера. Форма окна общая с DOCX.
+/// Перевести окно из JS в представление рендера. Форма окна общая с DOCX,
+/// разбор — общий в `doc_converter_wasm_common::frame`.
 pub(crate) fn viewport_of(value: JsValue) -> Result<Viewport, JsValue> {
-    let js: ViewportWire = serde_wasm_bindgen::from_value(value).map_err(to_js)?;
-    Ok(Viewport::new(
-        js.scroll_x,
-        js.scroll_y,
-        js.width,
-        js.height,
-        js.scale,
-    ))
+    frame::viewport_of(value)
 }
 
 fn options_of(value: JsValue) -> Result<PaintOptions, JsValue> {
@@ -167,22 +160,23 @@ fn options_of(value: JsValue) -> Result<PaintOptions, JsValue> {
     })
 }
 
-/// Собрать кадр листа и отдать его байты транспорту вызывающего.
+/// Собрать кадр листа в `frame` и вернуть число команд.
 ///
-/// Сборка и сериализация у обоих путей (SAB и без него) общие: решение о
-/// транспорте не должно разъезжаться с решением о содержимом кадра. Слот ring'а
-/// и буфер JS отличаются только тем, куда байты деваются, — это и есть `write`.
+/// CANCEL-обвязка (ADR-0032) и маппинг ошибок формата остаются здесь — у
+/// DOCX/PPTX свои типы ошибок, — а сериализация и транспорт общие у всех
+/// форматов и живут в `doc_converter_wasm_common::frame`. Слот ring'а и буфер
+/// JS отличаются только тем, куда байты деваются, — решение о транспорте не
+/// должно разъезжаться с решением о содержимом кадра.
 ///
 /// # Errors
-/// Если книга не открыта, листа нет, окно описано неверно или запись не удалась.
-fn with_frame_bytes(
+/// Если книга не открыта или листа с таким номером нет.
+fn build_frame(
     sheet: usize,
     viewport: Viewport,
-    options: PaintOptions,
-    write: impl FnOnce(&[u8]) -> Result<bool, JsValue>,
-) -> Result<BuildStatsWire, JsValue> {
-    let started = now();
-    DOC.with(|doc| -> Result<BuildStatsWire, JsValue> {
+    options: &PaintOptions,
+    frame: &mut DisplayList,
+) -> Result<u32, JsValue> {
+    DOC.with(|doc| {
         let doc = doc.borrow();
         let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
         let sheet = book
@@ -190,60 +184,20 @@ fn with_frame_bytes(
             .get(sheet)
             .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
 
-        FRAME.with(|frame| {
-            let mut frame = frame.borrow_mut();
-            let built = CANCEL.with(|cancelled| {
-                paint::build(book, sheet, viewport, &options, &mut frame, cancelled)
-            });
-            // Флаг одноразовый (ADR-0032): попытка сборки его гасит — иначе
-            // отменённый кадр отменял бы и следующий.
-            CANCEL.with(|cancelled| cancelled.set(false));
-            built.map_err(|e| {
-                if matches!(e, doc_converter_xlsx::XlsxError::Cancelled) {
-                    JsValue::from_str("[cancelled] operation cancelled")
-                } else {
-                    to_js(e)
-                }
-            })?;
-            let cmds = u32::try_from(frame.len()).unwrap_or(u32::MAX);
-
-            SCRATCH.with(|scratch| {
-                let mut scratch = scratch.borrow_mut();
-                frame.to_bytes_into(&mut scratch);
-                let bytes = u32::try_from(scratch.len()).unwrap_or(u32::MAX);
-                Ok(BuildStatsWire {
-                    written: write(&scratch)?,
-                    cmds,
-                    bytes,
-                    build_ms: now() - started,
-                })
-            })
-        })
+        let built =
+            CANCEL.with(|cancelled| paint::build(book, sheet, viewport, options, frame, cancelled));
+        // Флаг одноразовый (ADR-0032): попытка сборки его гасит — иначе
+        // отменённый кадр отменял бы и следующий.
+        CANCEL.with(|cancelled| cancelled.set(false));
+        built.map_err(|e| {
+            if matches!(e, doc_converter_xlsx::XlsxError::Cancelled) {
+                JsValue::from_str("[cancelled] operation cancelled")
+            } else {
+                to_js(e)
+            }
+        })?;
+        Ok(u32::try_from(frame.len()).unwrap_or(u32::MAX))
     })
-}
-
-/// Собрать кадр листа и вернуть его байты.
-///
-/// Годится тому, кто рисует кадр не в этом же воркере: сам кадр самодостаточен.
-/// Просмотрщик ходит через [`xlsx_build_display_list_into`] — там буфер
-/// вызывающего переиспользуется, а тут кадр каждый раз новый массив.
-///
-/// # Errors
-/// Если книга не открыта, листа с таким номером нет или окно описано неверно.
-#[wasm_bindgen]
-pub fn xlsx_build_display_list(
-    sheet: usize,
-    viewport: JsValue,
-    options: JsValue,
-) -> Result<Vec<u8>, JsValue> {
-    let viewport = viewport_of(viewport)?;
-    let options = options_of(options)?;
-    let mut out = Vec::new();
-    with_frame_bytes(sheet, viewport, options, |bytes| {
-        out.extend_from_slice(bytes);
-        Ok(true)
-    })?;
-    Ok(out)
 }
 
 /// Собрать кадр листа сразу в слот ring'а.
@@ -266,9 +220,8 @@ pub fn xlsx_build_display_list_sab(
 ) -> Result<JsValue, JsValue> {
     let viewport = viewport_of(viewport)?;
     let options = options_of(options)?;
-    let stats = with_frame_bytes(sheet, viewport, options, |bytes| {
-        let mut ring = SabRing::from_sab(sab, slot_capacity as usize)?;
-        ring.try_write(bytes)
+    let stats = frame::build_sab(sab, slot_capacity, &FRAME, &SCRATCH, |frame| {
+        build_frame(sheet, viewport, &options, frame)
     })?;
     serde_wasm_bindgen::to_value(&stats).map_err(to_js)
 }
@@ -291,13 +244,8 @@ pub fn xlsx_build_display_list_into(
 ) -> Result<JsValue, JsValue> {
     let viewport = viewport_of(viewport)?;
     let options = options_of(options)?;
-    let stats = with_frame_bytes(sheet, viewport, options, |bytes| {
-        let length = bytes.len() as u32;
-        if length > out.length() {
-            return Ok(false);
-        }
-        out.subarray(0, length).copy_from(bytes);
-        Ok(true)
+    let stats = frame::build_into(out, &FRAME, &SCRATCH, |frame| {
+        build_frame(sheet, viewport, &options, frame)
     })?;
     serde_wasm_bindgen::to_value(&stats).map_err(to_js)
 }
@@ -376,7 +324,3 @@ pub fn xlsx_open_bytes(bytes: js_sys::Uint8Array) -> Result<JsValue, JsValue> {
 // Экспорт в PDF живёт в отдельном модуле (`crates/pdf-wasm`): экспортёр PDF
 // тянет за собой lopdf/skrifa и раздувает бандл в разы, а нужен он только по
 // клику «Экспорт в PDF». Воркер грузит его лениво.
-
-fn now() -> f64 {
-    js_sys::Date::now()
-}

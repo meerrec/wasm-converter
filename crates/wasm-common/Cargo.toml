@@ -1,0 +1,21 @@
+[package]
+name = "doc-converter-wasm-common"
+version.workspace = true
+edition = "2021"
+description = "Shared wasm helpers: streaming input and DisplayList frame transport"
+license = "Apache-2.0"
+# На crates.io не публикуется: внутренняя библиотека wasm-крейтов, сама
+# wasm-bindgen-экспортов не объявляет (гейт `check exports` в CI сверяет
+# экспорты каждого pkg/ с его крейтом — биндинги из зависимости уронили бы
+# его во всех модулях).
+publish = false
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+doc-converter-core = { workspace = true }
+doc-converter-render = { workspace = true }
+js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
+wasm-bindgen = "0.2"

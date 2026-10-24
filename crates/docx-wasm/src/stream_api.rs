@@ -1,4 +1,4 @@
-//! Потоковый вход DOCX: чанки копятся в [`SegmentedBuffer`] до конца потока,
+//! Потоковый вход DOCX: чанки копятся в [`doc_converter_core::SegmentedBuffer`] до конца потока,
 //! парс — в том же wasm-модуле (ADR-0031 §6).
 //!
 //! Реестр потоков живёт в ленивом модуле DOCX, потому что документ разбирается
@@ -6,16 +6,20 @@
 //! парс из чанков (`parse_docx_segmented`) копии и не требует — `Archive`
 //! читает сегменты как есть. Копия чанка на границе JS→wasm неизбежна без
 //! SAB и принимается (ADR-0031 §6).
+//!
+//! Логика реестра общая с XLSX/PPTX и живёт в `doc_converter_wasm_common::streams`;
+//! здесь — только `thread_local!`-пара (статики импортировать нельзя) и
+//! `#[wasm_bindgen]`-обёртки.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use doc_converter_core::SegmentedBuffer;
+use doc_converter_wasm_common::streams::StreamMap;
 use wasm_bindgen::prelude::*;
 
 thread_local! {
     /// Открытые потоки по id: чанки копятся, пока не придёт конец потока.
-    static STREAMS: RefCell<HashMap<u32, SegmentedBuffer>> = RefCell::new(HashMap::new());
+    static STREAMS: StreamMap = RefCell::new(HashMap::new());
     /// Следующий id потока — монотонный счётчик воркера, повторов не бывает.
     static NEXT_ID: RefCell<u32> = const { RefCell::new(1) };
 }
@@ -23,15 +27,7 @@ thread_local! {
 /// Завести поток: id, под которым воркер будет слать чанки.
 #[wasm_bindgen]
 pub fn stream_new() -> u32 {
-    NEXT_ID.with(|next| {
-        let mut next = next.borrow_mut();
-        let id = *next;
-        *next = next.wrapping_add(1);
-        STREAMS.with(|streams| {
-            streams.borrow_mut().insert(id, SegmentedBuffer::new());
-        });
-        id
-    })
+    doc_converter_wasm_common::streams::stream_new(&STREAMS, &NEXT_ID)
 }
 
 /// Дописать чанк. Возвращает накопленный размер — прогресс для диагностики.
@@ -40,21 +36,13 @@ pub fn stream_new() -> u32 {
 /// Если поток с таким id не заведён.
 #[wasm_bindgen]
 pub fn stream_append(id: u32, bytes: &[u8]) -> Result<u64, JsValue> {
-    STREAMS.with(|streams| {
-        let mut streams = streams.borrow_mut();
-        let buf = streams
-            .get_mut(&id)
-            .ok_or_else(|| JsValue::from_str("stream_append: unknown stream id"))?;
-        Ok(buf.append(bytes))
-    })
+    doc_converter_wasm_common::streams::stream_append(&STREAMS, id, bytes)
 }
 
 /// Отменить поток: буфер освобождается, id больше не действителен.
 #[wasm_bindgen]
 pub fn stream_free(id: u32) {
-    STREAMS.with(|streams| {
-        streams.borrow_mut().remove(&id);
-    });
+    doc_converter_wasm_common::streams::stream_free(&STREAMS, id);
 }
 
 /// Завершить поток: разобрать накопленный буфер как документ (ADR-0031 §6).
@@ -67,9 +55,7 @@ pub fn stream_free(id: u32) {
 /// OOXML-пакет.
 #[wasm_bindgen]
 pub fn stream_open_docx(id: u32) -> Result<JsValue, JsValue> {
-    let buf = STREAMS
-        .with(|streams| streams.borrow_mut().remove(&id))
-        .ok_or_else(|| JsValue::from_str("stream_open: unknown stream id"))?;
+    let buf = doc_converter_wasm_common::streams::stream_take(&STREAMS, id)?;
     if buf.is_empty() {
         return Err(JsValue::from_str("stream aborted"));
     }

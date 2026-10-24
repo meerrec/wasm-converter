@@ -74,15 +74,15 @@ jobs:
 
       - name: build (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
-        run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm -p doc-converter-pptx-pdf-wasm --release
+        run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm -p doc-converter-pptx-pdf-wasm -p doc-converter-wasm-common --release
 
-      # На нативном таргете все пять крейтов пусты (`#![cfg(target_arch = "wasm32")]`),
+      # На нативном таргете все шесть крейтов пусты (`#![cfg(target_arch = "wasm32")]`),
       # поэтому их доккомментарии проверяет только эта нога матрицы.
       - name: doc (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm -p doc-converter-pptx-pdf-wasm --no-deps
+        run: cargo doc --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm -p doc-converter-pptx-pdf-wasm -p doc-converter-wasm-common --no-deps
 
   wasm:
     name: Wasm bindings

@@ -118,20 +118,35 @@ fn open_bytes_accepts_a_uint8_array() {
     doc_converter_pptx_wasm::pptx_api::pptx_close();
 }
 
-/// Fallback без SAB: байты кадра уезжают в воркер копией.
+/// Fallback без SAB: байты кадра уезжают в буфер вызывающего.
 #[wasm_bindgen_test]
-fn build_without_sab_returns_the_frame_bytes() {
+fn build_without_sab_writes_the_frame_into_the_caller_buffer() {
     doc_converter_pptx_wasm::pptx_api::pptx_open(TWO_SLIDES.to_vec())
         .expect("фикстура открывается");
 
-    let bytes = doc_converter_pptx_wasm::pptx_api::pptx_build_display_list(viewport(), 1)
-        .expect("кадр собирается");
-    assert!(bytes.len() > doc_converter_render::display_list::HEADER_SIZE);
+    let out = js_sys::Uint8Array::new_with_length(SLOT_CAPACITY);
+    let stats =
+        doc_converter_pptx_wasm::pptx_api::pptx_build_display_list_into(&out, viewport(), 1)
+            .expect("кадр собирается");
+    assert!(
+        js_sys::Reflect::get(&stats, &JsValue::from_str("written"))
+            .expect("поле читается")
+            .as_bool()
+            .expect("written — bool"),
+        "кадр уложился в буфер"
+    );
+    let len = number(&stats, "bytes") as usize;
+    assert!(len > doc_converter_render::display_list::HEADER_SIZE);
+
+    let bytes = out.to_vec();
     assert_eq!(
         &bytes[..4],
         doc_converter_render::display_list::DL_MAGIC.to_le_bytes(),
         "кадр начинается с магии DisplayList"
     );
+    let frame = doc_converter_render::display_list::DisplayList::from_bytes(&bytes[..len])
+        .expect("кадр декодируется как DisplayList");
+    assert!(frame.cmd_count() > 0, "слайд с текстом даёт команды");
 
     doc_converter_pptx_wasm::pptx_api::pptx_close();
 }
@@ -183,8 +198,11 @@ fn build_after_close_is_an_error() {
         .expect("фикстура открывается");
     doc_converter_pptx_wasm::pptx_api::pptx_close();
 
-    let error = doc_converter_pptx_wasm::pptx_api::pptx_build_display_list(viewport(), 0)
-        .expect_err("после закрытия кадр не собирается");
+    // До записи кадр не собирается: буфер на ошибку не влияет, хватит минимума.
+    let out = js_sys::Uint8Array::new_with_length(16);
+    let error =
+        doc_converter_pptx_wasm::pptx_api::pptx_build_display_list_into(&out, viewport(), 0)
+            .expect_err("после закрытия кадр не собирается");
     let message = error.as_string().unwrap_or_default();
     assert!(message.contains("no presentation"), "сообщение: {message}");
 }
@@ -195,8 +213,10 @@ fn slide_out_of_range_is_an_error() {
     doc_converter_pptx_wasm::pptx_api::pptx_open(TWO_SLIDES.to_vec())
         .expect("фикстура открывается");
 
-    let error = doc_converter_pptx_wasm::pptx_api::pptx_build_display_list(viewport(), 99)
-        .expect_err("слайда с таким индексом нет");
+    let out = js_sys::Uint8Array::new_with_length(16);
+    let error =
+        doc_converter_pptx_wasm::pptx_api::pptx_build_display_list_into(&out, viewport(), 99)
+            .expect_err("слайда с таким индексом нет");
     let message = error.as_string().unwrap_or_default();
     assert!(message.contains("out of range"), "сообщение: {message}");
 

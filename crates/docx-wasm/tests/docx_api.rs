@@ -129,14 +129,21 @@ fn build_without_sab_returns_the_frame_bytes() {
     doc_converter_docx_wasm::docx_api::docx_open(ONE_PARAGRAPH.to_vec())
         .expect("фикстура открывается");
 
-    let bytes = doc_converter_docx_wasm::docx_api::docx_build_display_list(viewport(), GAP)
-        .expect("кадр собирается");
-    assert!(bytes.len() > doc_converter_render::display_list::HEADER_SIZE);
+    let out = js_sys::Uint8Array::new(&vec![0u8; 1_048_576].into());
+    let stats =
+        doc_converter_docx_wasm::docx_api::docx_build_display_list_into(&out, viewport(), GAP)
+            .expect("кадр собирается");
+    assert!(boolean(&stats, "written"), "кадр уложился в буфер");
+    let bytes = number(&stats, "bytes") as usize;
+    assert!(bytes > doc_converter_render::display_list::HEADER_SIZE);
+    let frame = &out.to_vec()[..bytes];
     assert_eq!(
-        &bytes[..4],
+        &frame[..4],
         doc_converter_render::display_list::DL_MAGIC.to_le_bytes(),
         "кадр начинается с магии DisplayList"
     );
+    doc_converter_render::display_list::DisplayList::from_bytes(frame)
+        .expect("кадр декодируется как DisplayList");
 
     doc_converter_docx_wasm::docx_api::docx_close();
 }
@@ -189,8 +196,10 @@ fn build_after_close_is_an_error() {
         .expect("фикстура открывается");
     doc_converter_docx_wasm::docx_api::docx_close();
 
-    let error = doc_converter_docx_wasm::docx_api::docx_build_display_list(viewport(), GAP)
-        .expect_err("после закрытия кадр не собирается");
+    let out = js_sys::Uint8Array::new(&vec![0u8; 16].into());
+    let error =
+        doc_converter_docx_wasm::docx_api::docx_build_display_list_into(&out, viewport(), GAP)
+            .expect_err("после закрытия кадр не собирается");
     let message = error.as_string().unwrap_or_default();
     assert!(message.contains("no document"), "сообщение: {message}");
 }
