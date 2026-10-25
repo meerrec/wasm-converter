@@ -460,6 +460,20 @@ export interface EditCellMsg {
   text: string;
 }
 
+/**
+ * Заменить текст run'а документа DOCX сырым вводом. Адрес `(paragraph, run)` —
+ * модельный: его несёт текстовый слой (`TextRun.paragraphIndex`/`runIndex`).
+ * Воркер перераскладывает документ и отвечает `docx-edited` новыми размерами
+ * страниц; правка живёт до следующего открытия и попадает в PDF-экспорт.
+ */
+export interface EditDocxMsg {
+  type: 'edit-docx';
+  id: number;
+  paragraph: number;
+  run: number;
+  text: string;
+}
+
 export type InMsg =
   | InitMsg
   | ResizeMsg
@@ -476,6 +490,7 @@ export type InMsg =
   | HitTestMsg
   | HyperlinkAtMsg
   | EditCellMsg
+  | EditDocxMsg
   | ExportPngMsg
   | ExportPdfMsg
   | ExportDocxPdfMsg
@@ -526,6 +541,11 @@ export interface DocxOpenedMsg { type: 'docx-opened'; id: number; pages: PageInf
  * union не сужаются, и ветка на main-стороне потеряла бы `slides`.
  */
 export interface PptxOpenedMsg { type: 'pptx-opened'; id: number; slides: SlideInfo[] }
+/**
+ * Правка run'а применена: документ перераскладыван, и страницы могли
+ * измениться — размеры отдаются целиком, чтобы вьюер перестроил стопку.
+ */
+export interface DocxEditedMsg { type: 'docx-edited'; id: number; pages: PageInfo[] }
 /** Ответ на `hit-test`: строка и столбец либо ничего, если точка мимо. */
 export interface HitMsg { type: 'hit'; id: number; cell: [number, number] | null }
 /** Ответ на `hyperlink-at`: ссылка под точкой либо ничего. */
@@ -583,6 +603,7 @@ export type OutMsg =
   | OpenedMsg
   | DocxOpenedMsg
   | PptxOpenedMsg
+  | DocxEditedMsg
   | HitMsg
   | HyperlinkMsg
   | DocxTextMsg

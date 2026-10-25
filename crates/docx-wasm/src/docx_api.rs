@@ -13,7 +13,7 @@
 use std::cell::Cell;
 use std::cell::RefCell;
 
-use doc_converter_core::wire::{ImageInfoWire, PageInfoWire};
+use doc_converter_core::wire::{DocxRunEditWire, ImageInfoWire, PageInfoWire};
 use doc_converter_docx::layout::layout_document_with_cancel;
 use doc_converter_docx::{Document, LayoutError, LayoutOptions, MediaPart, PageLayout};
 use doc_converter_render::display_list::DisplayList;
@@ -92,14 +92,7 @@ pub(crate) fn install_document(document: Document) -> Result<JsValue, JsValue> {
             to_js(e)
         }
     })?;
-    let pages: Vec<PageInfoWire> = layout
-        .pages
-        .iter()
-        .map(|page| PageInfoWire {
-            width: page.width,
-            height: page.height,
-        })
-        .collect();
+    let pages = page_infos(&layout);
 
     DOC.with(|doc| {
         *doc.borrow_mut() = Some(OpenDoc {
@@ -109,6 +102,19 @@ pub(crate) fn install_document(document: Document) -> Result<JsValue, JsValue> {
         })
     });
     serde_wasm_bindgen::to_value(&pages).map_err(to_js)
+}
+
+/// Размеры страниц раскладки — общий вид `PageInfoWire` для открытия и
+/// [`docx_pages`].
+fn page_infos(layout: &PageLayout) -> Vec<PageInfoWire> {
+    layout
+        .pages
+        .iter()
+        .map(|page| PageInfoWire {
+            width: page.width,
+            height: page.height,
+        })
+        .collect()
 }
 
 /// Закрыть документ и освободить память.
@@ -123,6 +129,92 @@ pub fn docx_close() {
 #[wasm_bindgen]
 pub fn docx_is_open() -> bool {
     DOC.with(|doc| doc.borrow().is_some())
+}
+
+/// Заменить текст run'а открытого документа и перераскладывать его.
+///
+/// Адрес `(paragraph, run)` — модельный: индекс абзаца в теле и индекс run'а в
+/// его потоке (тот же адрес несёт текстовый слой). Правка ложится в слой
+/// правок документа, после чего раскладка считается заново
+/// ([`layout_document_with_cancel`]) тем же реестром шрифтов, которым документ
+/// был открыт, и заменяет готовую: кадр и текстовый слой читают новый текст.
+/// Правка живёт до следующего открытия документа.
+///
+/// # Errors
+/// Если документ не открыт; если абзаца с таким индексом нет
+/// (`paragraph {n} out of range`) или в абзаце нет run'а с таким индексом
+/// (`run {n} out of range`); если перераскладка отменена или не собралась.
+#[wasm_bindgen]
+pub fn docx_set_run_text(paragraph: u32, run: u32, text: String) -> Result<(), JsValue> {
+    DOC.with(|doc| {
+        let mut doc = doc.borrow_mut();
+        let open = doc
+            .as_mut()
+            .ok_or_else(|| to_js("no docx document is open"))?;
+        open.document
+            .set_run_text(paragraph, run, text)
+            .map_err(to_js)?;
+        let laid_out = CANCEL.with(|cancelled| {
+            layout_document_with_cancel(
+                &open.document,
+                &LayoutOptions::default(),
+                &mut open.fonts,
+                cancelled,
+            )
+        });
+        // Флаг одноразовый (ADR-0032): попытка раскладки его гасит.
+        CANCEL.with(|cancelled| cancelled.set(false));
+        let layout = laid_out.map_err(|e| {
+            if matches!(e, LayoutError::Cancelled) {
+                JsValue::from_str("[cancelled] operation cancelled")
+            } else {
+                to_js(e)
+            }
+        })?;
+        open.layout = layout;
+        Ok(())
+    })
+}
+
+/// Размеры страниц текущей раскладки — перечитываются после правки.
+///
+/// # Errors
+/// Если документ не открыт.
+#[wasm_bindgen]
+pub fn docx_pages() -> Result<JsValue, JsValue> {
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let open = doc
+            .as_ref()
+            .ok_or_else(|| to_js("no docx document is open"))?;
+        serde_wasm_bindgen::to_value(&page_infos(&open.layout)).map_err(to_js)
+    })
+}
+
+/// Снимок правок открытого документа — для экспортёра PDF, который разбирает
+/// байты заново. Порядок детерминирован: абзац, затем run.
+///
+/// # Errors
+/// Если документ не открыт.
+#[wasm_bindgen]
+pub fn docx_edits() -> Result<JsValue, JsValue> {
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let open = doc
+            .as_ref()
+            .ok_or_else(|| to_js("no docx document is open"))?;
+        let edits: Vec<DocxRunEditWire> = open
+            .document
+            .run_edits()
+            .into_iter()
+            .map(|(paragraph, run, text)| DocxRunEditWire {
+                paragraph,
+                run,
+                text,
+            })
+            .collect();
+        serde_wasm_bindgen::to_value(&edits).map_err(to_js)
+    })
 }
 
 /// Картинка документа в том виде, в каком её видит интерфейс: id, MIME и размер.

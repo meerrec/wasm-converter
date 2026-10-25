@@ -22,6 +22,8 @@ function run(overrides: Partial<TextRun>): TextRun {
     page: 0,
     lineIndex: 0,
     fragmentIndex: 0,
+    paragraphIndex: 0,
+    runIndex: 0,
     readingOrder: 0,
     direction: 'ltr',
     bidiLevel: 0,

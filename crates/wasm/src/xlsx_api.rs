@@ -322,12 +322,7 @@ pub fn xlsx_hyperlink_at(
 /// # Errors
 /// Если книга не открыта или листа с таким номером нет.
 #[wasm_bindgen]
-pub fn xlsx_set_cell_text(
-    sheet: usize,
-    row: u32,
-    col: u32,
-    text: String,
-) -> Result<(), JsValue> {
+pub fn xlsx_set_cell_text(sheet: usize, row: u32, col: u32, text: String) -> Result<(), JsValue> {
     DOC.with(|doc| {
         let doc = doc.borrow();
         let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;

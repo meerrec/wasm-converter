@@ -12,7 +12,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use doc_converter_core::wire::{
-    CellEditWire, OrientationWire, PageSizeWire, PdfOptionsWire,
+    CellEditWire, DocxRunEditWire, OrientationWire, PageSizeWire, PdfOptionsWire,
 };
 use doc_converter_pdf::{Margins, PageOrientation, PageSize, PdfExporter, PdfOptions};
 use doc_converter_xlsx::CellRef;
@@ -158,7 +158,11 @@ pub fn export_pdf_book_edits(
 }
 
 /// Общий хвост экспорта книги: правки прикладываются до экспортёра.
-fn export_pdf_book_with(bytes: &[u8], options: JsValue, edits: JsValue) -> Result<Vec<u8>, JsValue> {
+fn export_pdf_book_with(
+    bytes: &[u8],
+    options: JsValue,
+    edits: JsValue,
+) -> Result<Vec<u8>, JsValue> {
     let options = parse_options(options)?;
     let book = doc_converter_xlsx::open(bytes.to_vec()).map_err(to_js)?;
     apply_edits(&book, edits)?;
@@ -203,4 +207,40 @@ pub fn export_docx_pdf(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValu
     let document = doc_converter_docx::open(bytes.to_vec()).map_err(to_js)?;
     let mut exporter = PdfExporter::new(options);
     exporter.export_docx(&document).map_err(to_js)
+}
+
+/// [`export_docx_pdf`] с правками интерфейса: `edits` — снимок `docx_edits` из
+/// просмотрщика. Правки прикладываются к заново разобранному документу до
+/// раскладки, поэтому перераскладка PDF видит тот же текст, что и кадр.
+///
+/// # Errors
+/// Как у [`export_docx_pdf`], плюс неверный адрес run'а в снимке.
+#[wasm_bindgen]
+pub fn export_docx_pdf_edits(
+    bytes: &[u8],
+    options: JsValue,
+    edits: JsValue,
+) -> Result<Vec<u8>, JsValue> {
+    let options = parse_options(options)?;
+    let document = doc_converter_docx::open(bytes.to_vec()).map_err(to_js)?;
+    apply_docx_edits(&document, edits)?;
+    let mut exporter = PdfExporter::new(options);
+    exporter.export_docx(&document).map_err(to_js)
+}
+
+/// Приложить снимок правок интерфейса к заново разобранному документу.
+fn apply_docx_edits(
+    document: &doc_converter_docx::Document,
+    edits: JsValue,
+) -> Result<(), JsValue> {
+    if edits.is_undefined() || edits.is_null() {
+        return Ok(());
+    }
+    let edits: Vec<DocxRunEditWire> = serde_wasm_bindgen::from_value(edits).map_err(to_js)?;
+    for edit in edits {
+        document
+            .set_run_text(edit.paragraph, edit.run, edit.text)
+            .map_err(to_js)?;
+    }
+    Ok(())
 }

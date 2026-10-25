@@ -18,13 +18,16 @@
 //! отдельного слайса, — «обычный **жирный** обычный» рисуется начертанием
 //! первого слова, но переносится уже целиком.
 
+use std::collections::HashMap;
+
+use doc_converter_core::NodeId;
 use doc_converter_render::font::FontId;
 use unicode_bidi::BidiClass;
 
 use crate::model::raw::{HalfPoint, Underline};
 use crate::model::{
     Anchor, Document, Highlight, Inline, InlineOrAnchor, Justification, Paragraph, Run, RunContent,
-    StyleTable,
+    RunEdits, StyleTable,
 };
 
 use super::cascade::{resolve_paragraph_styled, resolve_run_styled, ResolvedParagraph, StyleCache};
@@ -116,6 +119,12 @@ pub struct LineFragment {
     /// Фон под фрагментом `RRGGBB` (`w:highlight` или `w:rPr/w:shd`);
     /// `None` — подсветки нет.
     pub highlight: Option<u32>,
+    /// Индекс абзаца в теле документа (0-based); `None` — текст вне тела
+    /// (ячейка таблицы, колонтитул).
+    pub paragraph_index: Option<u32>,
+    /// Индекс run'а в потоке абзаца (0-based); `None` — фрагмент не адресует
+    /// правимый run (например, вычисленное поле).
+    pub run_index: Option<u32>,
 }
 
 /// Результат раскладки абзаца.
@@ -172,6 +181,10 @@ struct Segment {
     color: Option<u32>,
     /// Фон под текстом (`w:highlight` или `w:rPr/w:shd`), `RRGGBB`.
     highlight: Option<u32>,
+    /// Индекс абзаца в теле документа; `None` — текст вне тела.
+    paragraph_index: Option<u32>,
+    /// Индекс run'а в потоке абзаца; `None` — отрезок не адресует run.
+    run_index: Option<u32>,
 }
 
 impl Segment {
@@ -270,6 +283,8 @@ impl ParagraphText {
                 underline: segment.underline,
                 color: segment.color,
                 highlight: segment.highlight,
+                paragraph_index: segment.paragraph_index,
+                run_index: segment.run_index,
             });
             x += width;
             cursor = end;
@@ -300,6 +315,7 @@ fn is_underlined(underline: Option<&Underline>) -> bool {
 /// Гиперссылки и поля обходятся тем же `collect_runs`, что и в таблицах: текст
 /// ссылки/оглавления — часть абзаца, и без него не только `TextLayer`, но и
 /// canvas теряли содержимое.
+#[allow(clippy::too_many_arguments)]
 fn segments(
     styles: &StyleTable,
     paragraph: &Paragraph,
@@ -307,12 +323,44 @@ fn segments(
     cache: &mut StyleCache,
     line_breaker: &LineBreaker,
     include_fields: bool,
+    edits: Option<(&RunEdits, u32)>,
+    run_indices: Option<&HashMap<NodeId, u32>>,
 ) -> Vec<Segment> {
     let mut segments: Vec<Segment> = Vec::new();
     let mut runs = Vec::new();
     collect_runs(&paragraph.runs, &mut runs, include_fields);
+    // Правок нет — замок слоя правок не трогается вовсе: горячий путь раскладки
+    // платит за фичу только одним сравнением на абзац.
+    let has_edits = edits.is_some_and(|(layer, _)| !layer.is_empty());
+    let mut next = 0u32;
     for run in runs {
-        push_segment(&mut segments, styles, resolved, run, cache, line_breaker);
+        // Адрес run'а: карта по `NodeId` — когда абзац переписан подстановкой
+        // вычисляемых полей и сквозная нумерация сдвинута; иначе — порядковый
+        // номер в потоке.
+        let run_index = if let Some(indices) = run_indices {
+            indices.get(&run.id).copied()
+        } else {
+            let index = next;
+            next += 1;
+            Some(index)
+        };
+        let paragraph_index = edits.map(|(_, index)| index);
+        let edited = if has_edits {
+            edits.and_then(|(layer, index)| run_index.and_then(|run| layer.text(index, run)))
+        } else {
+            None
+        };
+        push_segment(
+            &mut segments,
+            styles,
+            resolved,
+            run,
+            paragraph_index,
+            run_index,
+            edited.as_deref(),
+            cache,
+            line_breaker,
+        );
     }
     segments
 }
@@ -336,15 +384,22 @@ fn collect_runs<'a>(inlines: &'a [Inline], runs: &mut Vec<&'a Run>, include_fiel
 }
 
 /// Отрезок одного прогона: текст с разрешённым по каскаду стилем знака.
+///
+/// `edited` — текст правки интерфейса: он замещает содержимое `w:t` run'а,
+/// не трогая форматирование.
+#[allow(clippy::too_many_arguments)]
 fn push_segment(
     segments: &mut Vec<Segment>,
     styles: &StyleTable,
     resolved: &ResolvedParagraph,
     run: &Run,
+    paragraph_index: Option<u32>,
+    run_index: Option<u32>,
+    edited: Option<&str>,
     cache: &mut StyleCache,
     line_breaker: &LineBreaker,
 ) {
-    let text = run_text(run);
+    let text = edited.map_or_else(|| run_text(run), str::to_owned);
     if text.is_empty() {
         return;
     }
@@ -377,6 +432,8 @@ fn push_segment(
                 .as_ref()
                 .and_then(Highlight::rgb)
                 .or(rpr.shading),
+            paragraph_index,
+            run_index,
         });
     }
 }
@@ -435,6 +492,39 @@ pub fn layout_paragraph(
         cache,
         line_breaker,
         false,
+        None,
+        None,
+    )
+}
+
+/// Разложить абзац тела документа, применяя правки run'ов интерфейса.
+///
+/// `paragraph_index` — индекс абзаца в теле (его же несёт `TextRunWire`);
+/// `run_indices` — адреса run'ов по `NodeId`, когда абзац переписан
+/// подстановкой вычисляемых полей (без них — `None`, и сквозная нумерация
+/// совпадает с модельной).
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn layout_paragraph_addressed(
+    document: &Document,
+    paragraph: &Paragraph,
+    state: &LayoutState,
+    options: &LayoutOptions,
+    cache: &mut StyleCache,
+    line_breaker: &mut LineBreaker,
+    paragraph_index: u32,
+    run_indices: Option<&HashMap<NodeId, u32>>,
+) -> ParagraphLayout {
+    layout_paragraph_styled(
+        &document.styles,
+        paragraph,
+        state,
+        options,
+        cache,
+        line_breaker,
+        false,
+        Some((&document.edits, paragraph_index)),
+        run_indices,
     )
 }
 
@@ -459,6 +549,8 @@ pub(crate) fn layout_paragraph_styled(
     cache: &mut StyleCache,
     line_breaker: &mut LineBreaker,
     include_fields: bool,
+    edits: Option<(&RunEdits, u32)>,
+    run_indices: Option<&HashMap<NodeId, u32>>,
 ) -> ParagraphLayout {
     let resolved = resolve_paragraph_styled(styles, paragraph, cache);
     let ind = resolved.ppr.ind;
@@ -478,6 +570,8 @@ pub(crate) fn layout_paragraph_styled(
         cache,
         line_breaker,
         include_fields,
+        edits,
+        run_indices,
     );
     let flow = ParagraphText::new(&segments);
 
@@ -716,8 +810,8 @@ mod tests {
     };
     use crate::model::{
         BlockItem, Body, DocDefaults, Extent, Hyperlink, InlineImage, InlineOrAnchor, Metadata,
-        NumberingTable, PositionH, PositionV, RelFromH, RelFromV, Relationships, Settings,
-        StyleTable, WrapKind,
+        NumberingTable, PositionH, PositionV, RelFromH, RelFromV, Relationships, RunEdits,
+        Settings, StyleTable, WrapKind,
     };
     use crate::Twips;
     use doc_converter_core::NodeId;
@@ -756,6 +850,7 @@ mod tests {
             footers: std::collections::BTreeMap::new(),
             warnings: Vec::new(),
             media: Vec::new(),
+            edits: RunEdits::default(),
         }
     }
 

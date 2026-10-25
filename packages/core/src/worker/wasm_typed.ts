@@ -65,6 +65,46 @@ export const docxTextLayer = (mod: DocxWasm, page: number): TextLayerWire =>
 export const docxFullTextLayer = (mod: DocxWasm): TextLayerWire =>
   mod.docx_get_full_text_layer() as unknown as TextLayerWire;
 
+/**
+ * DOCX-модуль с правками run'ов. Каст живёт здесь же, в граничном файле: срез
+ * появится в сгенерированных биндингах после сборки wasm
+ * (`scripts/build-wasm.sh`).
+ */
+type DocxEditWasm = DocxWasm & {
+  docx_set_run_text(paragraph: number, run: number, text: string): void;
+  docx_pages(): unknown;
+  docx_edits(): unknown;
+};
+
+/** Привести ленивый DOCX-модуль к срезу правок. */
+function withRunEdits(mod: DocxWasm): DocxEditWasm {
+  return mod as DocxEditWasm;
+}
+
+/** Правка run'а: снимок для экспортёра PDF, поля — как в Rust `DocxRunEditWire`. */
+export interface DocxRunEdit {
+  paragraph: number;
+  run: number;
+  text: string;
+}
+
+/** Заменить текст run'а и перераскладывать документ. Ошибки wasm — исключения JS. */
+export const docxSetRunText = (mod: DocxWasm, paragraph: number, run: number, text: string): void => {
+  withRunEdits(mod).docx_set_run_text(paragraph, run, text);
+};
+
+/** Размеры страниц после перераскладки — их несёт ответ `docx-edited`. */
+export const docxPages = (mod: DocxWasm): PageInfoWire[] =>
+  withRunEdits(mod).docx_pages() as unknown as PageInfoWire[];
+
+/** Все правки открытого документа, для экспортёра PDF. */
+export const docxEdits = (mod: DocxWasm): DocxRunEdit[] => {
+  // Старый wasm-модуль без экспорта правок даёт пустой снимок: путь без
+  // правок остаётся байт-в-байт, как до фичи.
+  const edits = withRunEdits(mod).docx_edits?.();
+  return (edits ?? []) as unknown as DocxRunEdit[];
+};
+
 /** Открыть презентацию PPTX: слайды с именами и размерами раскладки. */
 export const openPptx = (mod: PptxWasm, bytes: Uint8Array): SlideInfoWire[] =>
   mod.pptx_open_bytes(bytes) as unknown as SlideInfoWire[];
@@ -236,12 +276,34 @@ function withEditsPdf(mod: PdfWasm): PdfWasm & {
   };
 }
 
-/** Экспортировать документ DOCX в PDF. */
+/** Экспортировать документ DOCX в PDF; `edits` — правки интерфейса, если есть. */
 export const exportDocxPdf = (
   mod: PdfWasm,
   bytes: Uint8Array,
   options: PdfOptionsWire,
-): Uint8Array => mod.export_docx_pdf(bytes, options);
+  edits: DocxRunEdit[] = [],
+): Uint8Array => {
+  // Без правок путь прежний — байт-в-байт, как до фичи.
+  if (edits.length === 0) return mod.export_docx_pdf(bytes, options);
+  return withDocxEditsPdf(mod).export_docx_pdf_edits(bytes, options, edits);
+};
+
+/**
+ * PDF-модуль с правками run'ов DOCX. Каст живёт в граничном файле: срез
+ * появится в сгенерированных биндингах после сборки wasm
+ * (`scripts/build-wasm.sh`).
+ */
+function withDocxEditsPdf(mod: PdfWasm): PdfWasm & {
+  export_docx_pdf_edits(bytes: Uint8Array, options: PdfOptionsWire, edits: DocxRunEdit[]): Uint8Array;
+} {
+  return mod as PdfWasm & {
+    export_docx_pdf_edits(
+      bytes: Uint8Array,
+      options: PdfOptionsWire,
+      edits: DocxRunEdit[],
+    ): Uint8Array;
+  };
+}
 
 /** Экспортировать презентацию PPTX в PDF. Модуль ленивый и свой у формата. */
 export const exportPptxPdf = (

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type ChangeEvent,
   type DragEvent,
@@ -55,6 +56,19 @@ export interface DocxPageController {
   ready: boolean;
   /** Документ открыт: есть что экспортировать и по чему ходить. */
   opened: boolean;
+  /** Текст поля `#edit-run`: правка run'а, выбранного кликом по тексту. */
+  editText: string;
+  /** Подпись выбранного run'а («абзац N, run M») либо `null` — ничего не выбрано. */
+  editTarget: string | null;
+  /** Запомнить ввод в поле `#edit-run` (controlled input). */
+  onEditText: (text: string) => void;
+  /**
+   * Применить правку из поля `#edit-run` к выбранному кликом run'у: воркер
+   * перераскладывает документ, кадр и доступный слой обновляются по ответу.
+   */
+  onEditRun: () => void;
+  /** Документ не открыт — править нечего. */
+  editDisabled: boolean;
   zoom: number;
   setZoom: (zoom: number) => void;
   fixtures: string[];
@@ -91,6 +105,13 @@ export function useDocxPage(): DocxPageController {
   const [fixtures, setFixtures] = useState<string[]>([]);
   const [fixture, setFixture] = useState('');
   const [busy, setBusy] = useState<ExportKind | null>(null);
+  /** Ввод поля `#edit-run`: правка run'а, выбранного кликом по тексту. */
+  const [editText, setEditText] = useState('');
+  /** Подпись выбранного run'а; `null` — кликом ничего не выбрано. */
+  const [editTarget, setEditTarget] = useState<string | null>(null);
+  /** Run под курсором: его адрес правка несёт воркеру; живёт ref'ом, а не
+      состоянием — клик не обязан перерисовывать страницу. */
+  const editAnchorRef = useRef<{ paragraph: number; run: number } | null>(null);
 
   // Вьюер создаётся один раз за жизнь страницы и публикуется для сквозных
   // тестов: их мост к странице — `window.docConverter`.
@@ -106,6 +127,19 @@ export function useDocxPage(): DocxPageController {
         // Сквозные тесты и ручная проверка NVDA/VoiceOver включают слой
         // параметром `?a11y=1`; по умолчанию он выключен.
         ...(new URLSearchParams(window.location.search).has('a11y') ? { a11y: true } : {}),
+        // Клик по тексту доступного слоя заполняет поле `#edit-run` адресом
+        // run'а: правка текста живёт на этом подписчике, а не на опросе DOM.
+        onTextRunClick: (run) => {
+          if (run.paragraphIndex === null || run.runIndex === null) {
+            setStatus('этот текст не правится: таблица или колонтитул');
+            return;
+          }
+          editAnchorRef.current = { paragraph: run.paragraphIndex, run: run.runIndex };
+          const target = `абзац ${run.paragraphIndex + 1}, run ${run.runIndex + 1}`;
+          setEditTarget(target);
+          setEditText(run.text);
+          setStatus(`выбран ${target}: Enter в поле «править текст» применяет правку`);
+        },
       }),
     (handle) => {
       publishViewer({ kind: 'docx', viewer: handle });
@@ -147,6 +181,10 @@ export function useDocxPage(): DocxPageController {
       }
       setLabel(name);
       setPager({ index: viewer.pageIndex, count: viewer.pageCount });
+      // Новый документ — новая нумерация абзацев: адрес старой правки гасится.
+      editAnchorRef.current = null;
+      setEditTarget(null);
+      setEditText('');
       const elapsed = Math.round(performance.now() - started);
       setStatus(`${name}: ${pages.length} стр. за ${elapsed} мс`);
       // Документ открылся — значит, воркер уже загрузил DOCX-модуль: его байты
@@ -326,6 +364,35 @@ export function useDocxPage(): DocxPageController {
     [runExport],
   );
 
+  /** Запомнить ввод поля `#edit-run` — значение живёт состоянием React. */
+  const onEditText = useCallback((text: string) => {
+    setEditText(text);
+  }, []);
+
+  /**
+   * Применить правку из поля `#edit-run`: цель — run, выбранный кликом по
+   * тексту. Воркер перераскладывает документ, страницы могут измениться, и
+   * вьюер по ответу перестраивает стопку, кадр и доступный слой.
+   */
+  const onEditRun = useCallback(() => {
+    const active = viewer;
+    if (active === null) {
+      setStatus('вьюер не поднялся — править нечего');
+      return;
+    }
+    const anchor = editAnchorRef.current;
+    if (anchor === null) {
+      setStatus('кликните по тексту документа, который правите');
+      return;
+    }
+    void active
+      .editRun(anchor.paragraph, anchor.run, editText)
+      .then(
+        () => setStatus(`правка применена: ${editTarget ?? 'выбранный run'}`),
+        (e: unknown) => setStatus(`правка не удалась: ${errorText(e)}`),
+      );
+  }, [viewer, editText, editTarget]);
+
   const ready = viewer !== null;
   const opened = ready && label !== null;
   const pageInfo = pager.count === 0 ? '—' : `${pager.index + 1} / ${pager.count}`;
@@ -344,6 +411,11 @@ export function useDocxPage(): DocxPageController {
     canNext: pager.count > 0 && pager.index < pager.count - 1,
     ready,
     opened,
+    editText,
+    editTarget,
+    onEditText,
+    onEditRun,
+    editDisabled: !opened,
     zoom,
     setZoom,
     fixtures,

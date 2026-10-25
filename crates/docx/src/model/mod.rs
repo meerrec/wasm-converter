@@ -51,7 +51,8 @@ pub use table::{
     TableBorders, TableLayout, TableLook, TableWidth, VMerge,
 };
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Mutex;
 
 use doc_converter_core::rels::{RelMap, Relationship};
 use doc_converter_core::{NodeId, ParseWarning, WarningKind, Warnings};
@@ -96,7 +97,119 @@ pub struct Document {
     /// (`Archive`) живёт только внутри разбора и байты нужны лишь рисующему.
     /// Идентификатор записи несут элементы кадра ([`MediaPart::id`]).
     pub media: Vec<MediaPart>,
+    /// Правки текста run'ов интерфейсом: адрес `(абзац, run)` и новый текст.
+    ///
+    /// Слой живёт отдельно от модели файла: раскладка подставляет правку при
+    /// чтении run'а, а PDF-экспортёр, разбирающий байты заново, получает её
+    /// снимком ([`Document::run_edits`]). `Mutex` нужен потому, что документ
+    /// живёт за общей ссылкой; в сериализацию и [`PartialEq`] правки не входят.
+    #[serde(skip, default)]
+    pub edits: RunEdits,
 }
+
+/// Слой правок текста run'ов, введённых интерфейсом.
+///
+/// Ключ — модельный адрес `(индекс абзаца, индекс run'а)`, значение — новый
+/// текст вместо содержимого `w:t`. Замок — `std::sync::Mutex`: документ
+/// отдаётся потребителям за общей ссылкой, а правки приходят уже после
+/// открытия. Новый разбор начинает с пустой карты.
+#[derive(Debug, Default)]
+pub struct RunEdits(Mutex<HashMap<(u32, u32), String>>);
+
+impl RunEdits {
+    /// Запомнить правку run'а.
+    pub fn set(&self, paragraph: u32, run: u32, text: String) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert((paragraph, run), text);
+    }
+
+    /// Текст правки run'а; `None` — run не правили.
+    ///
+    /// Возвращается копия: замок не выпускает заём наружу.
+    #[must_use]
+    pub fn text(&self, paragraph: u32, run: u32) -> Option<String> {
+        let edits = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        edits.get(&(paragraph, run)).cloned()
+    }
+
+    /// Правок нет — раскладка читает модель как есть.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    }
+
+    /// Все правки по возрастанию адреса — детерминированный снимок.
+    #[must_use]
+    pub fn entries(&self) -> Vec<(u32, u32, String)> {
+        let edits = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut list: Vec<(u32, u32, String)> = edits
+            .iter()
+            .map(|(&(paragraph, run), text)| (paragraph, run, text.clone()))
+            .collect();
+        list.sort_by_key(|&(paragraph, run, _)| (paragraph, run));
+        list
+    }
+}
+
+impl Clone for RunEdits {
+    fn clone(&self) -> Self {
+        let edits = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        Self(Mutex::new(edits))
+    }
+}
+
+impl PartialEq for RunEdits {
+    fn eq(&self, _other: &Self) -> bool {
+        // Правки — рантайм-состояние интерфейса, а не модель файла: две
+        // документные модели из одних байтов равны, сколько бы правок в них ни
+        // внесли (так же устроено сравнение `Workbook` в XLSX).
+        true
+    }
+}
+
+/// Ошибка правки run'а: адрес не нашёлся в модели.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunEditError {
+    /// В теле документа нет абзаца с таким индексом.
+    ParagraphOutOfRange(u32),
+    /// В абзаце нет run'а с таким индексом.
+    RunOutOfRange {
+        /// Индекс абзаца, в котором искали run.
+        paragraph: u32,
+        /// Запрошенный индекс run'а.
+        run: u32,
+    },
+}
+
+impl std::fmt::Display for RunEditError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ParagraphOutOfRange(paragraph) => {
+                write!(formatter, "paragraph {paragraph} out of range")
+            }
+            Self::RunOutOfRange { run, .. } => {
+                write!(formatter, "run {run} out of range")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RunEditError {}
 
 impl Document {
     /// Предупреждения разбора в порядке появления.
@@ -135,6 +248,65 @@ impl Document {
     pub fn has_fatal_warnings(&self) -> bool {
         self.warnings.len() > Warnings::UI_ALERT_THRESHOLD
     }
+
+    /// Заменить текст run'а по модельному адресу `(абзац, run)`.
+    ///
+    /// `paragraph` — индекс [`BlockItem::Paragraph`] в [`Body::items`] (0-based;
+    /// абзацы внутри таблиц и колонтитулов в нумерацию не входят), `run` —
+    /// индекс run'а в потоке абзаца: прямые [`Inline::Run`] и runs гиперссылок
+    /// в порядке текста. Тот же адрес несёт текстовый слой
+    /// (`TextRunWire::paragraph_index`/`run_index`), поэтому клик по тексту
+    /// адресуется сюда напрямую. Пустая строка — тоже правка: она гасит текст
+    /// run'а.
+    ///
+    /// # Errors
+    /// [`RunEditError::ParagraphOutOfRange`], если абзаца с таким индексом нет;
+    /// [`RunEditError::RunOutOfRange`], если в абзаце нет run'а с таким
+    /// индексом.
+    pub fn set_run_text(&self, paragraph: u32, run: u32, text: String) -> Result<(), RunEditError> {
+        let target = self
+            .body
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                BlockItem::Paragraph(paragraph) => Some(paragraph),
+                _ => None,
+            })
+            .nth(usize::try_from(paragraph).unwrap_or(usize::MAX))
+            .ok_or(RunEditError::ParagraphOutOfRange(paragraph))?;
+        let mut next = 0u32;
+        if !run_at(&target.runs, run, &mut next) {
+            return Err(RunEditError::RunOutOfRange { paragraph, run });
+        }
+        self.edits.set(paragraph, run, text);
+        Ok(())
+    }
+
+    /// Все правки документа по возрастанию адреса — снимок для экспортёра PDF.
+    #[must_use]
+    pub fn run_edits(&self) -> Vec<(u32, u32, String)> {
+        self.edits.entries()
+    }
+}
+
+/// Есть ли в потоке inline-элементов run с индексом `target` (прямые runs и
+/// runs гиперссылок); `next` — счётчик пройденных runs.
+fn run_at(inlines: &[Inline], target: u32, next: &mut u32) -> bool {
+    for inline in inlines {
+        match inline {
+            Inline::Run(_) => {
+                if *next == target {
+                    return true;
+                }
+                *next += 1;
+            }
+            Inline::Hyperlink(link) if run_at(&link.runs, target, next) => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Тело документа (`w:body`).

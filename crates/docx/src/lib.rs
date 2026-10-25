@@ -78,7 +78,7 @@ pub use model::table::{
     Cell, CellBorders, CellMargins, CellWidth, GridCol, HeightRule, Row, RowHeight, Table,
     TableBorders, TableLayout, TableLook, TableWidth, VMerge,
 };
-pub use model::{BlockItem, Body, Document, Metadata, Relationships};
+pub use model::{BlockItem, Body, Document, Metadata, Relationships, RunEditError, RunEdits};
 pub use parse::{parse_docx, parse_docx_owned, parse_docx_segmented};
 
 use doc_converter_core::zip_limits::ZipLimits;

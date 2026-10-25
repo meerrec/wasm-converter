@@ -477,9 +477,13 @@ fn draw_page(
     }
     for painted in &sheet_page.cells {
         let cell = painted.cell;
-        let Some((mut value, edited)) =
-            display_text_edited(book, sheet.index, painted.at, cell, painted.style.number_format)
-        else {
+        let Some((mut value, edited)) = display_text_edited(
+            book,
+            sheet.index,
+            painted.at,
+            cell,
+            painted.style.number_format,
+        ) else {
             continue;
         };
         if value.is_empty() {

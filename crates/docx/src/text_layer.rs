@@ -117,6 +117,9 @@ impl Builder {
         }
     }
 
+    // Один проход по элементам раскладки: индексы страниц и строк считаются
+    // в локальном контексте обхода; деление ради счётчика строк размыло бы их.
+    #[allow(clippy::too_many_lines)]
     fn collect_item(
         &mut self,
         page_index: usize,
@@ -157,6 +160,10 @@ impl Builder {
                     underline: *underline,
                     color: *color,
                     highlight: None,
+                    // Строка без фрагментов — стиль первого прогона: модельного
+                    // адреса у неё нет.
+                    paragraph_index: None,
+                    run_index: None,
                 };
                 let fragments = if fragments.is_empty() {
                     std::slice::from_ref(&fallback)
@@ -200,6 +207,8 @@ impl Builder {
                         page: u32::try_from(page_index).unwrap_or(u32::MAX),
                         line_index,
                         fragment_index: u32::try_from(fragment_index).unwrap_or(u32::MAX),
+                        paragraph_index: fragment.paragraph_index,
+                        run_index: fragment.run_index,
                         reading_order: self.order,
                         direction,
                         bidi_level: level,
@@ -461,6 +470,75 @@ mod tests {
         assert!(!first.id.is_empty());
     }
 
+    /// Раскладка документа из байтов — общий хвост теста правок.
+    fn lay_out(document: &crate::model::Document) -> PageLayout {
+        let mut fonts = FontRegistry::new(8);
+        layout_document(document, &LayoutOptions::default(), &mut fonts)
+            .expect("фикстура раскладывается")
+    }
+
+    #[test]
+    fn run_edit_reaches_layout_and_layer() {
+        let bytes = include_bytes!("../../../test-fixtures/docx/simple/one_paragraph.docx");
+        let document = crate::open(bytes.to_vec()).expect("фикстура разбирается");
+
+        // Без правок: слой несёт текст документа и модельный адрес первого run'а.
+        let before = text_layer(&lay_out(&document));
+        let original = before.runs[0].text.clone();
+        assert!(!original.is_empty(), "первый run фикстуры не пуст");
+        assert_eq!(before.runs[0].paragraph_index, Some(0));
+        assert_eq!(before.runs[0].run_index, Some(0));
+
+        // Правка попадает и в строку кадра (текст `LayoutItem`), и в слой.
+        document
+            .set_run_text(0, 0, "правка интерфейса".to_owned())
+            .expect("адрес первого run'а валиден");
+        let layout = lay_out(&document);
+        let after = text_layer(&layout);
+        let edited = after
+            .runs
+            .iter()
+            .find(|run| run.text.contains("правка интерфейса"))
+            .expect("правленый run в слое");
+        assert_eq!(edited.paragraph_index, Some(0));
+        assert_eq!(edited.run_index, Some(0));
+        let item_texts: Vec<&str> = layout
+            .pages
+            .iter()
+            .flat_map(|page| page.items.iter())
+            .filter_map(|item| match item {
+                LayoutItem::Paragraph { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            item_texts
+                .iter()
+                .any(|text| text.contains("правка интерфейса")),
+            "кадр несёт правленый текст"
+        );
+        assert!(!after.runs.iter().any(|run| run.text == original));
+
+        // Снимок правок детерминирован: одна запись по возрастающему адресу.
+        assert_eq!(
+            document.run_edits(),
+            vec![(0, 0, "правка интерфейса".to_owned())]
+        );
+
+        // Адреса вне документа и вне абзаца — ошибки, а не паника.
+        assert!(matches!(
+            document.set_run_text(7, 0, "x".to_owned()),
+            Err(crate::RunEditError::ParagraphOutOfRange(7))
+        ));
+        assert!(matches!(
+            document.set_run_text(0, 9, "x".to_owned()),
+            Err(crate::RunEditError::RunOutOfRange {
+                paragraph: 0,
+                run: 9
+            })
+        ));
+    }
+
     #[test]
     fn page_runs_match_full_layer() {
         let layout = sample_layout();
@@ -503,6 +581,8 @@ mod tests {
             underline: false,
             color: None,
             highlight: None,
+            paragraph_index: None,
+            run_index: None,
         };
         let bbox = Rect::new(rect.x + fragment.x, rect.y, fragment.width, rect.height);
         assert!(close(bbox.x, 13.0));

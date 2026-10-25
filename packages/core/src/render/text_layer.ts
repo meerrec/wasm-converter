@@ -36,6 +36,12 @@ export interface TextLayerDeps {
   fetchAll: () => Promise<TextLayer>;
   /** Подпись `role=document`; не задана — документ без имени. */
   label?: string;
+  /**
+   * Клик по фрагменту визуального слоя — источник правки текста: вьюер
+   * передаёт его странице, та адресует run по `paragraphIndex`/`runIndex`.
+   * Не задан — spans остаются только выделяемым текстом.
+   */
+  onRunClick?: (run: TextRun) => void;
 }
 
 /** Управление слоем; создаётся фабрикой, как и вьюеры. */
@@ -234,6 +240,23 @@ export function createTextLayer(deps: TextLayerDeps): TextLayerController {
       `text-decoration:${style.underline ? 'underline' : 'none'};` +
       `text-align:${line.first.textAlign};line-height:${rect.height}px;` +
       'white-space:pre;color:transparent;cursor:text;pointer-events:auto;user-select:text;';
+    if (deps.onRunClick !== undefined) {
+      // Клик идёт во фрагмент по координате в координатах раскладки: `bbox`
+      // фрагмента сравнивается с левым краем строки, и зум снимается делением.
+      span.addEventListener('click', (event) => {
+        const bounds = span.getBoundingClientRect();
+        const x = (event.clientX - bounds.left) / zoom;
+        const origin = line.first.lineRect;
+        const hit =
+          line.cells.find(
+            (run) =>
+              run.bbox.x - origin.x <= x && x <= run.bbox.x - origin.x + run.bbox.width,
+          ) ?? line.first;
+        if (hit.paragraphIndex !== null && hit.runIndex !== null) {
+          deps.onRunClick?.(hit);
+        }
+      });
+    }
     return span;
   };
 

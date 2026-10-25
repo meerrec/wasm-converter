@@ -29,6 +29,7 @@ function fakeHandle(): XlsxViewerHandle {
     setView: vi.fn(),
     hitTest: vi.fn(),
     hyperlinkAt: vi.fn(),
+    setCellText: vi.fn(),
     exportPng: vi.fn(),
     exportPdf: vi.fn(),
     onTick: vi.fn(),

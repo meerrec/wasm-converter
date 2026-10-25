@@ -27,7 +27,7 @@ import { useDocxPage, type ExportKind } from './use_docx_page.js';
  * ленты — правдоподобный, но недоступный фон; состояние и вызовы вьюера живут
  * в `useDocxPage`, здесь остаются разметка и контракт id (`#viewer`,
  * `#page-prev`, `#page-info`, `#page-next`, `#pages`, `#status`, `#zoom`,
- * `#export-*`, счётчики кадров).
+ * `#export-*`, `#edit-run`, счётчики кадров).
  */
 
 /** Вкладки ленты — как в Word. */
@@ -234,6 +234,12 @@ interface HomeRibbonProps {
   onStepPage: (delta: number) => void;
   onExport: (kind: ExportKind) => void;
   exportDisabled: (kind: ExportKind) => boolean;
+  /** Правка текста: документ открыт — поле `#edit-run` принимает ввод. */
+  opened: boolean;
+  editText: string;
+  editTarget: string | null;
+  onEditText: (text: string) => void;
+  onEditRun: () => void;
 }
 
 /** Лента «Главная»: та же, что в Word, и так же разложена по группам. */
@@ -336,10 +342,37 @@ function HomeRibbon(props: HomeRibbonProps): ReactElement {
         />
       </RibbonGroup>
       <RibbonGroup label="Редактирование">
-        <div className="ofc-row">
-          <RibbonButton icon="find" label="Найти" disabled />
-          <RibbonButton icon="replace" label="Заменить" disabled />
-          <RibbonButton icon="select" label="Выделить" disabled />
+        <div className="ofc-stack">
+          <div className="ofc-row">
+            <RibbonButton icon="find" label="Найти" disabled />
+            <RibbonButton icon="replace" label="Заменить" disabled />
+            <RibbonButton icon="select" label="Выделить" disabled />
+          </div>
+          {/* Правка текста: клик по тексту документа заполняет поле адресом
+              run'а, Enter применяет правку и перераскладывает документ. */}
+          <label
+            className="ofc-edit-cell"
+            title="Текст run'а под курсором; Enter применяет правку"
+          >
+            править текст
+            <input
+              id="edit-run"
+              type="text"
+              placeholder={props.editTarget ?? 'текст'}
+              value={props.editText}
+              disabled={!props.opened}
+              style={{ width: 130 }}
+              onChange={(event) => {
+                props.onEditText(event.target.value);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  props.onEditRun();
+                }
+              }}
+            />
+          </label>
         </div>
       </RibbonGroup>
       {/* Экспорт — первое, что делает вьюер: без открытого документа
@@ -453,6 +486,11 @@ export default function DocxPage(): ReactElement {
             onStepPage={page.stepPage}
             onExport={page.exportDocument}
             exportDisabled={page.exportDisabled}
+            opened={page.opened}
+            editText={page.editText}
+            editTarget={page.editTarget}
+            onEditText={page.onEditText}
+            onEditRun={page.onEditRun}
           />
         ) : (
           <div className="ofc-ribbon-body">

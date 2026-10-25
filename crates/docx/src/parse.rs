@@ -21,7 +21,7 @@ use doc_converter_core::ns::OoxmlVariant;
 use crate::error::{Error, Result};
 use crate::model::{
     BlockItem, Body, Document, Footnote, HeaderFooter, Inline, MediaPart, NoteKind, NumberingTable,
-    Paragraph, PartRef, Relationships, Settings, StyleId, StyleTable, Table,
+    Paragraph, PartRef, Relationships, RunEdits, Settings, StyleId, StyleTable, Table,
 };
 use crate::settings::xml_error;
 use crate::xml::local_name;
@@ -862,6 +862,7 @@ fn parse_archive(mut archive: Archive) -> Result<Document> {
         footers,
         warnings: Vec::new(),
         media,
+        edits: RunEdits::default(),
     };
 
     validate_refs(&mut document, &parts, &mut ctx)?;

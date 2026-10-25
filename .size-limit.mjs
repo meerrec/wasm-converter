@@ -83,9 +83,12 @@ export default [
     // строки уходит на ~14 %, превью расходится с экспортом). Вынос шрифтов
     // в ленивый ассет — задел после v1.0; строка по-прежнему стережёт
     // возврат кода в основной бандл.
+    //
+    // 480 → 490 КБ в 2.0.2: редактирование ячеек (xlsx_set_cell_text,
+    // снимок правок для lazy pdf-wasm) — +2,6 КБ gzip.
     name: 'wasm (viewer)',
     path: 'packages/wasm/pkg/*.wasm',
-    limit: '480 KB',
+    limit: '490 KB',
     gzip: true,
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },

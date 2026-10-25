@@ -566,8 +566,8 @@ mod tests {
 
     use super::*;
     use crate::model::{
-        BlockItem, Body, Metadata, NumberingTable, ParagraphStyle, Relationships, Settings,
-        StyleTable,
+        BlockItem, Body, Metadata, NumberingTable, ParagraphStyle, Relationships, RunEdits,
+        Settings, StyleTable,
     };
 
     /// Документ с пустой таблицей стилей: тесты переопределяют нужное сами.
@@ -591,6 +591,7 @@ mod tests {
             footers: BTreeMap::new(),
             warnings: Vec::new(),
             media: Vec::new(),
+            edits: RunEdits::default(),
         }
     }
 

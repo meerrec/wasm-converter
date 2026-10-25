@@ -9,6 +9,7 @@ import type {
   RenderConfig,
   RenderMode,
   TextLayer,
+  TextRun,
   Viewport,
 } from '../protocol.js';
 import { createTextLayer } from './text_layer.js';
@@ -77,6 +78,13 @@ export interface DocxViewerHandle {
   getTextLayer(page: number): Promise<TextLayer>;
   /** TextLayer всего документа — для семантического дерева и Ctrl+A. */
   getFullTextLayer(): Promise<TextLayer>;
+  /**
+   * Заменить текст run'а по модельному адресу `(paragraph, run)` — его несёт
+   * `TextRun` текстового слоя (`paragraphIndex`/`runIndex`). Воркер применяет
+   * правку, перераскладывает документ и отвечает новыми размерами страниц;
+   * после ответа вьюер перестраивает стопку, кадр и доступный слой.
+   */
+  editRun(paragraph: number, run: number, text: string): Promise<void>;
   /** Подписка на метрики кадров. */
   onTick(handler: (stats: PaintStats) => void): () => void;
   /** Остановить воркер и убрать за собой разметку. */
@@ -121,6 +129,12 @@ export interface DocxViewerOptions {
    * вьюер, в Vue/Svelte опция читается только при монтировании.
    */
   a11y?: boolean;
+  /**
+   * Клик по тексту доступного слоя: вьюер создаёт слой, даже если `a11y`
+   * выключен, и отдаёт подписчику run с модельным адресом
+   * (`paragraphIndex`/`runIndex`) — источник правки текста.
+   */
+  onTextRunClick?: (run: TextRun) => void;
   /** Начальный зум. */
   zoom?: number;
   /**
@@ -153,6 +167,11 @@ interface DocxState {
   stackHeight: number;
   pageIndex: number;
   pageGap: number;
+  /** Ожидающие ответы `docx-edited` на `edit-docx`: id → промис правки. */
+  pendingEdit: Map<
+    number,
+    { resolve: (pages: PageInfo[]) => void; reject: (e: Error) => void }
+  >;
 }
 
 /**
@@ -194,6 +213,20 @@ export async function createDocxViewer(
   /** Верх страницы в пикселях раскладки; у номера вне документа — нуль. */
   function pageTop(st: ViewerState<DocxState>, index: number): number {
     return st.data.pageTops[index] ?? 0;
+  }
+
+  /**
+   * Принять новые размеры страниц (открытие или перераскладка после правки):
+   * перестроить стопку, переустановить распорку и слой, вернуть индекс
+   * видимой страницы.
+   */
+  function applyPages(st: ViewerState<DocxState>, pages: PageInfo[]): void {
+    st.data.pages = pages;
+    layoutStack(st);
+    st.applyLayout();
+    st.textLayer?.configure(pages, st.data.pageTops);
+    st.data.pageIndex = pageAt(st, st.scroller.scrollTop);
+    st.schedule();
   }
 
   /**
@@ -256,12 +289,7 @@ export async function createDocxViewer(
     openedResponse: 'docx-opened',
     onOpened(st, msg) {
       if (msg.type !== 'docx-opened') return;
-      st.data.pages = msg.pages;
-      layoutStack(st);
-      st.applyLayout();
-      st.textLayer?.configure(msg.pages, st.data.pageTops);
-      st.data.pageIndex = pageAt(st, st.scroller.scrollTop);
-      st.schedule();
+      applyPages(st, msg.pages);
     },
     applyLayout(st) {
       const d = st.data;
@@ -289,16 +317,33 @@ export async function createDocxViewer(
     },
     extraInit(st, _canvas, scroller) {
       // Доступный слой создаётся до первого кадра: он живёт в layout-координатах
-      // и наполняется после `docx-opened`.
-      if (options.a11y === true) {
+      // и наполняется после `docx-opened`. Клик по тексту (`onTextRunClick`)
+      // тоже требует слоя — он и есть источник адреса run'а.
+      if (options.a11y === true || options.onTextRunClick !== undefined) {
         st.textLayer = createTextLayer({
           fetchPage: (page) => st.requestTextLayer(page),
           fetchAll: () => st.requestTextLayer(null),
+          ...(options.onTextRunClick === undefined ? {} : { onRunClick: options.onTextRunClick }),
         });
         scroller.append(st.textLayer.element);
       }
     },
     extraMsg(st, msg) {
+      // Ответ на правку: резолвим свой промис, страницы примет `editRun`.
+      if (msg.type === 'docx-edited') {
+        const pending = st.data.pendingEdit.get(msg.id);
+        if (pending) pending.resolve(msg.pages);
+        return true;
+      }
+      // Адресная ошибка правки отклоняет свой промис; общая пусть идёт в ядро.
+      if (msg.type === 'error' && msg.id !== undefined) {
+        const pending = st.data.pendingEdit.get(msg.id);
+        if (pending) {
+          st.data.pendingEdit.delete(msg.id);
+          pending.reject(new Error(msg.message));
+          return true;
+        }
+      }
       // Ответ слоя адресный, но у DOCX он один на оба запроса (страница/весь
       // документ) — формат сам находит свой ожидающий промис.
       if (msg.type !== 'text-layer') return false;
@@ -317,6 +362,7 @@ export async function createDocxViewer(
         stackHeight: 0,
         pageIndex: 0,
         pageGap: opts.pageGap ?? DEFAULT_PAGE_GAP,
+        pendingEdit: new Map(),
       };
     },
     initOptions: (opts) => ({ docx: opts.docxWasm, pdf: opts.pdfWasm }),
@@ -380,6 +426,30 @@ export async function createDocxViewer(
     exportText: (opts?: { signal?: AbortSignal }) => base.exportText('text', opts),
     getTextLayer: (page: number) => base.getTextLayer(page),
     getFullTextLayer: () => base.getFullTextLayer(),
+
+    async editRun(paragraph: number, run: number, text: string): Promise<void> {
+      // Документа нет — править нечего; воркер всё равно ответил бы ошибкой.
+      if (st.destroyed || st.data.pages.length === 0) return;
+      const id = st.nextRequestId++;
+      const edited = new Promise<PageInfo[]>((resolve, reject) => {
+        st.data.pendingEdit.set(id, { resolve, reject });
+      });
+      st.worker.postMessage({
+        type: 'edit-docx',
+        id,
+        paragraph,
+        run,
+        text,
+      } satisfies InMsg);
+      try {
+        // Ответ несёт размеры страниц после перераскладки: стопка, кадр и
+        // доступный слой перестраиваются заново (слой сбрасывает кэш страниц).
+        const pages = await edited;
+        applyPages(st, pages);
+      } finally {
+        st.data.pendingEdit.delete(id);
+      }
+    },
 
     onTick: base.onTick,
     destroy: base.destroy,

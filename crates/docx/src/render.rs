@@ -432,6 +432,7 @@ mod tests {
     use crate::model::raw::HalfPoint;
     use crate::model::{
         BlockItem, Body, Extent, Inline, InlineImage, InlineOrAnchor, Paragraph, Run, RunContent,
+        RunEdits,
     };
 
     /// Путь к фикстуре от корня репозитория.
@@ -709,6 +710,7 @@ mod tests {
             footers: BTreeMap::new(),
             warnings: Vec::new(),
             media: Vec::new(),
+            edits: RunEdits::default(),
         }
     }
 
@@ -754,6 +756,8 @@ mod tests {
             underline: false,
             color: None,
             highlight: Some(0x00FF_FF00),
+            paragraph_index: None,
+            run_index: None,
         };
         let item = LayoutItem::Paragraph {
             node_id: NodeId::ROOT,

@@ -1200,6 +1200,8 @@ fn measure_cell<'a>(
                         cache,
                         &mut breaker,
                         true,
+                        None,
+                        None,
                     )
                 };
                 // Интервалы достаются крайним строкам абзаца: `before` — первой,

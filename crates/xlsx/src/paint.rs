@@ -693,6 +693,10 @@ fn visible_regions(
 
 /// Фон, заливки, сетка, границы и текст одного квадранта.
 #[allow(clippy::too_many_arguments)]
+// Единый проход отрисовки региона листа: слои (заливки, сетка, объединения,
+// визуалы, границы, текст) рисуются в общем локальном контексте координат полос;
+// деление ради счётчика строк только разорвало бы эти контексты.
+#[allow(clippy::too_many_lines)]
 fn draw_region(
     book: &Workbook,
     sheet: &Sheet,
@@ -817,8 +821,21 @@ fn draw_region(
             };
             let is_link = sheet.hyperlink_at(cell.at(row)).is_some();
             draw_text(
-                book, sheet_index, cell.at(row), cell, &style, x, y, w, h, scale, &clip, is_link,
-                options, frame_font, out,
+                book,
+                sheet_index,
+                cell.at(row),
+                cell,
+                &style,
+                x,
+                y,
+                w,
+                h,
+                scale,
+                &clip,
+                is_link,
+                options,
+                frame_font,
+                out,
             );
         }
     }
@@ -1731,7 +1748,11 @@ fn draw_text(
     };
 
     // Правка — текст, как введён: общее выравнивание ведёт себя как у строки.
-    let value = if edited { &CellValue::Empty } else { &cell.value };
+    let value = if edited {
+        &CellValue::Empty
+    } else {
+        &cell.value
+    };
     let (align, tx) = match horizontal(style.base().alignment.horizontal, value) {
         HorizontalAlign::Center | HorizontalAlign::CenterContinuous => {
             (TextAlign::Center, x + w / 2.0)

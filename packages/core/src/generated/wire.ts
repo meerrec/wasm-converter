@@ -129,6 +129,17 @@ lineRect: BBoxWire, text: string, style: TextStyleWire,
  */
 page: number, lineIndex: number, fragmentIndex: number, 
 /**
+ * Индекс абзаца в теле документа (0-based) — цель правки run'а;
+ * `None` — текст вне тела (ячейка таблицы, колонтитул) или фрагмент без
+ * модельного адреса (вычисленное поле).
+ */
+paragraphIndex: number | null, 
+/**
+ * Индекс run'а в потоке абзаца (0-based) — цель правки run'а;
+ * `None` — у фрагмента нет правимого run'а.
+ */
+runIndex: number | null, 
+/**
  * Сквозной логический порядок по документу.
  */
 readingOrder: number, direction: TextDirectionWire, 

@@ -8,7 +8,10 @@ import { frameTarget } from './frame_args.js';
 import {
   buildDocxInto,
   buildDocxSab,
+  docxEdits,
   docxFullTextLayer,
+  docxPages,
+  docxSetRunText,
   docxTextLayer,
   exportDocxPdf,
   images,
@@ -132,6 +135,19 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
   const msg = ev.data;
   if (await core.handle(msg)) return;
   switch (msg.type) {
+    case 'edit-docx': {
+      try {
+        const mod = docxWasm;
+        if (!mod) throw new Error('no docx document is open');
+        // Правка ложится в документ и перераскладывает его; ответ несёт новые
+        // размеры страниц — вьюер перестроит стопку и перезапросит слой.
+        docxSetRunText(mod, msg.paragraph, msg.run, msg.text);
+        post({ type: 'docx-edited', id: msg.id, pages: docxPages(mod) });
+      } catch (e) {
+        postError(String(e), { id: msg.id, code: 'internal' });
+      }
+      break;
+    }
     case 'export-docx-pdf': {
       const urls = core.pdfModuleUrls;
       // Снимок: за время загрузки модуля документ могли закрыть или сменить.
@@ -150,7 +166,10 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       try {
         // Первый клик платит за загрузку модуля; дальше он уже в памяти.
         const mod = await core.loadPdfWasm(urls);
-        const bytes = exportDocxPdf(mod, new Uint8Array(source), msg.options);
+        // Правки интерфейса: экспортёр разбирает байты заново и получает их
+        // снимком из документа.
+        const edits = docxWasm === null ? [] : docxEdits(docxWasm);
+        const bytes = exportDocxPdf(mod, new Uint8Array(source), msg.options, edits);
         post({ type: 'pdf', id: msg.id, bytes }, [bytes.buffer]);
       } catch (e) {
         // Ошибка экспорта — ответ, а не падение воркера: документ остаётся открытым.

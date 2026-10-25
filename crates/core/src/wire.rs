@@ -181,6 +181,13 @@ pub struct TextRunWire {
     pub page: u32,
     pub line_index: u32,
     pub fragment_index: u32,
+    /// Индекс абзаца в теле документа (0-based) — цель правки run'а;
+    /// `None` — текст вне тела (ячейка таблицы, колонтитул) или фрагмент без
+    /// модельного адреса (вычисленное поле).
+    pub paragraph_index: Option<u32>,
+    /// Индекс run'а в потоке абзаца (0-based) — цель правки run'а;
+    /// `None` — у фрагмента нет правимого run'а.
+    pub run_index: Option<u32>,
     /// Сквозной логический порядок по документу.
     pub reading_order: u32,
     pub direction: TextDirectionWire,
@@ -269,6 +276,23 @@ pub struct CellEditWire {
     pub row: u32,
     pub col: u32,
     /// Сырой текст, как введён.
+    pub text: String,
+}
+
+/// Правка run'а документа DOCX, как её ввёл интерфейс: новый текст вместо
+/// содержимого `w:t`.
+///
+/// Снимок правок едет между wasm-модулями: просмотрщик держит их в документе,
+/// а экспортёр PDF разбирает байты заново и прикладывает снимок сам. К конверту
+/// Main ↔ Worker отношения не имеет — этот тип не входит в `InMsg`/`OutMsg`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocxRunEditWire {
+    /// Индекс абзаца в теле документа (`Document::body.items`), 0-based.
+    pub paragraph: u32,
+    /// Индекс run'а в потоке абзаца, 0-based.
+    pub run: u32,
+    /// Новый текст run'а, как введён.
     pub text: String,
 }
 

@@ -12,13 +12,16 @@ use doc_converter_render::{
     text_measure,
 };
 use std::cell::Cell;
+use std::collections::HashMap;
 
 use crate::layout::cascade::StyleCache;
 use crate::layout::fields::{resolve_paragraph, FieldPass};
 use crate::layout::float::{emu_to_px, layout_floats_on_page, FloatElement, FloatKind};
 use crate::layout::line_break::LineBreaker;
 use crate::layout::pagination::{FooterExtent, HeaderExtent, Paginator};
-use crate::layout::paragraph::{layout_paragraph, Line, LineAlign, LineFragment, ParagraphLayout};
+use crate::layout::paragraph::{
+    layout_paragraph, layout_paragraph_addressed, Line, LineAlign, LineFragment, ParagraphLayout,
+};
 use crate::layout::tables::{
     compute_table_frame, layout_table_fragments, table_item, PageBand, TableRowLayout,
 };
@@ -504,6 +507,10 @@ fn layout_pass(
     // Секция, в которой идёт раскладка: `sections[i]` описывает секцию, которую
     // закрывает i-й по порядку конец секции (`collect_sections` в `document.rs`).
     let mut section_index = 0usize;
+    // Индекс абзаца в теле — модельный адрес правок run'ов: его несёт
+    // `TextRunWire::paragraph_index`, и нумеруются только
+    // `BlockItem::Paragraph` (абзацы таблиц и колонтитулов не входят).
+    let mut paragraph_index = 0u32;
 
     for block in &document.body.items {
         // Отмена проверяется между блоками: документ из десятков тысяч блоков
@@ -527,6 +534,14 @@ fn layout_pass(
         }
 
         pass.on_page(paginator.current_page().number);
+        let address = match block {
+            BlockItem::Paragraph(_) => {
+                let index = paragraph_index;
+                paragraph_index = paragraph_index.saturating_add(1);
+                Some(index)
+            }
+            _ => None,
+        };
         layout_block(
             document,
             block,
@@ -538,6 +553,7 @@ fn layout_pass(
             &mut deferred_floats,
             &mut state,
             &mut pass,
+            address,
         );
 
         // Абзац со встроенным `w:sectPr` закрывает секцию: он сам ещё
@@ -592,6 +608,7 @@ fn layout_block(
     deferred_floats: &mut Vec<DeferredFloat>,
     state: &mut LayoutState,
     pass: &mut FieldPass,
+    paragraph_index: Option<u32>,
 ) {
     match block {
         BlockItem::Paragraph(paragraph) => {
@@ -601,17 +618,33 @@ fn layout_block(
             sync_frame(paginator, state);
 
             let resolved = resolve_paragraph(paragraph, pass);
+            // Подстановка вычисляемых полей переписывает абзац: после неё
+            // сквозная нумерация runs не совпадает с модельной, поэтому адреса
+            // runs берутся картой по `NodeId` из исходного абзаца.
+            let run_indices = resolved.as_ref().map(|_| model_run_indices(paragraph));
             let paragraph = resolved.as_ref().unwrap_or(paragraph);
 
             let mut line_breaker = LineBreaker::new(fonts, FontId::default());
-            let layout = layout_paragraph(
-                document,
-                paragraph,
-                state,
-                options,
-                cache,
-                &mut line_breaker,
-            );
+            let layout = match paragraph_index {
+                Some(index) => layout_paragraph_addressed(
+                    document,
+                    paragraph,
+                    state,
+                    options,
+                    cache,
+                    &mut line_breaker,
+                    index,
+                    run_indices.as_ref(),
+                ),
+                None => layout_paragraph(
+                    document,
+                    paragraph,
+                    state,
+                    options,
+                    cache,
+                    &mut line_breaker,
+                ),
+            };
 
             let empty_line = empty_paragraph_line(&mut line_breaker, state.x);
             let lines: Vec<&Line> = if layout.lines.is_empty() {
@@ -654,6 +687,30 @@ fn layout_block(
         }
         // Секции в поток колонтитула не попадают, чужие блоки раскладке не видны.
         BlockItem::SectPr(_) | BlockItem::Unknown { .. } => {}
+    }
+}
+
+/// Адреса runs исходного абзаца: `NodeId` → индекс в потоке (прямые runs и
+/// runs гиперссылок). Нужна, когда [`resolve_paragraph`] переписал абзац
+/// подстановкой вычисляемых полей: по карте адрес каждого run'а переживает
+/// переписывание, и правка интерфейса попадает в тот же run, что в модели.
+fn model_run_indices(paragraph: &Paragraph) -> HashMap<NodeId, u32> {
+    let mut indices = HashMap::new();
+    collect_model_runs(&paragraph.runs, &mut indices);
+    indices
+}
+
+/// Собрать адреса runs из inline-потока (см. [`model_run_indices`]).
+fn collect_model_runs(inlines: &[Inline], indices: &mut HashMap<NodeId, u32>) {
+    for inline in inlines {
+        match inline {
+            Inline::Run(run) => {
+                let index = u32::try_from(indices.len()).unwrap_or(u32::MAX);
+                indices.entry(run.id).or_insert(index);
+            }
+            Inline::Hyperlink(link) => collect_model_runs(&link.runs, indices),
+            _ => {}
+        }
     }
 }
 
@@ -1487,6 +1544,7 @@ fn layout_chrome_items(
             &mut deferred_floats,
             &mut state,
             pass,
+            None,
         );
         // Курсор — высота содержимого вместе с отбивкой за последним блоком.
         // Берётся только с первой страницы полосы: колонтитул выше страницы —
@@ -1836,8 +1894,8 @@ mod tests {
     use crate::model::{
         Body, BreakKind, ColumnDef, Columns, Extent, Field, FieldKind, HeaderFooter, Inline,
         InlineImage, InlineOrAnchor, Metadata, NumberingTable, Paragraph, PartRef, PositionH,
-        PositionV, RelFromH, RelFromV, Relationships, Run, RunContent, SectionType, Settings,
-        StyleTable, WrapKind,
+        PositionV, RelFromH, RelFromV, Relationships, Run, RunContent, RunEdits, SectionType,
+        Settings, StyleTable, WrapKind,
     };
 
     /// Абзац из одного run'а; идентификаторы произвольные — раскладка их не сверяет.
@@ -1874,6 +1932,7 @@ mod tests {
             footers: std::collections::BTreeMap::new(),
             warnings: Vec::new(),
             media: Vec::new(),
+            edits: RunEdits::default(),
         }
     }
 

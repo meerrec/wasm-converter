@@ -25,10 +25,10 @@ use doc_converter_docx::{
     Margins, Metadata, MultiLevelType, NoteKind, Num, NumFmt, NumId, NumPr, NumRestart,
     NumberingStyle, NumberingTable, Orientation, PageSize, Paragraph, ParagraphBorders,
     ParagraphSpacing, ParagraphStyle, PartRef, PositionH, PositionV, RFonts, RawPPr, RawRPr,
-    RelFromH, RelFromV, Relationships, Row, RowHeight, Run, RunContent, Section, SectionProperties,
-    SectionType, Settings, Shading, ShadingPattern, StyleId, StyleTable, TabLeader, TabStop,
-    TabStopKind, Table, TableBorders, TableLayout, TableLook, TableStyle, TableStyleCondition,
-    TableWidth, Toggle, Twips, Underline, VMerge, VertAlign, WrapKind,
+    RelFromH, RelFromV, Relationships, Row, RowHeight, Run, RunContent, RunEdits, Section,
+    SectionProperties, SectionType, Settings, Shading, ShadingPattern, StyleId, StyleTable,
+    TabLeader, TabStop, TabStopKind, Table, TableBorders, TableLayout, TableLook, TableStyle,
+    TableStyleCondition, TableWidth, Toggle, Twips, Underline, VMerge, VertAlign, WrapKind,
 };
 // Парсер наружу открывается одним входом `open`: вариант с `ZipLimits` — внутренний.
 use doc_converter_docx::open;
@@ -97,6 +97,7 @@ fn base_document() -> Document {
         footers: BTreeMap::new(),
         warnings: Vec::new(),
         media: Vec::new(),
+        edits: RunEdits::default(),
     }
 }
 
