@@ -11,8 +11,8 @@ We have a quick list of common questions to get you started engaging with this p
 
 - `pnpm changeset` — создать changeset; `pnpm release:version` — применить накопленные
   changesets (версии + CHANGELOG.md). Pre-release режим (`changeset pre enter`) не используется.
-- `linked` — все пять публикуемых пакетов (`core`, `cli`, `wasm`, `wasm-docx`,
-  `wasm-pdf`) версионируются вместе: `core → wasm` и `cli → wasm-docx/wasm-pdf`
+- `linked` — все четырнадцать публикуемых пакетов (`core`, `cli`, `react`, `vue`,
+  `svelte` и девять `wasm-*`) версионируются вместе: `core → wasm-*` и `cli → wasm-*`
   (всё через `workspace:*`), рассинхрон версий биндингов ломал бы потребителей.
 - `@meerrec/example-viewer` приватный и исключён из версионирования (`privatePackages`).
 - `commit: false` — коммиты делает агент/человек (Conventional Commits), не changesets.

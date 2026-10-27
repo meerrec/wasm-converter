@@ -12,7 +12,9 @@ use std::cell::Cell;
 
 use doc_converter_core::ZipLimits;
 use doc_converter_render::display_list::DisplayList;
-use doc_converter_render::plugin::{DocumentModel, EngineError, FormatKind, FormatPlugin, PluginInfo, RenderContext};
+use doc_converter_render::plugin::{
+    DocumentModel, EngineError, FormatKind, FormatPlugin, PluginInfo, RenderContext,
+};
 use doc_converter_render::viewport::Viewport;
 use doc_converter_xlsx::paint::{self, PaintOptions};
 use doc_converter_xlsx::Workbook;

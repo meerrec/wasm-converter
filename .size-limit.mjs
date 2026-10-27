@@ -165,4 +165,37 @@ export default [
     gzip: true,
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },
+  {
+    // Ленивый модуль XLSB (ADR-0048): 242 КБ gzip по факту. Бюджет стережёт
+    // возврат парсера BIFF12 в основной бандл и рост за счёт фич.
+    name: 'wasm (xlsb)',
+    path: 'packages/wasm-xlsb/pkg/*.wasm',
+    limit: '260 KB',
+    gzip: true,
+    modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
+  },
+  {
+    // Ленивый модуль ODS (ADR-0047): 259 КБ gzip по факту.
+    name: 'wasm (ods)',
+    path: 'packages/wasm-ods/pkg/*.wasm',
+    limit: '275 KB',
+    gzip: true,
+    modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
+  },
+  {
+    // Ленивый модуль ODT (ADR-0047): 308 КБ gzip по факту.
+    name: 'wasm (odt)',
+    path: 'packages/wasm-odt/pkg/*.wasm',
+    limit: '330 KB',
+    gzip: true,
+    modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
+  },
+  {
+    // Ленивый модуль ODP (ADR-0047): 219 КБ gzip по факту.
+    name: 'wasm (odp)',
+    path: 'packages/wasm-odp/pkg/*.wasm',
+    limit: '235 KB',
+    gzip: true,
+    modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
+  },
 ];
