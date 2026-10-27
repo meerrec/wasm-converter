@@ -3,7 +3,7 @@
   "changelog": "@changesets/cli/changelog",
   "commit": false,
   "fixed": [],
-  "linked": [["@meerrec/core", "@meerrec/wasm", "@meerrec/wasm-docx", "@meerrec/wasm-pdf", "@meerrec/cli"]],
+  "linked": [["@meerrec/core", "@meerrec/wasm", "@meerrec/wasm-docx", "@meerrec/wasm-pdf", "@meerrec/wasm-xlsb", "@meerrec/wasm-ods", "@meerrec/wasm-odt", "@meerrec/wasm-odp", "@meerrec/wasm-pptx", "@meerrec/wasm-pptx-pdf", "@meerrec/react", "@meerrec/vue", "@meerrec/svelte", "@meerrec/cli"]],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",

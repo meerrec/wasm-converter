@@ -10,7 +10,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { CliError } from './errors.js';
-import { inputKind } from './formats.js';
+import { INPUT_EXTENSIONS, inputKind } from './formats.js';
 
 /** Есть ли в шаблоне спецсимволы glob. */
 export function hasMagic(pattern: string): boolean {
@@ -60,19 +60,19 @@ export function globToRegExp(glob: string): RegExp {
 }
 
 /**
- * Развернуть входы в список существующих `.docx`/`.xlsx`.
+ * Развернуть входы в список существующих поддерживаемых документов.
  *
  * Каталоги обходятся рекурсивно, скрытые каталоги пропускаются. Каждый шаблон
  * обязан дать хотя бы один файл — иначе это опечатка, и о ней нужно сказать
  * до запуска воркеров. Файлы с чужими расширениями молча отбрасываются:
- * `batch ./in` не должен падать из-за `readme.txt` рядом с книгами.
+ * `batch ./in` не должен падать из-за `readme.txt` рядом с документами.
  */
 export async function expandInputs(patterns: readonly string[]): Promise<string[]> {
   const found = new Set<string>();
   for (const pattern of patterns) {
     const matches = await expandOne(pattern);
     if (matches.length === 0) {
-      throw new CliError(`no .docx/.xlsx files matched '${pattern}'`);
+      throw new CliError(`no ${INPUT_EXTENSIONS} files matched '${pattern}'`);
     }
     for (const match of matches) found.add(match);
   }

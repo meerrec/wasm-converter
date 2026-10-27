@@ -321,6 +321,84 @@ pub struct BuildStatsWire {
     pub build_ms: f64,
 }
 
+/// Код структурной диагностики: машинно-читаемая причина отказа.
+///
+/// Набор плоский намеренно: интерфейс различает причины по строке, а не по
+/// иерархии ошибок Rust, — поэтому код остаётся стабильным значением
+/// протокола, пока внутренние типы ошибок меняются свободно. В TS значения
+/// записаны kebab-case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum DiagnosticCodeWire {
+    /// Формат не поддержан этой сборкой.
+    UnsupportedFormat,
+    /// Пакет битый: ZIP/XML не разобрался или нарушена структура.
+    MalformedPackage,
+    /// Пакет зашифрован — разбор без пароля невозможен.
+    Encrypted,
+    /// Исчерпан лимит ресурсов (ADR-0015).
+    LimitExceeded,
+    /// Раскладка не сошлась.
+    LayoutFailed,
+    /// Операция отменена вызывающим (ADR-0032).
+    Cancelled,
+    /// Кадр не нарисовался.
+    RenderFailed,
+    /// Транспорт кадра недоступен (SAB без COOP/COEP, ADR-0021).
+    TransportUnavailable,
+    /// Экспорт не удался.
+    ExportFailed,
+    /// Ошибка ввода-вывода.
+    IoFailed,
+    /// Внутренняя ошибка движка.
+    Internal,
+}
+
+/// Слой, на котором произошёл отказ: от разбора пакета до CLI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum DiagnosticLayerWire {
+    /// Разбор пакета и его частей.
+    Parse,
+    /// Раскладка в пиксели.
+    Layout,
+    /// Сборка и отрисовка кадра.
+    Render,
+    /// Доставка кадра (SAB/ArrayBuffer).
+    Transport,
+    /// Экспорт в PDF/PNG/Markdown/HTML/текст.
+    Export,
+    /// Оркестрация: отмена, выбор плагина и пути исполнения.
+    Orchestration,
+    /// Командная строка.
+    Cli,
+    /// Инварианты самого движка.
+    Internal,
+}
+
+/// Структурная диагностика: что случилось, на каком слое и можно ли повторить.
+///
+/// Единая форма для Rust → TS: `message` — текст для человека, остальные поля
+/// машинные. `format` не задан, если ошибка не привязана к конкретному
+/// формату (например, отказ транспорта).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct DiagnosticWire {
+    pub code: DiagnosticCodeWire,
+    pub layer: DiagnosticLayerWire,
+    /// Текст ошибки нижнего слоя как есть.
+    pub message: String,
+    /// Формат, к которому относится ошибка; `None` — формат неизвестен.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub format: Option<String>,
+    /// Повтор операции имеет смысл: отмена или временный сбой транспорта.
+    pub retryable: bool,
+}
+
 /// Настройки экспорта из интерфейса: имена полей — как у TS `PdfOptions`.
 /// Все поля необязательны; чего нет — берётся умолчание `PdfOptions`.
 #[derive(Debug, Default, Deserialize)]

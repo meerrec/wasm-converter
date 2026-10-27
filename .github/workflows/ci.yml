@@ -74,15 +74,15 @@ jobs:
 
       - name: build (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
-        run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm -p doc-converter-pptx-pdf-wasm -p doc-converter-wasm-common --release
+        run: cargo build --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm -p doc-converter-pptx-pdf-wasm -p doc-converter-wasm-common -p doc-converter-xlsb-wasm -p doc-converter-ods-wasm -p doc-converter-odt-wasm -p doc-converter-odp-wasm --release
 
-      # На нативном таргете все шесть крейтов пусты (`#![cfg(target_arch = "wasm32")]`),
+      # На нативном таргете все десять крейтов пусты (`#![cfg(target_arch = "wasm32")]`),
       # поэтому их доккомментарии проверяет только эта нога матрицы.
       - name: doc (wasm)
         if: matrix.target == 'wasm32-unknown-unknown'
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm -p doc-converter-pptx-pdf-wasm -p doc-converter-wasm-common --no-deps
+        run: cargo doc --target wasm32-unknown-unknown -p doc-converter-wasm -p doc-converter-pdf-wasm -p doc-converter-docx-wasm -p doc-converter-pptx-wasm -p doc-converter-pptx-pdf-wasm -p doc-converter-wasm-common -p doc-converter-xlsb-wasm -p doc-converter-ods-wasm -p doc-converter-odt-wasm -p doc-converter-odp-wasm --no-deps
 
   wasm:
     name: Wasm bindings
@@ -102,11 +102,9 @@ jobs:
       - run: cargo install wasm-pack --locked
       - run: bash scripts/build-wasm.sh
 
-      # I3: .d.ts не должен объявлять экспорты, которых нет в крейте.
-      # wasm-bindgen собирает `#[wasm_bindgen]`-элементы из всего графа
-      # зависимостей; своей PDF-библиотеки больше нет (ADR-0022), поэтому
-      # посторонних экспортов быть не должно — любое лишнее имя здесь
-      # регрессия. Сверяются оба ленивых модуля.
+      # Экспорты всех восьми ленивых модулей сверяются с их крейтами (у основного
+      # `wasm` проверка своя, ниже): wasm-bindgen собирает #[wasm_bindgen] из всего
+      # графа зависимостей, лишнее имя — регрессия.
       - name: check wasm exports
         run: |
           set -euo pipefail
@@ -140,6 +138,10 @@ jobs:
           check_exports packages/wasm-docx/pkg/doc_converter_docx_wasm.d.ts crates/docx-wasm/src
           check_exports packages/wasm-pptx/pkg/doc_converter_pptx_wasm.d.ts crates/pptx-wasm/src
           check_exports packages/wasm-pptx-pdf/pkg/doc_converter_pptx_pdf_wasm.d.ts crates/pptx-pdf-wasm/src
+          check_exports packages/wasm-xlsb/pkg/doc_converter_xlsb_wasm.d.ts crates/xlsb-wasm/src
+          check_exports packages/wasm-ods/pkg/doc_converter_ods_wasm.d.ts crates/ods-wasm/src
+          check_exports packages/wasm-odt/pkg/doc_converter_odt_wasm.d.ts crates/odt-wasm/src
+          check_exports packages/wasm-odp/pkg/doc_converter_odp_wasm.d.ts crates/odp-wasm/src
 
       # Просмотрщик DOCX уехал из основного модуля в ленивый `wasm-docx`;
       # экспорты `docx_*` в `packages/wasm/pkg` означают его возврат в основной
@@ -186,6 +188,26 @@ jobs:
         with:
           name: wasm-pptx-pdf-pkg
           path: packages/wasm-pptx-pdf/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-xlsb-pkg
+          path: packages/wasm-xlsb/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-ods-pkg
+          path: packages/wasm-ods/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-odt-pkg
+          path: packages/wasm-odt/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-odp-pkg
+          path: packages/wasm-odp/pkg
 
   # Браузерные wasm-bindgen-тесты до этой джобы не запускались нигде: в
   # crates/wasm/tests/ живёт регрессия кэша стилей painter'а, тесты остальных
@@ -296,8 +318,8 @@ jobs:
           name: wasm-pkg
           path: packages/wasm/pkg
 
-      # pkg/ трёх модулей приезжает артефактами, потому что генерируется
-      # wasm-bindgen.
+      # pkg/ всех ленивых модулей приезжает артефактами, потому что
+      # генерируется wasm-bindgen.
       - uses: actions/download-artifact@v4
         with:
           name: wasm-pdf-pkg
@@ -317,6 +339,26 @@ jobs:
         with:
           name: wasm-pptx-pdf-pkg
           path: packages/wasm-pptx-pdf/pkg
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-xlsb-pkg
+          path: packages/wasm-xlsb/pkg
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-ods-pkg
+          path: packages/wasm-ods/pkg
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-odt-pkg
+          path: packages/wasm-odt/pkg
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-odp-pkg
+          path: packages/wasm-odp/pkg
 
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 

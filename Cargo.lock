@@ -507,6 +507,72 @@ dependencies = [
 ]
 
 [[package]]
+name = "doc-converter-odf"
+version = "2.0.2"
+dependencies = [
+ "doc-converter-core",
+ "doc-converter-docx",
+ "doc-converter-pptx",
+ "doc-converter-pptx-layout",
+ "doc-converter-pptx-render",
+ "doc-converter-render",
+ "doc-converter-xlsx",
+ "miette",
+ "quick-xml",
+ "thiserror",
+ "zip",
+]
+
+[[package]]
+name = "doc-converter-odp-wasm"
+version = "2.0.2"
+dependencies = [
+ "doc-converter-core",
+ "doc-converter-odf",
+ "doc-converter-pptx",
+ "doc-converter-pptx-render",
+ "doc-converter-render",
+ "doc-converter-wasm-common",
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
+]
+
+[[package]]
+name = "doc-converter-ods-wasm"
+version = "2.0.2"
+dependencies = [
+ "doc-converter-core",
+ "doc-converter-odf",
+ "doc-converter-render",
+ "doc-converter-wasm-common",
+ "doc-converter-xlsx",
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
+]
+
+[[package]]
+name = "doc-converter-odt-wasm"
+version = "2.0.2"
+dependencies = [
+ "doc-converter-core",
+ "doc-converter-docx",
+ "doc-converter-odf",
+ "doc-converter-render",
+ "doc-converter-wasm-common",
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
+]
+
+[[package]]
 name = "doc-converter-pdf"
 version = "2.0.2"
 dependencies = [
@@ -530,7 +596,9 @@ version = "2.0.2"
 dependencies = [
  "doc-converter-core",
  "doc-converter-docx",
+ "doc-converter-odf",
  "doc-converter-pdf",
+ "doc-converter-xlsb",
  "doc-converter-xlsx",
  "js-sys",
  "serde",
@@ -577,6 +645,7 @@ name = "doc-converter-pptx-pdf-wasm"
 version = "2.0.2"
 dependencies = [
  "doc-converter-core",
+ "doc-converter-odf",
  "doc-converter-pdf",
  "doc-converter-pptx",
  "doc-converter-pptx-pdf",
@@ -655,6 +724,34 @@ dependencies = [
  "js-sys",
  "serde-wasm-bindgen",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "doc-converter-xlsb"
+version = "2.0.2"
+dependencies = [
+ "doc-converter-core",
+ "doc-converter-render",
+ "doc-converter-xlsx",
+ "miette",
+ "thiserror",
+ "zip",
+]
+
+[[package]]
+name = "doc-converter-xlsb-wasm"
+version = "2.0.2"
+dependencies = [
+ "doc-converter-core",
+ "doc-converter-render",
+ "doc-converter-wasm-common",
+ "doc-converter-xlsb",
+ "doc-converter-xlsx",
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
 ]
 
 [[package]]

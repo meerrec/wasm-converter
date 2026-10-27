@@ -9,18 +9,26 @@
 
 use doc_converter_core::zip_limits::ZipLimits;
 use doc_converter_render::display_list::DisplayList;
-use doc_converter_render::plugin::{DocumentModel, EngineError, FormatPlugin, RenderContext};
+use doc_converter_render::plugin::{
+    DocumentModel, EngineError, FormatKind, FormatPlugin, PluginInfo, RenderContext,
+};
 use doc_converter_render::viewport::Viewport;
 
 use doc_converter_pptx_layout::{layout_slide, SlideLayout};
 
-/// Плагин PPTX: `id()` → `"pptx"`, как `DocFormat` протокола TS.
+/// Плагин PPTX: `info().id` → `"pptx"`, как `DocFormat` протокола TS.
 #[derive(Debug, Default)]
 pub struct PptxPlugin;
 
 impl FormatPlugin for PptxPlugin {
-    fn id(&self) -> &'static str {
-        "pptx"
+    fn info(&self) -> PluginInfo {
+        PluginInfo {
+            id: "pptx",
+            kind: FormatKind::Slides,
+            // `pptm` — тот же OOXML-пакет: макросы не читаются и не
+            // исполняются, презентация разбирается как обычный PPTX.
+            extensions: &["pptx", "pptm"],
+        }
     }
 
     /// # Errors
@@ -85,7 +93,13 @@ mod tests {
 
     #[test]
     fn plugin_id_is_pptx() {
-        assert_eq!(PptxPlugin.id(), "pptx");
+        let info = PptxPlugin.info();
+        assert_eq!(info.id, "pptx");
+        assert_eq!(info.kind, FormatKind::Slides);
+        let extensions: &[&str] = &["pptx", "pptm"];
+        assert_eq!(info.extensions, extensions);
+        // `id()` — удобная обёртка над паспортом, а не второй источник истины.
+        assert_eq!(PptxPlugin.id(), info.id);
     }
 
     #[test]

@@ -18,7 +18,7 @@ import type {
   Viewport,
 } from '../protocol.js';
 import type { AbortGuard } from './abort.js';
-import type { MainFrameChain } from './main_frame_chain.js';
+import type { MainRenderAdapter } from './render_adapter.js';
 import type { TextLayerController } from './text_layer.js';
 
 export type { TextExportFormat };
@@ -42,7 +42,7 @@ export interface ViewerFormatSpec<S, O> {
   /** URL воркера: свой из опций либо дефолт рядом с бандлом. */
   workerUrl: (options: { workerUrl?: URL }) => URL;
   /** Формат-тег телеметрии (ADR-0037). */
-  telemetry: 'xlsx' | 'docx' | 'pptx';
+  telemetry: 'xlsx' | 'docx' | 'pptx' | 'xlsb' | 'ods' | 'odp' | 'odt';
   /** Формат в конверте `open`/`open-stream`. */
   formatTag: DocFormat;
   /** Тег ответа на открытие: свой у каждого формата. */
@@ -100,9 +100,8 @@ export interface ViewerState<S, O extends ViewerBaseOptions = ViewerBaseOptions>
   padLeft: number;
   destroyed: boolean;
   frameScheduled: boolean;
-  mainChain: MainFrameChain | null;
-  /** Битмапы main-режима: main перерегистрирует их после resize. */
-  readonly mainBitmaps: Map<number, ImageBitmap>;
+  /** Путь кадра на main-стороне: painter, битмапы, resize и снимок PNG. */
+  readonly render: MainRenderAdapter;
   readonly tickHandlers: Set<(stats: PaintStats) => void>;
   readonly pendingOpen: Map<number, AbortGuard<void>>;
   readonly pendingHit: Map<number, { resolve: (cell: [number, number] | null) => void }>;

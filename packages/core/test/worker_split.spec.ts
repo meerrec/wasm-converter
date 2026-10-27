@@ -8,7 +8,7 @@ import { createXlsxViewer, type XlsxViewerHandle } from '../src/render/xlsx_view
  * Разделение воркеров по форматам (направление «воркер на формат»): каждая
  * фабрика поднимает свой бандл и шлёт только сообщения своего формата. Общий
  * диспетчер `worker.js` удалён, поэтому проверяем и конфиг сборки: tsup обязан
- * выпускать три воркер-бандла, а не один.
+ * выпускать семь воркер-бандлов, а не один.
  */
 
 const SHEET = {
@@ -162,11 +162,19 @@ describe('бандлы воркеров', () => {
     expect(entry.xlsx_worker).toBe('src/worker/xlsx_worker.ts');
     expect(entry.docx_worker).toBe('src/worker/docx_worker.ts');
     expect(entry.pptx_worker).toBe('src/worker/pptx_worker.ts');
+    expect(entry.xlsb_worker).toBe('src/worker/xlsb_worker.ts');
+    expect(entry.ods_worker).toBe('src/worker/ods_worker.ts');
+    expect(entry.odp_worker).toBe('src/worker/odp_worker.ts');
+    expect(entry.odt_worker).toBe('src/worker/odt_worker.ts');
     expect(entry.worker).toBeUndefined();
     expect(Object.keys(entry).filter((key) => key.endsWith('_worker'))).toEqual([
       'xlsx_worker',
       'docx_worker',
       'pptx_worker',
+      'xlsb_worker',
+      'ods_worker',
+      'odp_worker',
+      'odt_worker',
     ]);
   });
 

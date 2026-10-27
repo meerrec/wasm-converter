@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { defaultWorkers, parseArgs } from '../src/args.js';
+import { defaultWorkers, parseArgs, USAGE } from '../src/args.js';
 import { CliError } from '../src/errors.js';
 
 describe('parseArgs', () => {
@@ -16,6 +16,7 @@ describe('parseArgs', () => {
       out: 'report.pdf',
       format: null,
       force: false,
+      json: false,
       pdf: {},
     });
   });
@@ -68,6 +69,7 @@ describe('parseArgs', () => {
       workers: 4,
       force: true,
       quiet: false,
+      json: false,
       pdf: {},
     });
   });
@@ -120,6 +122,23 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['convert', 'a.xlsx', '-o', 'a.pdf', '--scale', '-1'])).toThrow(/positive number/);
     expect(() => parseArgs(['convert', 'a.xlsx', '-o', 'a.pdf', '--fit-to-width', '-1'])).toThrow(/non-negative integer/);
     expect(() => parseArgs(['convert', 'a.xlsx', '-o', 'a.pdf', '--fit-to-height', 'x'])).toThrow(/non-negative integer/);
+  });
+
+  it('разбирает --json в convert и batch', () => {
+    const convert = parseArgs(['convert', 'a.docx', '-o', 'a.pdf', '--json']);
+    if (convert.kind !== 'convert') throw new Error('expected convert');
+    expect(convert.json).toBe(true);
+
+    const batch = parseArgs(['batch', 'in', '--out', 'out', '--json']);
+    if (batch.kind !== 'batch') throw new Error('expected batch');
+    expect(batch.json).toBe(true);
+  });
+
+  it('по умолчанию --json выключен и описан в USAGE', () => {
+    const convert = parseArgs(['convert', 'a.docx', '-o', 'a.pdf']);
+    if (convert.kind !== 'convert') throw new Error('expected convert');
+    expect(convert.json).toBe(false);
+    expect(USAGE).toContain('--json');
   });
 
   it('показывает справку по help в подкоманде', () => {

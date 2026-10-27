@@ -207,3 +207,21 @@ written: boolean, cmds: number,
  */
 bytes: number, buildMs: number, };
 
+export type DiagnosticCodeWire = "unsupported-format" | "malformed-package" | "encrypted" | "limit-exceeded" | "layout-failed" | "cancelled" | "render-failed" | "transport-unavailable" | "export-failed" | "io-failed" | "internal";
+
+export type DiagnosticLayerWire = "parse" | "layout" | "render" | "transport" | "export" | "orchestration" | "cli" | "internal";
+
+export type DiagnosticWire = { code: DiagnosticCodeWire, layer: DiagnosticLayerWire, 
+/**
+ * Текст ошибки нижнего слоя как есть.
+ */
+message: string, 
+/**
+ * Формат, к которому относится ошибка; `None` — формат неизвестен.
+ */
+format?: string, 
+/**
+ * Повтор операции имеет смысл: отмена или временный сбой транспорта.
+ */
+retryable: boolean, };
+

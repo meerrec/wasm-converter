@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { CliError } from '../src/errors.js';
-import { assertSupported, extensionOf, formatFromPath, inputKind, parseFormat, withExtension } from '../src/formats.js';
+import { assertSupported, extensionOf, formatFromPath, inputKind, parseFormat, SUPPORTED, withExtension } from '../src/formats.js';
 
 describe('formats', () => {
   it('разбирает расширения без учёта регистра', () => {
@@ -10,6 +10,26 @@ describe('formats', () => {
     expect(inputKind('book.xls')).toBeNull();
     expect(inputKind('doc.zip')).toBeNull();
     expect(inputKind('noextension')).toBeNull();
+  });
+
+  it('разбирает новые расширения в верный InputKind', () => {
+    expect(inputKind('deck.pptx')).toBe('pptx');
+    expect(inputKind('letter.odt')).toBe('odt');
+    expect(inputKind('sheet.ods')).toBe('ods');
+    expect(inputKind('slides.odp')).toBe('odp');
+    expect(inputKind('book.xlsb')).toBe('xlsb');
+    // `.docm` остаётся вне скоупа: макросы CLI не читает.
+    expect(inputKind('book.docm')).toBeNull();
+  });
+
+  it('матрица SUPPORTED: документы и презентации — четыре цели, таблицы — PDF', () => {
+    expect(SUPPORTED.docx).toEqual(['pdf', 'md', 'html', 'txt']);
+    expect(SUPPORTED.odt).toEqual(['pdf', 'md', 'html', 'txt']);
+    expect(SUPPORTED.pptx).toEqual(['pdf', 'md', 'html', 'txt']);
+    expect(SUPPORTED.odp).toEqual(['pdf', 'md', 'html', 'txt']);
+    expect(SUPPORTED.xlsx).toEqual(['pdf']);
+    expect(SUPPORTED.ods).toEqual(['pdf']);
+    expect(SUPPORTED.xlsb).toEqual(['pdf']);
   });
 
   it('понимает синонимы выходных расширений', () => {

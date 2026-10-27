@@ -21,6 +21,9 @@ const packageRoot = fileURLToPath(new URL('..', import.meta.url));
 const CLI = join(packageRoot, 'dist/cli.js');
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const DOCX = join(repoRoot, 'test-fixtures/docx/simple/one_paragraph.docx');
+const ODT = join(repoRoot, 'test-fixtures/odf/odt/simple.odt');
+const ODP = join(repoRoot, 'test-fixtures/odf/odp/simple.odp');
+const ODS = join(repoRoot, 'test-fixtures/odf/ods/simple.ods');
 
 let outDir: string;
 
@@ -41,11 +44,53 @@ describe.skipIf(!existsSync(CLI))('dist/cli.js', () => {
     expect(stdout).toBe('%PDF-');
   });
 
+  it('convert --json: JSON в stdout и тишина в stderr', async () => {
+    const output = join(outDir, 'one_paragraph-json.pdf');
+    const { stdout, stderr } = await run('node', [CLI, 'convert', DOCX, '-o', output, '--json']);
+
+    expect(stderr).toBe('');
+    const parsed = JSON.parse(stdout) as { ok: boolean; input: string; output: string; bytes: number; stats: { format: string } };
+    expect(parsed).toMatchObject({ ok: true, input: DOCX, output, stats: { format: 'docx' } });
+    expect(parsed.bytes).toBeGreaterThan(0);
+    const { stdout: header } = await run('head', ['-c', '5', output]);
+    expect(header).toBe('%PDF-');
+  });
+
   it('convert DOCX → Markdown', async () => {
     const output = join(outDir, 'one_paragraph.md');
     await run('node', [CLI, 'convert', DOCX, '-o', output]);
     const { stdout } = await run('cat', [output]);
     expect(stdout).toContain('Hello, World!');
+  });
+
+  it('convert ODT → PDF', async () => {
+    const output = join(outDir, 'simple.odt.pdf');
+    const { stderr } = await run('node', [CLI, 'convert', ODT, '-o', output]);
+    expect(stderr).toContain('ok');
+    const { stdout } = await run('head', ['-c', '5', output]);
+    expect(stdout).toBe('%PDF-');
+  });
+
+  it('convert ODT → Markdown', async () => {
+    const output = join(outDir, 'simple.odt.md');
+    await run('node', [CLI, 'convert', ODT, '-o', output]);
+    const { stdout } = await run('cat', [output]);
+    expect(stdout).toContain('ODF text fixture');
+  });
+
+  it('convert ODP → text', async () => {
+    const output = join(outDir, 'simple.odp.txt');
+    await run('node', [CLI, 'convert', ODP, '-o', output]);
+    const { stdout } = await run('cat', [output]);
+    expect(stdout).toContain('Slides in ODF');
+  });
+
+  it('convert ODS → PDF', async () => {
+    const output = join(outDir, 'simple.ods.pdf');
+    const { stderr } = await run('node', [CLI, 'convert', ODS, '-o', output]);
+    expect(stderr).toContain('ok');
+    const { stdout } = await run('head', ['-c', '5', output]);
+    expect(stdout).toBe('%PDF-');
   });
 
   it('batch каталога с --workers 4 печатает прогресс', async () => {
@@ -61,6 +106,23 @@ describe.skipIf(!existsSync(CLI))('dist/cli.js', () => {
     const files = stdout.trim().split('\n');
     expect(files.length).toBeGreaterThan(1);
     expect(files.every((name) => name.endsWith('.pdf'))).toBe(true);
+  });
+
+  it('batch --json печатает JSON Lines без прогресса в stderr', async () => {
+    const inputDir = join(repoRoot, 'test-fixtures/docx/simple');
+    const jsonDir = join(outDir, 'json');
+    const { stdout, stderr } = await run('node', [CLI, 'batch', inputDir, '--out', jsonDir, '--workers', '2', '--json']);
+
+    expect(stderr).toBe('');
+    const lines = stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const summary = lines.at(-1) as { ok: boolean; total: number; failed: number; ms: number; workers: number };
+    expect(summary).toMatchObject({ ok: true, failed: 0, workers: 2 });
+    const jobs = lines.slice(0, -1);
+    expect(jobs.length).toBe(summary.total);
+    expect(jobs.every((job) => job.ok === true && typeof job.stats === 'object')).toBe(true);
   });
 
   it('неподдерживаемая пара — код возврата 2 и текст ошибки', async () => {

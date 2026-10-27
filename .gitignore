@@ -75,3 +75,7 @@ experiments/lowa-spike/vendor/
 # являются, в сборку уезжает копия.
 examples/viewer/public/x2t/
 test-fixtures/conf-xlsx/
+chromedriver/
+.pnpm-store/
+.qwen/
+.omp/

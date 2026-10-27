@@ -42,3 +42,26 @@ pub fn export_pptx_pdf(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValu
     let presentation = doc_converter_pptx::open(bytes.to_vec()).map_err(to_js)?;
     doc_converter_pptx_pdf::export(&presentation, &PdfOptions::default()).map_err(to_js)
 }
+
+/// Экспортировать презентацию ODP в PDF: слайд = страница, размер страницы из
+/// раскладки. Презентация приходит байтами ODF и разбирается здесь же: модель —
+/// та же, что у PPTX ([`doc_converter_odf::odp::open`] доводит `content.xml` до
+/// презентации PPTX), поэтому раскладку и PDF даёт PPTX-семейство (ADR-0046).
+///
+/// `options` принимаются для симметрии протокола с PPTX, но не читаются: как у
+/// [`export_pptx_pdf`], размер, поля, ориентация и масштаб страницы задаёт сама
+/// презентация, а метаданных в модели PPTX нет.
+///
+/// # Errors
+/// Если байты не ODP-пакет (`mimetype` не презентация, нет `content.xml`), в
+/// презентации нет слайдов или PDF не собрался.
+#[wasm_bindgen]
+pub fn export_odp_pdf(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValue> {
+    // Опции протокола у ODP не читаются (см. доккомментарий): валидируем
+    // форму, чтобы битые настройки не проходили молча.
+    if !options.is_undefined() && !options.is_null() {
+        let _ = serde_wasm_bindgen::from_value::<PdfOptionsWire>(options).map_err(to_js)?;
+    }
+    let presentation = doc_converter_odf::odp::open(bytes.to_vec()).map_err(to_js)?;
+    doc_converter_pptx_pdf::export(&presentation, &PdfOptions::default()).map_err(to_js)
+}

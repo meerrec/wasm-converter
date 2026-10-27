@@ -41,6 +41,18 @@ export type PptxPdfWasm = typeof import('@meerrec/wasm-pptx-pdf');
 /** Тип ленивого PDF-модуля берём у сгенерированных wasm-bindgen деклараций. */
 export type PdfWasm = typeof import('@meerrec/wasm-pdf');
 
+/** Тип ленивого XLSB-модуля берём у сгенерированных wasm-bindgen деклараций. */
+export type XlsbWasm = typeof import('@meerrec/wasm-xlsb');
+
+/** Тип ленивого ODS-модуля берём у сгенерированных wasm-bindgen деклараций. */
+export type OdsWasm = typeof import('@meerrec/wasm-ods');
+
+/** Тип ленивого ODP-модуля берём у сгенерированных wasm-bindgen деклараций. */
+export type OdpWasm = typeof import('@meerrec/wasm-odp');
+
+/** Тип ленивого ODT-модуля берём у сгенерированных wasm-bindgen деклараций. */
+export type OdtWasm = typeof import('@meerrec/wasm-odt');
+
 /** Открыть книгу XLSX: список листов с размерами раскладки. */
 export const openXlsx = (bytes: Uint8Array): SheetInfoWire[] =>
   xlsx_open(bytes) as unknown as SheetInfoWire[];
@@ -112,6 +124,46 @@ export const openPptx = (mod: PptxWasm, bytes: Uint8Array): SlideInfoWire[] =>
 /** Завершить поток PPTX: разобрать накопленный буфер, ответ — слайды. */
 export const openPptxStream = (mod: PptxWasm, streamId: number): SlideInfoWire[] =>
   mod.stream_open_pptx(streamId) as unknown as SlideInfoWire[];
+
+/** Открыть книгу XLSB: список листов с размерами раскладки. Модуль ленивый. */
+export const openXlsb = (mod: XlsbWasm, bytes: Uint8Array): SheetInfoWire[] =>
+  mod.xlsb_open_bytes(bytes) as unknown as SheetInfoWire[];
+
+/** Завершить поток XLSB: разобрать накопленный буфер, ответ — список листов. */
+export const openXlsbStream = (mod: XlsbWasm, streamId: number): SheetInfoWire[] =>
+  mod.stream_open_xlsb(streamId) as unknown as SheetInfoWire[];
+
+/** Открыть книгу ODS: список листов с размерами раскладки. Модуль ленивый. */
+export const openOds = (mod: OdsWasm, bytes: Uint8Array): SheetInfoWire[] =>
+  mod.ods_open_bytes(bytes) as unknown as SheetInfoWire[];
+
+/** Завершить поток ODS: разобрать накопленный буфер, ответ — список листов. */
+export const openOdsStream = (mod: OdsWasm, streamId: number): SheetInfoWire[] =>
+  mod.stream_open_ods(streamId) as unknown as SheetInfoWire[];
+
+/** Открыть презентацию ODP: слайды с именами и размерами раскладки. */
+export const openOdp = (mod: OdpWasm, bytes: Uint8Array): SlideInfoWire[] =>
+  mod.odp_open_bytes(bytes) as unknown as SlideInfoWire[];
+
+/** Завершить поток ODP: разобрать накопленный буфер, ответ — слайды. */
+export const openOdpStream = (mod: OdpWasm, streamId: number): SlideInfoWire[] =>
+  mod.stream_open_odp(streamId) as unknown as SlideInfoWire[];
+
+/** Открыть документ ODT: размеры страниц раскладки. Модуль ленивый. */
+export const openOdt = (mod: OdtWasm, bytes: Uint8Array): PageInfoWire[] =>
+  mod.odt_open_bytes(bytes) as unknown as PageInfoWire[];
+
+/** Завершить поток ODT: разобрать накопленный буфер, ответ — страницы. */
+export const openOdtStream = (mod: OdtWasm, streamId: number): PageInfoWire[] =>
+  mod.stream_open_odt(streamId) as unknown as PageInfoWire[];
+
+/** TextLayer одной страницы открытого ODT. Модуль ленивый. */
+export const odtTextLayer = (mod: OdtWasm, page: number): TextLayerWire =>
+  mod.odt_get_text_layer(page) as unknown as TextLayerWire;
+
+/** TextLayer всего документа ODT — для семантического дерева и Ctrl+A. */
+export const odtFullTextLayer = (mod: OdtWasm): TextLayerWire =>
+  mod.odt_get_full_text_layer() as unknown as TextLayerWire;
 
 /** Список картинок: id, MIME и длина байтов. */
 export const images = (value: unknown): ImageInfoWire[] => value as unknown as ImageInfoWire[];
@@ -213,6 +265,86 @@ export const buildPptxSab = (
   viewport: ViewportWire,
 ): BuildStatsWire =>
   buildStats(() => mod.pptx_build_display_list_sab(sab, slotCapacity, viewport, slide));
+
+/** XLSB-кадр в буфер вызывающего. Модуль ленивый. */
+export const buildXlsbInto = (
+  mod: XlsbWasm,
+  out: Uint8Array,
+  sheet: number,
+  viewport: ViewportWire,
+  options: RenderOptionsWire,
+): BuildStatsWire =>
+  buildStats(() => mod.xlsb_build_display_list_into(out, sheet, viewport, options));
+
+/** XLSB-кадр в слот ring'а. Модуль ленивый. */
+export const buildXlsbSab = (
+  mod: XlsbWasm,
+  sab: SharedArrayBuffer,
+  slotCapacity: number,
+  sheet: number,
+  viewport: ViewportWire,
+  options: RenderOptionsWire,
+): BuildStatsWire =>
+  buildStats(() => mod.xlsb_build_display_list_sab(sab, slotCapacity, sheet, viewport, options));
+
+/** ODS-кадр в буфер вызывающего. Модуль ленивый. */
+export const buildOdsInto = (
+  mod: OdsWasm,
+  out: Uint8Array,
+  sheet: number,
+  viewport: ViewportWire,
+  options: RenderOptionsWire,
+): BuildStatsWire =>
+  buildStats(() => mod.ods_build_display_list_into(out, sheet, viewport, options));
+
+/** ODS-кадр в слот ring'а. Модуль ленивый. */
+export const buildOdsSab = (
+  mod: OdsWasm,
+  sab: SharedArrayBuffer,
+  slotCapacity: number,
+  sheet: number,
+  viewport: ViewportWire,
+  options: RenderOptionsWire,
+): BuildStatsWire =>
+  buildStats(() => mod.ods_build_display_list_sab(sab, slotCapacity, sheet, viewport, options));
+
+/** ODP-кадр в буфер вызывающего. Модуль ленивый. */
+export const buildOdpInto = (
+  mod: OdpWasm,
+  out: Uint8Array,
+  slide: number,
+  viewport: ViewportWire,
+): BuildStatsWire =>
+  buildStats(() => mod.odp_build_display_list_into(out, viewport, slide));
+
+/** ODP-кадр в слот ring'а. Модуль ленивый. */
+export const buildOdpSab = (
+  mod: OdpWasm,
+  sab: SharedArrayBuffer,
+  slotCapacity: number,
+  slide: number,
+  viewport: ViewportWire,
+): BuildStatsWire =>
+  buildStats(() => mod.odp_build_display_list_sab(sab, slotCapacity, viewport, slide));
+
+/** ODT-кадр в буфер вызывающего. Модуль ленивый. */
+export const buildOdtInto = (
+  mod: OdtWasm,
+  out: Uint8Array,
+  viewport: ViewportWire,
+  gap: number,
+): BuildStatsWire =>
+  buildStats(() => mod.odt_build_display_list_into(out, viewport, gap));
+
+/** ODT-кадр в слот ring'а. Модуль ленивый. */
+export const buildOdtSab = (
+  mod: OdtWasm,
+  sab: SharedArrayBuffer,
+  slotCapacity: number,
+  viewport: ViewportWire,
+  gap: number,
+): BuildStatsWire =>
+  buildStats(() => mod.odt_build_display_list_sab(sab, slotCapacity, viewport, gap));
 
 /** Painter: байты DisplayList (путь без SAB). */
 export const paintBytes = (frame: Uint8Array): PaintStatsWire =>
@@ -321,4 +453,26 @@ export const exportPptxText = (
   if (format === 'markdown') return mod.pptx_export_markdown(bytes);
   if (format === 'html') return mod.pptx_export_html(bytes);
   return mod.pptx_export_text(bytes);
+};
+
+/** Экспортировать презентацию ODP в текст: формат выбирает воркер. */
+export const exportOdpText = (
+  mod: OdpWasm,
+  bytes: Uint8Array,
+  format: 'markdown' | 'html' | 'text',
+): string => {
+  if (format === 'markdown') return mod.odp_export_markdown(bytes);
+  if (format === 'html') return mod.odp_export_html(bytes);
+  return mod.odp_export_text(bytes);
+};
+
+/** Экспортировать документ ODT в текст: формат выбирает воркер. */
+export const exportOdtText = (
+  mod: OdtWasm,
+  bytes: Uint8Array,
+  format: 'markdown' | 'html' | 'text',
+): string => {
+  if (format === 'markdown') return mod.odt_export_markdown(bytes);
+  if (format === 'html') return mod.odt_export_html(bytes);
+  return mod.odt_export_text(bytes);
 };

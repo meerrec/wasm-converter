@@ -10,19 +10,27 @@
 use doc_converter_core::ZipLimits;
 use doc_converter_render::display_list::DisplayList;
 use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE};
-use doc_converter_render::plugin::{DocumentModel, EngineError, FormatPlugin, RenderContext};
+use doc_converter_render::plugin::{
+    DocumentModel, EngineError, FormatKind, FormatPlugin, PluginInfo, RenderContext,
+};
 use doc_converter_render::viewport::Viewport;
 
 use crate::layout::engine::{layout_document, LayoutOptions, PageLayout};
 use crate::model::Document;
 
-/// Плагин DOCX: `id()` → `"docx"`, как `DocFormat` протокола TS.
+/// Плагин DOCX: `info().id` → `"docx"`, как `DocFormat` протокола TS.
 #[derive(Debug, Default)]
 pub struct DocxPlugin;
 
 impl FormatPlugin for DocxPlugin {
-    fn id(&self) -> &'static str {
-        "docx"
+    fn info(&self) -> PluginInfo {
+        PluginInfo {
+            id: "docx",
+            kind: FormatKind::Pages,
+            // `docm` — тот же OOXML-пакет: макросы не читаются и не
+            // исполняются (ADR-0039), документ разбирается как обычный DOCX.
+            extensions: &["docx", "docm"],
+        }
     }
 
     /// # Errors
@@ -136,7 +144,13 @@ mod tests {
 
     #[test]
     fn plugin_id_is_docx() {
-        assert_eq!(DocxPlugin.id(), "docx");
+        let info = DocxPlugin.info();
+        assert_eq!(info.id, "docx");
+        assert_eq!(info.kind, FormatKind::Pages);
+        let extensions: &[&str] = &["docx", "docm"];
+        assert_eq!(info.extensions, extensions);
+        // `id()` — удобная обёртка над паспортом, а не второй источник истины.
+        assert_eq!(DocxPlugin.id(), info.id);
     }
 
     #[test]

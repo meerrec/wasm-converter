@@ -22,6 +22,8 @@ export interface ConvertCommand {
   /** `null` — формат берётся из расширения `--out`. */
   format: OutputFormat | null;
   force: boolean;
+  /** Печатать в stdout один JSON-объект вместо человекочитаемого текста. */
+  json: boolean;
   pdf: PdfOptions;
 }
 
@@ -33,12 +35,14 @@ export interface BatchCommand {
   workers: number;
   force: boolean;
   quiet: boolean;
+  /** Печатать в stdout JSON Lines: строка на файл и итоговая строка. */
+  json: boolean;
   pdf: PdfOptions;
 }
 
 export type Command = ConvertCommand | BatchCommand | { kind: 'help' } | { kind: 'version' };
 
-export const USAGE = `doc-converter — OOXML → PDF/Markdown/HTML/text
+export const USAGE = `doc-converter — OOXML/ODF → PDF/Markdown/HTML/text
 
 Usage:
   doc-converter convert <input> -o <output> [options]
@@ -46,13 +50,15 @@ Usage:
   doc-converter help | --version
 
 Formats:
-  .docx → .pdf .md .html .txt
-  .xlsx → .pdf
+  .docx .odt → .pdf .md .html .txt
+  .pptx .odp → .pdf .md .html .txt
+  .xlsx .ods .xlsb → .pdf
 
 Convert options:
   -o, --out <path>        output file, or directory to name the file from the input
   -f, --format <format>   output format when --out has no known extension
       --force             overwrite existing output files
+      --json              print one JSON object to stdout, nothing on success to stderr
 
 Batch options:
       --out <dir>         output directory (required)
@@ -60,24 +66,26 @@ Batch options:
   -w, --workers <n>       worker threads (default: cpu count, at most 8)
   -q, --quiet             do not print progress
       --force             overwrite existing output files
+      --json              print JSON Lines to stdout: one per file, plus a summary
 
 PDF options (both commands):
-      --page-size <A4|A3|Letter|Legal>   XLSX only; DOCX keeps its section size
-      --orientation <portrait|landscape> XLSX only
-      --scale <factor>                   XLSX only, e.g. 0.8
-      --fit-to-page                      XLSX only: fit the sheet on one page
-      --fit-to-width <n>                 XLSX only: pages wide, 0 = unlimited
-      --fit-to-height <n>                XLSX only: pages tall, 0 = unlimited
-      --margins <top,right,bottom,left>  XLSX only, millimetres
+      --page-size <A4|A3|Letter|Legal>   spreadsheets (XLSX/ODS/XLSB); DOCX/ODT keep their section size
+      --orientation <portrait|landscape> spreadsheets
+      --scale <factor>                   spreadsheets, e.g. 0.8
+      --fit-to-page                      spreadsheets: fit the sheet on one page
+      --fit-to-width <n>                 spreadsheets: pages wide, 0 = unlimited
+      --fit-to-height <n>                spreadsheets: pages tall, 0 = unlimited
+      --margins <top,right,bottom,left>  spreadsheets, millimetres
       --sheet <n>                        XLSX only, 0-based; default is the whole book
 
-Batch inputs may be files, directories (searched for .docx/.xlsx recursively)
-or glob patterns like './in/**/*.xlsx'. Output files are written flat into
---out as <name>.<format>; duplicate names are an error.
+Batch inputs may be files, directories (searched for .docx/.xlsx/.pptx/.odt/.ods/.odp/.xlsb
+recursively) or glob patterns like './in/**/*.xlsx'. Output files are written
+flat into --out as <name>.<format>; duplicate names are an error.
 
 Examples:
   doc-converter convert report.docx -o report.pdf
   doc-converter convert report.docx -o report.md
+  doc-converter convert letter.odt -o letter.pdf
   doc-converter batch ./in/*.xlsx --out ./pdf --workers 4
   doc-converter batch ./in --out ./out --format pdf --workers 8 --scale 0.9
 `;
@@ -89,6 +97,7 @@ interface ScanResult {
   workers: string | null;
   force: boolean;
   quiet: boolean;
+  json: boolean;
   pdf: PdfOptions;
   help: boolean;
 }
@@ -122,6 +131,7 @@ function scan(args: readonly string[]): ScanResult {
     workers: null,
     force: false,
     quiet: false,
+    json: false,
     pdf: {},
     help: false,
   };
@@ -174,6 +184,9 @@ function scan(args: readonly string[]): ScanResult {
       case '--quiet':
         result.quiet = true;
         break;
+      case '--json':
+        result.json = true;
+        break;
       case '--page-size':
         result.pdf.pageSize = parsePageSize(take());
         break;
@@ -223,6 +236,7 @@ function toConvert(scanned: ScanResult): Command {
     out: scanned.out,
     format: scanned.format === null ? null : parseFormat(scanned.format),
     force: scanned.force,
+    json: scanned.json,
     pdf: scanned.pdf,
   };
 }
@@ -241,6 +255,7 @@ function toBatch(scanned: ScanResult, runtime?: ParallelismSource): Command {
     workers,
     force: scanned.force,
     quiet: scanned.quiet,
+    json: scanned.json,
     pdf: scanned.pdf,
   };
 }

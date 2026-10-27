@@ -1,7 +1,12 @@
 import type { FrameTransport, RenderMode } from '../protocol.js';
+import { resolveRenderTarget } from '../execution/plan.js';
 
 /**
  * Решение о месте рендера кадра: воркер или main-поток.
+ *
+ * Сам выбор живёт в `execution/plan.ts`: он общий с воркером, который по тому
+ * же плану выбирает транспорт. Здесь остаётся только то, что знает DOM, —
+ * есть ли `transferControlToOffscreen`, — и предупреждение о fallback.
  *
  * Фабрики просмотрщиков (`createXlsxViewer`/`createDocxViewer`/`createPptxViewer`)
  * спрашивают здесь режим и сами поднимают воркер; отдельной legacy-фабрики
@@ -28,26 +33,17 @@ export function resolveRenderMode(
   requested: RenderMode | undefined,
   transport?: 'auto' | FrameTransport,
 ): 'worker' | 'main' {
-  const canWorker = typeof canvas.transferControlToOffscreen === 'function';
-  if (requested === 'main') {
-    if (transport === 'sab') {
-      throw new Error(
-        "renderMode: 'main' несовместим с transport: 'sab' — в main-режиме кадры едут буферами",
-      );
-    }
-    return 'main';
+  const target = resolveRenderTarget({
+    requested,
+    canOffscreen: typeof canvas.transferControlToOffscreen === 'function',
+    transport,
+  });
+  // `auto` без OffscreenCanvas — штатный fallback, но не молчаливый: смена
+  // пути видна в консоли. Явные режимы сюда не попадают.
+  if ((requested === undefined || requested === 'auto') && target === 'main') {
+    console.warn(
+      '[doc-converter] OffscreenCanvas (transferControlToOffscreen) недоступен: рендер на main-потоке',
+    );
   }
-  if (requested === 'worker') {
-    if (!canWorker) {
-      throw new Error(
-        'этот браузер не поддерживает OffscreenCanvas (transferControlToOffscreen) — просмотрщик не запустится в режиме worker',
-      );
-    }
-    return 'worker';
-  }
-  if (canWorker) return 'worker';
-  console.warn(
-    '[doc-converter] OffscreenCanvas (transferControlToOffscreen) недоступен: рендер на main-потоке',
-  );
-  return 'main';
+  return target;
 }

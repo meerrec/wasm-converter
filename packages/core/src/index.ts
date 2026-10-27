@@ -7,6 +7,10 @@ export type {
   PdfModuleUrls,
   DocxModuleUrls,
   PptxModuleUrls,
+  XlsbModuleUrls,
+  OdtModuleUrls,
+  OdsModuleUrls,
+  OdpModuleUrls,
   PdfOptions,
   HitResult,
   CellRef,
@@ -37,3 +41,40 @@ export {
   type PptxViewerHandle,
   type PptxViewerOptions,
 } from './render/pptx_viewer.js';
+
+export {
+  createXlsbViewer,
+  type XlsbViewerHandle,
+  type XlsbViewerOptions,
+} from './render/xlsb_viewer.js';
+
+export {
+  createOdsViewer,
+  type OdsViewerHandle,
+  type OdsViewerOptions,
+} from './render/ods_viewer.js';
+
+export {
+  createOdpViewer,
+  type OdpViewerHandle,
+  type OdpViewerOptions,
+} from './render/odp_viewer.js';
+
+export {
+  createOdtViewer,
+  type OdtViewerHandle,
+  type OdtViewerOptions,
+} from './render/odt_viewer.js';
+
+export {
+  diagnosticError,
+  formatDiagnostic,
+  toDiagnostic,
+  ViewerError,
+  workerDiagnostic,
+  type ConversionStats,
+  type Diagnostic,
+  type DiagnosticCode,
+  type DiagnosticFallback,
+  type DiagnosticLayer,
+} from './diagnostics.js';

@@ -30,9 +30,9 @@ export const toOptions = (config: RenderConfig): RenderOptionsWire => ({
  * страниц от них не зависит, — а кадр PPTX несёт один слайд целиком.
  */
 export type FrameTarget =
-  | { kind: 'xlsx'; sheet: number; viewport: ViewportWire; options: RenderOptionsWire }
-  | { kind: 'docx'; gap: number; viewport: ViewportWire }
-  | { kind: 'pptx'; slide: number; viewport: ViewportWire };
+  | { kind: 'xlsx' | 'xlsb' | 'ods'; sheet: number; viewport: ViewportWire; options: RenderOptionsWire }
+  | { kind: 'docx' | 'odt'; gap: number; viewport: ViewportWire }
+  | { kind: 'pptx' | 'odp'; slide: number; viewport: ViewportWire };
 
 /**
  * Разобрать запрос кадра под формат открытого документа.
@@ -44,13 +44,13 @@ export type FrameTarget =
 export function frameTarget(format: OpenFormat, req: RenderRequest): FrameTarget {
   if (format === null) throw new Error('render: no document is open');
   const viewport = toViewport(req.viewport);
-  if (format === 'docx') {
-    if (req.gap === undefined) throw new Error('render: docx frame has no page gap');
-    return { kind: 'docx', gap: req.gap, viewport };
+  if (format === 'docx' || format === 'odt') {
+    if (req.gap === undefined) throw new Error(`render: ${format} frame has no page gap`);
+    return { kind: format, gap: req.gap, viewport };
   }
-  if (format === 'pptx') {
-    if (req.slide === undefined) throw new Error('render: pptx frame has no slide');
-    return { kind: 'pptx', slide: req.slide, viewport };
+  if (format === 'pptx' || format === 'odp') {
+    if (req.slide === undefined) throw new Error(`render: ${format} frame has no slide`);
+    return { kind: format, slide: req.slide, viewport };
   }
-  return { kind: 'xlsx', sheet: req.sheet ?? 0, viewport, options: toOptions(req.config) };
+  return { kind: format, sheet: req.sheet ?? 0, viewport, options: toOptions(req.config) };
 }

@@ -20,5 +20,8 @@ export {
   type OutputFormat,
 } from './formats.js';
 export { WorkerPool, type WorkerFactory, type WorkerLike } from './pool.js';
-export { formatBytes, ProgressReporter } from './progress.js';
-export { run } from './run.js';
+export { formatBytes, ProgressReporter, type OutputStream } from './progress.js';
+export { run, type CliStreams } from './run.js';
+
+/** Диагностика и метрики — те же типы, что у браузера: реэкспорт из core. */
+export type { ConversionStats, Diagnostic } from '@meerrec/core';

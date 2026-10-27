@@ -10,19 +10,27 @@ use std::cell::Cell;
 
 use doc_converter_core::ZipLimits;
 use doc_converter_render::display_list::DisplayList;
-use doc_converter_render::plugin::{DocumentModel, EngineError, FormatPlugin, RenderContext};
+use doc_converter_render::plugin::{
+    DocumentModel, EngineError, FormatKind, FormatPlugin, PluginInfo, RenderContext,
+};
 use doc_converter_render::viewport::Viewport;
 
 use crate::model::Workbook;
 use crate::paint::{self, PaintOptions};
 
-/// Плагин XLSX: `id()` → `"xlsx"`, как `DocFormat` протокола TS.
+/// Плагин XLSX: `info().id` → `"xlsx"`, как `DocFormat` протокола TS.
 #[derive(Debug, Default)]
 pub struct XlsxPlugin;
 
 impl FormatPlugin for XlsxPlugin {
-    fn id(&self) -> &'static str {
-        "xlsx"
+    fn info(&self) -> PluginInfo {
+        PluginInfo {
+            id: "xlsx",
+            kind: FormatKind::Sheets,
+            // Книги с макросами (`xlsm`) и шаблоны (`xltx`/`xltm`) — тот же
+            // OOXML-пакет: макросы не исполняются, шаблон читается как книга.
+            extensions: &["xlsx", "xlsm", "xltx", "xltm"],
+        }
     }
 
     /// # Errors
@@ -122,7 +130,13 @@ mod tests {
 
     #[test]
     fn plugin_id_is_xlsx() {
-        assert_eq!(XlsxPlugin.id(), "xlsx");
+        let info = XlsxPlugin.info();
+        assert_eq!(info.id, "xlsx");
+        assert_eq!(info.kind, FormatKind::Sheets);
+        let extensions: &[&str] = &["xlsx", "xlsm", "xltx", "xltm"];
+        assert_eq!(info.extensions, extensions);
+        // `id()` — удобная обёртка над паспортом, а не второй источник истины.
+        assert_eq!(XlsxPlugin.id(), info.id);
     }
 
     #[test]

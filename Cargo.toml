@@ -5,6 +5,8 @@ members = [
     "crates/render",
     "crates/docx",
     "crates/xlsx",
+    "crates/xlsb",
+    "crates/odf",
     "crates/pptx",
     "crates/pptx-layout",
     "crates/pptx-render",
@@ -16,6 +18,10 @@ members = [
     "crates/pptx-pdf-wasm",
     "crates/wasm",
     "crates/wasm-common",
+    "crates/xlsb-wasm",
+    "crates/ods-wasm",
+    "crates/odp-wasm",
+    "crates/odt-wasm",
 ]
 # crates/fuzz — свой workspace (nightly + sanitizer), ему нужен отдельный
 # target/ и свой Cargo.lock: в общем workspace он тянул бы nightly в сборку
@@ -35,6 +41,8 @@ doc-converter-core   = { path = "crates/core",   version = "2.0.2" }
 doc-converter-render = { path = "crates/render", version = "2.0.2" }
 doc-converter-docx   = { path = "crates/docx",   version = "2.0.2" }
 doc-converter-xlsx   = { path = "crates/xlsx",   version = "2.0.2" }
+doc-converter-xlsb   = { path = "crates/xlsb",   version = "2.0.2" }
+doc-converter-odf    = { path = "crates/odf",    version = "2.0.2" }
 doc-converter-pptx   = { path = "crates/pptx",   version = "2.0.2" }
 doc-converter-pptx-layout = { path = "crates/pptx-layout", version = "2.0.2" }
 doc-converter-pptx-render = { path = "crates/pptx-render", version = "2.0.2" }
@@ -42,6 +50,10 @@ doc-converter-pptx-pdf    = { path = "crates/pptx-pdf",    version = "2.0.2" }
 doc-converter-pptx-pdf-wasm = { path = "crates/pptx-pdf-wasm", version = "2.0.2" }
 doc-converter-wasm-common = { path = "crates/wasm-common", version = "2.0.2" }
 doc-converter-pdf    = { path = "crates/pdf",    version = "2.0.2" }
+doc-converter-xlsb-wasm = { path = "crates/xlsb-wasm", version = "2.0.2" }
+doc-converter-ods-wasm  = { path = "crates/ods-wasm",  version = "2.0.2" }
+doc-converter-odp-wasm  = { path = "crates/odp-wasm",  version = "2.0.2" }
+doc-converter-odt-wasm  = { path = "crates/odt-wasm",  version = "2.0.2" }
 
 # ── external ────────────────────────────────────────────────
 wasm-bindgen         = "0.2"

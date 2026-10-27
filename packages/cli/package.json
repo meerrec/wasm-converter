@@ -43,7 +43,11 @@
   "dependencies": {
     "@meerrec/core": "workspace:*",
     "@meerrec/wasm-docx": "workspace:*",
-    "@meerrec/wasm-pdf": "workspace:*"
+    "@meerrec/wasm-odp": "workspace:*",
+    "@meerrec/wasm-odt": "workspace:*",
+    "@meerrec/wasm-pdf": "workspace:*",
+    "@meerrec/wasm-pptx": "workspace:*",
+    "@meerrec/wasm-pptx-pdf": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",

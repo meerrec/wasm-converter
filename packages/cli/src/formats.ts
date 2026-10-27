@@ -4,13 +4,15 @@
  * поэтому неподдерживаемая пара расширений ловится до запуска воркеров.
  */
 
+import { toDiagnostic } from '@meerrec/core';
+
 import { CliError } from './errors.js';
 
 /** Формат, в который CLI умеет писать. */
 export type OutputFormat = 'pdf' | 'md' | 'html' | 'txt';
 
 /** Формат ввода: разбирается по расширению. */
-export type InputKind = 'docx' | 'xlsx';
+export type InputKind = 'docx' | 'xlsx' | 'pptx' | 'odt' | 'ods' | 'odp' | 'xlsb';
 
 /** Расширение выходного файла, с точкой. */
 export const OUTPUT_EXTENSION: Record<OutputFormat, string> = {
@@ -20,16 +22,33 @@ export const OUTPUT_EXTENSION: Record<OutputFormat, string> = {
   txt: '.txt',
 };
 
-/** Что во что конвертируется. У XLSX путь только один — PDF. */
+/**
+ * Что во что конвертируется. Документы (DOCX/ODT) и презентации (PPTX/ODP)
+ * идут в PDF/Markdown/HTML/текст, у таблиц (XLSX/ODS/XLSB) путь один — PDF:
+ * текстового просмотра таблиц в CLI нет.
+ */
 export const SUPPORTED: Record<InputKind, readonly OutputFormat[]> = {
   docx: ['pdf', 'md', 'html', 'txt'],
   xlsx: ['pdf'],
+  pptx: ['pdf', 'md', 'html', 'txt'],
+  odt: ['pdf', 'md', 'html', 'txt'],
+  ods: ['pdf'],
+  odp: ['pdf', 'md', 'html', 'txt'],
+  xlsb: ['pdf'],
 };
 
 const INPUT_KIND_BY_EXTENSION: Record<string, InputKind> = {
   '.docx': 'docx',
   '.xlsx': 'xlsx',
+  '.pptx': 'pptx',
+  '.odt': 'odt',
+  '.ods': 'ods',
+  '.odp': 'odp',
+  '.xlsb': 'xlsb',
 };
+
+/** Перечень расширений входа — один источник для текстов ошибок и справки. */
+export const INPUT_EXTENSIONS = '.docx/.xlsx/.pptx/.odt/.ods/.odp/.xlsb' as const;
 
 const FORMAT_BY_EXTENSION: Record<string, OutputFormat> = {
   '.pdf': 'pdf',
@@ -65,7 +84,7 @@ export function parseFormat(value: string): OutputFormat {
   const normalized = value.replace(/^\./, '').toLowerCase();
   const format = FORMATS.find((candidate) => candidate === normalized);
   if (format === undefined) {
-    throw new CliError(`unknown format '${value}': expected one of ${FORMATS.join(', ')}`);
+    throw unsupported(`unknown format '${value}': expected one of ${FORMATS.join(', ')}`);
   }
   return format;
 }
@@ -73,12 +92,22 @@ export function parseFormat(value: string): OutputFormat {
 /** Проверить, что пара «вход → выход» поддерживается. */
 export function assertSupported(kind: InputKind, format: OutputFormat): void {
   if (!SUPPORTED[kind].includes(format)) {
-    throw new CliError(
+    throw unsupported(
       `${kind} → ${format} is not supported: .${kind} can only be written to ${SUPPORTED[kind]
         .map((f) => OUTPUT_EXTENSION[f])
         .join(', ')}`,
     );
   }
+}
+
+/**
+ * Ошибка выбора формата: у неё всегда один машинный код.
+ *
+ * Текст остаётся человекочитаемым и прежним, а `diagnostic` позволяет `run`
+ * напечатать `orchestration/unsupported-format` в `--json` без разбора строки.
+ */
+function unsupported(message: string): CliError {
+  return new CliError(message, 2, toDiagnostic(message, { code: 'unsupported-format', layer: 'orchestration' }));
 }
 
 /** Заменить расширение пути на расширение формата. */

@@ -33,6 +33,22 @@
     "./pptx-worker": {
       "types": "./dist/pptx_worker.d.ts",
       "import": "./dist/pptx_worker.js"
+    },
+    "./xlsb-worker": {
+      "types": "./dist/xlsb_worker.d.ts",
+      "import": "./dist/xlsb_worker.js"
+    },
+    "./ods-worker": {
+      "types": "./dist/ods_worker.d.ts",
+      "import": "./dist/ods_worker.js"
+    },
+    "./odp-worker": {
+      "types": "./dist/odp_worker.d.ts",
+      "import": "./dist/odp_worker.js"
+    },
+    "./odt-worker": {
+      "types": "./dist/odt_worker.d.ts",
+      "import": "./dist/odt_worker.js"
     }
   },
   "files": [
@@ -46,7 +62,15 @@
     "./dist/docx_worker.js",
     "./dist/docx_worker.cjs",
     "./dist/pptx_worker.js",
-    "./dist/pptx_worker.cjs"
+    "./dist/pptx_worker.cjs",
+    "./dist/xlsb_worker.js",
+    "./dist/xlsb_worker.cjs",
+    "./dist/ods_worker.js",
+    "./dist/ods_worker.cjs",
+    "./dist/odp_worker.js",
+    "./dist/odp_worker.cjs",
+    "./dist/odt_worker.js",
+    "./dist/odt_worker.cjs"
   ],
   "scripts": {
     "build": "tsup",
@@ -65,6 +89,10 @@
     "@opentelemetry/sdk-trace-base": "^1.0.0",
     "@meerrec/wasm-pptx": "workspace:*",
     "@meerrec/wasm-pptx-pdf": "workspace:*",
+    "@meerrec/wasm-xlsb": "workspace:*",
+    "@meerrec/wasm-ods": "workspace:*",
+    "@meerrec/wasm-odp": "workspace:*",
+    "@meerrec/wasm-odt": "workspace:*",
     "tsup": "^8.3.5",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4"

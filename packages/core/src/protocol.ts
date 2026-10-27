@@ -2,6 +2,7 @@
 // здесь; payload'ы описаны в Rust (`crates/core/src/wire.rs`) и сгенерированы
 // в `generated/wire.ts` (ADR-0028). Руками payload'ы не правятся.
 import type {
+  DiagnosticWire,
   HyperlinkInfoWire,
   ImageInfoWire,
   PageInfoWire,
@@ -17,11 +18,20 @@ import type {
  * Формат документа.
  *
  * Диспетчеризация — по воркерам: `xlsx_worker` обслуживает только `xlsx`,
- * `docx_worker` — только `docx`, `pptx_worker` — только `pptx`. Поле остаётся
- * в конверте для совместимости: воркер принимает свой формат, а чужой
- * отбрасывает ошибкой с кодом `open`, не переключая состояние.
+ * `docx_worker` — только `docx`, `pptx_worker` — только `pptx`, `xlsb_worker`
+ * — только `xlsb`, `ods_worker` — только `ods`, `odp_worker` — только `odp`,
+ * `odt_worker` — только `odt`. Поле остаётся в конверте для совместимости:
+ * воркер принимает свой формат, а чужой отбрасывает ошибкой с кодом `open`,
+ * не переключая состояние.
  */
-export type DocFormat = 'xlsx' | 'docx' | 'pptx';
+export type DocFormat =
+  | 'xlsx'
+  | 'docx'
+  | 'pptx'
+  | 'xlsb'
+  | 'ods'
+  | 'odp'
+  | 'odt';
 
 export interface Viewport { x: number; y: number; w: number; h: number; scale: number }
 
@@ -178,6 +188,58 @@ export interface PptxModuleUrls {
   binary?: string | undefined;
 }
 
+/**
+ * Ленивый XLSB-модуль: URL его JS-модуля и wasm-бинаря.
+ *
+ * Оба приходят с main-потока: воркер собран бандлом, и относительный путь из
+ * него ничего не значит. Не задан — открытие `.xlsb` вернёт внятную ошибку.
+ */
+export interface XlsbModuleUrls {
+  /** JS-модуль `@meerrec/wasm-xlsb`: воркер импортирует его при открытии `.xlsb`. */
+  module: string;
+  /** Бинарь для `init()`; без него wasm-bindgen ищет его рядом с модулем. */
+  binary?: string | undefined;
+}
+
+/**
+ * Ленивый ODS-модуль: URL его JS-модуля и wasm-бинаря.
+ *
+ * Оба приходят с main-потока: воркер собран бандлом, и относительный путь из
+ * него ничего не значит. Не задан — открытие `.ods` вернёт внятную ошибку.
+ */
+export interface OdsModuleUrls {
+  /** JS-модуль `@meerrec/wasm-ods`: воркер импортирует его при открытии `.ods`. */
+  module: string;
+  /** Бинарь для `init()`; без него wasm-bindgen ищет его рядом с модулем. */
+  binary?: string | undefined;
+}
+
+/**
+ * Ленивый ODP-модуль: URL его JS-модуля и wasm-бинаря.
+ *
+ * Оба приходят с main-потока: воркер собран бандлом, и относительный путь из
+ * него ничего не значит. Не задан — открытие `.odp` вернёт внятную ошибку.
+ */
+export interface OdpModuleUrls {
+  /** JS-модуль `@meerrec/wasm-odp`: воркер импортирует его при открытии `.odp`. */
+  module: string;
+  /** Бинарь для `init()`; без него wasm-bindgen ищет его рядом с модулем. */
+  binary?: string | undefined;
+}
+
+/**
+ * Ленивый ODT-модуль: URL его JS-модуля и wasm-бинаря.
+ *
+ * Оба приходят с main-потока: воркер собран бандлом, и относительный путь из
+ * него ничего не значит. Не задан — открытие `.odt` вернёт внятную ошибку.
+ */
+export interface OdtModuleUrls {
+  /** JS-модуль `@meerrec/wasm-odt`: воркер импортирует его при открытии `.odt`. */
+  module: string;
+  /** Бинарь для `init()`; без него wasm-bindgen ищет его рядом с модулем. */
+  binary?: string | undefined;
+}
+
 export interface InitMsg {
   type: 'init';
   /**
@@ -204,6 +266,14 @@ export interface InitMsg {
    * DOCX (ADR-0033).
    */
   pptxPdf?: PdfModuleUrls | undefined;
+  /** Где лежит XLSB-модуль. Не задан — открыть книгу не получится. */
+  xlsb?: XlsbModuleUrls | undefined;
+  /** Где лежит ODS-модуль. Не задан — открыть книгу не получится. */
+  ods?: OdsModuleUrls | undefined;
+  /** Где лежит ODP-модуль. Не задан — открыть презентацию не получится. */
+  odp?: OdpModuleUrls | undefined;
+  /** Где лежит ODT-модуль. Не задан — открыть документ не получится. */
+  odt?: OdtModuleUrls | undefined;
   slotCapacity: number;
   /**
    * Транспорт кадра. `auto` (по умолчанию) — `sab`, если `SharedArrayBuffer`
@@ -589,6 +659,12 @@ export interface WorkerErrorMsg {
    * `internal` — нарушение протокола (например, повторный `init`).
    */
   code?: WorkerErrorCode;
+  /**
+   * Структурная диагностика: код, слой и признак повтора. `message`/`code`
+   * остаются для совместимости; если поля нет, просмотрщик соберёт диагностику
+   * из них.
+   */
+  diagnostic?: DiagnosticWire;
 }
 
 export type OutMsg =

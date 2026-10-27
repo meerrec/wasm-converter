@@ -1,0 +1,45 @@
+[package]
+name = "doc-converter-odf"
+version.workspace = true
+edition.workspace = true
+description = "OpenDocument (ODF) parsing into OOXML spreadsheet, presentation and document models"
+license.workspace = true
+# workspace-URL не совпадает с фактическим remote (meerrec/wasm-converter)
+repository = "https://github.com/meerrec/wasm-converter"
+rust-version.workspace = true
+
+[features]
+default = []
+# ODS — электронная таблица ODF 1.2: разбор в модель `doc-converter-xlsx`.
+ods = []
+# ODP — презентация ODF 1.2: разбор в модель `doc-converter-pptx`; раскладку и
+# кадр дают крейты PPTX-семейства (ADR-0046), поэтому свой движок не нужен.
+odp = [
+    "dep:doc-converter-pptx",
+    "dep:doc-converter-pptx-layout",
+    "dep:doc-converter-pptx-render",
+]
+# ODT — текстовый документ ODF 1.2: разбор в модель `doc-converter-docx`;
+# раскладку, кадр и PDF даёт DOCX-семейство (ADR-0046), движок не дублируется.
+odt = ["dep:doc-converter-docx"]
+
+[dependencies]
+doc-converter-core   = { workspace = true }
+doc-converter-render = { workspace = true }
+doc-converter-xlsx   = { workspace = true }
+# PPTX-семейство включается только фичей `odp`: первый срез (ODS) не тянет
+# парсер презентаций, а ODP переиспользует раскладку/рендер PPTX (ADR-0046).
+doc-converter-pptx        = { workspace = true, optional = true }
+doc-converter-pptx-layout = { workspace = true, optional = true }
+doc-converter-pptx-render = { workspace = true, optional = true }
+# DOCX-семейство включается только фичей `odt` (ADR-0046): раскладка и кадр ODT
+# берутся у DOCX, поэтому парсер документов не тянется фичами `ods`/`odp`.
+doc-converter-docx        = { workspace = true, optional = true }
+quick-xml            = { workspace = true }
+thiserror            = { workspace = true }
+miette               = { workspace = true }
+
+[dev-dependencies]
+# Битые пакеты (нет `content.xml`, нет `mimetype`, чужой mimetype) собираются
+# в памяти тестами: без записи ZIP проверить отказы нечем.
+zip = { workspace = true }
