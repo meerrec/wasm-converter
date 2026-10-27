@@ -197,3 +197,85 @@ describe('ленивая загрузка DOCX-модуля', () => {
     expect(docxStub()).toBeUndefined();
   });
 });
+
+describe('поток в ленивый DOCX-модуль (ADR-0049)', () => {
+  /** Ворота загрузки: пока тест их не откроет, заглушка «не загрузилась». */
+  interface Gate {
+    promise: Promise<void>;
+    open: () => void;
+  }
+
+  function gate(): Gate {
+    // `Promise.withResolvers` нет в Node 20 (`engines` — «>=20», CI гоняет обе ноги).
+    let open!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    return { promise, open };
+  }
+
+  const streamMsgs = (id: number): InMsg[] => [
+    { type: 'open-stream', id, format: 'docx' },
+    { type: 'append', id, bytes: new Uint8Array([1, 2, 3]).buffer },
+    { type: 'append', id, bytes: new Uint8Array([4, 5]).buffer },
+  ];
+
+  afterEach(() => {
+    // Заглушка кэширована по URL, а ворота живут на `globalThis`: без сброса
+    // следующий сценарий унаследовал бы уже открытые.
+    delete (globalThis as { __docxStubGate?: Gate }).__docxStubGate;
+  });
+
+  it('до загрузки модуля чанков в wasm нет, после — догон и поштучный append', async () => {
+    await startWorker();
+    // Заглушка грузится тем же динамическим импортом, поэтому ворота ставятся
+    // до первого `open-stream`: `init` ждёт их.
+    const pendingGate = gate();
+    (globalThis as { __docxStubGate?: Gate }).__docxStubGate = pendingGate;
+
+    for (const msg of streamMsgs(1)) await handler({ data: msg });
+
+    // Модуль ещё не готов: ни одного вызова wasm, байты ждут в записи потока.
+    expect(stubCalls('stream_append')).toHaveLength(0);
+    expect(stubCalls('stream_new')).toHaveLength(0);
+
+    pendingGate.open();
+    // Динамический импорт заглушки — не микротакт: ждём фактической загрузки.
+    await vi.waitFor(() => expect(stubCalls('stream_new')).toHaveLength(1));
+
+    // Догон: оба накопленных чанка уехали по порядку и поштучно.
+    expect(stubCalls('stream_new')).toHaveLength(1);
+    expect(stubCalls('stream_append').map((args) => args[1])).toEqual([3, 2]);
+
+    // Следующий чанк уходит сразу, не дожидаясь end-stream.
+    await handler({ data: { type: 'append', id: 1, bytes: new Uint8Array([6]).buffer } });
+    expect(stubCalls('stream_append').map((args) => args[1])).toEqual([3, 2, 1]);
+
+    await handler({ data: { type: 'end-stream', id: 1 } });
+
+    // Буфер разобран тем же streamId, ответ открытия — обычный.
+    expect(stubCalls('stream_open_docx')).toHaveLength(1);
+    expect(posted).toContainEqual({ type: 'docx-opened', id: 1, pages: docxStub()?.pages });
+    // Поток одноразовый: free в конце не зовётся, буфер изъят разбором.
+    expect(stubCalls('stream_free')).toHaveLength(0);
+  });
+
+  it('закрытие во время загрузки освобождает буфер, а end-stream не разбирает', async () => {
+    await startWorker();
+    const pendingGate = gate();
+    (globalThis as { __docxStubGate?: Gate }).__docxStubGate = pendingGate;
+
+    for (const msg of streamMsgs(2)) await handler({ data: msg });
+    pendingGate.open();
+    await vi.waitFor(() => expect(stubCalls('stream_new')).toHaveLength(1));
+
+    await handler({ data: { type: 'close' } });
+    // Буфер уже выделен — закрытие его отпускает ровно один раз.
+    expect(stubCalls('stream_free')).toHaveLength(1);
+
+    await handler({ data: { type: 'end-stream', id: 2 } });
+    // Записи потока больше нет: разбора не было и второго free тоже.
+    expect(stubCalls('stream_open_docx')).toHaveLength(0);
+    expect(stubCalls('stream_free')).toHaveLength(1);
+  });
+});

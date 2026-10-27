@@ -67,6 +67,16 @@ export interface OpenStreamEntry {
   chunks: Uint8Array[];
   /** Сколько байт уже приехало (оно же — смещение записи в `target`). */
   received: number;
+  /**
+   * Сколько байт уже уехало в wasm на пути с известным размером. Чанки
+   * досылаются по мере прихода (ADR-0049), поэтому `flushed` отстаёт от
+   * `received` только пока модуль формата не загружен.
+   */
+  flushed: number;
+  /** Сколько чанков уже уехало в wasm на пути без известного размера. */
+  flushedChunks: number;
+  /** Почему модуль формата не загрузился; `null` — загрузка идёт или прошла. */
+  failure: string | null;
   /** Загрузка модуля формата; `null`, если модуль уже в памяти. */
   moduleReady: Promise<unknown> | null;
 }
@@ -390,10 +400,28 @@ export class WorkerCore {
             target: msg.totalSize ? new Uint8Array(msg.totalSize) : null,
             chunks: [],
             received: 0,
+            flushed: 0,
+            flushedChunks: 0,
+            failure: null,
             moduleReady: null,
           };
           this.openStreams.set(msg.id, entry);
           this.hooks.beginStream(msg, entry, () => this.openStreams.has(msg.id));
+          // Подписка ставится на `moduleReady` самого хука, поэтому её
+          // продолжение выполняется уже после того, как хук выставил `streamId`
+          // (и мог решить, что поток закрыт, — тогда flush ничего не делает).
+          // Отказ загрузки снимается здесь: иначе unhandled rejection, а
+          // end-stream обязан ответить ошибкой открытия.
+          const ready = entry.moduleReady;
+          if (ready) {
+            ready.then(
+              () => this.flushStream(entry),
+              (e: unknown) => {
+                entry.failure = String(e);
+                entry.chunks.length = 0;
+              },
+            );
+          }
         } catch (e) {
           this.openStreams.delete(msg.id);
           postError(String(e), { id: msg.id, code: 'open' });
@@ -421,11 +449,15 @@ export class WorkerCore {
             entry.chunks.push(bytes);
           }
           entry.received += bytes.byteLength;
-          // В wasm байты не уезжают: единый append всего буфера случится в
-          // end-stream, когда модуль формата точно загружен.
+          // Модуль готов — чанк уходит в wasm сразу (ADR-0049); не готов — этот
+          // вызов ничего не делает, и накопленное догонит подписка на загрузку.
+          this.flushStream(entry);
         } catch (e) {
           postError(String(e), { id: msg.id, code: 'open' });
           this.openStreams.delete(msg.id);
+          // Буфер потока уже мог быть выделен в модуле: без этого он остался бы
+          // там до закрытия воркера.
+          this.freeEntry(entry);
         }
         return true;
       }
@@ -452,9 +484,25 @@ export class WorkerCore {
           }
           // Дожидаемся модуля формата; запись удаляется только после этого:
           // closure загрузки проверяет карту, и раннее удаление выглядело бы
-          // как закрытие потока. Если поток закрыли во время ожидания —
-          // streamId останется нулём, а буфер уже освободил сам closure.
-          if (entry.moduleReady) await entry.moduleReady;
+          // как закрытие потока. Отказ загрузки к этому моменту уже записан в
+          // `entry.failure` подпиской из `open-stream`.
+          if (entry.failure) {
+            this.openStreams.delete(msg.id);
+            this.freeEntry(entry);
+            postError(entry.failure, { id: msg.id, code: 'open' });
+            return true;
+          }
+          if (entry.moduleReady) await entry.moduleReady.catch(() => {});
+          // Пока ждали модуль, поток могли закрыть (`close` освобождает буферы)
+          // или вытеснить. Запись живёт в карте и осталась бы там, если бы её
+          // сняли снаружи, поэтому сверяем тождество: разбирать нечего.
+          if (this.openStreams.get(msg.id) !== entry) return true;
+          if (entry.failure) {
+            this.openStreams.delete(msg.id);
+            this.freeEntry(entry);
+            postError(entry.failure, { id: msg.id, code: 'open' });
+            return true;
+          }
           if (entry.streamId === 0) {
             postError('stream aborted', { id: msg.id, code: 'open' });
             return true;
@@ -481,10 +529,9 @@ export class WorkerCore {
             entry.chunks.length = 0;
             source = joined.buffer;
           }
-          // Единый append всего буфера: порядок чанков не зависит от гонки
-          // загрузки модуля, копия в wasm живёт только на время парса — пик
-          // памяти равен пути через буфер.
-          this.hooks.appendStream(entry.streamId, new Uint8Array(source));
+          // Догон остатка: пока модуль грузился, чанки копились здесь, а всё
+          // пришедшее после загрузки уже в wasm. Порядок задан счётчиками.
+          this.flushStream(entry);
           const response = this.hooks.finishStream(entry.streamId, msg.id);
           this.format = this.hooks.format;
           this.pending = null;
@@ -553,6 +600,33 @@ export class WorkerCore {
   private freeEntry(entry: OpenStreamEntry): void {
     if (entry.streamId === 0) return;
     this.hooks.freeStream(entry.streamId);
+  }
+
+  /**
+   * Досылать в wasm всё, что ещё не уехало (ADR-0049).
+   *
+   * Идемпотентен: счётчики `flushed`/`flushedChunks` делают повторный вызов
+   * no-op, а порядок гарантирован тем, что сообщения и продолжения обещаний
+   * выполняются на одном потоке. Пока модуль формата не загружен
+   * (`streamId === 0`) или его загрузка провалилась, вызов ничего не делает:
+   * накопленное либо догонит подписка из `open-stream`, либо поток закончится
+   * ошибкой открытия.
+   */
+  private flushStream(entry: OpenStreamEntry): void {
+    if (entry.streamId === 0 || entry.failure) return;
+    if (entry.target) {
+      if (entry.flushed < entry.received) {
+        this.hooks.appendStream(entry.streamId, entry.target.subarray(entry.flushed, entry.received));
+        entry.flushed = entry.received;
+      }
+      return;
+    }
+    while (entry.flushedChunks < entry.chunks.length) {
+      const chunk = entry.chunks[entry.flushedChunks];
+      if (!chunk) break;
+      entry.flushedChunks++;
+      this.hooks.appendStream(entry.streamId, chunk);
+    }
   }
 
   /** Снять с painter'а все зарегистрированные картинки. */
