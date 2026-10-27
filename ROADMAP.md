@@ -64,7 +64,7 @@
 
 | ✅ Делаем | ❌ Не делаем |
 |---|---|
-| Парсинг и чтение OOXML | Редактирование документов |
+| Парсинг, чтение и правка текста OOXML в рантайме — ячейка XLSX, run DOCX ([ADR-0043](docs/adr/0043-runtime-text-edits.md)) | Запись документов (writer) |
 | Рендеринг на OffscreenCanvas | Колаборация (Yjs / CRDT) |
 | Экспорт в PDF / PNG / MD / HTML / CSV | ИИ-предложения (human-in-the-loop) |
 | DOCX, XLSX (Transitional + Strict, [ADR-0034](docs/adr/0034-strict-ooxml.md)) и PPTX ([ADR-0033](docs/adr/0033-pptx-plugin.md)) | Статусы форматов — [ADR-0039](docs/adr/0039-cancel-v1-non-goals.md) |

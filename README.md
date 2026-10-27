@@ -1,45 +1,54 @@
 # doc-converter
 
-Просмотр и конвертация OOXML (DOCX/XLSX) в браузере и Node.js: Rust/WASM,
+Просмотр и конвертация OOXML (DOCX/XLSX/PPTX) в браузере и Node.js: Rust/WASM,
 рендер на `OffscreenCanvas` в Web Worker, экспорт в PDF/Markdown/HTML/текст.
 
 ## Что это
 
-- **Просмотрщики XLSX и DOCX** в браузере: разбор, раскладка и отрисовка
+- **Просмотрщики XLSX, DOCX и PPTX** в браузере: разбор, раскладка и отрисовка
   кадра целиком в Web Worker, основной поток получает готовый холст.
 - **Экспорт**: PDF (собственный PDF-бэкенд, [ADR-0022](docs/adr/0022-own-pdf-backend.md)),
   PNG, Markdown, HTML, текст.
 - **CLI** `@meerrec/cli`: `convert` и `batch` на тех же wasm-модулях, с
   пулом воркеров; работает под Node, Bun и Deno (см.
   [`packages/cli/README.md`](packages/cli/README.md)).
-- Монорепозиторий: шесть Rust-крейтов (`core`, `render`, `xlsx`, `docx`,
-  `pdf`, три wasm-модуля) и JS/TS-пакеты (`@meerrec/core`,
-  `@meerrec/wasm`, `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`,
-  `@meerrec/cli`).
+- Монорепозиторий: пятнадцать Rust-крейтов (`core`, `render`, `xlsx`, `docx`,
+  четыре PPTX-крейта, `pdf`, пять wasm-модулей и общий `wasm-common`) и
+  десять JS/TS-пакетов (`@meerrec/core`, `@meerrec/cli`, `@meerrec/wasm`,
+  `@meerrec/wasm-docx`, `@meerrec/wasm-pdf`, `@meerrec/wasm-pptx`,
+  `@meerrec/wasm-pptx-pdf` и обёртки `@meerrec/react`/`vue`/`svelte`).
 
 ## Статус
 
 Спринты 1–11 закрыты (сводка — [ROADMAP.md](ROADMAP.md) §7): разбор и
-раскладка обоих форматов, оба транспорта кадра first-class, просмотрщики,
+раскладка DOCX и XLSX, оба транспорта кадра first-class, просмотрщики,
 экспорт PDF/Markdown/HTML/текста, CLI с батч-конвертацией, оракул против
 LibreOffice, бенчмарки против JS-библиотек; спайк LibreOffice-WASM закрыт
-решением no-go. Фазы 1–4 архитектурного аудита реализованы: публикация
-десяти пакетов `@meerrec/*@1.2.0` в npmjs.org — основной реестр, установка
-без токена ([ADR-0027](docs/adr/0027-npmjs-primary-registry.md); первая
-публикация запущена и ждёт валидного `NPM_TOKEN`; GitHub
-Packages — зеркало, crates.io — non-goal,
-[ADR-0026](docs/adr/0026-rust-crates-distribution.md)), wire-типы Rust → TS
-через ts-rs ([ADR-0028](docs/adr/0028-typed-wire-protocol.md)) и рендер на
-main-потоке без `OffscreenCanvas` ([ADR-0029](docs/adr/0029-main-thread-render-backend.md)).
-Что работает — в разделе «Производительность», что осознанно не входит в v1 — в
-разделе «Ограничения v1».
+решением no-go. Текущий релиз — `2.0.2`, тег `v2.0.2`: десять пакетов
+`@meerrec/*@2.0.2` в npmjs.org — основной реестр, установка без токена
+([ADR-0027](docs/adr/0027-npmjs-primary-registry.md); GitHub Packages —
+зеркало, crates.io — non-goal,
+[ADR-0026](docs/adr/0026-rust-crates-distribution.md)). В релиз вошли
+PPTX-плагин ([ADR-0033](docs/adr/0033-pptx-plugin.md)), TextLayer и
+DOM-overlay для доступности
+([ADR-0041](docs/adr/0041-text-layer-dom-overlay.md)), UAX #9 bidi
+([ADR-0040](docs/adr/0040-bidi-strategy.md)), RTL-fallback шрифтов
+([ADR-0042](docs/adr/0042-rtl-font-coverage.md)) и обёртки
+`@meerrec/react`/`@meerrec/vue`/`@meerrec/svelte`.
+
+В `main` после тега — правка текста в рантайме
+([ADR-0043](docs/adr/0043-runtime-text-edits.md)); в опубликованных пакетах её
+пока нет, она уйдёт в следующий релиз. Что работает — в разделе
+«Производительность», что осознанно не входит в скоуп — в разделе
+«Ограничения».
 
 ## Демо
 
 Демо просмотрщика живёт на
-<https://meerrec.github.io/wasm-converter/viewer/> и это две страницы:
-«Слово» на `#/docx` и «ДваИксель» на `#/xlsx` (корень демо ведёт на `#/docx`).
-Публикуется workflow `Pages` при пуше в `main`.
+<https://meerrec.github.io/wasm-converter/viewer/> и это три страницы:
+«Слово» на `#/docx`, «ДваИксель» на `#/xlsx` и «PowerPoint» на `#/pptx`
+(корень демо ведёт на `#/docx`). Публикуется workflow `Pages` при пуше
+в `main`.
 
 Страницы «Конвертер» (x2t-wasm, конвертер ONLYOFFICE) и «Euro-Office»
 (self-host движка Euro-Office, форк ONLYOFFICE, AGPL-3.0-only) вынесены вместе
@@ -62,12 +71,11 @@ GitHub Pages не отдаёт заголовки cross-origin isolation (COOP/C
 
 ### Установка
 
-Десять пакетов `@meerrec/*` версии `1.2.0`: `core`, `wasm`, `wasm-docx`,
+Десять пакетов `@meerrec/*` версии `2.0.2`: `core`, `wasm`, `wasm-docx`,
 `wasm-pdf`, `wasm-pptx`, `wasm-pptx-pdf`, `cli`, `react`, `vue`, `svelte`.
-Основной реестр — `registry.npmjs.org` ([ADR-0027](docs/adr/0027-npmjs-primary-registry.md));
-установка без токена станет доступна после первой публикации (ждёт валидного
-`NPM_TOKEN`); **GitHub Packages** — действующее зеркало (нужна
-авторизация и `~/.npmrc`):
+Основной реестр — `registry.npmjs.org`, установка без токена
+([ADR-0027](docs/adr/0027-npmjs-primary-registry.md)); **GitHub Packages** —
+действующее зеркало (нужна авторизация и `~/.npmrc`):
 
 ```bash
 npm install @meerrec/core @meerrec/wasm \
@@ -78,8 +86,8 @@ npm install -g @meerrec/cli
 ```
 
 Тарболы — в ассетах
-релиза [`v1.2.0`](https://github.com/meerrec/wasm-converter/releases/tag/v1.2.0)
-(`meerrec-*.tgz`, ставится как `npm install ./meerrec-core-1.2.0.tgz`).
+релиза [`v2.0.2`](https://github.com/meerrec/wasm-converter/releases/tag/v2.0.2)
+(`meerrec-*.tgz`, ставится как `npm install ./meerrec-core-2.0.2.tgz`).
 
 `wasm-docx`, `wasm-pdf`, `wasm-pptx` и `wasm-pptx-pdf` — ленивые модули:
 воркер грузит их по URL при открытии документа и при первом экспорте в PDF.
@@ -154,6 +162,25 @@ viewer.destroy();
 
 Без `docxWasm` открытие `.docx` вернёт внятную ошибку вместо страниц; без
 `pdfWasm` — ошибку вернёт экспорт в PDF.
+
+### Правка текста
+
+Просмотрщики умеют заменять текст в рантайме
+([ADR-0043](docs/adr/0043-runtime-text-edits.md)); это код `main` после тега
+`v2.0.2` — в опубликованных пакетах `2.0.2` правки ещё нет. Исходный файл не
+перезаписывается — правка живёт до следующего `open`.
+
+```ts
+viewer.setCellText(0, 4, 2, '42');      // XLSX: лист, строка, столбец, текст
+await viewer.editRun(12, 0, 'Новый');   // DOCX: абзац, run, текст
+```
+
+Правка ячейки меняет только показ: значение и формат не трогаются, поэтому
+число, введённое в числовую ячейку, покажется как текст (левое выравнивание).
+Правка run'а перераскладывает документ — она может сдвинуть пагинацию,
+поэтому `editRun` возвращает промис, а адрес `(абзац, run)` берётся из
+TextLayer: `paragraphIndex`/`runIndex` в `TextRun`. Правки видны в кадре и в
+PDF-экспорте.
 
 ### CLI
 
@@ -240,8 +267,8 @@ round-trip < 1 мс на SAB против < 3 мс на буферах (RPC-сл
 | Разбор DOCX 50 МБ (`openDocx`, нативно) | 356 мс | < 1,5 с |
 | Пагинация DOCX, 150 страниц | 32,47 мс | < 500 мс на 100 стр. |
 | Экспорт PDF, 500 страниц XLSX | 159,4 мс | < 3 с |
-| Пик памяти PDF-экспорта `scale-500-pages.xlsx` | 28,12 МиБ | ≤ 40 МиБ |
-| Пик памяти разбора `memory_50mib.docx` (57 МБ, 75 картинок) | 155,50 МиБ | ≤ 200 МиБ |
+| Пик памяти PDF-экспорта `scale-500-pages.xlsx` | 28,41 МиБ | ≤ 40 МиБ |
+| Пик памяти разбора `memory_50mib.docx` (57,19 МиБ, 75 картинок) | 155,48 МиБ | ≤ 200 МиБ |
 | `batch` по `test-fixtures/xlsx`, 116 файлов, 4 воркера | 0,20 с | 100 файлов < 30 с |
 | DOCX → HTML против mammoth, медиана | ×5,3 | — |
 
@@ -256,25 +283,35 @@ round-trip < 1 мс на SAB против < 3 мс на буферах (RPC-сл
 
 Размер ассетов (gzip, гейт `pnpm size-limit`):
 
-| Ассет | Факт | Бюджет |
+| Ассет | Факт (gzip) | Бюджет |
 |---|---|---|
-| `@meerrec/core` xlsx-worker.js / docx-worker.js | 9,27 / 9,05 КБ | 550 / 550 КБ |
-| `@meerrec/core` pptx-worker.js / index.js | 8,36 / 11,22 КБ | 550 / 200 КБ |
-| `wasm (viewer)` — XLSX-просмотрщик | 464,2 КБ | 480 КБ |
-| `wasm (docx)` — ленивый модуль DOCX | 384,4 КБ | 400 КБ |
-| `wasm (pdf)` — ленивый модуль PDF | 1,01 МБ | 1,05 МБ |
+| `@meerrec/core` xlsx-worker.js / docx-worker.js | 9,42 / 9,25 КБ | 550 / 550 КБ |
+| `@meerrec/core` pptx-worker.js / index.js | 9,09 / 17,24 КБ | 550 / 200 КБ |
+| `wasm (viewer)` — основной модуль (XLSX) | 482,58 КБ | 490 КБ |
+| `wasm (docx)` — ленивый модуль DOCX | 424,89 КБ | 425 КБ |
+| `wasm (pptx)` — ленивый просмотр PPTX | 224,09 КБ | 480 КБ |
+| `wasm (pptx-pdf)` — экспорт PPTX в PDF | 781,53 КБ | 800 КБ |
+| `wasm (pdf)` — ленивый модуль PDF | 1,05 МБ | 1050 КБ |
+| `@meerrec/react` / `@meerrec/vue` | 562 / 486 Б | 25 КБ каждый |
 
-Модуль просмотра DOCX и модуль PDF грузятся по требованию; PDF после ухода с
-printpdf на собственный бэкенд похудел на 31 % gzip. Бюджет основного
-модуля поднят в Спринте 12 из-за вшитых поднаборов Carlito: превью рисует
-той же гарнитурой, что и PDF. Источники остальных чисел — [ROADMAP.md](ROADMAP.md)
-§9 и [docs/bench-js.md](docs/bench-js.md).
+Замеры — `pnpm size-limit` от 27.10.2026. Модули DOCX, PPTX и PDF грузятся по
+требованию; PDF после ухода с printpdf на собственный бэкенд похудел на 31 %
+gzip. Бюджет основного модуля поднят в Спринте 12 из-за вшитых поднаборов
+Carlito (превью рисует той же гарнитурой, что и PDF), а в 2.0.2 — до 490 КБ
+под правку ячеек ([ADR-0043](docs/adr/0043-runtime-text-edits.md)). Модуль DOCX
+стоит впритык к бюджету — 424,89 из 425 КБ: следующий рост требует либо выноса
+шрифтов, либо осознанного пересмотра лимита. Источники остальных чисел —
+[ROADMAP.md](ROADMAP.md) §9 и [docs/bench-js.md](docs/bench-js.md).
 
-## Ограничения v1
+## Ограничения
 
-- **Редактирование — нет.** Только чтение и конвертация
-  ([ADR-0018](docs/adr/0018-editing-boundaries.md),
-  [ADR-0020](docs/adr/0020-parser-writer-boundary.md)).
+- **Записи файла — нет.** Движок читает и конвертирует; правка текста в
+  рантайме есть в `main` (в опубликованных `2.0.2` её ещё нет), но исходный
+  файл не перезаписывается, writer'а в репозитории нет
+  ([ADR-0043](docs/adr/0043-runtime-text-edits.md),
+  [ADR-0020](docs/adr/0020-parser-writer-boundary.md)). Правка ограничена
+  текстом — значение ячейки XLSX и текст run'а DOCX; структурных изменений
+  (вставка строк, форматирование, перенос страниц) нет.
 - **Сноски и комментарии** парсятся в модели, но в раскладку не попадают.
 - **Обтекание текстом вокруг плавающих рисунков — нет**: рисунок
   вынимается из потока.
@@ -304,10 +341,10 @@ Apache-2.0 — файл [LICENSE](LICENSE) в корне репозитория.
 - [ROADMAP.md](ROADMAP.md) — план, состояние по спринтам, бюджеты (§9),
   DoD v1.0 (§12).
 - [docs/cookbook/](docs/cookbook/) — рецепты: просмотр, экспорт, CLI,
-  embed — готовится к релизу (Спринт 12).
+  embed, доступность.
 - [docs/migration-from-mammoth.md](docs/migration-from-mammoth.md) и
   [docs/migration-from-exceljs.md](docs/migration-from-exceljs.md) —
-  миграционные гайды, готовятся к релизу (Спринт 12).
+  миграционные гайды.
 - [docs/bench-js.md](docs/bench-js.md) — сравнение с mammoth, exceljs,
   SheetJS.
 - [examples/viewer](examples/viewer) — демо-приложение и e2e-тесты.

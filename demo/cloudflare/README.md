@@ -88,15 +88,7 @@ curl -sI https://<домен>/viewer/ | grep -iE 'cross-origin-opener|cross-orig
    `@playwright/test`:
 
 ```bash
-cd examples/viewer
-node --input-type=module -e "
-import { chromium } from '@playwright/test';
-const browser = await chromium.launch();
-const page = await browser.newPage();
-await page.goto('https://<домен>/viewer/');
-console.log('crossOriginIsolated =', await page.evaluate(() => crossOriginIsolated));
-await browser.close();
-"
+curl -sI https://<домен>/viewer/ | grep -iE 'cross-origin-opener|cross-origin-embedder'
 ```
 
 Ожидается `crossOriginIsolated = true`. Если браузеры Playwright не

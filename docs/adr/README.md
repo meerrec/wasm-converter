@@ -46,5 +46,11 @@
 | 0040 | Bidi — UAX #9 через `unicode-bidi`, без `rustybuzz` в Спринте 2 | [`0040-bidi-strategy.md`](0040-bidi-strategy.md) |
 | 0041 | TextLayer и DOM-overlay — доступность без изменения `DisplayList` | [`0041-text-layer-dom-overlay.md`](0041-text-layer-dom-overlay.md) |
 | 0042 | Покрытие RTL-шрифтов — системный fallback и ленивый сабсет | [`0042-rtl-font-coverage.md`](0042-rtl-font-coverage.md) |
+| 0043 | Правка текста в рантайме — слой правок поверх модели, без writer'а | [`0043-runtime-text-edits.md`](0043-runtime-text-edits.md) |
+| 0044 | Единый путь исполнения кадра: TransportAdapter и RenderAdapter | [`0044-unified-execution-path.md`](0044-unified-execution-path.md) |
+| 0045 | Единая диагностика браузера и CLI: `Diagnostic`, `ViewerError`, JSON-вывод | [`0045-diagnostics.md`](0045-diagnostics.md) |
+| 0046 | Расширяемый FormatPlugin: паспорт, семейные модели и TS-дескриптор | [`0046-format-plugin-contract.md`](0046-format-plugin-contract.md) |
+| 0047 | ODF-плагин: `.odt`/`.ods`/`.odp` в семейные модели | [`0047-odf-plugin.md`](0047-odf-plugin.md) |
+| 0048 | XLSB-плагин: BIFF12 в модель XLSX | [`0048-xlsb-plugin.md`](0048-xlsb-plugin.md) |
 
 Сводка принятых решений по спринтам — `ROADMAP.md` §11.
