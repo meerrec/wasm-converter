@@ -22,11 +22,8 @@ import type {
   TextLayer,
 } from '../protocol.js';
 import { armAbort, type AbortGuard } from './abort.js';
-import { exportPng } from './export_png.js';
-import { createMainFrameChain } from './main_frame_chain.js';
-import {
-  disposeMainPainter, dropMainBitmap, initMainPainter, registerMainBitmap, resizeMainCanvas,
-} from './main_painter.js';
+import { toDiagnostic, ViewerError, workerDiagnostic, type Diagnostic } from '../diagnostics.js';
+import { createMainRenderAdapter } from './render_adapter.js';
 import { resolveRenderMode } from './offscreen.js';
 import { pumpStream, type PumpOptions } from './open_stream.js';
 import { computeDpr } from './dpr.js';
@@ -110,6 +107,27 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
   const worker = new Worker(workerUrl, { type: 'module', name: spec.workerName });
 
   const slotCapacity = options.slotCapacity ?? DEFAULT_SLOT_CAPACITY;
+  // main-сторонний путь кадра: в воркер-режиме адаптер тонкий (только resize),
+  // в main-режиме он держит painter, цикл кадра и битмапы. Ошибка init не
+  // оставляет воркер висеть, а singleton painter'а освобождается.
+  const tickHandlers = new Set<(stats: PaintStats) => void>();
+  const renderer = createMainRenderAdapter({
+    mode: renderMode,
+    canvas,
+    worker,
+    ...(options.wasmUrl === undefined ? {} : { wasmUrl: options.wasmUrl }),
+    onTick: (stats) => {
+      for (const handler of tickHandlers) handler(stats);
+    },
+  });
+  try {
+    await renderer.init();
+  } catch (e) {
+    worker.terminate();
+    renderer.destroy();
+    throw e;
+  }
+
   const state: ViewerState<S, O> = {
     host,
     options,
@@ -125,9 +143,8 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
     padLeft: 0,
     destroyed: false,
     frameScheduled: false,
-    mainChain: null,
-    mainBitmaps: new Map(),
-    tickHandlers: new Set(),
+    render: renderer,
+    tickHandlers,
     pendingOpen: new Map(),
     pendingHit: new Map(),
     pendingHyperlink: new Map(),
@@ -156,24 +173,6 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
     state.pendingTextLayer,
   ];
 
-  // main-режим: painter поднимается до воркера и до первого кадра; если инициализация не удалась, воркер не должен остаться висеть.
-  if (renderMode === 'main') {
-    const ctx2d = canvas.getContext('2d');
-    if (!ctx2d) {
-      worker.terminate();
-      throw new Error('getContext("2d") returned null');
-    }
-    try {
-      await initMainPainter(ctx2d, options.wasmUrl);
-    } catch (e) {
-      worker.terminate();
-      throw e;
-    }
-    state.mainChain = createMainFrameChain(worker, (stats) => {
-      for (const handler of state.tickHandlers) handler(stats);
-    });
-  }
-
   worker.addEventListener('message', (ev: MessageEvent<OutMsg>) => {
     const msg = ev.data;
     // Форматное сообщение идёт первым: ядро не трогает то, что формат уже обработал.
@@ -183,20 +182,17 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
         for (const handler of state.tickHandlers) handler(msg.stats);
         break;
       case 'frame':
-        // main-режим: воркер собрал DisplayList, рисуем и возвращаем буфер.
-        state.mainChain?.handle(msg);
+        // main-режим: воркер собрал DisplayList, адаптер рисует и возвращает буфер.
+        state.render.handleFrame(msg);
         break;
       case 'bitmap':
-        registerMainBitmap(msg.id, msg.bitmap);
-        state.mainBitmaps.set(msg.id, msg.bitmap);
+        state.render.registerBitmap(msg.id, msg.bitmap);
         break;
       case 'drop-bitmap':
-        dropMainBitmap(msg.id);
-        state.mainBitmaps.delete(msg.id);
+        state.render.dropBitmap(msg.id);
         break;
       case 'clear-bitmaps':
-        for (const id of state.mainBitmaps.keys()) dropMainBitmap(id);
-        state.mainBitmaps.clear();
+        state.render.clearBitmaps();
         break;
       case 'opened':
       case 'docx-opened':
@@ -227,8 +223,11 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
         answer(state.pendingTextLayer, msg.id, msg.layer);
         break;
       case 'error': {
-        const error = new Error(msg.message);
-        console.error(`[${spec.formatTag}]`, msg.code ? `${msg.code}: ${msg.message}` : msg.message);
+        // Ошибка воркера — уже диагностика: Rust/воркер могли прислать
+        // структурный объект, иначе собираем его из кода стадии и текста.
+        const diagnostic = msg.diagnostic ?? workerDiagnostic(msg, spec.formatTag);
+        const error = new ViewerError(diagnostic);
+        console.error(`[${spec.formatTag}]`, `${diagnostic.layer}/${diagnostic.code}: ${diagnostic.message}`);
         if (msg.id !== undefined) {
           // Ошибка адресная: отклоняем только свой запрос, соседние ждут своих ответов — их ошибка не касается.
           for (const map of pendingRejectables) rejectPending(map, msg.id, error);
@@ -247,7 +246,11 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
   try {
     ready = await new Promise<ReadyInfo>((resolve, reject) => {
       const onMessage = (ev: MessageEvent) => {
-        const payload = ev.data as { type?: string; message?: string } & Partial<ReadyInfo>;
+        const payload = ev.data as {
+          type?: string;
+          message?: string;
+          diagnostic?: Diagnostic;
+        } & Partial<ReadyInfo>;
         if (payload?.type === 'ready') {
           worker.removeEventListener('message', onMessage);
           resolve({
@@ -259,7 +262,18 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
           });
         } else if (payload?.type === 'error') {
           worker.removeEventListener('message', onMessage);
-          reject(new Error(payload.message ?? 'worker init error'));
+          // Ошибка без `id` — воркер не поднялся. Это не отказ одного запроса,
+          // поэтому в диагностике слой оркестрации, а не разбора.
+          reject(
+            new ViewerError(
+              payload.diagnostic ??
+                toDiagnostic(payload.message ?? 'worker init error', {
+                  code: 'internal',
+                  layer: 'orchestration',
+                  format: spec.formatTag,
+                }),
+            ),
+          );
         }
       };
       worker.addEventListener('message', onMessage);
@@ -282,8 +296,7 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
   } catch (e) {
     // Воркер не поднялся — он не нужен, а painter в main-режиме singleton страницы: без освобождения следующий вьюер не смог бы инициализироваться.
     worker.terminate();
-    state.mainChain?.destroy();
-    if (renderMode === 'main') disposeMainPainter();
+    state.render.destroy();
     throw e;
   }
   state.transport = ready.transport;
@@ -295,15 +308,9 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
     state.dpr = computeDpr(cssW, cssH, devicePixelRatio);
     canvas.style.width = `${cssW}px`;
     canvas.style.height = `${cssH}px`;
-    if (renderMode === 'main') {
-      // Установка width/height сбрасывает 2D-контекст: painter пересчитывает его сам, а картинки возвращаются в кэш после этого.
-      canvas.width = Math.max(1, Math.round(cssW * state.dpr));
-      canvas.height = Math.max(1, Math.round(cssH * state.dpr));
-      resizeMainCanvas(cssW, cssH, state.dpr);
-      for (const [id, bmp] of state.mainBitmaps) registerMainBitmap(id, bmp);
-      return;
-    }
-    worker.postMessage({ type: 'resize', cssW, cssH, dpr: state.dpr } satisfies InMsg);
+    // Режим решает адаптер: воркеру уходит resize, main сам ставит размеры и
+    // возвращает битмапы в кэш painter'а.
+    state.render.resize(cssW, cssH, state.dpr);
   }
 
   function render(): void {
@@ -461,9 +468,10 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
     let failed: unknown;
     try {
       let bytes: Uint8Array;
-      if (renderMode === 'main') {
+      const local = state.render.capturePng();
+      if (local) {
         // В main-режиме холст и painter здесь: снимок делается локально.
-        bytes = await exportPng(canvas);
+        bytes = await local;
       } else {
         bytes = await request(
           opts,
@@ -520,14 +528,9 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
     for (const map of pendingRejectables) rejectAll(map, error);
     state.textLayer?.destroy();
     // Сначала цикл кадров: он вернёт воркеру вытесненный буфер, пока тот ещё жив. Затем singleton painter'а освобождается для страницы.
-    state.mainChain?.destroy();
+    state.render.destroy();
     worker.postMessage({ type: 'close' } satisfies InMsg);
     worker.terminate();
-    if (renderMode === 'main') {
-      for (const id of state.mainBitmaps.keys()) dropMainBitmap(id);
-      state.mainBitmaps.clear();
-      disposeMainPainter();
-    }
     scroller.remove();
   }
 

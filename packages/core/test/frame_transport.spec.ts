@@ -6,7 +6,7 @@ import {
   SLOT_COUNT,
 } from '../src/sab/protocol.js';
 import { SabReader } from './sab_reader.js';
-import { FramePool, pickTransport } from '../src/worker/transport.js';
+import { FramePool } from '../src/worker/frame_pool.js';
 
 /** Кадр-образец: у настоящего DisplayList тот же вид — заголовок и команды. */
 function sampleFrame(length = 64): Uint8Array {
@@ -31,26 +31,6 @@ function ringWrite(sab: SharedArrayBuffer, capacity: number, bytes: Uint8Array):
   Atomics.store(header, 0, seqWriter + 1);
   return true;
 }
-
-describe('pickTransport', () => {
-  it('берёт SAB, когда он доступен', () => {
-    expect(pickTransport(undefined, {} as SharedArrayBuffer)).toBe('sab');
-    expect(pickTransport('auto', {} as SharedArrayBuffer)).toBe('sab');
-  });
-
-  it('без SAB молча уходит на буферы: путь без SAB — не аварийный', () => {
-    expect(pickTransport(undefined, null)).toBe('bytes');
-    expect(pickTransport('auto', null)).toBe('bytes');
-  });
-
-  it('явный bytes не трогает SAB, даже когда он есть', () => {
-    expect(pickTransport('bytes', {} as SharedArrayBuffer)).toBe('bytes');
-  });
-
-  it('явный sab без SAB — ошибка, а не подмена транспорта', () => {
-    expect(() => pickTransport('sab', null)).toThrow(/COOP\/COEP/);
-  });
-});
 
 describe('FramePool', () => {
   it('держит два буфера и переиспользует их, а не аллоцирует новые', () => {

@@ -7,15 +7,11 @@
 import init, {
   alloc_sab,
   drop_bitmap,
-  font_bytes,
-  init_painter,
   register_bitmap,
-  resize_canvas,
   sab_total_bytes,
 } from '@meerrec/wasm';
-import type { BuildStatsWire, ImageInfoWire, PaintStatsWire } from '../generated/wire.js';
+import type { BuildStatsWire, DiagnosticWire, ImageInfoWire } from '../generated/wire.js';
 import type {
-  FrameTransport,
   InMsg,
   InitMsg,
   OpenMsg,
@@ -26,16 +22,19 @@ import type {
   WorkerErrorCode,
   WorkerErrorMsg,
 } from '../protocol.js';
+import { resolveExecutionPlan, type ExecutionPlan } from '../execution/plan.js';
+import {
+  createTransportAdapter,
+  type LocalBuildResult,
+  type TransportAdapter,
+} from '../execution/transport.js';
 import { exportPng } from '../render/export_png.js';
 import { frameTarget } from './frame_args.js';
-import { registerPaintFonts } from './fonts.js';
-import { startFrameLoop, type BuildOutcome, type FrameLoop } from './frame_loop';
-import { FrameRelay } from './frame_relay.js';
-import { startRelayLoop, type RelayBuildOutcome, type RelayLoop } from './relay_loop.js';
-import { FramePool, pickTransport } from './transport.js';
-import { paintBytes, paintSab, type PdfWasm } from './wasm_typed.js';
-
-type Ctx = OffscreenCanvasRenderingContext2D;
+import { ForwardingRenderAdapter } from './execution/render_forward.js';
+import { OffscreenRenderAdapter } from './execution/render_offscreen.js';
+import type { RenderAdapter } from './execution/render.js';
+import type { RelayBuildOutcome } from './relay_loop.js';
+import type { PdfWasm } from './wasm_typed.js';
 
 /** Откуда воркер берёт картинки открытого документа. */
 export interface BitmapSource {
@@ -128,11 +127,12 @@ export const post = (msg: OutMsg, transfer: Transferable[] = []): void => {
  */
 export function postError(
   message: string,
-  opts: { id?: number; code?: WorkerErrorCode } = {},
+  opts: { id?: number; code?: WorkerErrorCode; diagnostic?: DiagnosticWire } = {},
 ): void {
   const msg: WorkerErrorMsg = { type: 'error', message };
   if (opts.id !== undefined) msg.id = opts.id;
   if (opts.code !== undefined) msg.code = opts.code;
+  if (opts.diagnostic !== undefined) msg.diagnostic = opts.diagnostic;
   post(msg);
 }
 
@@ -146,22 +146,15 @@ export function openErrorCode(e: unknown): WorkerErrorCode {
 
 /** Общее состояние и обработчики воркера одного формата. */
 export class WorkerCore {
-  private ctx: Ctx | null = null;
-  /** Где рисуется кадр. Решается один раз на `init` и дальше не меняется. */
-  private backend: 'worker' | 'main' = 'worker';
   /** `init` уже прошёл (успешно или нет): повторный — нарушение протокола. */
   private initialized = false;
-  /** Транспорт кадра: выбирается на `init`, дальше не меняется. */
-  private transport: FrameTransport = 'bytes';
-  /** Ring SAB-пути; `null` на пути без SAB. */
-  private sab: SharedArrayBuffer | null = null;
-  /** Двойной буфер пути без SAB; `null` на SAB-пути. */
-  private pool: FramePool | null = null;
-  /** Двойной буфер main-режима: владение уезжает на main и возвращается ack'ом. */
-  private relay: FrameRelay | null = null;
+  /** Выбранный путь кадра: место рендера и транспорт. */
+  private plan: ExecutionPlan | null = null;
+  /** Транспорт кадра: живёт от `init` до остановки воркера. */
+  private transportAdapter: TransportAdapter | null = null;
+  /** Рендер-адаптер: offscreen-путь рисует здесь, main-путь отправляет кадры. */
+  private render: RenderAdapter | null = null;
   private slotCapacity = 0;
-  private loop: FrameLoop | null = null;
-  private relayLoop: RelayLoop | null = null;
   /** Последний запрос на кадр: перерисовка идёт по нему, а не по сообщению. */
   private pending: RenderRequest | null = null;
   /** Формат открытого документа: по нему разбирается запрос кадра. */
@@ -253,87 +246,83 @@ export class WorkerCore {
         this.initialized = true;
         try {
           await init(msg.wasmUrl);
-          this.backend = msg.backend ?? 'worker';
           this.pdfUrls = msg.pdf ?? null;
           this.hooks.configure?.(msg);
           this.slotCapacity = msg.slotCapacity;
 
-          if (this.backend === 'main') {
-            // В main-режиме воркер только разбирает и собирает кадры: контекста
-            // у него нет, шрифты и painter живут на main, SAB не нужен.
-            if (msg.transport === 'sab') {
-              throw new Error(
-                "renderMode 'main' несовместим с transport 'sab': кадры едут буферами",
-              );
-            }
-            this.transport = 'bytes';
-            this.relay = new FrameRelay(this.slotCapacity);
-            post({
-              type: 'ready',
-              backend: 'main',
-              transport: this.transport,
-              slotCapacity: this.slotCapacity,
-              totalBytes: this.slotCapacity * 2,
-              crossOriginIsolated:
-                typeof crossOriginIsolated === 'boolean' ? crossOriginIsolated : false,
-            });
-            this.relayLoop = startRelayLoop({
-              build: () => this.buildFrameMain(),
-              send: (frame) => post(frame, [frame.bytes]),
-            });
-            return true;
-          }
+          // Одно решение о пути кадра: место рендера, транспорт и допустимость
+          // пары. SAB выделяется только для воркер-пути: main всегда едет
+          // буферами, и аллокация там была бы мёртвой памятью.
+          const renderTarget = msg.backend ?? 'worker';
+          const wantsSab = renderTarget === 'worker' && msg.transport !== 'bytes';
+          const shared = wantsSab ? this.tryAllocSab(this.slotCapacity) : null;
+          const plan = resolveExecutionPlan({
+            render: renderTarget,
+            requested: msg.transport,
+            sabAvailable: shared !== null,
+          });
+          this.plan = plan;
 
-          // Сабсеты Carlito — до первого кадра: Chromium запоминает промах по
-          // строке `ctx.font` на всю сессию, и нарисованное подставленным лицом
-          // осталось бы таким же и после регистрации. Иначе предпросмотр
-          // разойдётся с PDF, куда встроены те же сабсеты.
-          await registerPaintFonts({ font_bytes });
-          const canvas = msg.canvas;
-          if (!canvas) throw new Error('init: worker backend requires canvas');
-          this.ctx = canvas.getContext('2d', {
-            alpha: true,
-            desynchronized: true,
-          }) as Ctx;
-          if (!this.ctx) throw new Error('getContext("2d") returned null');
+          const transport = createTransportAdapter(plan.transport, {
+            slotCapacity: this.slotCapacity,
+            target: plan.render,
+            sab: plan.transport === 'sab' ? shared : null,
+            allocSab: (bytes) => this.tryAllocSab(bytes),
+            buildInto: this.hooks.buildInto,
+            buildSab: this.hooks.buildSab,
+          });
+          this.transportAdapter = transport;
 
-          // SAB — не transferable, шарится через structured clone; живёт он в
-          // воркере, поэтому на main уезжает не он, а решение о транспорте.
-          const shared = msg.transport === 'bytes' ? null : this.tryAllocSab(this.slotCapacity);
-          this.transport = pickTransport(msg.transport, shared);
-          this.sab = this.transport === 'sab' ? shared : null;
-          if (this.transport === 'bytes') this.pool = new FramePool(this.slotCapacity);
+          const render: RenderAdapter =
+            plan.render === 'worker'
+              ? new OffscreenRenderAdapter({
+                  transport,
+                  build: () => this.buildLocal(),
+                  onTick: (stats) =>
+                    post({
+                      type: 'tick',
+                      stats: { ...stats, buildMs: this.buildMs },
+                    }),
+                  onAfterResize: () => this.reregisterBitmaps(),
+                })
+              : new ForwardingRenderAdapter({
+                  transport,
+                  build: () => this.buildForward(),
+                  send: (frame) => post(frame, [frame.bytes]),
+                });
+          this.render = render;
+
+          // Полная инициализация до `ready`: main не должен успеть прислать
+          // первый кадр раньше, чем painter и шрифты готовы.
+          await render.start(msg.canvas ?? null);
+
           post({
             type: 'ready',
-            backend: 'worker',
-            transport: this.transport,
+            backend: plan.render,
+            transport: plan.transport,
             slotCapacity: this.slotCapacity,
             totalBytes:
-              this.transport === 'sab'
+              plan.transport === 'sab'
                 ? sab_total_bytes(this.slotCapacity)
                 : this.slotCapacity * 2,
             crossOriginIsolated:
               typeof crossOriginIsolated === 'boolean' ? crossOriginIsolated : false,
           });
-
-          init_painter(this.ctx);
-          this.loop = startFrameLoop({
-            build: () => this.buildFrame(),
-            paint: () => this.paintFrame(),
-            onTick: (s) => post({ type: 'tick', stats: { ...s, buildMs: this.buildMs } }),
-          });
         } catch (e) {
           // Ошибка без id: воркер не поднялся, ответить на запросы нечем.
+          this.render?.stop();
+          this.transportAdapter?.close();
+          this.render = null;
+          this.transportAdapter = null;
           postError(String(e), { code: 'init' });
         }
         return true;
       }
       case 'resize': {
-        // В main-режиме размеры холста ставит main; воркеру тут делать нечего.
-        if (this.backend === 'main' || !this.ctx) return true;
-        resize_canvas(msg.cssW, msg.cssH, msg.dpr);
-        this.reregisterBitmaps();
-        if (this.pending) this.loop?.request();
+        // В main-режиме размеры холста ставит main; адаптер сам решает, что делать.
+        if (!this.render) return true;
+        this.render.resize(msg.cssW, msg.cssH, msg.dpr);
+        if (this.plan?.render === 'worker' && this.pending) this.render.request();
         return true;
       }
       case 'bitmap': {
@@ -346,8 +335,7 @@ export class WorkerCore {
       }
       case 'frame-ack': {
         // main вернул буфер после отрисовки (или сразу, если кадр вытеснен).
-        this.relay?.adopt(msg.slot, msg.buffer);
-        this.relayLoop?.ack();
+        this.render?.ack(msg.slot, msg.buffer);
         return true;
       }
       case 'open': {
@@ -520,7 +508,7 @@ export class WorkerCore {
         return true;
       }
       case 'export-png': {
-        if (this.backend === 'main') {
+        if (this.plan?.render === 'main') {
           // Снимок делает main: холст и painter живут там же, гонять его через
           // воркер значило бы копировать PNG лишний раз.
           postError('export-png is handled on the main thread in main mode', {
@@ -529,12 +517,13 @@ export class WorkerCore {
           });
           return true;
         }
-        if (!this.ctx) {
+        const canvas = this.render?.canvas;
+        if (!canvas) {
           postError('export-png before init', { id: msg.id, code: 'export' });
           return true;
         }
         try {
-          const bytes = await exportPng(this.ctx.canvas);
+          const bytes = await exportPng(canvas);
           post({ type: 'png', id: msg.id, bytes }, [bytes.buffer]);
         } catch (e) {
           postError(String(e), { id: msg.id, code: 'export' });
@@ -568,7 +557,7 @@ export class WorkerCore {
   /** Снять с painter'а все зарегистрированные картинки. */
   private dropBitmaps(): void {
     this.bitmapsGen++;
-    if (this.backend === 'main') {
+    if (this.plan?.render === 'main') {
       // Id нового документа могут совпасть со старыми: main снимает весь набор
       // разом, до того как приедут новые картинки.
       post({ type: 'clear-bitmaps' });
@@ -626,7 +615,7 @@ export class WorkerCore {
             bmp.close();
             return;
           }
-          if (this.backend === 'main') {
+          if (this.plan?.render === 'main') {
             // В main-режиме painter живёт на main: картинка уезжает туда
             // переводом владения, и после этого воркер её не удерживает.
             post({ type: 'bitmap', id, bitmap: bmp }, [bmp]);
@@ -647,7 +636,7 @@ export class WorkerCore {
    * холста не привязаны, поэтому сразу возвращаем их в кэш.
    */
   private reregisterBitmaps(): void {
-    if (this.backend === 'main') return;
+    if (this.plan?.render === 'main') return;
     for (const [id, bmp] of this.bitmaps) register_bitmap(id, bmp);
   }
 
@@ -665,136 +654,35 @@ export class WorkerCore {
     }
   }
 
-  /** Размер слота: у обоих путей он означает одно — сколько влезает кадр. */
-  private frameCapacity(): number {
-    return this.transport === 'bytes'
-      ? (this.pool?.slotCapacity ?? this.slotCapacity)
-      : this.slotCapacity;
-  }
-
-  /** Вырасти под кадр длиной `bytes`. */
-  private growFrameBuffer(bytes: number): void {
-    if (this.transport === 'bytes') {
-      this.pool?.grow(bytes);
-      return;
-    }
-    const grown = this.tryAllocSab(Math.max(bytes, this.slotCapacity * 2));
-    // Памяти на новый ring не нашлось — кадр пропущен, как раньше: следующий
-    // может оказаться меньше и влезет в старый слот.
-    if (!grown) return;
-    this.slotCapacity = Math.max(bytes, this.slotCapacity * 2);
-    this.sab = grown;
-  }
-
-  /** Путь без SAB: кадр пишется в готовый буфер пула. */
-  private buildBytes(req: RenderRequest): BuildStatsWire | null {
-    const buffers = this.pool;
-    if (!buffers) return null;
-    const out = buffers.beginBuild();
-    const stats = this.hooks.buildInto(out, req);
-    if (!stats) {
-      buffers.abortBuild();
-      return null;
-    }
-    if (stats.written) buffers.commitBuild(stats.bytes);
-    else buffers.abortBuild();
-    return stats;
-  }
-
-  /** SAB-путь: кадр пишется прямо в слот ring'а. */
-  private buildSab(req: RenderRequest): BuildStatsWire | null {
-    const shared = this.sab;
-    if (!shared) return null;
-    return this.hooks.buildSab(shared, this.slotCapacity, req);
-  }
-
-  /** Собрать кадр в свободный буфер выбранного транспорта. */
-  private buildFrame(): BuildOutcome {
+  /**
+   * Собрать кадр под локальный painter.
+   *
+   * Разбор запроса (`frameTarget`) остаётся здесь, а не в транспорте: без
+   * обязательного поля формата кадр лучше пропустить, чем оставить пул в
+   * состоянии сборки. Транспорт отвечает только за буфер и его судьбу.
+   */
+  private buildLocal(): LocalBuildResult {
     const req = this.pending;
     // Документа ещё нет — собирать нечего; это не ошибка, а пустой ход.
-    if (!req || !this.format) return 'idle';
-    // Разбор запроса до захвата буфера: без обязательного поля формата кадр
-    // лучше пропустить, чем оставить пул в состоянии сборки.
+    if (!req || !this.format || !this.transportAdapter) {
+      return { outcome: 'idle', stats: null };
+    }
     frameTarget(this.format, req);
-    const stats =
-      this.transport === 'bytes' ? this.buildBytes(req) : this.buildSab(req);
-    // Модуля формата нет — собирать кадр нечем. Путь страховочный: открытие
-    // модуль уже загрузило.
-    if (!stats) return 'idle';
-    this.buildMs = stats.buildMs;
-    if (stats.written) return 'built';
-    // Слота не хватило: либо он занят (backpressure — кадр пропущен намеренно),
-    // либо кадр больше слота. Во втором случае буфер растят: кадр, который
-    // никогда не влезает, — это замерший экран.
-    if (stats.bytes > this.frameCapacity()) this.growFrameBuffer(stats.bytes);
-    return 'dropped';
+    const result = this.transportAdapter.buildLocal(req);
+    if (result.stats) this.buildMs = result.stats.buildMs;
+    return result;
   }
 
-  /**
-   * main-режим: кадр пишется в свободный буфер релея, отправляет его цикл.
-   *
-   * `busy` — оба буфера в полёте, ждём `frame-ack`; `retry` — кадр не влез в
-   * буфер, ёмкость уже выросла и сборка повторяется. Занятость буферов сюда
-   * не попадает: `beginBuild` отдаёт только свободный.
-   */
-  private buildFrameMain(): RelayBuildOutcome {
+  /** Собрать кадр для отправки на main; буферы и backpressure — у транспорта. */
+  private buildForward(): RelayBuildOutcome {
     const req = this.pending;
-    const buffers = this.relay;
-    if (!req || !this.format || !buffers) return { kind: 'idle' };
+    if (!req || !this.format || !this.transportAdapter) return { kind: 'idle' };
     frameTarget(this.format, req);
-    const out = buffers.beginBuild();
-    if (!out) return { kind: 'busy' };
-    let stats: BuildStatsWire | null;
-    try {
-      stats = this.hooks.buildInto(out, req);
-    } catch (e) {
-      buffers.abort();
-      throw e;
-    }
-    // Модуля формата нет — собирать кадр нечем. Путь страховочный: открытие
-    // модуль уже загрузило.
-    if (!stats) {
-      buffers.abort();
-      return { kind: 'idle' };
-    }
-    if (!stats.written) {
-      buffers.abort();
-      if (stats.bytes > buffers.slotCapacity) {
-        buffers.grow(stats.bytes);
-        return { kind: 'retry' };
-      }
-      return { kind: 'busy' };
-    }
-    buffers.commit(stats.bytes);
-    const frame = buffers.takeFrame();
-    if (!frame) return { kind: 'busy' };
-    return {
-      kind: 'frame',
-      frame: {
-        slot: frame.slot,
-        bytes: frame.bytes,
-        len: frame.len,
-        cmds: stats.cmds,
-        buildMs: stats.buildMs,
-      },
-    };
+    return this.transportAdapter.buildForward(req);
   }
 
-  /** Запросить кадр на перерисовку: какой цикл, решает режим. */
+  /** Запросить кадр на перерисовку: цикл живёт в рендер-адаптере. */
   private requestFrame(): void {
-    if (this.backend === 'main') this.relayLoop?.request();
-    else this.loop?.request();
-  }
-
-  /** Нарисовать самый свежий готовый кадр; промежуточные транспорт отпускает сам. */
-  private paintFrame(): PaintStatsWire {
-    if (this.transport === 'bytes') {
-      const frame = this.pool?.takeLatest();
-      if (!frame) return { cmds: 0, dropped: true, paintMs: 0 };
-      return paintBytes(frame);
-    }
-    const shared = this.sab;
-    if (!shared) return { cmds: 0, dropped: true, paintMs: 0 };
-    return paintSab(shared, this.slotCapacity);
+    this.render?.request();
   }
 }
