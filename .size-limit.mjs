@@ -104,9 +104,11 @@ export default [
     // поднят осознанно; trade-off зафиксирован в отчёте спринта.
     // 420 → 425 КБ: подсветка знака (`w:highlight` и `w:rPr/w:shd`) и
     // подъём полосы набора над высоким подвалом добавили 1,33 КБ.
+    // 425 → 435 КБ: правка текста run в рантайме (ADR-0043) — слой правок
+    // в модели DOCX и его подстановка в раскладку. Замер 427,77 КБ gzip.
     name: 'wasm (docx)',
     path: 'packages/wasm-docx/pkg/*.wasm',
-    limit: '425 KB',
+    limit: '435 KB',
     gzip: true,
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },
@@ -125,9 +127,12 @@ export default [
     // 991 kB по факту после миграции на собственный бэкенд (ADR-0022, было
     // ≈1,46 МБ с printpdf). Запас ~6 % — как у соседних строк; возврат
     // PDF-библиотеки или раздувание шрифтовой части бюджет покрасят.
+    // 1050 → 1120 КБ: экспорт XLSB/ODS/ODT в PDF (ADR-0046/0048) — модуль
+    // потянул `doc-converter-odf` (ods+odt) и `doc-converter-xlsb`, потому что
+    // эти форматы доводятся до моделей XLSX/DOCX уже здесь. Замер 1,11 МБ.
     name: 'wasm (pdf)',
     path: 'packages/wasm-pdf/pkg/*.wasm',
-    limit: '1050 KB',
+    limit: '1120 KB',
     gzip: true,
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },
@@ -159,9 +164,11 @@ export default [
     // раскладка, шрифты, постраничный бэкенд) стоит ~782 КБ gzip. Лимит
     // 800 КБ — решение владельца T3.1; строка стережёт возврат экспортёра в
     // модуль просмотра и рост за счёт фич без пересмотра.
+    // 800 → 830 КБ: экспорт ODP (ADR-0047) приносит `doc-converter-odf` с
+    // разбором ODP, чтобы довести его до модели PPTX. Замер 808,59 КБ gzip.
     name: 'wasm (pptx-pdf)',
     path: 'packages/wasm-pptx-pdf/pkg/*.wasm',
-    limit: '800 KB',
+    limit: '830 KB',
     gzip: true,
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },

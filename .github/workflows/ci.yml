@@ -102,8 +102,9 @@ jobs:
       - run: cargo install wasm-pack --locked
       - run: bash scripts/build-wasm.sh
 
-      # Экспорты всех девяти ленивых модулей сверяются с их крейтами: wasm-bindgen
-      # собирает #[wasm_bindgen] из всего графа зависимостей, лишнее имя — регрессия.
+      # Экспорты всех восьми ленивых модулей сверяются с их крейтами (у основного
+      # `wasm` проверка своя, ниже): wasm-bindgen собирает #[wasm_bindgen] из всего
+      # графа зависимостей, лишнее имя — регрессия.
       - name: check wasm exports
         run: |
           set -euo pipefail

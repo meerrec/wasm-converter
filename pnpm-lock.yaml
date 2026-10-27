@@ -105,9 +105,21 @@ importers:
       '@meerrec/wasm-docx':
         specifier: workspace:*
         version: link:../wasm-docx
+      '@meerrec/wasm-odp':
+        specifier: workspace:*
+        version: link:../wasm-odp
+      '@meerrec/wasm-odt':
+        specifier: workspace:*
+        version: link:../wasm-odt
       '@meerrec/wasm-pdf':
         specifier: workspace:*
         version: link:../wasm-pdf
+      '@meerrec/wasm-pptx':
+        specifier: workspace:*
+        version: link:../wasm-pptx
+      '@meerrec/wasm-pptx-pdf':
+        specifier: workspace:*
+        version: link:../wasm-pptx-pdf
     devDependencies:
       '@types/node':
         specifier: ^22.9.0
