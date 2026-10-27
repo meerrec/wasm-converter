@@ -131,6 +131,15 @@ importers:
       '@meerrec/wasm-docx':
         specifier: workspace:*
         version: link:../wasm-docx
+      '@meerrec/wasm-odp':
+        specifier: workspace:*
+        version: link:../wasm-odp
+      '@meerrec/wasm-ods':
+        specifier: workspace:*
+        version: link:../wasm-ods
+      '@meerrec/wasm-odt':
+        specifier: workspace:*
+        version: link:../wasm-odt
       '@meerrec/wasm-pdf':
         specifier: workspace:*
         version: link:../wasm-pdf
@@ -140,6 +149,9 @@ importers:
       '@meerrec/wasm-pptx-pdf':
         specifier: workspace:*
         version: link:../wasm-pptx-pdf
+      '@meerrec/wasm-xlsb':
+        specifier: workspace:*
+        version: link:../wasm-xlsb
       '@opentelemetry/sdk-trace-base':
         specifier: ^1.0.0
         version: 1.30.1(@opentelemetry/api@1.10.0)
@@ -250,11 +262,19 @@ importers:
 
   packages/wasm-docx: {}
 
+  packages/wasm-odp: {}
+
+  packages/wasm-ods: {}
+
+  packages/wasm-odt: {}
+
   packages/wasm-pdf: {}
 
   packages/wasm-pptx: {}
 
   packages/wasm-pptx-pdf: {}
+
+  packages/wasm-xlsb: {}
 
 packages:
 

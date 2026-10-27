@@ -17,7 +17,7 @@ import { parseArgs, USAGE, type BatchCommand, type ConvertCommand } from './args
 import { convertFile, type ConvertJob } from './convert.js';
 import { CliError } from './errors.js';
 import { expandInputs } from './expand.js';
-import { assertSupported, formatFromPath, inputKind, withExtension } from './formats.js';
+import { assertSupported, formatFromPath, INPUT_EXTENSIONS, inputKind, withExtension } from './formats.js';
 import { formatBytes, ProgressReporter, type OutputStream } from './progress.js';
 import { loadRuntime, type CliRuntime } from './runtime.js';
 
@@ -83,7 +83,7 @@ async function runConvert(command: ConvertCommand, streams: CliStreams): Promise
   try {
     const kind = inputKind(command.input);
     if (kind === null) {
-      const message = `unsupported input '${command.input}': expected .docx or .xlsx`;
+      const message = `unsupported input '${command.input}': expected ${INPUT_EXTENSIONS}`;
       throw new CliError(message, 2, toDiagnostic(message, { code: 'unsupported-format', layer: 'orchestration' }));
     }
 
@@ -189,7 +189,7 @@ async function planJobs(inputs: readonly string[], command: BatchCommand): Promi
   for (const input of inputs) {
     const kind = inputKind(input);
     if (kind === null) {
-      const message = `unsupported input '${input}': expected .docx or .xlsx`;
+      const message = `unsupported input '${input}': expected ${INPUT_EXTENSIONS}`;
       throw new CliError(message, 2, toDiagnostic(message, { code: 'unsupported-format', layer: 'orchestration' }));
     }
     assertSupported(kind, command.format);

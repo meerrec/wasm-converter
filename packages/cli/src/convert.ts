@@ -9,8 +9,8 @@ import { dirname } from 'node:path';
 import { toDiagnostic, type ConversionStats, type PdfOptions } from '@meerrec/core';
 
 import { CliError } from './errors.js';
-import { assertSupported, inputKind, type InputKind, type OutputFormat } from './formats.js';
-import { loadDocxWasm, loadPdfWasm } from './wasm.js';
+import { assertSupported, INPUT_EXTENSIONS, inputKind, type InputKind, type OutputFormat } from './formats.js';
+import { loadDocxWasm, loadOdpWasm, loadOdtWasm, loadPdfWasm, loadPptxPdfWasm, loadPptxWasm } from './wasm.js';
 
 export interface ConvertJob {
   input: string;
@@ -41,7 +41,7 @@ export async function convertFile(job: ConvertJob): Promise<ConvertResult> {
   const started = Date.now();
   const kind = inputKind(job.input);
   if (kind === null) {
-    const message = `unsupported input '${job.input}': expected .docx or .xlsx`;
+    const message = `unsupported input '${job.input}': expected ${INPUT_EXTENSIONS}`;
     throw new CliError(message, 2, toDiagnostic(message, { code: 'unsupported-format', layer: 'orchestration' }));
   }
   assertSupported(kind, job.format);
@@ -72,7 +72,6 @@ export async function convertFile(job: ConvertJob): Promise<ConvertResult> {
 }
 
 async function toPdf(kind: InputKind, bytes: Uint8Array, pdf: PdfOptions): Promise<Uint8Array> {
-  const wasm = await loadPdfWasm();
   // Опции для wasm-модуля: только заданные ключи (exactOptionalPropertyTypes).
   // Имена — camelCase, как в `PdfOptionsWire`; `allSheets` CLI не знает и не шлёт.
   const options: PdfOptions = {};
@@ -84,24 +83,65 @@ async function toPdf(kind: InputKind, bytes: Uint8Array, pdf: PdfOptions): Promi
   if (pdf.fitToPage !== undefined) options.fitToPage = pdf.fitToPage;
   if (pdf.fitToWidth !== undefined) options.fitToWidth = pdf.fitToWidth;
   if (pdf.fitToHeight !== undefined) options.fitToHeight = pdf.fitToHeight;
+
+  // PPTX/ODP идут ленивым модулем pptx-pdf; `options` валидируются, но не
+  // читаются — размер страницы задаёт сама презентация.
+  if (kind === 'pptx') return (await loadPptxPdfWasm()).export_pptx_pdf(bytes, options);
+  if (kind === 'odp') return (await loadPptxPdfWasm()).export_odp_pdf(bytes, options);
+
+  // Остальные PDF — через wasm-pdf. У ODT/ODS/XLSB `sheetIndex` не
+  // поддерживается: документ/книга экспортируются целиком, лист не выбирается.
+  const wasm = await loadPdfWasm();
   if (kind === 'docx') return wasm.export_docx_pdf(bytes, options);
+  if (kind === 'odt') return wasm.export_odt_pdf(bytes, options);
+  if (kind === 'ods') return wasm.export_ods_pdf(bytes, options);
+  if (kind === 'xlsb') return wasm.export_xlsb_pdf(bytes, options);
+  // XLSX — единственный путь с выбором листа: `sheetIndex` либо вся книга.
   return pdf.sheetIndex === undefined
     ? wasm.export_pdf_book(bytes, options)
     : wasm.export_pdf(bytes, pdf.sheetIndex, options);
 }
 
 async function toText(kind: InputKind, bytes: Uint8Array, format: OutputFormat): Promise<Uint8Array> {
-  // XLSX сюда не доходит: `assertSupported` выше разрешает ему только PDF.
-  if (kind !== 'docx') {
-    const message = `${kind} → ${format} is not supported`;
-    throw new CliError(message, 2, toDiagnostic(message, { code: 'unsupported-format', layer: 'orchestration' }));
+  return Buffer.from(await textOf(kind, bytes, format), 'utf8');
+}
+
+/** Текстовый экспорт по формату входа: документы и презентации, не таблицы. */
+async function textOf(kind: InputKind, bytes: Uint8Array, format: OutputFormat): Promise<string> {
+  switch (kind) {
+    case 'docx': {
+      const wasm = await loadDocxWasm();
+      return exportText(bytes, format, wasm.docx_export_markdown, wasm.docx_export_html, wasm.docx_export_text);
+    }
+    case 'odt': {
+      const wasm = await loadOdtWasm();
+      return exportText(bytes, format, wasm.odt_export_markdown, wasm.odt_export_html, wasm.odt_export_text);
+    }
+    case 'pptx': {
+      const wasm = await loadPptxWasm();
+      return exportText(bytes, format, wasm.pptx_export_markdown, wasm.pptx_export_html, wasm.pptx_export_text);
+    }
+    case 'odp': {
+      const wasm = await loadOdpWasm();
+      return exportText(bytes, format, wasm.odp_export_markdown, wasm.odp_export_html, wasm.odp_export_text);
+    }
+    case 'xlsx':
+    case 'ods':
+    case 'xlsb': {
+      // Таблицы сюда не доходят: `assertSupported` разрешает им только PDF.
+      const message = `${kind} → ${format} is not supported`;
+      throw new CliError(message, 2, toDiagnostic(message, { code: 'unsupported-format', layer: 'orchestration' }));
+    }
   }
-  const wasm = await loadDocxWasm();
-  const text =
-    format === 'md'
-      ? wasm.docx_export_markdown(bytes)
-      : format === 'html'
-        ? wasm.docx_export_html(bytes)
-        : wasm.docx_export_text(bytes);
-  return Buffer.from(text, 'utf8');
+}
+
+/** Выбрать экспортёр текста по цели: md, html, иначе txt. */
+function exportText(
+  bytes: Uint8Array,
+  format: OutputFormat,
+  markdown: (bytes: Uint8Array) => string,
+  html: (bytes: Uint8Array) => string,
+  text: (bytes: Uint8Array) => string,
+): string {
+  return format === 'md' ? markdown(bytes) : format === 'html' ? html(bytes) : text(bytes);
 }

@@ -21,6 +21,9 @@ const packageRoot = fileURLToPath(new URL('..', import.meta.url));
 const CLI = join(packageRoot, 'dist/cli.js');
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const DOCX = join(repoRoot, 'test-fixtures/docx/simple/one_paragraph.docx');
+const ODT = join(repoRoot, 'test-fixtures/odf/odt/simple.odt');
+const ODP = join(repoRoot, 'test-fixtures/odf/odp/simple.odp');
+const ODS = join(repoRoot, 'test-fixtures/odf/ods/simple.ods');
 
 let outDir: string;
 
@@ -58,6 +61,36 @@ describe.skipIf(!existsSync(CLI))('dist/cli.js', () => {
     await run('node', [CLI, 'convert', DOCX, '-o', output]);
     const { stdout } = await run('cat', [output]);
     expect(stdout).toContain('Hello, World!');
+  });
+
+  it('convert ODT → PDF', async () => {
+    const output = join(outDir, 'simple.odt.pdf');
+    const { stderr } = await run('node', [CLI, 'convert', ODT, '-o', output]);
+    expect(stderr).toContain('ok');
+    const { stdout } = await run('head', ['-c', '5', output]);
+    expect(stdout).toBe('%PDF-');
+  });
+
+  it('convert ODT → Markdown', async () => {
+    const output = join(outDir, 'simple.odt.md');
+    await run('node', [CLI, 'convert', ODT, '-o', output]);
+    const { stdout } = await run('cat', [output]);
+    expect(stdout).toContain('ODF text fixture');
+  });
+
+  it('convert ODP → text', async () => {
+    const output = join(outDir, 'simple.odp.txt');
+    await run('node', [CLI, 'convert', ODP, '-o', output]);
+    const { stdout } = await run('cat', [output]);
+    expect(stdout).toContain('Slides in ODF');
+  });
+
+  it('convert ODS → PDF', async () => {
+    const output = join(outDir, 'simple.ods.pdf');
+    const { stderr } = await run('node', [CLI, 'convert', ODS, '-o', output]);
+    expect(stderr).toContain('ok');
+    const { stdout } = await run('head', ['-c', '5', output]);
+    expect(stdout).toBe('%PDF-');
   });
 
   it('batch каталога с --workers 4 печатает прогресс', async () => {

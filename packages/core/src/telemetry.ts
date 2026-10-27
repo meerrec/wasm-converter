@@ -17,8 +17,8 @@ import pkg from '../package.json';
  * во внешний APM, и содержимое документа — не телеметрия (ADR-0037).
  */
 export interface SpanAttributes extends Attributes {
-  /** Формат документа: `'xlsx' | 'docx' | 'pptx'`. */
-  format?: 'xlsx' | 'docx' | 'pptx';
+  /** Формат документа: `'xlsx' | 'docx' | 'pptx' | 'xlsb' | 'ods' | 'odp' | 'odt'`. */
+  format?: 'xlsx' | 'docx' | 'pptx' | 'xlsb' | 'ods' | 'odp' | 'odt';
   /** Что выгружали: `'pdf' | 'png'`. */
   kind?: 'pdf' | 'png';
   /** Длина входа (при открытии) или результата (при экспорте). */

@@ -12,6 +12,7 @@ import init, {
 } from '@meerrec/wasm';
 import type { BuildStatsWire, DiagnosticWire, ImageInfoWire } from '../generated/wire.js';
 import type {
+  DocFormat,
   InMsg,
   InitMsg,
   OpenMsg,
@@ -73,7 +74,7 @@ export interface OpenStreamEntry {
 /** Форматная часть воркера: всё, что зависит от XLSX или DOCX. */
 export interface FormatHooks {
   /** Формат, который обслуживает воркер. */
-  readonly format: 'xlsx' | 'docx' | 'pptx';
+  readonly format: DocFormat;
   /** Запомнить URL-ы формата из `init` (DOCX-модуль грузится лениво). */
   configure?: (msg: InitMsg) => void;
   /** Причина, по которой открывать нельзя (нет URL модуля), или `null`. */
@@ -158,7 +159,7 @@ export class WorkerCore {
   /** Последний запрос на кадр: перерисовка идёт по нему, а не по сообщению. */
   private pending: RenderRequest | null = null;
   /** Формат открытого документа: по нему разбирается запрос кадра. */
-  private format: 'xlsx' | 'docx' | 'pptx' | null = null;
+  private format: DocFormat | null = null;
   /** Сколько заняла сборка последнего кадра. */
   private buildMs = 0;
 

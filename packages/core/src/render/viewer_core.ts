@@ -38,7 +38,9 @@ import type {
 
 /** Атрибут спана открытия: число листов, страниц или слайдов. */
 function openedCountKey(format: DocFormat): string {
-  return format === 'xlsx' ? 'sheetCount' : format === 'docx' ? 'pageCount' : 'slideCount';
+  if (format === 'xlsx' || format === 'xlsb' || format === 'ods') return 'sheetCount';
+  if (format === 'docx' || format === 'odt') return 'pageCount';
+  return 'slideCount';
 }
 
 /** Число единиц документа в ответе на открытие — для атрибута спана. */
@@ -366,13 +368,15 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
 
   /** Текстовая выгрузка: формат решает, какой функцией модуля её считать. */
   function exportText(format: TextExportFormat, opts: { signal?: AbortSignal } = {}): Promise<string> {
-    if (spec.formatTag === 'xlsx') {
-      return Promise.reject(new Error('текстовая выгрузка не поддерживается для xlsx'));
+    if (spec.formatTag === 'xlsx' || spec.formatTag === 'xlsb' || spec.formatTag === 'ods') {
+      return Promise.reject(
+        new Error(`текстовая выгрузка не поддерживается для ${spec.formatTag}`),
+      );
     }
     return request(
       opts,
       (id) =>
-        spec.formatTag === 'docx'
+        spec.formatTag === 'docx' || spec.formatTag === 'odt'
           ? { type: 'export-docx-text', id, format }
           : { type: 'export-pptx-text', id, format },
       state.pendingText,

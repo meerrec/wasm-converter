@@ -12,6 +12,10 @@ import { CliError } from '../src/errors.js';
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const DOCX = join(repoRoot, 'test-fixtures/docx/simple/one_paragraph.docx');
 const XLSX = join(repoRoot, 'test-fixtures/xlsx/content-single-cell.xlsx');
+const ODT = join(repoRoot, 'test-fixtures/odf/odt/simple.odt');
+const ODP = join(repoRoot, 'test-fixtures/odf/odp/simple.odp');
+const ODS = join(repoRoot, 'test-fixtures/odf/ods/simple.ods');
+const PPTX = join(repoRoot, 'test-fixtures/pptx/simple/two_slides.pptx');
 
 let outDir: string;
 
@@ -85,8 +89,31 @@ describe('convertFile', () => {
     });
   });
 
+  it('ODT → Markdown: в тексте есть абзац документа', async () => {
+    const output = join(outDir, 'simple.odt.md');
+    await convertFile({ input: ODT, output, format: 'md', pdf: {} });
+    const text = await readFile(output, 'utf8');
+    expect(text).toContain('ODF text fixture');
+  });
+
+  it('ODP → текст и PPTX → текст: в тексте есть содержимое слайда', async () => {
+    const odpOutput = join(outDir, 'simple.odp.txt');
+    await convertFile({ input: ODP, output: odpOutput, format: 'txt', pdf: {} });
+    expect(await readFile(odpOutput, 'utf8')).toContain('Slides in ODF');
+
+    const pptxOutput = join(outDir, 'two-slides.txt');
+    await convertFile({ input: PPTX, output: pptxOutput, format: 'txt', pdf: {} });
+    expect(await readFile(pptxOutput, 'utf8')).toContain('Hello Slides');
+  });
+
+  it('ODS → PDF: настоящий PDF в выходном файле', async () => {
+    const output = join(outDir, 'simple.ods.pdf');
+    await convertFile({ input: ODS, output, format: 'pdf', pdf: {} });
+    expect((await readFile(output)).subarray(0, 5).toString('latin1')).toBe('%PDF-');
+  });
+
   it('неподдерживаемый вход — CliError с кодом unsupported-format', async () => {
-    const attempt = convertFile({ input: 'book.odt', output: join(outDir, 'book.pdf'), format: 'pdf', pdf: {} });
+    const attempt = convertFile({ input: 'book.doc', output: join(outDir, 'book.pdf'), format: 'pdf', pdf: {} });
     await expect(attempt).rejects.toBeInstanceOf(CliError);
     await expect(attempt).rejects.toMatchObject({
       exitCode: 2,

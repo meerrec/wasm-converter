@@ -106,7 +106,15 @@ jobs:
       # wasm-bindgen собирает `#[wasm_bindgen]`-элементы из всего графа
       # зависимостей; своей PDF-библиотеки больше нет (ADR-0022), поэтому
       # посторонних экспортов быть не должно — любое лишнее имя здесь
-      # регрессия. Сверяются оба ленивых модуля.
+      # регрессия. Сверяются PDF и DOCX ленивые модули. XLSB, ODS, ODT, ODP
+      # уехали в отдельные крейты (ADR-0048, ADR-0047), поэтому их не включают
+      # здесь — экспорты внутри своих крейтов.
+
+      # I3: .d.ts must not declare exports that don't exist in the crate.
+      # wasm-bindgen collects `#[wasm_bindgen]` elements from the entire
+      # dependency graph; its PDF library no longer exists (ADR-0022), so any
+      # extra export is a regression. Only PDF and DOCX lazy modules are checked.
+      # XLSB, ODS, ODT, ODP moved to separate crates (ADR-0048, ADR-0047), so they are not included here — exports within their own crates.
       - name: check wasm exports
         run: |
           set -euo pipefail
@@ -139,7 +147,12 @@ jobs:
           check_exports packages/wasm-pdf/pkg/doc_converter_pdf_wasm.d.ts crates/pdf-wasm/src
           check_exports packages/wasm-docx/pkg/doc_converter_docx_wasm.d.ts crates/docx-wasm/src
           check_exports packages/wasm-pptx/pkg/doc_converter_pptx_wasm.d.ts crates/pptx-wasm/src
-          check_exports packages/wasm-pptx-pdf/pkg/doc_converter_pptx_pdf_wasm.d.ts crates/pptx-pdf-wasm/src
+          check_exports packages/wasm-pptx-pdf/pkg/doc_converter_pptx_pdf_wasm.d.ts crates/pptx-pdf-wasm/src          check_exports packages/wasm-xlsb/pkg/doc_converter_xlsb_wasm.d.ts crates/xlsb-wasm/src
+          check_exports packages/wasm-ods/pkg/doc_converter_ods_wasm.d.ts crates/ods-wasm/src
+          check_exports packages/wasm-odt/pkg/doc_converter_odt_wasm.d.ts crates/odt-wasm/src
+          check_exports packages/wasm-odp/pkg/doc_converter_odp_wasm.d.ts crates/odp-wasm/src
+
+
 
       # Просмотрщик DOCX уехал из основного модуля в ленивый `wasm-docx`;
       # экспорты `docx_*` в `packages/wasm/pkg` означают его возврат в основной
@@ -161,6 +174,8 @@ jobs:
             exit 1
           fi
           echo "OK: в основном модуле нет экспортов docx_*/pptx_*"
+      # XLSB и ODF форматы уехали в отдельные ленивые модули (ADR-0047, ADR-0048),
+      # поэтому их экспорты не проверяются здесь — это часть бюджета новых крейтов.
 
       - uses: actions/upload-artifact@v4
         with:
@@ -186,6 +201,26 @@ jobs:
         with:
           name: wasm-pptx-pdf-pkg
           path: packages/wasm-pptx-pdf/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-xlsb-pkg
+          path: packages/wasm-xlsb/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-ods-pkg
+          path: packages/wasm-ods/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-odt-pkg
+          path: packages/wasm-odt/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-odp-pkg
+          path: packages/wasm-odp/pkg
 
   # Браузерные wasm-bindgen-тесты до этой джобы не запускались нигде: в
   # crates/wasm/tests/ живёт регрессия кэша стилей painter'а, тесты остальных
@@ -317,6 +352,26 @@ jobs:
         with:
           name: wasm-pptx-pdf-pkg
           path: packages/wasm-pptx-pdf/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-xlsb-pkg
+          path: packages/wasm-xlsb/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-ods-pkg
+          path: packages/wasm-ods/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-odt-pkg
+          path: packages/wasm-odt/pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-odp-pkg
+          path: packages/wasm-odp/pkg
 
       - run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 

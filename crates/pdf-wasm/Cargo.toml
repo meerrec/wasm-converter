@@ -15,7 +15,12 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 doc-converter-core = { workspace = true }
 doc-converter-docx = { workspace = true }
+# ODF нужен только для ODS/ODT: разбор доводит их до моделей XLSX/DOCX, а
+# PDF даёт DOCX/XLSX-семейство (ADR-0046). ODP сюда не тянется — у презентаций
+# свой экспортёр в `doc-converter-pptx-pdf-wasm`.
+doc-converter-odf = { workspace = true, features = ["ods", "odt"] }
 doc-converter-pdf = { workspace = true }
+doc-converter-xlsb = { workspace = true }
 doc-converter-xlsx = { workspace = true }
 wasm-bindgen = "0.2"
 serde = { version = "1", features = ["derive"] }

@@ -12,7 +12,7 @@ import { CliError } from './errors.js';
 export type OutputFormat = 'pdf' | 'md' | 'html' | 'txt';
 
 /** Формат ввода: разбирается по расширению. */
-export type InputKind = 'docx' | 'xlsx';
+export type InputKind = 'docx' | 'xlsx' | 'pptx' | 'odt' | 'ods' | 'odp' | 'xlsb';
 
 /** Расширение выходного файла, с точкой. */
 export const OUTPUT_EXTENSION: Record<OutputFormat, string> = {
@@ -22,16 +22,33 @@ export const OUTPUT_EXTENSION: Record<OutputFormat, string> = {
   txt: '.txt',
 };
 
-/** Что во что конвертируется. У XLSX путь только один — PDF. */
+/**
+ * Что во что конвертируется. Документы (DOCX/ODT) и презентации (PPTX/ODP)
+ * идут в PDF/Markdown/HTML/текст, у таблиц (XLSX/ODS/XLSB) путь один — PDF:
+ * текстового просмотра таблиц в CLI нет.
+ */
 export const SUPPORTED: Record<InputKind, readonly OutputFormat[]> = {
   docx: ['pdf', 'md', 'html', 'txt'],
   xlsx: ['pdf'],
+  pptx: ['pdf', 'md', 'html', 'txt'],
+  odt: ['pdf', 'md', 'html', 'txt'],
+  ods: ['pdf'],
+  odp: ['pdf', 'md', 'html', 'txt'],
+  xlsb: ['pdf'],
 };
 
 const INPUT_KIND_BY_EXTENSION: Record<string, InputKind> = {
   '.docx': 'docx',
   '.xlsx': 'xlsx',
+  '.pptx': 'pptx',
+  '.odt': 'odt',
+  '.ods': 'ods',
+  '.odp': 'odp',
+  '.xlsb': 'xlsb',
 };
+
+/** Перечень расширений входа — один источник для текстов ошибок и справки. */
+export const INPUT_EXTENSIONS = '.docx/.xlsx/.pptx/.odt/.ods/.odp/.xlsb' as const;
 
 const FORMAT_BY_EXTENSION: Record<string, OutputFormat> = {
   '.pdf': 'pdf',

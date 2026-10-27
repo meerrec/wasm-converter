@@ -42,7 +42,7 @@ export interface ViewerFormatSpec<S, O> {
   /** URL воркера: свой из опций либо дефолт рядом с бандлом. */
   workerUrl: (options: { workerUrl?: URL }) => URL;
   /** Формат-тег телеметрии (ADR-0037). */
-  telemetry: 'xlsx' | 'docx' | 'pptx';
+  telemetry: 'xlsx' | 'docx' | 'pptx' | 'xlsb' | 'ods' | 'odp' | 'odt';
   /** Формат в конверте `open`/`open-stream`. */
   formatTag: DocFormat;
   /** Тег ответа на открытие: свой у каждого формата. */

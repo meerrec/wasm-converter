@@ -12,6 +12,9 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 doc-converter-core = { workspace = true }
+# ODF нужен только для ODP: разбор доводит презентацию до модели PPTX, а
+# раскладку и PDF даёт PPTX-семейство (ADR-0046).
+doc-converter-odf = { workspace = true, features = ["odp"] }
 doc-converter-pdf = { workspace = true }
 doc-converter-pptx = { workspace = true }
 # Экспортёр PPTX — отдельный крейт (ADR-0033: просмотрщик и экспортёр

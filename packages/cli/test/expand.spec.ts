@@ -77,6 +77,8 @@ describe('expandInputs', () => {
 
   it('ругается на несуществующий путь и на пустую выборку', async () => {
     await expect(expandInputs([join(root, 'nope.docx')])).rejects.toThrow(/input not found/);
-    await expect(expandInputs([join(root, 'in', '*.pptx')])).rejects.toThrow(/no \.docx\/\.xlsx files matched/);
+    await expect(expandInputs([join(root, 'in', '*.pptx')])).rejects.toThrow(
+      /no \.docx\/\.xlsx\/\.pptx\/\.odt\/\.ods\/\.odp\/\.xlsb files matched/,
+    );
   });
 });

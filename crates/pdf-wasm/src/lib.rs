@@ -170,6 +170,38 @@ fn export_pdf_book_with(
     exporter.export_xlsx_book(&book).map_err(to_js)
 }
 
+/// Экспортировать книгу XLSB в PDF: листы идут подряд, закладка — на первый
+/// лист каждого. Книга приходит байтами XLSB и разбирается здесь же: у модуля
+/// нет общего с просмотрщиком состояния, а модель — та же, что у XLSX
+/// ([`doc_converter_xlsb::open`] доводит бинарные части до книги XLSX).
+///
+/// # Errors
+/// Если байты не XLSB-пакет (не ZIP, нет `xl/workbook.bin`), в книге лист
+/// неподдержанного типа или PDF не собрался.
+#[wasm_bindgen]
+pub fn export_xlsb_pdf(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValue> {
+    let options = parse_options(options)?;
+    let book = doc_converter_xlsb::open(bytes.to_vec()).map_err(to_js)?;
+    let mut exporter = PdfExporter::new(options);
+    exporter.export_xlsx_book(&book).map_err(to_js)
+}
+
+/// Экспортировать книгу ODS в PDF: листы идут подряд, закладка — на первый
+/// лист каждого. Книга приходит байтами ODS и разбирается здесь же: модель —
+/// та же, что у XLSX ([`doc_converter_odf::ods::open`] доводит `content.xml` до
+/// книги XLSX).
+///
+/// # Errors
+/// Если байты не ODS-пакет (`mimetype` не электронная таблица, нет
+/// `content.xml`) или PDF не собрался.
+#[wasm_bindgen]
+pub fn export_ods_pdf(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValue> {
+    let options = parse_options(options)?;
+    let book = doc_converter_odf::ods::open(bytes.to_vec()).map_err(to_js)?;
+    let mut exporter = PdfExporter::new(options);
+    exporter.export_xlsx_book(&book).map_err(to_js)
+}
+
 /// Приложить снимок правок интерфейса к разобранной книге.
 ///
 /// Пустой снимок (`null`/`undefined`) — обычный экспорт без правок: путь
@@ -205,6 +237,26 @@ fn apply_edits(book: &doc_converter_xlsx::Workbook, edits: JsValue) -> Result<()
 pub fn export_docx_pdf(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValue> {
     let options = parse_options(options)?;
     let document = doc_converter_docx::open(bytes.to_vec()).map_err(to_js)?;
+    let mut exporter = PdfExporter::new(options);
+    exporter.export_docx(&document).map_err(to_js)
+}
+
+/// Экспортировать документ ODT в PDF. Документ приходит байтами ODF и
+/// разбирается здесь же: модель — та же, что у DOCX
+/// ([`doc_converter_odf::odt::open`] доводит `content.xml` до документа DOCX),
+/// поэтому раскладку и страницы даёт DOCX-семейство (ADR-0046).
+///
+/// Опции — тот же [`PdfOptionsWire`], что у XLSX/DOCX, но читаются не все:
+/// размер, поля и ориентация берутся из раскладки документа, а `pageSize`,
+/// `orientation`, `margins`, `scale` и `sheetIndex` не читаются.
+///
+/// # Errors
+/// Если байты не ODT-пакет (`mimetype` не текстовый документ, нет
+/// `content.xml`), раскладка документа не собралась или PDF не собрался.
+#[wasm_bindgen]
+pub fn export_odt_pdf(bytes: &[u8], options: JsValue) -> Result<Vec<u8>, JsValue> {
+    let options = parse_options(options)?;
+    let document = doc_converter_odf::odt::open(bytes.to_vec()).map_err(to_js)?;
     let mut exporter = PdfExporter::new(options);
     exporter.export_docx(&document).map_err(to_js)
 }

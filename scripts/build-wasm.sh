@@ -46,6 +46,33 @@ wasm-pack build crates/pptx-pdf-wasm \
   --out-name doc_converter_pptx_pdf_wasm \
   --release
 
+# Четыре ленивых модуля новых форматов: XLSB, ODS, ODP и ODT. Первый и второй
+# тянут парсеры в модель XLSX, третий и четвёртый — ODF-парсеры в модель
+# PPTX/DOCX, поэтому в основной модуль они не входят и грузятся по требованию.
+wasm-pack build crates/xlsb-wasm \
+  --target web \
+  --out-dir "$ROOT/packages/wasm-xlsb/pkg" \
+  --out-name doc_converter_xlsb_wasm \
+  --release
+
+wasm-pack build crates/ods-wasm \
+  --target web \
+  --out-dir "$ROOT/packages/wasm-ods/pkg" \
+  --out-name doc_converter_ods_wasm \
+  --release
+
+wasm-pack build crates/odp-wasm \
+  --target web \
+  --out-dir "$ROOT/packages/wasm-odp/pkg" \
+  --out-name doc_converter_odp_wasm \
+  --release
+
+wasm-pack build crates/odt-wasm \
+  --target web \
+  --out-dir "$ROOT/packages/wasm-odt/pkg" \
+  --out-name doc_converter_odt_wasm \
+  --release
+
 # wasm-pack кладёт в каждый pkg/ свой .gitignore со содержимым `*`. npm при
 # упаковке читает .gitignore внутри каталогов и учитывает его, поэтому всё
 # содержимое pkg/ выпадает из тарбола — вместе с самим .wasm, и пакет уезжает
@@ -57,7 +84,11 @@ rm -f "$ROOT/packages/wasm/pkg/.gitignore" \
       "$ROOT/packages/wasm-pdf/pkg/.gitignore" \
       "$ROOT/packages/wasm-docx/pkg/.gitignore" \
       "$ROOT/packages/wasm-pptx/pkg/.gitignore" \
-      "$ROOT/packages/wasm-pptx-pdf/pkg/.gitignore"
+      "$ROOT/packages/wasm-pptx-pdf/pkg/.gitignore" \
+      "$ROOT/packages/wasm-xlsb/pkg/.gitignore" \
+      "$ROOT/packages/wasm-ods/pkg/.gitignore" \
+      "$ROOT/packages/wasm-odp/pkg/.gitignore" \
+      "$ROOT/packages/wasm-odt/pkg/.gitignore"
 
 if command -v wasm-opt >/dev/null 2>&1; then
   wasm-opt -O4 packages/wasm/pkg/doc_converter_wasm_bg.wasm \
@@ -70,6 +101,14 @@ if command -v wasm-opt >/dev/null 2>&1; then
     -o packages/wasm-pptx/pkg/doc_converter_pptx_wasm_bg.wasm
   wasm-opt -O4 packages/wasm-pptx-pdf/pkg/doc_converter_pptx_pdf_wasm_bg.wasm \
     -o packages/wasm-pptx-pdf/pkg/doc_converter_pptx_pdf_wasm_bg.wasm
+  wasm-opt -O4 packages/wasm-xlsb/pkg/doc_converter_xlsb_wasm_bg.wasm \
+    -o packages/wasm-xlsb/pkg/doc_converter_xlsb_wasm_bg.wasm
+  wasm-opt -O4 packages/wasm-ods/pkg/doc_converter_ods_wasm_bg.wasm \
+    -o packages/wasm-ods/pkg/doc_converter_ods_wasm_bg.wasm
+  wasm-opt -O4 packages/wasm-odp/pkg/doc_converter_odp_wasm_bg.wasm \
+    -o packages/wasm-odp/pkg/doc_converter_odp_wasm_bg.wasm
+  wasm-opt -O4 packages/wasm-odt/pkg/doc_converter_odt_wasm_bg.wasm \
+    -o packages/wasm-odt/pkg/doc_converter_odt_wasm_bg.wasm
 fi
 
-echo "OK: WASM built -> packages/wasm/pkg/, packages/wasm-pdf/pkg/, packages/wasm-docx/pkg/, packages/wasm-pptx/pkg/, packages/wasm-pptx-pdf/pkg/"
+echo "OK: WASM built -> packages/wasm/pkg/, packages/wasm-pdf/pkg/, packages/wasm-docx/pkg/, packages/wasm-pptx/pkg/, packages/wasm-pptx-pdf/pkg/, packages/wasm-xlsb/pkg/, packages/wasm-ods/pkg/, packages/wasm-odp/pkg/, packages/wasm-odt/pkg/"

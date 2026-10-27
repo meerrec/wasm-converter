@@ -42,7 +42,7 @@ export interface BatchCommand {
 
 export type Command = ConvertCommand | BatchCommand | { kind: 'help' } | { kind: 'version' };
 
-export const USAGE = `doc-converter — OOXML → PDF/Markdown/HTML/text
+export const USAGE = `doc-converter — OOXML/ODF → PDF/Markdown/HTML/text
 
 Usage:
   doc-converter convert <input> -o <output> [options]
@@ -50,8 +50,9 @@ Usage:
   doc-converter help | --version
 
 Formats:
-  .docx → .pdf .md .html .txt
-  .xlsx → .pdf
+  .docx .odt → .pdf .md .html .txt
+  .pptx .odp → .pdf .md .html .txt
+  .xlsx .ods .xlsb → .pdf
 
 Convert options:
   -o, --out <path>        output file, or directory to name the file from the input
@@ -68,22 +69,23 @@ Batch options:
       --json              print JSON Lines to stdout: one per file, plus a summary
 
 PDF options (both commands):
-      --page-size <A4|A3|Letter|Legal>   XLSX only; DOCX keeps its section size
-      --orientation <portrait|landscape> XLSX only
-      --scale <factor>                   XLSX only, e.g. 0.8
-      --fit-to-page                      XLSX only: fit the sheet on one page
-      --fit-to-width <n>                 XLSX only: pages wide, 0 = unlimited
-      --fit-to-height <n>                XLSX only: pages tall, 0 = unlimited
-      --margins <top,right,bottom,left>  XLSX only, millimetres
+      --page-size <A4|A3|Letter|Legal>   spreadsheets (XLSX/ODS/XLSB); DOCX/ODT keep their section size
+      --orientation <portrait|landscape> spreadsheets
+      --scale <factor>                   spreadsheets, e.g. 0.8
+      --fit-to-page                      spreadsheets: fit the sheet on one page
+      --fit-to-width <n>                 spreadsheets: pages wide, 0 = unlimited
+      --fit-to-height <n>                spreadsheets: pages tall, 0 = unlimited
+      --margins <top,right,bottom,left>  spreadsheets, millimetres
       --sheet <n>                        XLSX only, 0-based; default is the whole book
 
-Batch inputs may be files, directories (searched for .docx/.xlsx recursively)
-or glob patterns like './in/**/*.xlsx'. Output files are written flat into
---out as <name>.<format>; duplicate names are an error.
+Batch inputs may be files, directories (searched for .docx/.xlsx/.pptx/.odt/.ods/.odp/.xlsb
+recursively) or glob patterns like './in/**/*.xlsx'. Output files are written
+flat into --out as <name>.<format>; duplicate names are an error.
 
 Examples:
   doc-converter convert report.docx -o report.pdf
   doc-converter convert report.docx -o report.md
+  doc-converter convert letter.odt -o letter.pdf
   doc-converter batch ./in/*.xlsx --out ./pdf --workers 4
   doc-converter batch ./in --out ./out --format pdf --workers 8 --scale 0.9
 `;

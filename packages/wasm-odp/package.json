@@ -1,0 +1,36 @@
+{
+  "name": "@meerrec/wasm-odp",
+  "version": "2.0.2",
+  "description": "Lazy ODP viewer module: parsed into the pptx presentation model and rendered by the shared painter.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meerrec/wasm-converter.git",
+    "directory": "packages/wasm-odp"
+  },
+  "homepage": "https://github.com/meerrec/wasm-converter#readme",
+  "bugs": {
+    "url": "https://github.com/meerrec/wasm-converter/issues"
+  },
+  "type": "module",
+  "main": "./pkg/doc_converter_odp_wasm.js",
+  "module": "./pkg/doc_converter_odp_wasm.js",
+  "types": "./pkg/doc_converter_odp_wasm.d.ts",
+  "exports": {
+    ".": {
+      "types": "./pkg/doc_converter_odp_wasm.d.ts",
+      "import": "./pkg/doc_converter_odp_wasm.js"
+    },
+    "./pkg/*": "./pkg/*"
+  },
+  "files": [
+    "pkg",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "echo 'build via scripts/build-wasm.sh from repo root'",
+    "clean": "rm -rf pkg"
+  }
+}
