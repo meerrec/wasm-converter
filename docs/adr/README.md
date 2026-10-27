@@ -46,5 +46,12 @@
 | 0040 | Bidi — UAX #9 через `unicode-bidi`, без `rustybuzz` в Спринте 2 | [`0040-bidi-strategy.md`](0040-bidi-strategy.md) |
 | 0041 | TextLayer и DOM-overlay — доступность без изменения `DisplayList` | [`0041-text-layer-dom-overlay.md`](0041-text-layer-dom-overlay.md) |
 | 0042 | Покрытие RTL-шрифтов — системный fallback и ленивый сабсет | [`0042-rtl-font-coverage.md`](0042-rtl-font-coverage.md) |
+| 0043 | Контракты кадра и SAB — валидация `DisplayList` и единый источник раскладки кольца | [`0043-cross-language-contracts.md`](0043-cross-language-contracts.md) |
+| 0044 | Шрифты Carlito — ленивый общий ассет | [`0044-font-assets.md`](0044-font-assets.md) |
+| 0045 | PDF — бэкенд без знания форматов и отдельные адаптеры экспорта | [`0045-pdf-backend-boundary.md`](0045-pdf-backend-boundary.md) |
+| 0046 | Единый runtime вьюеров — запросы, ошибки и отмена | [`0046-viewer-runtime.md`](0046-viewer-runtime.md) |
+
+ADR-0043…0046 — предложения по итогам архитектурного аудита 23.10.2026
+(`docs/analysis/architecture-audit-2026-10-23.md`); они ещё не приняты.
 
 Сводка принятых решений по спринтам — `ROADMAP.md` §11.
