@@ -6,7 +6,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import type { PdfOptions } from '@meerrec/core';
+import { toDiagnostic, type ConversionStats, type PdfOptions } from '@meerrec/core';
 
 import { CliError } from './errors.js';
 import { assertSupported, inputKind, type InputKind, type OutputFormat } from './formats.js';
@@ -24,6 +24,8 @@ export interface ConvertResult {
   output: string;
   bytes: number;
   ms: number;
+  /** Те же метрики в общей форме браузера и CLI (для `--json`). */
+  stats: ConversionStats;
 }
 
 /**
@@ -32,22 +34,41 @@ export interface ConvertResult {
  * # Errors
  * Если расширение входа или пара «вход → выход» не поддерживается, файл не
  * читается, wasm-модуль не разобрал документ или выход не записался.
+ * Неподдерживаемая пара — `exitCode` 2 и код `unsupported-format`; отказ
+ * чтения/конвертации/записи — `exitCode` 1 и диагностика `internal`/`cli`.
  */
 export async function convertFile(job: ConvertJob): Promise<ConvertResult> {
   const started = Date.now();
   const kind = inputKind(job.input);
   if (kind === null) {
-    throw new CliError(`unsupported input '${job.input}': expected .docx or .xlsx`);
+    const message = `unsupported input '${job.input}': expected .docx or .xlsx`;
+    throw new CliError(message, 2, toDiagnostic(message, { code: 'unsupported-format', layer: 'orchestration' }));
   }
   assertSupported(kind, job.format);
 
-  const input = await readFile(job.input);
-  const data: Uint8Array = job.format === 'pdf' ? await toPdf(kind, input, job.pdf) : await toText(kind, input, job.format);
+  try {
+    const input = await readFile(job.input);
+    const data: Uint8Array =
+      job.format === 'pdf' ? await toPdf(kind, input, job.pdf) : await toText(kind, input, job.format);
 
-  await mkdir(dirname(job.output), { recursive: true });
-  await writeFile(job.output, data);
+    await mkdir(dirname(job.output), { recursive: true });
+    await writeFile(job.output, data);
 
-  return { input: job.input, output: job.output, bytes: data.byteLength, ms: Date.now() - started };
+    const ms = Date.now() - started;
+    const stats: ConversionStats = {
+      format: kind,
+      bytesIn: input.byteLength,
+      bytesOut: data.byteLength,
+      ms,
+    };
+    return { input: job.input, output: job.output, bytes: data.byteLength, ms, stats };
+  } catch (error) {
+    // Ошибку с готовой диагностикой не переоборачиваем: пул и `run` должны
+    // получить исходный код, а не `internal`.
+    if (error instanceof CliError) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new CliError(message, 1, toDiagnostic(error, { code: 'internal', layer: 'cli' }));
+  }
 }
 
 async function toPdf(kind: InputKind, bytes: Uint8Array, pdf: PdfOptions): Promise<Uint8Array> {
@@ -71,7 +92,10 @@ async function toPdf(kind: InputKind, bytes: Uint8Array, pdf: PdfOptions): Promi
 
 async function toText(kind: InputKind, bytes: Uint8Array, format: OutputFormat): Promise<Uint8Array> {
   // XLSX сюда не доходит: `assertSupported` выше разрешает ему только PDF.
-  if (kind !== 'docx') throw new CliError(`${kind} → ${format} is not supported`);
+  if (kind !== 'docx') {
+    const message = `${kind} → ${format} is not supported`;
+    throw new CliError(message, 2, toDiagnostic(message, { code: 'unsupported-format', layer: 'orchestration' }));
+  }
   const wasm = await loadDocxWasm();
   const text =
     format === 'md'

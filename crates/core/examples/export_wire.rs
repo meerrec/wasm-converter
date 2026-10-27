@@ -14,10 +14,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use doc_converter_core::wire::{
-    BBoxWire, BlockKindWire, BuildStatsWire, HyperlinkInfoWire, ImageInfoWire, MarginsWire,
-    OrientationWire, PageInfoWire, PageRunsWire, PageSizeWire, PaintStatsWire, PdfOptionsWire,
-    RenderOptionsWire, SheetInfoWire, SlideInfoWire, TableContextWire, TextAlignWire,
-    TextDirectionWire, TextLayerWire, TextRunWire, TextStyleWire, ViewportWire,
+    BBoxWire, BlockKindWire, BuildStatsWire, DiagnosticCodeWire, DiagnosticLayerWire,
+    DiagnosticWire, HyperlinkInfoWire, ImageInfoWire, MarginsWire, OrientationWire, PageInfoWire,
+    PageRunsWire, PageSizeWire, PaintStatsWire, PdfOptionsWire, RenderOptionsWire, SheetInfoWire,
+    SlideInfoWire, TableContextWire, TextAlignWire, TextDirectionWire, TextLayerWire, TextRunWire,
+    TextStyleWire, ViewportWire,
 };
 use ts_rs::TS;
 
@@ -52,6 +53,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         HyperlinkInfoWire::decl(),
         PaintStatsWire::decl(),
         BuildStatsWire::decl(),
+        DiagnosticCodeWire::decl(),
+        DiagnosticLayerWire::decl(),
+        DiagnosticWire::decl(),
     ];
 
     let mut out = String::from(HEADER);

@@ -122,7 +122,7 @@ export class WorkerPool {
     if (task === undefined) return;
     this.#busy.delete(worker);
     if (message.ok) task.resolve(message.result);
-    else task.reject(new CliError(message.error, 1));
+    else task.reject(new CliError(message.error, 1, message.diagnostic));
     if (!this.#dead.has(worker)) this.#idle.push(worker);
     if (!this.#closed) this.#dispatch();
   }

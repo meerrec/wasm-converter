@@ -2,6 +2,7 @@
 // здесь; payload'ы описаны в Rust (`crates/core/src/wire.rs`) и сгенерированы
 // в `generated/wire.ts` (ADR-0028). Руками payload'ы не правятся.
 import type {
+  DiagnosticWire,
   HyperlinkInfoWire,
   ImageInfoWire,
   PageInfoWire,
@@ -589,6 +590,12 @@ export interface WorkerErrorMsg {
    * `internal` — нарушение протокола (например, повторный `init`).
    */
   code?: WorkerErrorCode;
+  /**
+   * Структурная диагностика: код, слой и признак повтора. `message`/`code`
+   * остаются для совместимости; если поля нет, просмотрщик соберёт диагностику
+   * из них.
+   */
+  diagnostic?: DiagnosticWire;
 }
 
 export type OutMsg =

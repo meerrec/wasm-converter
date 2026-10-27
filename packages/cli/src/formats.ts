@@ -4,6 +4,8 @@
  * поэтому неподдерживаемая пара расширений ловится до запуска воркеров.
  */
 
+import { toDiagnostic } from '@meerrec/core';
+
 import { CliError } from './errors.js';
 
 /** Формат, в который CLI умеет писать. */
@@ -65,7 +67,7 @@ export function parseFormat(value: string): OutputFormat {
   const normalized = value.replace(/^\./, '').toLowerCase();
   const format = FORMATS.find((candidate) => candidate === normalized);
   if (format === undefined) {
-    throw new CliError(`unknown format '${value}': expected one of ${FORMATS.join(', ')}`);
+    throw unsupported(`unknown format '${value}': expected one of ${FORMATS.join(', ')}`);
   }
   return format;
 }
@@ -73,12 +75,22 @@ export function parseFormat(value: string): OutputFormat {
 /** Проверить, что пара «вход → выход» поддерживается. */
 export function assertSupported(kind: InputKind, format: OutputFormat): void {
   if (!SUPPORTED[kind].includes(format)) {
-    throw new CliError(
+    throw unsupported(
       `${kind} → ${format} is not supported: .${kind} can only be written to ${SUPPORTED[kind]
         .map((f) => OUTPUT_EXTENSION[f])
         .join(', ')}`,
     );
   }
+}
+
+/**
+ * Ошибка выбора формата: у неё всегда один машинный код.
+ *
+ * Текст остаётся человекочитаемым и прежним, а `diagnostic` позволяет `run`
+ * напечатать `orchestration/unsupported-format` в `--json` без разбора строки.
+ */
+function unsupported(message: string): CliError {
+  return new CliError(message, 2, toDiagnostic(message, { code: 'unsupported-format', layer: 'orchestration' }));
 }
 
 /** Заменить расширение пути на расширение формата. */

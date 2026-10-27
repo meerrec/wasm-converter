@@ -4,6 +4,8 @@
  * описания протокола.
  */
 
+import type { Diagnostic } from '@meerrec/core';
+
 import type { ConvertJob, ConvertResult } from './convert.js';
 
 export interface WorkerRequest {
@@ -11,6 +13,11 @@ export interface WorkerRequest {
   job: ConvertJob;
 }
 
+/**
+ * `error` — строка для совместимости со старыми воркерами; `diagnostic` —
+ * машиночитаемая причина, если воркер её разметил. Поле необязательное:
+ * ответ без диагностики пул превращает в `CliError` без неё.
+ */
 export type WorkerResponse =
   | { id: number; ok: true; result: ConvertResult }
-  | { id: number; ok: false; error: string };
+  | { id: number; ok: false; error: string; diagnostic?: Diagnostic };

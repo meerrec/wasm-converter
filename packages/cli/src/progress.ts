@@ -15,6 +15,17 @@ export interface ProgressEvent {
   detail: string;
 }
 
+/**
+ * Минимальная часть потока вывода, которой пользуется CLI.
+ *
+ * `run` принимает такие потоки снаружи, поэтому тесты и программный вызов
+ * подменяют их объектом с одним `write`, не собирая весь `NodeJS.WriteStream`.
+ */
+export interface OutputStream {
+  write(chunk: string): unknown;
+  readonly isTTY?: boolean;
+}
+
 /** Размер в удобных единицах: `4.0 KiB`. */
 export function formatBytes(bytes: number): string {
   const units = ['B', 'KiB', 'MiB', 'GiB'];
@@ -29,14 +40,14 @@ export function formatBytes(bytes: number): string {
 
 export class ProgressReporter {
   readonly #total: number;
-  readonly #stream: NodeJS.WriteStream;
+  readonly #stream: OutputStream;
   readonly #quiet: boolean;
   readonly #tty: boolean;
   #done = 0;
   #failed = 0;
   #wrote = false;
 
-  constructor(total: number, options: { stream?: NodeJS.WriteStream; quiet?: boolean } = {}) {
+  constructor(total: number, options: { stream?: OutputStream; quiet?: boolean } = {}) {
     this.#total = total;
     this.#stream = options.stream ?? process.stderr;
     this.#quiet = options.quiet ?? false;

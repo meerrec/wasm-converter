@@ -1,8 +1,17 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import type { Diagnostic } from '@meerrec/core';
+
 import type { ConvertJob } from '../src/convert.js';
+import { CliError } from '../src/errors.js';
 import { WorkerPool, type WorkerLike } from '../src/pool.js';
 import type { WorkerRequest, WorkerResponse } from '../src/worker-protocol.js';
+
+/** Форма ответа об ошибке: строка и необязательная машинная диагностика. */
+interface Failure {
+  error: string;
+  diagnostic?: Diagnostic;
+}
 
 /** Воркер-двойник: отвечает асинхронно, чтобы пул успел раздать очередь. */
 class FakeWorker implements WorkerLike {
@@ -10,7 +19,10 @@ class FakeWorker implements WorkerLike {
   readonly #listeners = new Map<string, ((payload: never) => void)[]>();
   terminated = false;
 
-  constructor(private readonly handler: (job: ConvertJob) => Promise<unknown>) {
+  constructor(
+    private readonly handler: (job: ConvertJob) => Promise<unknown>,
+    private readonly failure: (error: unknown) => Failure = (error) => ({ error: String(error) }),
+  ) {
     FakeWorker.instances.push(this);
   }
 
@@ -20,9 +32,15 @@ class FakeWorker implements WorkerLike {
         this.#emit('message', {
           id: message.id,
           ok: true,
-          result: { input: message.job.input, output: message.job.output, bytes: bytes as number, ms: 1 },
+          result: {
+            input: message.job.input,
+            output: message.job.output,
+            bytes: bytes as number,
+            ms: 1,
+            stats: { format: 'docx', bytesIn: 0, bytesOut: bytes as number, ms: 1 },
+          },
         } satisfies WorkerResponse),
-      (error: unknown) => this.#emit('message', { id: message.id, ok: false, error: String(error) } satisfies WorkerResponse),
+      (error: unknown) => this.#emit('message', { id: message.id, ok: false, ...this.failure(error) } satisfies WorkerResponse),
     );
   }
 
@@ -83,6 +101,32 @@ describe('WorkerPool', () => {
 
     expect(outcomes.map((outcome) => outcome.status)).toEqual(['rejected', 'rejected']);
     expect(String((outcomes[0] as PromiseRejectedResult).reason)).toContain('boom a.docx');
+  });
+
+  it('переносит диагностику из ответа воркера в CliError', async () => {
+    const diagnostic: Diagnostic = {
+      code: 'malformed-package',
+      layer: 'parse',
+      message: 'invalid ZIP archive',
+      retryable: false,
+    };
+    const pool = new WorkerPool(
+      1,
+      () =>
+        new FakeWorker(
+          async () => Promise.reject(new Error('boom')),
+          () => ({ error: diagnostic.message, diagnostic }),
+        ),
+    );
+
+    const error = await pool.run(job('broken.docx')).then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    await pool.close();
+
+    expect(error).toBeInstanceOf(CliError);
+    expect(error).toMatchObject({ exitCode: 1, diagnostic });
   });
 
   it('заменяет воркер, упавший во время задачи', async () => {

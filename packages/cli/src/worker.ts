@@ -9,6 +9,8 @@
 
 import { parentPort } from 'node:worker_threads';
 
+import { toDiagnostic } from '@meerrec/core';
+
 import { convertFile } from './convert.js';
 import type { WorkerRequest, WorkerResponse } from './worker-protocol.js';
 
@@ -26,7 +28,14 @@ async function handle(message: WorkerRequest): Promise<void> {
     const result = await convertFile(message.job);
     port!.postMessage({ id: message.id, ok: true, result } satisfies WorkerResponse);
   } catch (error) {
-    const text = error instanceof Error ? error.message : String(error);
-    port!.postMessage({ id: message.id, ok: false, error: text } satisfies WorkerResponse);
+    // `error` — строка для совместимости, `diagnostic` — машинная причина;
+    // текст сообщения берём из диагностики, чтобы они не расходились.
+    const diagnostic = toDiagnostic(error, { code: 'internal', layer: 'cli' });
+    port!.postMessage({
+      id: message.id,
+      ok: false,
+      error: diagnostic.message,
+      diagnostic,
+    } satisfies WorkerResponse);
   }
 }

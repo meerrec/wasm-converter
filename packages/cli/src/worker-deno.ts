@@ -7,6 +7,8 @@
  * как и Node-версия.
  */
 
+import { toDiagnostic } from '@meerrec/core';
+
 import { convertFile } from './convert.js';
 import type { WorkerRequest, WorkerResponse } from './worker-protocol.js';
 
@@ -31,7 +33,13 @@ async function handle(message: WorkerRequest): Promise<void> {
     const result = await convertFile(message.job);
     port.postMessage({ id: message.id, ok: true, result } satisfies WorkerResponse);
   } catch (error) {
-    const text = error instanceof Error ? error.message : String(error);
-    port.postMessage({ id: message.id, ok: false, error: text } satisfies WorkerResponse);
+    // Зеркало `worker.ts`: строка для совместимости и машинная диагностика.
+    const diagnostic = toDiagnostic(error, { code: 'internal', layer: 'cli' });
+    port.postMessage({
+      id: message.id,
+      ok: false,
+      error: diagnostic.message,
+      diagnostic,
+    } satisfies WorkerResponse);
   }
 }

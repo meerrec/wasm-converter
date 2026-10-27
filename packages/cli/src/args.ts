@@ -22,6 +22,8 @@ export interface ConvertCommand {
   /** `null` — формат берётся из расширения `--out`. */
   format: OutputFormat | null;
   force: boolean;
+  /** Печатать в stdout один JSON-объект вместо человекочитаемого текста. */
+  json: boolean;
   pdf: PdfOptions;
 }
 
@@ -33,6 +35,8 @@ export interface BatchCommand {
   workers: number;
   force: boolean;
   quiet: boolean;
+  /** Печатать в stdout JSON Lines: строка на файл и итоговая строка. */
+  json: boolean;
   pdf: PdfOptions;
 }
 
@@ -53,6 +57,7 @@ Convert options:
   -o, --out <path>        output file, or directory to name the file from the input
   -f, --format <format>   output format when --out has no known extension
       --force             overwrite existing output files
+      --json              print one JSON object to stdout, nothing on success to stderr
 
 Batch options:
       --out <dir>         output directory (required)
@@ -60,6 +65,7 @@ Batch options:
   -w, --workers <n>       worker threads (default: cpu count, at most 8)
   -q, --quiet             do not print progress
       --force             overwrite existing output files
+      --json              print JSON Lines to stdout: one per file, plus a summary
 
 PDF options (both commands):
       --page-size <A4|A3|Letter|Legal>   XLSX only; DOCX keeps its section size
@@ -89,6 +95,7 @@ interface ScanResult {
   workers: string | null;
   force: boolean;
   quiet: boolean;
+  json: boolean;
   pdf: PdfOptions;
   help: boolean;
 }
@@ -122,6 +129,7 @@ function scan(args: readonly string[]): ScanResult {
     workers: null,
     force: false,
     quiet: false,
+    json: false,
     pdf: {},
     help: false,
   };
@@ -174,6 +182,9 @@ function scan(args: readonly string[]): ScanResult {
       case '--quiet':
         result.quiet = true;
         break;
+      case '--json':
+        result.json = true;
+        break;
       case '--page-size':
         result.pdf.pageSize = parsePageSize(take());
         break;
@@ -223,6 +234,7 @@ function toConvert(scanned: ScanResult): Command {
     out: scanned.out,
     format: scanned.format === null ? null : parseFormat(scanned.format),
     force: scanned.force,
+    json: scanned.json,
     pdf: scanned.pdf,
   };
 }
@@ -241,6 +253,7 @@ function toBatch(scanned: ScanResult, runtime?: ParallelismSource): Command {
     workers,
     force: scanned.force,
     quiet: scanned.quiet,
+    json: scanned.json,
     pdf: scanned.pdf,
   };
 }

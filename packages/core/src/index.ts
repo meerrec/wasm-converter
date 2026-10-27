@@ -37,3 +37,16 @@ export {
   type PptxViewerHandle,
   type PptxViewerOptions,
 } from './render/pptx_viewer.js';
+
+export {
+  diagnosticError,
+  formatDiagnostic,
+  toDiagnostic,
+  ViewerError,
+  workerDiagnostic,
+  type ConversionStats,
+  type Diagnostic,
+  type DiagnosticCode,
+  type DiagnosticFallback,
+  type DiagnosticLayer,
+} from './diagnostics.js';
