@@ -5,6 +5,8 @@ members = [
     "crates/render",
     "crates/docx",
     "crates/xlsx",
+    "crates/xlsb",
+    "crates/odf",
     "crates/pptx",
     "crates/pptx-layout",
     "crates/pptx-render",
@@ -35,6 +37,8 @@ doc-converter-core   = { path = "crates/core",   version = "2.0.2" }
 doc-converter-render = { path = "crates/render", version = "2.0.2" }
 doc-converter-docx   = { path = "crates/docx",   version = "2.0.2" }
 doc-converter-xlsx   = { path = "crates/xlsx",   version = "2.0.2" }
+doc-converter-xlsb   = { path = "crates/xlsb",   version = "2.0.2" }
+doc-converter-odf    = { path = "crates/odf",    version = "2.0.2" }
 doc-converter-pptx   = { path = "crates/pptx",   version = "2.0.2" }
 doc-converter-pptx-layout = { path = "crates/pptx-layout", version = "2.0.2" }
 doc-converter-pptx-render = { path = "crates/pptx-render", version = "2.0.2" }

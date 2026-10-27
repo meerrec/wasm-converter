@@ -1,0 +1,22 @@
+[package]
+name = "doc-converter-xlsb"
+version.workspace = true
+edition.workspace = true
+description = "XLSB (BIFF12) parsing into the SpreadsheetML cell model"
+license.workspace = true
+# workspace-URL не совпадает с фактическим remote (meerrec/wasm-converter)
+repository = "https://github.com/meerrec/wasm-converter"
+rust-version.workspace = true
+
+[dependencies]
+doc-converter-core = { workspace = true }
+doc-converter-xlsx = { workspace = true }
+doc-converter-render = { workspace = true }
+thiserror = { workspace = true }
+miette = { workspace = true }
+
+[dev-dependencies]
+# zip нужен только тестам: синтетический пакет собирается в памяти.
+# Сам архив в библиотеке читает doc-converter-core, поэтому в
+# [dependencies] он не тянется.
+zip = { workspace = true }
