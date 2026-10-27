@@ -1,6 +1,6 @@
 {
   "name": "@meerrec/wasm-odt",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "description": "Lazy ODT viewer module: parsed into the docx document model and rendered by the shared painter.",
   "license": "Apache-2.0",
   "repository": {

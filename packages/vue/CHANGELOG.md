@@ -1,10 +1,18 @@
 # @meerrec/vue
 
+## 2.1.0
+
+### Patch Changes
+
+- Updated dependencies [ccac422]
+- Updated dependencies [ce41287]
+  - @meerrec/core@2.1.0
+
 ## 2.0.2
 
 ### Patch Changes
 
-- внутренние зависимости больше не публикуются как workspace:* — npm install ставит пакеты без ошибки “Unsupported URL Type”.
+- внутренние зависимости больше не публикуются как workspace:\* — npm install ставит пакеты без ошибки “Unsupported URL Type”.
 
 ## 2.0.1
 

@@ -1,10 +1,32 @@
 # @doc-converter/cli
 
+## 2.1.0
+
+### Minor Changes
+
+- ccac422: Четыре ленивых wasm-модуля (XLSB, ODS, ODT, ODP) и фабрики
+  `createXlsbViewer`/`createOdsViewer`/`createOdtViewer`/`createOdpViewer`:
+  воркер на формат, модуль грузится по URL при открытии файла.
+  CLI понимает `.xlsb`, `.ods`, `.odt`, `.odp` на входе.
+
+### Patch Changes
+
+- Updated dependencies [ccac422]
+- Updated dependencies
+- Updated dependencies [ce41287]
+  - @meerrec/core@2.1.0
+  - @meerrec/wasm-odt@2.1.0
+  - @meerrec/wasm-odp@2.1.0
+  - @meerrec/wasm-docx@2.1.0
+  - @meerrec/wasm-pdf@2.1.0
+  - @meerrec/wasm-pptx@2.1.0
+  - @meerrec/wasm-pptx-pdf@2.1.0
+
 ## 2.0.2
 
 ### Patch Changes
 
-- внутренние зависимости больше не публикуются как workspace:* — npm install ставит пакеты без ошибки “Unsupported URL Type”.
+- внутренние зависимости больше не публикуются как workspace:\* — npm install ставит пакеты без ошибки “Unsupported URL Type”.
 
 ## 2.0.1
 

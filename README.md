@@ -24,8 +24,8 @@
 раскладка DOCX и XLSX, оба транспорта кадра first-class, просмотрщики,
 экспорт PDF/Markdown/HTML/текста, CLI с батч-конвертацией, оракул против
 LibreOffice, бенчмарки против JS-библиотек; спайк LibreOffice-WASM закрыт
-решением no-go. Текущий релиз — `2.0.2`, тег `v2.0.2`: десять пакетов
-`@meerrec/*@2.0.2` в npmjs.org — основной реестр, установка без токена
+решением no-go. Текущий релиз — `2.1.0`, тег `v2.1.0`: четырнадцать пакетов
+`@meerrec/*@2.1.0` в npmjs.org — основной реестр, установка без токена
 ([ADR-0027](docs/adr/0027-npmjs-primary-registry.md); GitHub Packages —
 зеркало, crates.io — non-goal,
 [ADR-0026](docs/adr/0026-rust-crates-distribution.md)). В релиз вошли
@@ -71,8 +71,9 @@ GitHub Pages не отдаёт заголовки cross-origin isolation (COOP/C
 
 ### Установка
 
-Десять пакетов `@meerrec/*` версии `2.0.2`: `core`, `wasm`, `wasm-docx`,
-`wasm-pdf`, `wasm-pptx`, `wasm-pptx-pdf`, `cli`, `react`, `vue`, `svelte`.
+Четырнадцать пакетов `@meerrec/*` версии `2.1.0`: `core`, `wasm`, `wasm-docx`,
+`wasm-pdf`, `wasm-pptx`, `wasm-pptx-pdf`, `wasm-xlsb`, `wasm-ods`, `wasm-odt`,
+`wasm-odp`, `cli`, `react`, `vue`, `svelte`.
 Основной реестр — `registry.npmjs.org`, установка без токена
 ([ADR-0027](docs/adr/0027-npmjs-primary-registry.md)); **GitHub Packages** —
 действующее зеркало (нужна авторизация и `~/.npmrc`):
@@ -80,17 +81,20 @@ GitHub Pages не отдаёт заголовки cross-origin isolation (COOP/C
 ```bash
 npm install @meerrec/core @meerrec/wasm \
   @meerrec/wasm-docx @meerrec/wasm-pdf \
-  @meerrec/wasm-pptx @meerrec/wasm-pptx-pdf
+  @meerrec/wasm-pptx @meerrec/wasm-pptx-pdf \
+  @meerrec/wasm-xlsb @meerrec/wasm-ods \
+  @meerrec/wasm-odt @meerrec/wasm-odp
 npm install @meerrec/react   # обёртки: react | vue | svelte
 npm install -g @meerrec/cli
 ```
 
 Тарболы — в ассетах
-релиза [`v2.0.2`](https://github.com/meerrec/wasm-converter/releases/tag/v2.0.2)
-(`meerrec-*.tgz`, ставится как `npm install ./meerrec-core-2.0.2.tgz`).
+релиза [`v2.1.0`](https://github.com/meerrec/wasm-converter/releases/tag/v2.1.0)
+(`meerrec-*.tgz`, ставится как `npm install ./meerrec-core-2.1.0.tgz`).
 
-`wasm-docx`, `wasm-pdf`, `wasm-pptx` и `wasm-pptx-pdf` — ленивые модули:
-воркер грузит их по URL при открытии документа и при первом экспорте в PDF.
+`wasm-docx`, `wasm-pdf`, `wasm-pptx`, `wasm-pptx-pdf`, `wasm-xlsb`, `wasm-ods`,
+`wasm-odt` и `wasm-odp` — ленивые модули: воркер грузит их по URL при открытии
+документа и при первом экспорте в PDF.
 
 ### Просмотрщик XLSX
 
@@ -166,8 +170,7 @@ viewer.destroy();
 ### Правка текста
 
 Просмотрщики умеют заменять текст в рантайме
-([ADR-0043](docs/adr/0043-runtime-text-edits.md)); это код `main` после тега
-`v2.0.2` — в опубликованных пакетах `2.0.2` правки ещё нет. Исходный файл не
+([ADR-0043](docs/adr/0043-runtime-text-edits.md)). Исходный файл не
 перезаписывается — правка живёт до следующего `open`.
 
 ```ts
@@ -306,8 +309,7 @@ Carlito (превью рисует той же гарнитурой, что и P
 ## Ограничения
 
 - **Записи файла — нет.** Движок читает и конвертирует; правка текста в
-  рантайме есть в `main` (в опубликованных `2.0.2` её ещё нет), но исходный
-  файл не перезаписывается, writer'а в репозитории нет
+  рантайме есть, но исходный файл не перезаписывается, writer'а в репозитории нет
   ([ADR-0043](docs/adr/0043-runtime-text-edits.md),
   [ADR-0020](docs/adr/0020-parser-writer-boundary.md)). Правка ограничена
   текстом — значение ячейки XLSX и текст run'а DOCX; структурных изменений

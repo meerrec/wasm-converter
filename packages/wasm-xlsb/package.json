@@ -1,6 +1,6 @@
 {
   "name": "@meerrec/wasm-xlsb",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "description": "Lazy XLSB (BIFF12) viewer module: parsed into the xlsx cell model and rendered by the shared painter.",
   "license": "Apache-2.0",
   "repository": {

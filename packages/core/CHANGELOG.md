@@ -1,10 +1,31 @@
 # @doc-converter/core
 
+## 2.1.0
+
+### Minor Changes
+
+- ccac422: Четыре ленивых wasm-модуля (XLSB, ODS, ODT, ODP) и фабрики
+  `createXlsbViewer`/`createOdsViewer`/`createOdtViewer`/`createOdpViewer`:
+  воркер на формат, модуль грузится по URL при открытии файла.
+  CLI понимает `.xlsb`, `.ods`, `.odt`, `.odp` на входе.
+
+### Patch Changes
+
+- ce41287: Потоковое открытие отдаёт чанки в wasm сразу, не дожидаясь загрузки ленивого
+  модуля (ADR-0049): пока модуль грузится, байты копятся в записи потока, а после
+  загрузки догоняются по порядку и дальше идут поштучно. На main чанк, владеющий
+  своим `ArrayBuffer`, уезжает transfer'ом без копии — прежний `buffer.slice()`
+  копировал документ целиком на каждый чанк. Пик памяти не меняется, но копия в
+  wasm распределена по загрузке, и парс начинается раньше. Публичный API не
+  меняется: `OpenStreamEntry` наружу не экспортируется.
+- Updated dependencies
+  - @meerrec/wasm@2.1.0
+
 ## 2.0.2
 
 ### Patch Changes
 
-- внутренние зависимости больше не публикуются как workspace:* — npm install ставит пакеты без ошибки “Unsupported URL Type”.
+- внутренние зависимости больше не публикуются как workspace:\* — npm install ставит пакеты без ошибки “Unsupported URL Type”.
 
 ## 2.0.1
 

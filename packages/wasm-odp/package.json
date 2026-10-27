@@ -1,6 +1,6 @@
 {
   "name": "@meerrec/wasm-odp",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "description": "Lazy ODP viewer module: parsed into the pptx presentation model and rendered by the shared painter.",
   "license": "Apache-2.0",
   "repository": {
