@@ -1,8 +1,10 @@
 // Прокачка `ReadableStream` в воркер чанками (ADR-0031).
 //
 // Один и тот же цикл у обоих просмотрщиков: `open-stream` → `append` ×N →
-// `end-stream`. Байты уезжают переводом владения, поэтому копии на main нет:
-// единственный след — сами чанки стрима, которые читает вызывающий.
+// `end-stream`. Чанк, владеющий своим `ArrayBuffer` целиком, уезжает переводом
+// владения — копии на main нет. Копируется только срез вью поверх большего
+// буфера (transfer унёс бы буфер целиком): это единственный случай, когда на
+// main остаётся копия, и по размеру она равна чанку, а не документу.
 
 import type { DocFormat, InMsg } from '../protocol.js';
 
@@ -50,11 +52,27 @@ export async function pumpStream(
       if (done) break;
       for (let off = 0; off < value.byteLength; off += STREAM_CHUNK_BYTES) {
         const end = Math.min(off + STREAM_CHUNK_BYTES, value.byteLength);
-        // `value` может быть вью поверх большего буфера: вырезаем ровно чанк.
-        // Источник обязан быть на ArrayBuffer (fetch/файл): SAB в transfer
-        // postMessage не принимает.
-        const slice = value.buffer.slice(value.byteOffset + off, value.byteOffset + end) as ArrayBuffer;
-        post({ type: 'append', id, bytes: slice }, [slice]);
+        const buffer = value.buffer;
+        if (
+          off === 0 &&
+          end === value.byteLength &&
+          value.byteOffset === 0 &&
+          buffer instanceof ArrayBuffer &&
+          // Буфер обязан быть ровно этого размера: вью короче своего буфера
+          // отправила бы transfer'ом лишний хвост.
+          buffer.byteLength === value.byteLength
+        ) {
+          // Чанк владеет буфером целиком — так отдают `fetch().body` и
+          // `File.stream()`. Переводим владение: копии на main нет вовсе.
+          post({ type: 'append', id, bytes: buffer }, [buffer]);
+        } else {
+          // Вью поверх большего буфера или чанк, разрезанный на несколько
+          // частей: transfer невозможен (уехал бы весь буфер), поэтому копируем
+          // ровно свой срез.
+          const copy = new Uint8Array(end - off);
+          copy.set(value.subarray(off, end));
+          post({ type: 'append', id, bytes: copy.buffer }, [copy.buffer]);
+        }
         loaded += end - off;
         options.onProgress?.(loaded, options.size);
       }

@@ -52,5 +52,6 @@
 | 0046 | Расширяемый FormatPlugin: паспорт, семейные модели и TS-дескриптор | [`0046-format-plugin-contract.md`](0046-format-plugin-contract.md) |
 | 0047 | ODF-плагин: `.odt`/`.ods`/`.odp` в семейные модели | [`0047-odf-plugin.md`](0047-odf-plugin.md) |
 | 0048 | XLSB-плагин: BIFF12 в модель XLSX | [`0048-xlsb-plugin.md`](0048-xlsb-plugin.md) |
+| 0049 | Поток в wasm поштучно, без ожидания ленивого модуля | [`0049-stream-chunk-append.md`](0049-stream-chunk-append.md) |
 
 Сводка принятых решений по спринтам — `ROADMAP.md` §11.

@@ -27,7 +27,35 @@ marks().loads++;
 export default async (...args) => {
   marks().initCalls++;
   record('default', args);
+  // Ворота «модуль ещё не загружен»: тест кладёт сюда `{ promise }` и открывает
+  // их сам, чтобы проверить догон накопленных чанков. Без ворот `init`
+  // резолвится сразу, как у настоящего модуля.
+  const gate = globalThis.__docxStubGate;
+  if (gate) await gate.promise;
 };
+
+// Потоковое открытие (ADR-0031/0049): воркер зовёт `stream_new` после загрузки
+// модуля, `stream_append` на каждый чанк и `stream_open_docx` в конце.
+let nextStreamId = 1;
+
+export function stream_new(...args) {
+  record('stream_new', args);
+  return nextStreamId++;
+}
+
+export function stream_append(id, bytes, ...args) {
+  // Длина, а не сам буфер: тест сверяет порядок и поштучность, а не содержимое.
+  record('stream_append', [id, bytes.byteLength, ...args]);
+}
+
+export function stream_free(id, ...args) {
+  record('stream_free', [id, ...args]);
+}
+
+export function stream_open_docx(id, ...args) {
+  record('stream_open_docx', [id, ...args]);
+  return marks().pages;
+}
 
 export function docx_open_bytes(...args) {
   record('docx_open_bytes', args);

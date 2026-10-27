@@ -197,6 +197,45 @@ describe('стримовое открытие XLSX', () => {
     await expect(opening).resolves.toEqual([SHEET]);
   });
 
+  it('чанк, владеющий буфером, уезжает без копии; вью — срезом', async () => {
+    const { viewer, worker } = await startXlsx();
+    // Два самостоятельных чанка: каждый владеет своим ArrayBuffer целиком —
+    // так отдают fetch().body и File.stream(). ADR-0049: transfer без копии.
+    const first = new Uint8Array([1, 2, 3, 4]);
+    const second = new Uint8Array([5, 6, 7, 8]);
+    const opening = viewer.open(streamOf([first, second]), { size: 8 });
+
+    await vi.waitFor(() => expect(worker.all('end-stream')).toHaveLength(1));
+    const posted = worker.all('append').map((m) => m.bytes as ArrayBuffer);
+    // Тождество, а не равенство: копия была бы другим ArrayBuffer.
+    expect(posted[0]).toBe(first.buffer);
+    expect(posted[1]).toBe(second.buffer);
+
+    const id = worker.lastId('open-stream');
+    worker.reply({ type: 'opened', id, sheets: [SHEET] });
+    await expect(opening).resolves.toEqual([SHEET]);
+  });
+
+  it('вью поверх общего буфера копируется ровно своим срезом', async () => {
+    const { viewer, worker } = await startXlsx();
+    // Один буфер на два чанка: transfer унёс бы весь буфер, поэтому копия.
+    const shared = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const opening = viewer.open(streamOf([shared.subarray(0, 4), shared.subarray(4)]), { size: 8 });
+
+    await vi.waitFor(() => expect(worker.all('end-stream')).toHaveLength(1));
+    const posted = worker.all('append').map((m) => m.bytes as ArrayBuffer);
+    expect(posted[0]).not.toBe(shared.buffer);
+    expect(posted[0]?.byteLength).toBe(4);
+    expect(Array.from(new Uint8Array(posted[0]!))).toEqual([1, 2, 3, 4]);
+    expect(Array.from(new Uint8Array(posted[1]!))).toEqual([5, 6, 7, 8]);
+    // Исходный буфер не тронут: копия отдельная.
+    expect(Array.from(shared)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+
+    const id = worker.lastId('open-stream');
+    worker.reply({ type: 'opened', id, sheets: [SHEET] });
+    await expect(opening).resolves.toEqual([SHEET]);
+  });
+
   it('обрыв читателя помечается aborted и реджектит промис ошибкой чтения', async () => {
     const { viewer, worker } = await startXlsx();
     // Локальный reject срабатывает раньше ответа воркера: промис реджектится
