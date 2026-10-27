@@ -36,11 +36,15 @@ DOM-overlay для доступности
 ([ADR-0042](docs/adr/0042-rtl-font-coverage.md)) и обёртки
 `@meerrec/react`/`@meerrec/vue`/`@meerrec/svelte`.
 
-В `main` после тега — правка текста в рантайме
-([ADR-0043](docs/adr/0043-runtime-text-edits.md)); в опубликованных пакетах её
-пока нет, она уйдёт в следующий релиз. Что работает — в разделе
-«Производительность», что осознанно не входит в скоуп — в разделе
-«Ограничения».
+В `2.1.0` вошли также правка текста в рантайме
+([ADR-0043](docs/adr/0043-runtime-text-edits.md)), четыре ленивых wasm-модуля
+XLSB/ODS/ODT/ODP ([ADR-0047](docs/adr/0047-odf-plugin.md),
+[ADR-0048](docs/adr/0048-xlsb-plugin.md)), контракт FormatPlugin
+([ADR-0046](docs/adr/0046-format-plugin-contract.md)), единый путь исполнения
+кадра ([ADR-0044](docs/adr/0044-unified-execution-path.md)) и поштучная
+отправка потока в wasm ([ADR-0049](docs/adr/0049-stream-chunk-append.md)).
+Что работает — в разделе «Производительность», что осознанно не входит в
+скоуп — в разделе «Ограничения».
 
 ## Демо
 
@@ -326,10 +330,13 @@ Carlito (превью рисует той же гарнитурой, что и P
   ([ADR-0034](docs/adr/0034-strict-ooxml.md)).
 - **Макрофайлы `.docm` поддерживаются** как обычный DOCX, макросы не
   читаются ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
-- **ODF (`.odt`/`.ods`/`.odp`)** — в плане
-  ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)).
-- **XLSB, зашифрованные документы и бинарный `.doc`** — статус non-goal
-  снят ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)), реализаций нет;
+- **ODF (`.odt`/`.ods`/`.odp`) поддерживается** — просмотр и экспорт PDF
+  через ленивые модули `@meerrec/wasm-ods`/`@meerrec/wasm-odt`/
+  `@meerrec/wasm-odp` ([ADR-0047](docs/adr/0047-odf-plugin.md)).
+- **XLSB поддерживается** — просмотр и экспорт PDF через ленивый модуль
+  `@meerrec/wasm-xlsb` ([ADR-0048](docs/adr/0048-xlsb-plugin.md)).
+- **Зашифрованные документы и бинарный `.doc`** — статус non-goal снят
+  ([ADR-0039](docs/adr/0039-cancel-v1-non-goals.md)), реализаций нет;
   открытие зашифрованных DOCX и `.doc` — фатальная ошибка
   ([ADR-0016](docs/adr/0016-docx-error-policy.md)).
 
