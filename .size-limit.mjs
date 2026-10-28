@@ -159,6 +159,8 @@ export default [
     gzip: true,
     ignore: ['@meerrec/core'],
     modifyEsbuildConfig: svelteMeasure,
+  },
+  {
     // Экспортёр PPTX в PDF — отдельный ленивый модуль (ADR-0033: просмотрщик
     // и экспортёр разнесены, как у DOCX): полный стек PPTX+PDF (разбор,
     // раскладка, шрифты, постраничный бэкенд) стоит ~782 КБ gzip. Лимит
