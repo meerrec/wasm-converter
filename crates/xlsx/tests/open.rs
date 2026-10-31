@@ -241,12 +241,40 @@ fn committed_strict_fixtures_open() {
         })
         .collect();
     names.sort();
-    assert_eq!(names.len(), 4, "в каталоге четыре strict-фикстуры");
+    assert_eq!(names.len(), 5, "в каталоге пять strict-фикстур");
 
     for name in names {
         let bytes = std::fs::read(dir.join(&name)).unwrap();
         let wb = open(bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(wb.sheet_count() > 0, "{name}: листов нет");
+        // Открыть книгу мало: вторая страница книги читается тем же путём,
+        // что и первая, но `sheet_count() > 0` её не трогает. Обходим все
+        // листы, чтобы части пакета и ячейки второго листа тоже
+        // разбирались — иначе опечатка в `sheet2.xml` пройдёт незамеченной.
+        for (index, sheet) in wb.sheets().iter().enumerate() {
+            let label = format!("{name}: лист #{index} «{}»", sheet.meta.name);
+            assert!(!sheet.meta.part.is_empty(), "{label}: пустая часть пакета");
+            assert!(sheet.cells.cell_count() > 0, "{label}: ячеек нет");
+        }
+    }
+
+    // `fixture-template.xlsx` — настоящая книга Excel из двух листов; её
+    // вторая страница и есть причина, по которой тест обходит все листы.
+    let bytes = std::fs::read(dir.join("fixture-template.xlsx")).unwrap();
+    let wb = open(bytes).expect("fixture-template.xlsx открывается");
+    assert_eq!(wb.sheet_count(), 2, "в fixture-template.xlsx два листа");
+    for expected in ["Overview", "Budget Plan"] {
+        let sheet = wb
+            .sheet(expected)
+            .unwrap_or_else(|| panic!("fixture-template.xlsx: нет листа «{expected}»"));
+        assert!(
+            !sheet.meta.part.is_empty(),
+            "fixture-template.xlsx: у листа «{expected}» пустая часть пакета"
+        );
+        assert!(
+            sheet.cells.cell_count() > 0,
+            "fixture-template.xlsx: у листа «{expected}» ячеек нет"
+        );
     }
 }
 
