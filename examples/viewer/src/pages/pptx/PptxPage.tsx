@@ -1,12 +1,11 @@
 import {
   useCallback,
   useEffect,
-  useRef,
   useState,
   type ChangeEvent,
   type ReactElement,
 } from 'react';
-import { createPptxViewer, type PptxViewerHandle } from '@meerrec/core';
+import { createPptxViewer } from '@meerrec/core';
 import {
   Icon,
   LogoPowerPoint,
@@ -23,6 +22,7 @@ import {
 import { clearViewer, publishViewer } from '../../lib/bridge.js';
 import { downloadBlob, exportFileName } from '../../lib/download.js';
 import { fetchFixture, listFixtures } from '../../lib/fixtures.js';
+import { useViewer } from '../../lib/use_viewer.js';
 import {
   pptxWorkerUrl,
   resolvePptxPdfWasm,
@@ -125,7 +125,7 @@ function errorText(error: unknown): string {
  * зум и экспорт.
  */
 export function usePptxPage(): {
-  hostRef: React.RefObject<HTMLDivElement | null>;
+  hostRef: React.RefObject<HTMLElement | null>;
   ready: boolean;
   error: string;
   documentName: string;
@@ -144,9 +144,8 @@ export function usePptxPage(): {
   exportPng(): Promise<void>;
   exportText(): Promise<void>;
 } {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const viewerRef = useRef<PptxViewerHandle | null>(null);
   const [ready, setReady] = useState(false);
+  /** Сообщение последнего действия: отказ открытия, экспорта и правки. */
   const [error, setError] = useState('');
   const [documentName, setDocumentName] = useState('Презентация1');
   const [slideIndex, setSlideIndex] = useState(0);
@@ -156,41 +155,22 @@ export function usePptxPage(): {
   const [fixtures, setFixtures] = useState<string[]>([]);
   const [fixture, setFixture] = useState(DEFAULT_FIXTURE);
 
-  useEffect(() => {
-    let cancelled = false;
-    const run = async (): Promise<void> => {
-      const host = hostRef.current;
-      if (!host) return;
-      try {
-        const viewer = await createPptxViewer(host, {
-          workerUrl: pptxWorkerUrl,
-          pptxWasm: await resolvePptxWasm(),
-          pptxPdfWasm: await resolvePptxPdfWasm(),
-        });
-        if (cancelled) {
-          viewer.destroy();
-          return;
-        }
-        viewerRef.current = viewer;
-        publishViewer({ kind: 'pptx', viewer });
-        const slides = await viewer.open(
-          await fetchFixture('pptx', DEFAULT_FIXTURE),
-        );
-        setSlideCount(slides.length);
-        setSlideIndex(0);
-        setReady(true);
-      } catch (e) {
-        if (!cancelled) setError(String(e));
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-      clearViewer();
-      viewerRef.current?.destroy();
-      viewerRef.current = null;
-    };
-  }, []);
+  // Вьюер поднимает общий хук: он же откладывает создание макротактом и
+  // гасит повторы в dev StrictMode. Со своим эффектом первый проход создавал
+  // второй `Worker` на том же URL (ручку ещё нечем было уничтожить), а WebKit
+  // такой повторный скрипт воркера может отвергнуть COEP-проверкой — и мост
+  // не появлялся вовсе.
+  const { hostRef, viewer, error: bootError } = useViewer(
+    async (host) =>
+      createPptxViewer(host, {
+        workerUrl: pptxWorkerUrl,
+        pptxWasm: await resolvePptxWasm(),
+        pptxPdfWasm: await resolvePptxPdfWasm(),
+      }),
+    (handle) => {
+      publishViewer({ kind: 'pptx', viewer: handle });
+    },
+  );
 
   // Список фикстур — удобство разработки: без него презентацию открывают
   // файлом, поэтому недоступный список — не ошибка страницы.
@@ -204,9 +184,33 @@ export function usePptxPage(): {
     };
   }, []);
 
+  // Мост сквозных тестов живёт ровно столько, сколько страница: иначе после
+  // перехода на другую страницу тест увидел бы мёртвый вьюер.
+  useEffect(() => clearViewer, []);
+
+  // Фикстура открывается сама, как только вьюер поднялся: детерминированный
+  // путь для сквозных тестов. Причина отказа уходит в строку состояния.
+  useEffect(() => {
+    if (viewer === null) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const slides = await viewer.open(await fetchFixture('pptx', DEFAULT_FIXTURE));
+        if (!alive) return;
+        setSlideCount(slides.length);
+        setSlideIndex(0);
+        setReady(true);
+      } catch (e) {
+        if (alive) setError(`не открылось: ${errorText(e)}`);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [viewer]);
+
   /** Открыть презентацию байтами: общий путь файла и фикстуры. */
   const openPresentation = useCallback(async (bytes: ArrayBuffer, name: string) => {
-    const viewer = viewerRef.current;
     if (!viewer) return;
     setError('');
     try {
@@ -219,7 +223,7 @@ export function usePptxPage(): {
       // в строку состояния.
       setError(`не открылось: ${errorText(e)}`);
     }
-  }, []);
+  }, [viewer]);
 
   const onFileChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -253,20 +257,24 @@ export function usePptxPage(): {
     [openPresentation],
   );
 
-  const show = useCallback((index: number) => {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-    viewer.showSlide(index);
-    setSlideIndex(viewer.slideIndex);
-  }, []);
+  const show = useCallback(
+    (index: number) => {
+      if (!viewer) return;
+      viewer.showSlide(index);
+      setSlideIndex(viewer.slideIndex);
+    },
+    [viewer],
+  );
 
-  const setZoom = useCallback((next: number) => {
-    viewerRef.current?.setZoom(next);
-    setZoomState(viewerRef.current?.zoom ?? next);
-  }, []);
+  const setZoom = useCallback(
+    (next: number) => {
+      viewer?.setZoom(next);
+      setZoomState(viewer?.zoom ?? next);
+    },
+    [viewer],
+  );
 
   const exportPdf = useCallback(async () => {
-    const viewer = viewerRef.current;
     if (!viewer) return;
     setBusy('pdf');
     try {
@@ -279,10 +287,9 @@ export function usePptxPage(): {
     } finally {
       setBusy(null);
     }
-  }, []);
+  }, [viewer]);
 
   const exportPng = useCallback(async () => {
-    const viewer = viewerRef.current;
     if (!viewer) return;
     setBusy('png');
     try {
@@ -291,10 +298,9 @@ export function usePptxPage(): {
     } finally {
       setBusy(null);
     }
-  }, []);
+  }, [viewer]);
 
   const exportText = useCallback(async () => {
-    const viewer = viewerRef.current;
     if (!viewer) return;
     setBusy('text');
     try {
@@ -307,12 +313,14 @@ export function usePptxPage(): {
     } finally {
       setBusy(null);
     }
-  }, []);
+  }, [viewer]);
 
   return {
     hostRef,
     ready,
-    error,
+    // Отказ создания вьюера важнее последнего сообщения: без вьюера не
+    // работает ничего, и строка состояния обязана это назвать.
+    error: bootError ?? error,
     documentName,
     slideIndex,
     slideCount,
