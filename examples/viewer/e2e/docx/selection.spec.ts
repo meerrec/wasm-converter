@@ -28,6 +28,12 @@ async function copyFromLayer(page: import('@playwright/test').Page): Promise<str
 }
 
 test.describe('DOCX selection', () => {
+  // Окно выше дефолтного: при zoom 0.2 три страницы драга должны целиком
+  // помещаться в скроллер. Иначе курсор уходит за его нижнюю кромку и Chrome
+  // включает автоскролл — а на автоскролле он сбрасывает нативное выделение
+  // поверх absolute-спанов слоя, и тест падает недетерминированно.
+  test.use({ viewport: { width: 1280, height: 1400 } });
+
   test('drag через три страницы даёт текст в порядке чтения', async ({ page }) => {
     await boot(page, '/docx', { a11y: true });
     await openFixture(page, 'a11y/a11y_audit.docx');
