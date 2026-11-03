@@ -53,5 +53,12 @@
 | 0047 | ODF-плагин: `.odt`/`.ods`/`.odp` в семейные модели | [`0047-odf-plugin.md`](0047-odf-plugin.md) |
 | 0048 | XLSB-плагин: BIFF12 в модель XLSX | [`0048-xlsb-plugin.md`](0048-xlsb-plugin.md) |
 | 0049 | Поток в wasm поштучно, без ожидания ленивого модуля | [`0049-stream-chunk-append.md`](0049-stream-chunk-append.md) |
+| 0050 | Контракты кадра и SAB — валидация `DisplayList` и единый источник раскладки кольца | [`0050-cross-language-contracts.md`](0050-cross-language-contracts.md) |
+| 0051 | Шрифты Carlito — ленивый общий ассет | [`0051-font-assets.md`](0051-font-assets.md) |
+| 0052 | PDF — бэкенд без знания форматов и отдельные адаптеры экспорта | [`0052-pdf-backend-boundary.md`](0052-pdf-backend-boundary.md) |
+| 0053 | Единый runtime вьюеров — запросы, ошибки и отмена | [`0053-viewer-runtime.md`](0053-viewer-runtime.md) |
+
+ADR-0050…0053 — предложения по итогам архитектурного аудита 23.10.2026
+(`docs/analysis/architecture-audit-2026-10-23.md`); они ещё не приняты.
 
 Сводка принятых решений по спринтам — `ROADMAP.md` §11.
