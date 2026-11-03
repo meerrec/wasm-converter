@@ -68,6 +68,38 @@ describe('createTextLayer', () => {
     expect(controller.element.querySelector('[data-page="0"]')).toBeNull();
   });
 
+  it('повторный вызов окна не пересобирает spans уже смонтированных страниц', async () => {
+    let fetched = 0;
+    const controller = createTextLayer({
+      fetchPage: async (page) => {
+        fetched += 1;
+        return layer([run({ page, lineIndex: page, nodeId: 10 + page })]);
+      },
+      fetchAll: async () => layer([]),
+    });
+    controller.configure(PAGES, TOPS);
+    // Окно 3..6.
+    controller.updateWindow(450, 100, 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetched).toBe(4);
+    const spanOf = (page: number): Element | null | undefined =>
+      controller.element.querySelector(`[data-page="${page}"] .dc-text-line`);
+    const kept = { 4: spanOf(4), 5: spanOf(5), 6: spanOf(6) };
+
+    // Окно сдвинулось: страница 3 уходит, 7 приходит, 4..6 остаются.
+    // Их spans обязаны остаться теми же узлами: нативное выделение держится
+    // за узлы текста, и пересборка молча схлопнула бы его во время drag.
+    controller.updateWindow(550, 100, 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetched).toBe(5);
+    expect(spanOf(3)).toBeNull();
+    expect(spanOf(7)).not.toBeNull();
+    expect(spanOf(4)).toBe(kept[4]);
+    expect(spanOf(5)).toBe(kept[5]);
+    expect(spanOf(6)).toBe(kept[6]);
+  });
+
   it('строит семантическое дерево с заголовком и таблицей', async () => {
     const controller = createTextLayer({
       fetchPage: async (page) => layer([run({ page })]),

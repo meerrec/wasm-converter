@@ -97,6 +97,8 @@ export function createTextLayer(deps: TextLayerDeps): TextLayerController {
   const pending = new Map<number, Promise<TextLayer>>();
   const pageNodes = new Map<number, HTMLDivElement>();
   const rendered = new Map<string, RenderedLine>();
+  /** Страницы с начатым монтированием: окно может позвать их ещё раз до ответа. */
+  const mounting = new Set<number>();
   let firstVisible = -1;
   let lastVisible = -1;
   /** Поколение документа: ответы старого открытия не должны рисоваться. */
@@ -170,18 +172,25 @@ export function createTextLayer(deps: TextLayerDeps): TextLayerController {
 
   const mountPage = async (page: number): Promise<void> => {
     if (destroyed) return;
-    const current = generation;
-    let layer: TextLayer;
+    // Окно зовёт монтирование каждой страницы из [first..last] на каждом
+    // изменении видимой области, включая зумы и появление полос прокрутки.
+    // Повторное монтирование уже нарисованной (или ещё грузящейся) страницы
+    // пересобрало бы её spans: нативное выделение пользователя привязано к
+    // узлам текста и молча схлопнулось бы прямо во время drag через страницы.
+    if (pageNodes.has(page) || mounting.has(page)) return;
+    mounting.add(page);
     try {
-      layer = await fetchPage(page);
-    } catch {
+      const current = generation;
       // Ошибка страницы не роняет слой: следующая попытка будет при новом окне.
-      return;
+      const layer = await fetchPage(page).catch(() => null);
+      if (layer === null) return;
+      // Пока грузилась страница, открыли другой документ — её ответ устарел.
+      if (destroyed || current !== generation) return;
+      if (page < firstVisible || page > lastVisible) return;
+      renderPage(page, layer);
+    } finally {
+      mounting.delete(page);
     }
-    // Пока грузилась страница, открыли другой документ — её ответ устарел.
-    if (destroyed || current !== generation) return;
-    if (page < firstVisible || page > lastVisible) return;
-    renderPage(page, layer);
   };
 
   const unmountPage = (page: number): void => {
@@ -269,6 +278,7 @@ export function createTextLayer(deps: TextLayerDeps): TextLayerController {
     for (const node of pageNodes.values()) node.remove();
     pageNodes.clear();
     rendered.clear();
+    mounting.clear();
     firstVisible = -1;
     lastVisible = -1;
     fullText = '';
@@ -356,6 +366,7 @@ export function createTextLayer(deps: TextLayerDeps): TextLayerController {
     pending.clear();
     pageNodes.clear();
     rendered.clear();
+    mounting.clear();
   };
 
   return {
