@@ -247,6 +247,31 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
   let ready: ReadyInfo;
   try {
     ready = await new Promise<ReadyInfo>((resolve, reject) => {
+      /** Снять оба слушателя: ответ ровно один — и по `init`, и по отказу загрузки. */
+      const settle = (): void => {
+        worker.removeEventListener('message', onMessage);
+        worker.removeEventListener('error', onError);
+      };
+      // Скрипт воркера не загрузился вовсе: браузер сообщает об этом событием
+      // `error` на самом `Worker`, а не ошибкой в его консоли. Без слушателя
+      // отказ виден только невнятным `pageerror`, а `init` уходит в никуда —
+      // ожидание `ready` не заканчивается никогда (у WebKit так бывает, когда
+      // ответ статики не проходит COEP-проверку при повторной навигации).
+      const onError = (ev: ErrorEvent) => {
+        settle();
+        reject(
+          new ViewerError(
+            toDiagnostic(
+              ev.message === '' ? 'worker script failed to load (blocked or network)' : ev.message,
+              {
+                code: 'internal',
+                layer: 'orchestration',
+                format: spec.formatTag,
+              },
+            ),
+          ),
+        );
+      };
       const onMessage = (ev: MessageEvent) => {
         const payload = ev.data as {
           type?: string;
@@ -254,7 +279,7 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
           diagnostic?: Diagnostic;
         } & Partial<ReadyInfo>;
         if (payload?.type === 'ready') {
-          worker.removeEventListener('message', onMessage);
+          settle();
           resolve({
             backend: payload.backend ?? 'worker',
             transport: payload.transport ?? 'bytes',
@@ -263,7 +288,7 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
             crossOriginIsolated: payload.crossOriginIsolated ?? false,
           });
         } else if (payload?.type === 'error') {
-          worker.removeEventListener('message', onMessage);
+          settle();
           // Ошибка без `id` — воркер не поднялся. Это не отказ одного запроса,
           // поэтому в диагностике слой оркестрации, а не разбора.
           reject(
@@ -279,6 +304,7 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
         }
       };
       worker.addEventListener('message', onMessage);
+      worker.addEventListener('error', onError);
       const init: InitMsg = {
         type: 'init',
         backend: renderMode,
