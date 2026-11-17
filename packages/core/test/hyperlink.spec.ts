@@ -26,23 +26,27 @@ const SHEET = {
 };
 
 type MessageHandler = (ev: { data: unknown }) => void;
+type ErrorHandler = (ev: { message: string }) => void;
 
 /** Двойник воркера: копит отправленное и отвечает так, как велит тест. */
 class FakeWorker {
   static last: FakeWorker | null = null;
   readonly sent: Array<Record<string, unknown>> = [];
   private readonly handlers = new Set<MessageHandler>();
+  private readonly errorHandlers = new Set<ErrorHandler>();
 
   constructor() {
     FakeWorker.last = this;
   }
 
-  addEventListener(type: string, fn: MessageHandler): void {
-    if (type === 'message') this.handlers.add(fn);
+  addEventListener(type: string, fn: MessageHandler | ErrorHandler): void {
+    if (type === 'message') this.handlers.add(fn as MessageHandler);
+    if (type === 'error') this.errorHandlers.add(fn as ErrorHandler);
   }
 
-  removeEventListener(type: string, fn: MessageHandler): void {
-    this.handlers.delete(fn);
+  removeEventListener(type: string, fn: MessageHandler | ErrorHandler): void {
+    if (type === 'message') this.handlers.delete(fn as MessageHandler);
+    if (type === 'error') this.errorHandlers.delete(fn as ErrorHandler);
   }
 
   postMessage(msg: Record<string, unknown>, ..._rest: unknown[]): void {
@@ -65,6 +69,11 @@ class FakeWorker {
   /** Ответ воркера: подписчикам он приходит событием `message`. */
   reply(data: unknown): void {
     for (const fn of [...this.handlers]) fn({ data });
+  }
+
+  /** Падение воркера: событие `error` на самом Worker. */
+  crash(message: string): void {
+    for (const fn of [...this.errorHandlers]) fn({ message });
   }
 
   /** Последнее отправленное сообщение заданного типа. */
@@ -237,5 +246,106 @@ describe('клик по гиперссылке', () => {
 
     expect(worker.last('hyperlink-at')).toBeUndefined();
     expect(onHyperlink).not.toHaveBeenCalled();
+  });
+});
+
+describe('ожидающие запросы точки', () => {
+  it('hit-test резолвится адресным ответом воркера', async () => {
+    const { viewer: handle, worker } = await openViewer();
+    await handle.open(new ArrayBuffer(8));
+
+    const cell = handle.hitTest(10, 20);
+    const request = worker.last('hit-test');
+    expect(request).toBeDefined();
+    worker.reply({ type: 'hit', id: request?.id, cell: [2, 3] });
+
+    await expect(cell).resolves.toEqual([2, 3]);
+  });
+
+  it('destroy отклоняет и hit-test, и hyperlink', async () => {
+    const { viewer: handle } = await openViewer();
+    await handle.open(new ArrayBuffer(8));
+
+    const hit = handle.hitTest(10, 20);
+    const link = handle.hyperlinkAt(10, 20);
+    handle.destroy();
+    viewer = null;
+
+    await expect(hit).rejects.toThrow('viewer destroyed');
+    await expect(link).rejects.toThrow('viewer destroyed');
+  });
+
+  it('адресная ошибка воркера отклоняет только свой запрос', async () => {
+    const { viewer: handle, worker } = await openViewer();
+    await handle.open(new ArrayBuffer(8));
+
+    const hit = handle.hitTest(10, 20);
+    const link = handle.hyperlinkAt(10, 20);
+    const hitRequest = worker.last('hit-test');
+    worker.reply({
+      type: 'error',
+      id: hitRequest?.id,
+      code: 'internal',
+      message: 'boom',
+    });
+
+    await expect(hit).rejects.toThrow('boom');
+    // Соседний hyperlink не задет: его ответ приходит отдельно.
+    const linkRequest = worker.last('hyperlink-at');
+    worker.reply({ type: 'hyperlink', id: linkRequest?.id, link: null });
+    await expect(link).resolves.toBeNull();
+  });
+
+  it('адресная ошибка воркера отклоняет и hyperlink', async () => {
+    const { viewer: handle, worker } = await openViewer();
+    await handle.open(new ArrayBuffer(8));
+
+    const link = handle.hyperlinkAt(10, 20);
+    const request = worker.last('hyperlink-at');
+    worker.reply({
+      type: 'error',
+      id: request?.id,
+      code: 'internal',
+      message: 'boom',
+    });
+
+    await expect(link).rejects.toThrow('boom');
+  });
+
+  it('падение воркера после ready отклоняет ожидающие запросы', async () => {
+    const { viewer: handle, worker } = await openViewer();
+    await handle.open(new ArrayBuffer(8));
+
+    const hit = handle.hitTest(10, 20);
+    worker.crash('worker crashed');
+
+    await expect(hit).rejects.toThrow('worker crashed');
+    // Вьюер помечен нерабочим: следующие запросы не уходят в мёртвый воркер.
+    await expect(handle.hitTest(30, 40)).rejects.toThrow('viewer destroyed');
+  });
+
+  it('destroy во время начатого клика не даёт unhandled rejection', async () => {
+    const onHyperlink = vi.fn();
+    const { canvas, viewer: handle } = await openViewer({ onHyperlink });
+    await handle.open(new ArrayBuffer(8));
+
+    canvas.dispatch('click', { clientX: 10, clientY: 20 });
+    handle.destroy();
+    viewer = null;
+    await flush();
+
+    expect(onHyperlink).not.toHaveBeenCalled();
+  });
+
+  it('ошибка без id отклоняет все ожидающие запросы точки', async () => {
+    const { viewer: handle, worker } = await openViewer();
+    await handle.open(new ArrayBuffer(8));
+
+    const hit = handle.hitTest(10, 20);
+    const link = handle.hyperlinkAt(10, 20);
+    worker.reply({ type: 'error', code: 'internal', message: 'worker crashed' });
+
+    await expect(hit).rejects.toThrow('worker crashed');
+    await expect(link).rejects.toThrow('worker crashed');
   });
 });

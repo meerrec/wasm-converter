@@ -14,7 +14,6 @@ serde                = { workspace = true }
 quick-xml            = { workspace = true }
 thiserror            = { workspace = true }
 miette               = { workspace = true }
-chrono               = { workspace = true }
 smallvec             = { workspace = true }
 
 [dev-dependencies]
