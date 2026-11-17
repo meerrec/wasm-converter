@@ -169,6 +169,8 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
   // Карты запросов, которым воркер отвечает ошибкой: адресной по id или общей.
   const pendingRejectables: Array<Map<number, { reject: (e: Error) => void }>> = [
     state.pendingOpen,
+    state.pendingHit,
+    state.pendingHyperlink,
     state.pendingPng,
     state.pendingPdf,
     state.pendingText,

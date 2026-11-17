@@ -239,3 +239,63 @@ describe('клик по гиперссылке', () => {
     expect(onHyperlink).not.toHaveBeenCalled();
   });
 });
+
+describe('ожидающие запросы точки', () => {
+  it('hit-test резолвится адресным ответом воркера', async () => {
+    const { viewer: handle, worker } = await openViewer();
+    await handle.open(new ArrayBuffer(8));
+
+    const cell = handle.hitTest(10, 20);
+    const request = worker.last('hit-test');
+    expect(request).toBeDefined();
+    worker.reply({ type: 'hit', id: request?.id, cell: [2, 3] });
+
+    await expect(cell).resolves.toEqual([2, 3]);
+  });
+
+  it('destroy отклоняет и hit-test, и hyperlink', async () => {
+    const { viewer: handle } = await openViewer();
+    await handle.open(new ArrayBuffer(8));
+
+    const hit = handle.hitTest(10, 20);
+    const link = handle.hyperlinkAt(10, 20);
+    handle.destroy();
+    viewer = null;
+
+    await expect(hit).rejects.toThrow('viewer destroyed');
+    await expect(link).rejects.toThrow('viewer destroyed');
+  });
+
+  it('адресная ошибка воркера отклоняет только свой запрос', async () => {
+    const { viewer: handle, worker } = await openViewer();
+    await handle.open(new ArrayBuffer(8));
+
+    const hit = handle.hitTest(10, 20);
+    const link = handle.hyperlinkAt(10, 20);
+    const hitRequest = worker.last('hit-test');
+    worker.reply({
+      type: 'error',
+      id: hitRequest?.id,
+      code: 'internal',
+      message: 'boom',
+    });
+
+    await expect(hit).rejects.toThrow('boom');
+    // Соседний hyperlink не задет: его ответ приходит отдельно.
+    const linkRequest = worker.last('hyperlink-at');
+    worker.reply({ type: 'hyperlink', id: linkRequest?.id, link: null });
+    await expect(link).resolves.toBeNull();
+  });
+
+  it('ошибка без id отклоняет все ожидающие запросы точки', async () => {
+    const { viewer: handle, worker } = await openViewer();
+    await handle.open(new ArrayBuffer(8));
+
+    const hit = handle.hitTest(10, 20);
+    const link = handle.hyperlinkAt(10, 20);
+    worker.reply({ type: 'error', code: 'internal', message: 'worker crashed' });
+
+    await expect(hit).rejects.toThrow('worker crashed');
+    await expect(link).rejects.toThrow('worker crashed');
+  });
+});

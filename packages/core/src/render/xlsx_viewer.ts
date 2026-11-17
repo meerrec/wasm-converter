@@ -183,10 +183,11 @@ export async function createXlsxViewer(
     clientX: number,
     clientY: number,
   ): Promise<[number, number] | null> {
+    if (st.destroyed) return Promise.reject(new Error('viewer destroyed'));
     const [x, y] = canvasPoint(st, clientX, clientY);
     const id = st.nextRequestId++;
-    return new Promise<[number, number] | null>((resolve) => {
-      st.pendingHit.set(id, { resolve });
+    return new Promise<[number, number] | null>((resolve, reject) => {
+      st.pendingHit.set(id, { resolve, reject });
       st.worker.postMessage({
         type: 'hit-test',
         id,
@@ -204,10 +205,11 @@ export async function createXlsxViewer(
     clientX: number,
     clientY: number,
   ): Promise<HyperlinkInfo | null> {
+    if (st.destroyed) return Promise.reject(new Error('viewer destroyed'));
     const [x, y] = canvasPoint(st, clientX, clientY);
     const id = st.nextRequestId++;
-    return new Promise<HyperlinkInfo | null>((resolve) => {
-      st.pendingHyperlink.set(id, { resolve });
+    return new Promise<HyperlinkInfo | null>((resolve, reject) => {
+      st.pendingHyperlink.set(id, { resolve, reject });
       st.worker.postMessage({
         type: 'hyperlink-at',
         id,
@@ -275,10 +277,16 @@ export async function createXlsxViewer(
       const onCanvasClick = (ev: MouseEvent): void => {
         const callback = options.onHyperlink;
         if (!callback || st.destroyed || st.data.sheets.length === 0) return;
-        void hyperlinkAt(st, ev.clientX, ev.clientY).then((link) => {
-          // Клик по ячейке без ссылки — обычный клик, колбэк молчит.
-          if (link) callback(link);
-        });
+        void hyperlinkAt(st, ev.clientX, ev.clientY)
+          .then((link) => {
+            // Клик по ячейке без ссылки — обычный клик, колбэк молчит.
+            if (link) callback(link);
+          })
+          .catch((error: unknown) => {
+            // После destroy запрос отклоняется штатно: обрабатывать клик уже
+            // некому. Остальные отказы видны в консоли, как и ошибки ядра.
+            if (!st.destroyed) console.error('[xlsx] hyperlink-at', error);
+          });
       };
       canvas.addEventListener('click', onCanvasClick);
       st.disposers.add(() => canvas.removeEventListener('click', onCanvasClick));
