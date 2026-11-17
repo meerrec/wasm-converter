@@ -10,6 +10,11 @@ export default defineConfig({
   testDir: './e2e',
   timeout: 120_000,
   expect: { timeout: 20_000 },
+  // WebKit на раннере периодически роняет вкладку («Target crashed»,
+  // «browser has been closed») на разных тестах; Chromium и Firefox те же
+  // сценарии проходят. Две попытки в CI дают свежий браузер, локально
+  // ретраев нет — падение остаётся падением.
+  retries: process.env.CI ? 2 : 0,
   fullyParallel: false,
   workers: 1,
   reporter: process.env.CI ? 'github' : 'list',

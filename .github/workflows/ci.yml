@@ -299,6 +299,9 @@ jobs:
     needs: wasm
     runs-on: ubuntu-latest
     strategy:
+      # Обе ноги матрицы должны доходить до конца: падение одной не отменяет
+      # вторую, иначе сигнал по Node 20/22 теряется.
+      fail-fast: false
       matrix:
         node: [20, 22]
     steps:
