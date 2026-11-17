@@ -331,6 +331,29 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
   }
   state.transport = ready.transport;
 
+  // Воркер может упасть и после `ready`: init-слушатель уже снят, ответа на
+  // запросы не будет. Помечаем вьюер нерабочим и завершаем всё ожидающее —
+  // иначе hit-test и hyperlink повисли бы навсегда. `destroy` вызывающего
+  // всё равно нужен: он освободит painter, DOM и сам воркер.
+  const failWorker = (message: string): void => {
+    if (state.destroyed) return;
+    state.destroyed = true;
+    const error = new ViewerError(
+      toDiagnostic(message, {
+        code: 'internal',
+        layer: 'orchestration',
+        format: spec.formatTag,
+      }),
+    );
+    for (const map of pendingRejectables) rejectAll(map, error);
+  };
+  worker.addEventListener('error', (ev: ErrorEvent) => {
+    failWorker(ev.message === '' ? 'worker crashed' : ev.message);
+  });
+  worker.addEventListener('messageerror', () => {
+    failWorker('worker message could not be deserialized');
+  });
+
   function resizeCanvas(): void {
     const cssW = scroller.clientWidth;
     const cssH = scroller.clientHeight;
