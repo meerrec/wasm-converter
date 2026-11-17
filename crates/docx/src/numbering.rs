@@ -319,6 +319,12 @@ fn parse_lvl_child(
     lvl: &mut Lvl,
 ) -> Result<bool> {
     let attrs = attributes(child, part)?;
+    // Листовые элементы схемы обычно самозакрытые, но чужие writer'ы пишут и
+    // парные (`<w:start>…</w:start>`). Незнакомый вложенный элемент тогда
+    // выглядел бы началом следующего уровня: `read_children` принимает первый
+    // `End` за конец родителя. Поэтому всё, что не вычитано явно, дочитывается
+    // здесь — цикл уровня остаётся выровненным.
+    let mut consumed = false;
     match local_name(child.name().as_ref()) {
         b"start" => lvl.start = attr_u32(&attrs, "val", ctx, part)?.unwrap_or(DEFAULT_START),
         b"numFmt" => {
@@ -339,6 +345,7 @@ fn parse_lvl_child(
                 // текст: так делает часть чужих writer'ов.
                 read_text(reader, part)?
             };
+            consumed = true;
         }
         b"lvlJc" => lvl.lvl_jc = find(&attrs, "val").map(justification),
         b"suff" => {
@@ -373,13 +380,25 @@ fn parse_lvl_child(
         b"lvlPicBulletId" | b"picBulletId" => {
             lvl.pic_bullet_id = attr_u32(&attrs, "val", ctx, part)?;
         }
-        b"pPr" => lvl.ppr = parse_ppr(reader, empty, ctx, part)?,
-        b"rPr" => lvl.rpr = parse_rpr(reader, empty, ctx, part)?,
+        b"pPr" => {
+            lvl.ppr = parse_ppr(reader, empty, ctx, part)?;
+            consumed = true;
+        }
+        b"rPr" => {
+            lvl.rpr = parse_rpr(reader, empty, ctx, part)?;
+            consumed = true;
+        }
         // `w:legacy` — указание старому Word игнорировать уровень; в модели
         // поля нет.
         // TODO (Спринт 9): сохранять `w:legacy`, если раскладке он понадобится.
-        b"legacy" => skip_tail(reader, empty, part)?,
+        b"legacy" => {
+            skip_tail(reader, empty, part)?;
+            consumed = true;
+        }
         _ => return Ok(false),
+    }
+    if !consumed {
+        skip_tail(reader, empty, part)?;
     }
     Ok(true)
 }
@@ -2225,6 +2244,25 @@ mod tests {
                 "{inner}"
             );
         }
+    }
+
+    /// Парные листовые элементы (`<w:start>…</w:start>`) не должны
+    /// обрывать уровень: их `End` — не конец `w:lvl`, и остаток уровня
+    /// (следующий `w:lvl`) должен разбираться.
+    #[test]
+    fn paired_leaf_elements_do_not_truncate_the_level() {
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\">\
+             <w:lvl w:ilvl=\"0\"><w:start w:val=\"5\"></w:start>\
+             <w:numFmt w:val=\"decimal\"/></w:lvl>\
+             <w:lvl w:ilvl=\"1\"><w:lvlText w:val=\"%2.\"/></w:lvl>\
+             </w:abstractNum>",
+        ));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let levels = &table.abstract_nums[&AbstractNumId::new(0)].levels;
+        assert_eq!(levels[&0].start, 5);
+        assert_eq!(levels[&0].num_fmt, NumFmt::Decimal);
+        assert_eq!(levels[&1].lvl_text, "%2.");
     }
 
     /// `w:color` вне `ST_HexColor` (шесть шестнадцатеричных цифр, `auto`,

@@ -436,7 +436,7 @@ impl DisplayList {
         if buf.len() < HEADER_SIZE {
             return Err(DecodeError::TooShort);
         }
-        let hdr: Header = *bytemuck::from_bytes(&buf[..HEADER_SIZE]);
+        let hdr: Header = bytemuck::pod_read_unaligned(&buf[..HEADER_SIZE]);
         if hdr.magic != DL_MAGIC {
             return Err(DecodeError::BadMagic(hdr.magic));
         }
@@ -835,6 +835,17 @@ mod tests {
             DisplayList::from_bytes(&bytes[..10]),
             Err(DecodeError::TooShort)
         ));
+    }
+
+    /// Заголовок читается с любого смещения: `&[u8]` из JS или SAB не обязан
+    /// быть выровнен под `Header`, а паника на выравнивании — не ошибка кадра.
+    #[test]
+    fn reads_an_unaligned_header() {
+        let bytes = sample_dl().to_bytes();
+        let mut shifted = vec![0u8];
+        shifted.extend_from_slice(&bytes);
+        let rdr = DisplayList::from_bytes(&shifted[1..]).unwrap();
+        assert_eq!(rdr.cmd_count(), sample_dl().len());
     }
 
     #[test]
