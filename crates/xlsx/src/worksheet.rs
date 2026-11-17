@@ -707,7 +707,14 @@ fn sqref_ranges(value: &str) -> Vec<Range> {
 /// То, что не разбирается — число, индекс общей строки, код ошибки, — остаётся
 /// текстом: значение хотя бы видно, и одна битая ячейка не роняет книгу.
 fn value_of(kind: CellType, raw: &str) -> CellValue {
-    let raw = raw.trim();
+    // Пробелы значимы только для текстовых типов: у числа, индекса общей
+    // строки, булева и кода ошибки они — форматирование XML. `t="str"` —
+    // строковый результат формулы, `t="d"` — дата ISO 8601: обрезать их
+    // нельзя, иначе значение ячейки молча изменится.
+    let raw = match kind {
+        CellType::FormulaString | CellType::Date | CellType::Inline => raw,
+        CellType::Number | CellType::SharedString | CellType::Bool | CellType::Error => raw.trim(),
+    };
     if raw.is_empty() {
         return CellValue::Empty;
     }
@@ -938,6 +945,27 @@ mod tests {
         );
 
         assert_eq!(value(&ws, 0, 0), CellValue::Number(2.5));
+    }
+
+    /// `t="str"` и `t="d"` — текстовые значения: пробелы внутри `<v>` значимы
+    /// и не должны обрезаться, иначе формула или дата меняются молча.
+    #[test]
+    fn text_values_keep_surrounding_spaces() {
+        let ws = sheet(
+            r#"<sheetData><row r="1">
+                 <c r="A1" t="str"><v>  результат  </v></c>
+                 <c r="B1" t="d"><v> 2026-10-23 </v></c>
+               </row></sheetData>"#,
+        );
+
+        assert_eq!(
+            value(&ws, 0, 0),
+            CellValue::InlineString("  результат  ".into())
+        );
+        assert_eq!(
+            value(&ws, 0, 1),
+            CellValue::InlineString(" 2026-10-23 ".into())
+        );
     }
 
     #[test]

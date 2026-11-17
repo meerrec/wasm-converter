@@ -150,6 +150,7 @@ fn parse_abstract_num(
     };
     read_children(reader, empty, part, |reader, child, empty| {
         let attrs = attributes(child, part)?;
+        let mut consumed = false;
         match local_name(child.name().as_ref()) {
             b"nsid" => scheme.nsid = find(&attrs, "val").map(str::to_owned),
             b"tmpl" => scheme.tmpl = find(&attrs, "val").map(str::to_owned),
@@ -173,10 +174,14 @@ fn parse_abstract_num(
             b"lvl" => {
                 let lvl = parse_lvl(reader, child, empty, ctx, part, None)?;
                 insert_level(&mut scheme.levels, lvl, ctx, part)?;
+                consumed = true;
             }
             // `w:name` — название схемы для UI; в модели поля нет.
             // TODO (Спринт 9): сохранять `w:name`, если он понадобится интерфейсу.
-            b"name" => skip_tail(reader, empty, part)?,
+            b"name" => {
+                skip_tail(reader, empty, part)?;
+                consumed = true;
+            }
             _ => {
                 ctx.warn(
                     WarningKind::UnknownElement,
@@ -187,7 +192,13 @@ fn parse_abstract_num(
                     ),
                 )?;
                 skip_tail(reader, empty, part)?;
+                consumed = true;
             }
+        }
+        // Листовые элементы обычно самозакрытые, но парное написание не должно
+        // обрывать `w:abstractNum` на их `End`.
+        if !consumed {
+            skip_tail(reader, empty, part)?;
         }
         Ok(())
     })?;
@@ -319,6 +330,12 @@ fn parse_lvl_child(
     lvl: &mut Lvl,
 ) -> Result<bool> {
     let attrs = attributes(child, part)?;
+    // Листовые элементы схемы обычно самозакрытые, но чужие writer'ы пишут и
+    // парные (`<w:start>…</w:start>`). Незнакомый вложенный элемент тогда
+    // выглядел бы началом следующего уровня: `read_children` принимает первый
+    // `End` за конец родителя. Поэтому всё, что не вычитано явно, дочитывается
+    // здесь — цикл уровня остаётся выровненным.
+    let mut consumed = false;
     match local_name(child.name().as_ref()) {
         b"start" => lvl.start = attr_u32(&attrs, "val", ctx, part)?.unwrap_or(DEFAULT_START),
         b"numFmt" => {
@@ -339,6 +356,7 @@ fn parse_lvl_child(
                 // текст: так делает часть чужих writer'ов.
                 read_text(reader, part)?
             };
+            consumed = true;
         }
         b"lvlJc" => lvl.lvl_jc = find(&attrs, "val").map(justification),
         b"suff" => {
@@ -373,13 +391,25 @@ fn parse_lvl_child(
         b"lvlPicBulletId" | b"picBulletId" => {
             lvl.pic_bullet_id = attr_u32(&attrs, "val", ctx, part)?;
         }
-        b"pPr" => lvl.ppr = parse_ppr(reader, empty, ctx, part)?,
-        b"rPr" => lvl.rpr = parse_rpr(reader, empty, ctx, part)?,
+        b"pPr" => {
+            lvl.ppr = parse_ppr(reader, empty, ctx, part)?;
+            consumed = true;
+        }
+        b"rPr" => {
+            lvl.rpr = parse_rpr(reader, empty, ctx, part)?;
+            consumed = true;
+        }
         // `w:legacy` — указание старому Word игнорировать уровень; в модели
         // поля нет.
         // TODO (Спринт 9): сохранять `w:legacy`, если раскладке он понадобится.
-        b"legacy" => skip_tail(reader, empty, part)?,
+        b"legacy" => {
+            skip_tail(reader, empty, part)?;
+            consumed = true;
+        }
         _ => return Ok(false),
+    }
+    if !consumed {
+        skip_tail(reader, empty, part)?;
     }
     Ok(true)
 }
@@ -425,6 +455,7 @@ fn parse_num(
     let mut abstract_seen = false;
     read_children(reader, empty, part, |reader, child, empty| {
         let attrs = attributes(child, part)?;
+        let mut consumed = false;
         match local_name(child.name().as_ref()) {
             b"abstractNumId" => {
                 abstract_seen = true;
@@ -443,7 +474,10 @@ fn parse_num(
                     (None, _) => {}
                 }
             }
-            b"lvlOverride" => parse_override(reader, child, empty, ctx, part, &mut num)?,
+            b"lvlOverride" => {
+                parse_override(reader, child, empty, ctx, part, &mut num)?;
+                consumed = true;
+            }
             // В `CT_Num` такого элемента нет, но поле есть в модели — принимаем
             // оба написания, чтобы не терять ссылку у чужих writer'ов.
             b"lvlPicBulletId" | b"picBulletId" => {
@@ -459,7 +493,11 @@ fn parse_num(
                     ),
                 )?;
                 skip_tail(reader, empty, part)?;
+                consumed = true;
             }
+        }
+        if !consumed {
+            skip_tail(reader, empty, part)?;
         }
         Ok(())
     })?;
@@ -525,11 +563,15 @@ fn parse_override(
     };
     read_children(reader, empty, part, |reader, child, empty| {
         let attrs = attributes(child, part)?;
+        let mut consumed = false;
         match local_name(child.name().as_ref()) {
             b"startOverride" => {
                 over.start_override = attr_u32(&attrs, "val", ctx, part)?;
             }
-            b"lvl" => over.lvl = parse_lvl(reader, child, empty, ctx, part, Some(ilvl))?,
+            b"lvl" => {
+                over.lvl = parse_lvl(reader, child, empty, ctx, part, Some(ilvl))?;
+                consumed = true;
+            }
             _ => {
                 ctx.warn(
                     WarningKind::UnknownElement,
@@ -540,7 +582,11 @@ fn parse_override(
                     ),
                 )?;
                 skip_tail(reader, empty, part)?;
+                consumed = true;
             }
+        }
+        if !consumed {
+            skip_tail(reader, empty, part)?;
         }
         Ok(())
     })?;
@@ -913,7 +959,7 @@ fn parse_tabs(
             kind,
             leader: find(&attrs, "leader").map_or(TabLeader::None, tab_leader),
         });
-        Ok(())
+        skip_tail(reader, empty, part)
     })?;
     Ok(tabs)
 }
@@ -2225,6 +2271,66 @@ mod tests {
                 "{inner}"
             );
         }
+    }
+
+    /// Парные листовые элементы (`<w:start>…</w:start>`) не должны
+    /// обрывать уровень: их `End` — не конец `w:lvl`, и остаток уровня
+    /// (следующий `w:lvl`) должен разбираться.
+    #[test]
+    fn paired_leaf_elements_do_not_truncate_the_level() {
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\">\
+             <w:lvl w:ilvl=\"0\"><w:start w:val=\"5\"></w:start>\
+             <w:numFmt w:val=\"upperRoman\"/></w:lvl>\
+             <w:lvl w:ilvl=\"1\"><w:lvlText w:val=\"%2.\"/></w:lvl>\
+             </w:abstractNum>",
+        ));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let levels = &table.abstract_nums[&AbstractNumId::new(0)].levels;
+        assert_eq!(levels[&0].start, 5);
+        assert_eq!(levels[&0].num_fmt, NumFmt::UpperRoman);
+        assert_eq!(levels[&1].lvl_text, "%2.");
+    }
+
+    /// Тот же класс для `w:abstractNum`, `w:num` и `w:lvlOverride`: парный
+    /// листовой элемент не должен съедать их хвост.
+    #[test]
+    fn paired_leaves_do_not_truncate_abstract_num_and_num() {
+        let (table, warnings) = parse_part(&part_xml(
+            "<w:abstractNum w:abstractNumId=\"0\">\
+             <w:nsid w:val=\"00112233\"></w:nsid>\
+             <w:lvl w:ilvl=\"0\"><w:numFmt w:val=\"decimal\"/></w:lvl>\
+             </w:abstractNum>\
+             <w:num w:numId=\"1\">\
+             <w:abstractNumId w:val=\"0\"></w:abstractNumId>\
+             <w:lvlOverride w:ilvl=\"0\">\
+             <w:startOverride w:val=\"5\"></w:startOverride>\
+             <w:lvl w:ilvl=\"0\"><w:lvlText w:val=\"%1.\"/></w:lvl>\
+             </w:lvlOverride>\
+             </w:num>",
+        ));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let scheme = &table.abstract_nums[&AbstractNumId::new(0)];
+        assert_eq!(scheme.nsid.as_deref(), Some("00112233"));
+        assert_eq!(scheme.levels[&0].num_fmt, NumFmt::Decimal);
+        let num = &table.nums[&NumId::new(1)];
+        assert_eq!(num.abstract_id, AbstractNumId::new(0));
+        let over = &num.overrides[&0];
+        assert_eq!(over.start_override, Some(5));
+        assert_eq!(over.lvl.as_ref().unwrap().lvl_text, "%1.");
+    }
+
+    /// Парный `w:tab` не должен обрывать `w:tabs` на первом же элементе.
+    #[test]
+    fn paired_tab_does_not_truncate_tabs() {
+        let lvl = level_zero(
+            "<w:lvl w:ilvl=\"0\"><w:pPr><w:tabs>\
+             <w:tab w:val=\"left\" w:pos=\"720\"></w:tab>\
+             <w:tab w:val=\"right\" w:pos=\"1440\"/>\
+             </w:tabs></w:pPr></w:lvl>",
+        );
+        assert_eq!(lvl.ppr.tabs.len(), 2);
+        assert_eq!(lvl.ppr.tabs[1].val, Twips::new(1440));
     }
 
     /// `w:color` вне `ST_HexColor` (шесть шестнадцатеричных цифр, `auto`,

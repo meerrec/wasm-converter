@@ -16,5 +16,7 @@ doc-converter-render     = { workspace = true }
 thiserror                = { workspace = true }
 
 [dev-dependencies]
-# Тест загружает собранный PDF, чтобы посчитать страницы.
-lopdf = "0.45"
+# Тест загружает собранный PDF, чтобы посчитать страницы. Дефолтные фичи
+# lopdf тянут `chrono-clock`; для чтения страниц он не нужен, а chrono
+# объявлен unmaintained (RUSTSEC-2026-0543).
+lopdf = { version = "0.45", default-features = false }

@@ -198,7 +198,6 @@ DisplayList, PDF/PNG transfer) работают без SAB с приемлемо
 | `zip` | 2.x | Распаковка OOXML |
 | `serde`, `serde_json` | 1 | Сериализация |
 | `thiserror`, `miette` | 2 / 7 | Ошибки |
-| `chrono` | 0.4 | Даты |
 | `lopdf` | 0.45 | Объекты PDF, сжатие потоков |
 | `subsetter` | 0.2 | Подрезка шрифтов |
 | `rustybuzz` | 0.20 | Shaping, kerning |
