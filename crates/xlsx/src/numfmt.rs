@@ -28,8 +28,6 @@
 
 use std::fmt::Write as _;
 
-use chrono::{Datelike, Days, NaiveDate};
-
 /// Код формата по умолчанию.
 pub const GENERAL: &str = "General";
 
@@ -932,12 +930,12 @@ impl DateTime {
 fn civil_from_days(days: i64, date1904: bool) -> Option<(i32, u32, u32, u32)> {
     if date1904 {
         // Система 1904: точка отсчёта — 01.01.1904, «фантомного» дня нет.
-        let base = NaiveDate::from_ymd_opt(1904, 1, 1)?;
-        let date = base.checked_add_days(Days::new(u64::try_from(days).ok()?))?;
+        let unix_days = days.checked_add(days_from_civil(1904, 1, 1))?;
+        let (year, month, day) = civil_from_unix_days(unix_days)?;
         return Some((
-            date.year(),
-            date.month(),
-            date.day(),
+            year,
+            month,
+            day,
             u32::try_from((days + 5).rem_euclid(7)).ok()?,
         ));
     }
@@ -952,12 +950,46 @@ fn civil_from_days(days: i64, date1904: bool) -> Option<(i32, u32, u32, u32)> {
         return Some((1900, 2, 29, weekday));
     }
     let base = if days < 60 {
-        NaiveDate::from_ymd_opt(1899, 12, 31)?
+        days_from_civil(1899, 12, 31)
     } else {
-        NaiveDate::from_ymd_opt(1899, 12, 30)?
+        days_from_civil(1899, 12, 30)
     };
-    let date = base.checked_add_days(Days::new(u64::try_from(days).ok()?))?;
-    Some((date.year(), date.month(), date.day(), weekday))
+    let unix_days = days.checked_add(base)?;
+    let (year, month, day) = civil_from_unix_days(unix_days)?;
+    Some((year, month, day, weekday))
+}
+
+/// Дни от 1970-01-01 до гражданской даты (пролептический григорианский
+/// календарь). Алгоритм Говарда Хиннанта, без внешней зависимости: `chrono`
+/// объявлен unmaintained (RUSTSEC-2026-0543), а нужна здесь только арифметика.
+fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
+    let y = i64::from(year) - i64::from(month <= 2);
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let m = i64::from(month);
+    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + i64::from(day) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// Гражданская дата по дням от 1970-01-01. `None` — год не помещается в `i32`
+/// или `days` выходит за разумный диапазон.
+fn civil_from_unix_days(days: i64) -> Option<(i32, u32, u32)> {
+    let z = days.checked_add(719_468)?;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + i64::from(month <= 2);
+    Some((
+        i32::try_from(year).ok()?,
+        u32::try_from(month).ok()?,
+        u32::try_from(day).ok()?,
+    ))
 }
 
 /// Напечатать дату и время по частям шаблона.
@@ -1289,6 +1321,16 @@ mod tests {
         assert_eq!(render(60.0, "ddd"), "Wed");
         // 1900-03-01 — четверг, и это уже правда.
         assert_eq!(render(61.0, "ddd"), "Thu");
+    }
+
+    /// Гражданский календарь — обратная пара к `days_from_civil`: без неё
+    /// ошибка в арифметике дала бы тихо неверную дату вместо паники.
+    #[test]
+    fn civil_calendar_roundtrips() {
+        for days in [-100_000_i64, -25_568, -1, 0, 1, 59, 60, 61, 45_000, 100_000] {
+            let (year, month, day) = civil_from_unix_days(days).expect("дата существует");
+            assert_eq!(days_from_civil(year, month, day), days, "{days}");
+        }
     }
 
     #[test]
