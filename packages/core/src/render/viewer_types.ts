@@ -104,8 +104,8 @@ export interface ViewerState<S, O extends ViewerBaseOptions = ViewerBaseOptions>
   readonly render: MainRenderAdapter;
   readonly tickHandlers: Set<(stats: PaintStats) => void>;
   readonly pendingOpen: Map<number, AbortGuard<void>>;
-  readonly pendingHit: Map<number, { resolve: (cell: [number, number] | null) => void }>;
-  readonly pendingHyperlink: Map<number, { resolve: (link: HyperlinkInfo | null) => void }>;
+  readonly pendingHit: Map<number, AbortGuard<[number, number] | null>>;
+  readonly pendingHyperlink: Map<number, AbortGuard<HyperlinkInfo | null>>;
   readonly pendingPng: Map<number, AbortGuard<Uint8Array>>;
   readonly pendingPdf: Map<number, AbortGuard<Uint8Array>>;
   readonly pendingText: Map<number, AbortGuard<string>>;
