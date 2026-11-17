@@ -972,8 +972,9 @@ fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// Гражданская дата по дням от 1970-01-01. `None` — год не помещается в `i32`
-/// или `days` выходит за разумный диапазон.
+/// Гражданская дата по дням от 1970-01-01. `None` — год вне диапазона
+/// `chrono::NaiveDate` (граница сохранена ради совместимости вывода) или
+/// арифметика переполнилась.
 fn civil_from_unix_days(days: i64) -> Option<(i32, u32, u32)> {
     let z = days.checked_add(719_468)?;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -985,6 +986,12 @@ fn civil_from_unix_days(days: i64) -> Option<(i32, u32, u32)> {
     let day = doy - (153 * mp + 2) / 5 + 1;
     let month = mp + if mp < 10 { 3 } else { -9 };
     let year = y + i64::from(month <= 2);
+    // chrono::NaiveDate::MIN/MAX — -262144-01-01 и 262142-12-31. За этими
+    // границами дата раньше печаталась как `#####`; смена зависимости не
+    // должна менять вывод.
+    if !(-262_144..=262_142).contains(&year) {
+        return None;
+    }
     Some((
         i32::try_from(year).ok()?,
         u32::try_from(month).ok()?,
@@ -1331,6 +1338,14 @@ mod tests {
             let (year, month, day) = civil_from_unix_days(days).expect("дата существует");
             assert_eq!(days_from_civil(year, month, day), days, "{days}");
         }
+    }
+
+    /// Граница `chrono::NaiveDate` сохранена: за 262142-12-31 Excel показывает
+    /// решётки, а не дату с произвольным годом.
+    #[test]
+    fn dates_outside_the_calendar_render_hashes() {
+        assert_eq!(format(95_051_805.0, "yyyy-mm-dd", false), "262142-12-31");
+        assert_eq!(format(95_051_806.0, "yyyy-mm-dd", false), "#####");
     }
 
     #[test]
