@@ -377,28 +377,53 @@ jobs:
       # лок apt (`/var/lib/apt/lists/lock`) — один падает с exit 100 каждую
       # попытку. Если в workspace появится второй пакет со своим playwright,
       # установку придётся развести на два последовательных шага.
+      # Браузеры Playwright (~600 МБ) переживают прогоны: ключ — lock-файл,
+      # то есть версия @playwright/test. На попадании `playwright install`
+      # видит уже распакованные браузеры и не качает их заново.
+      - name: cache playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
       # Повторы из-за фоновой установки пакетов в образе: `--with-deps` зовёт
-      # apt-get и падает на «Could not get lock /var/lib/apt/lists/lock», пока
-      # лок держит чужой процесс. Исчерпание попыток валит шаг ненулевым кодом.
-      # Предел на попытку — как у apt-шагов (`.github/actions/apt-install`):
-      # заминка неизвестной природы не должна ждаться бесконечно (в прогоне
-      # 38161310682 apt-шаг провисел полчаса). 300 с — пятикратный запас к самой
-      # долгой здоровой установке (62 с): здесь не только apt, но и скачивание
-      # трёх браузеров, а оно сетевое и переменчивое. `timeout` шлёт TERM всей
-      # группе процесса, так что оборванная попытка не оставляет за собой
-      # apt-get; код 124 обычный `until` считает провалом и уходит на повтор.
+      # apt-get и падает на «Could not get lock /var/lib/dpkg/lock-frontend»,
+      # пока лок держит чужой процесс. Исчерпание попыток валит шаг ненулевым
+      # кодом. Предел на попытку — как у apt-шагов
+      # (`.github/actions/apt-install`): заминка неизвестной природы не должна
+      # ждаться бесконечно (в прогоне 38161310682 apt-шаг провисел полчаса).
+      # 300 с — пятикратный запас к самой долгой здоровой установке (62 с):
+      # здесь не только apt, но и скачивание трёх браузеров, а оно сетевое и
+      # переменчивое. `timeout` шлёт TERM всей группе процесса, так что
+      # оборванная попытка не оставляет за собой apt-get; код 124 обычный
+      # `until` считает провалом и уходит на повтор.
+      #
+      # Ожидание перед первой попыткой закрывает случай, когда образ раннера
+      # ещё ставит свои пакеты: лок держится минутами, а не секундами, и три
+      # повтора по 30 с не доживают до его снятия. Ждём не дольше пяти минут —
+      # дальше разруливают повторы с растущей паузой.
       - name: playwright browsers
         run: |
           set -uo pipefail
+          for _ in $(seq 1 60); do
+            if ! pgrep -x apt-get >/dev/null && ! pgrep -x dpkg >/dev/null; then
+              break
+            fi
+            sleep 5
+          done
           attempt=1
           until timeout 300 pnpm --filter @meerrec/example-viewer exec playwright install --with-deps chromium firefox webkit; do
-            if [ "$attempt" -ge 3 ]; then
+            if [ "$attempt" -ge 5 ]; then
               echo "::error::playwright install не удался за ${attempt} попытки — браузеры не поставлены"
               exit 1
             fi
-            echo "::warning::попытка ${attempt} упала (вероятно, лок apt-get) — повтор через 30 с"
+            pause=$((attempt * 30))
+            echo "::warning::попытка ${attempt} упала (вероятно, лок apt-get) — повтор через ${pause} с"
+            sleep "$pause"
             attempt=$((attempt + 1))
-            sleep 30
           done
 
       - run: pnpm turbo run typecheck test build
@@ -407,7 +432,7 @@ jobs:
       # экспорта вернётся в основной бандл, бюджет покраснеет. Так же держится
       # и ленивость DOCX: просмотрщик уехал в отдельный модуль, и его возврат в
       # основной бандл поймает та же строка бюджета.
-      - if: matrix.node == 20
+      - if: matrix.node == 22
         run: pnpm size-limit
 
   # Числа DoD спринта 7 (время и память PDF-экспорта) держались на локальных
