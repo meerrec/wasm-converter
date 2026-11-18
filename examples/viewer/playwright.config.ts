@@ -39,6 +39,12 @@ export default defineConfig({
       name: 'webkit',
       use: { ...devices['Desktop Safari'] },
       testIgnore: /dpr\.spec\.ts/,
+      // На раннере WebKit падает не на конкретном тесте, а в случайном месте
+      // цепочки: «Target crashed», таймауты `waitForFunction` и открытия
+      // фикстуры. Двух глобальных попыток не хватает — набор падающих тестов
+      // меняется от прогона к прогону; четыре дают свежий браузер и шанс
+      // пройти весь спек.
+      retries: process.env.CI ? 4 : 0,
     },
     {
       name: 'chromium-dpr2',
