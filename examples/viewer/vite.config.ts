@@ -148,12 +148,18 @@ export default defineConfig({
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
+      // WebKit требует CORP и на same-origin подресурсы воркера: без него
+      // импорт `/@fs/.../vite/dist/client/env.mjs` блокируется COEP.
+      'Cross-Origin-Resource-Policy': 'same-origin',
     },
   },
   preview: {
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
+      // WebKit требует CORP и на same-origin подресурсы воркера: без него
+      // импорт `/@fs/.../vite/dist/client/env.mjs` блокируется COEP.
+      'Cross-Origin-Resource-Policy': 'same-origin',
     },
   },
   worker: {

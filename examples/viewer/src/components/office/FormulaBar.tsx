@@ -8,18 +8,29 @@ import { Icon } from './icons.js';
  * (`<span id="cell">`), теперь это имя живёт в строке состояния, поэтому поле
  * имени стало необязательным.
  */
-export function FormulaBar(props: { cellRef?: ReactNode; formula?: string }): ReactElement {
+export function FormulaBar(props: {
+  cellRef?: ReactNode;
+  formula?: string;
+  disabled?: boolean;
+  onFormulaChange?: (value: string) => void;
+  onInsertFunction?: () => void;
+}): ReactElement {
   return (
     <div className="ofc-formulabar">
       {props.cellRef === undefined ? null : (
         <span className="ofc-formulabar__name">{props.cellRef}</span>
       )}
-      {/* Кнопка недоступна, пока функцию некуда вставлять: строка формул
-          показывает вьюер, а не редактирует книгу. */}
-      <button type="button" className="ofc-formulabar__fx" disabled title="Вставить функцию">
+      <button type="button" className="ofc-formulabar__fx" disabled={props.disabled === true} title="Вставить функцию" onClick={props.onInsertFunction}>
         <Icon name="function" size={16} />
       </button>
-      <span className="ofc-formulabar__formula">{props.formula ?? ''}</span>
+      <input
+        className="ofc-formulabar__formula"
+        aria-label="Строка формул"
+        title="Формула или значение ячейки; Enter применяет правку"
+        value={props.formula ?? ''}
+        disabled={props.disabled === true}
+        onChange={(event) => props.onFormulaChange?.(event.currentTarget.value)}
+      />
     </div>
   );
 }

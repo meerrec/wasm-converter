@@ -19,3 +19,6 @@ export type { StatusZoomOption } from './StatusBar.js';
 export { Ruler } from './Ruler.js';
 export { FormulaBar } from './FormulaBar.js';
 export { LoadingOverlay } from './LoadingOverlay.js';
+export { OfficeDialog, HelpDialog } from './OfficeDialog.js';
+export { DrawingPad } from './DrawingPad.js';
+export { SpellcheckDialog } from './SpellcheckDialog.js';

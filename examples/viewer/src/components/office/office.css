@@ -926,3 +926,233 @@
   color: var(--ofc-text);
   font-weight: 600;
 }
+
+/* --- Быстрые команды, диалоги и редактор -------------------------------- */
+
+.ofc-titlebar__quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ofc-titlebar__quick button,
+.ofc-dialog__title button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ofc-text-2);
+  cursor: pointer;
+}
+
+.ofc-titlebar__quick button:hover:not(:disabled),
+.ofc-dialog__title button:hover {
+  background: var(--ofc-hover);
+  color: var(--ofc-text);
+}
+
+.ofc-titlebar__quick button:disabled {
+  color: var(--ofc-disabled);
+  cursor: default;
+}
+
+.ofc-dialog {
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  border: 1px solid var(--ofc-field-line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ofc-text);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 24%);
+}
+
+.ofc-dialog::backdrop {
+  background: rgb(0 0 0 / 28%);
+}
+
+.ofc-dialog__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ofc-line);
+  background: var(--ofc-ribbon-bg-2);
+}
+
+.ofc-dialog__title h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ofc-dialog__body {
+  padding: 14px;
+  overflow: auto;
+}
+
+.ofc-dialog__body p:first-child {
+  margin-top: 0;
+}
+
+.ofc-dialog__body li {
+  margin: 6px 0;
+}
+
+.ofc-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--ofc-line);
+}
+
+.ofc-dialog__actions button,
+.ofc-dialog__body button {
+  min-height: 28px;
+  padding: 4px 12px;
+  border: 1px solid var(--ofc-field-line);
+  border-radius: 3px;
+  background: #fff;
+  color: var(--ofc-text);
+  cursor: pointer;
+}
+
+.ofc-dialog__actions .ofc-primary,
+.ofc-dialog__body .ofc-primary {
+  border-color: var(--ofc-accent);
+  background: var(--ofc-accent);
+  color: #fff;
+}
+
+.ofc-dialog__actions button:disabled,
+.ofc-dialog__body button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ofc-dialog__field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.ofc-dialog__field input,
+.ofc-dialog__field select,
+.ofc-dialog__field textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--ofc-field-line);
+  border-radius: 3px;
+  background: #fff;
+  color: var(--ofc-text);
+  font: inherit;
+}
+
+.ofc-spellcheck {
+  min-height: 240px;
+  resize: vertical;
+}
+
+.ofc-drawing-pad {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--ofc-field-line);
+  background: #fff;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.ofc-tile--active {
+  border-color: var(--ofc-accent);
+  background: var(--ofc-active-bg);
+}
+
+.ofc-formulabar__formula {
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: #fff;
+  font: inherit;
+}
+
+.ofc-formulabar__formula:focus {
+  box-shadow: inset 0 0 0 1px var(--ofc-accent);
+}
+
+.ofc-app--reading .ofc-titlebar,
+.ofc-app--reading .ofc-ribbon,
+.ofc-app--reading .ofc-ruler,
+.ofc-app--reading .ofc-statusbar {
+  display: none;
+}
+
+.ofc-view-grid {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgb(15 108 189 / 18%) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(15 108 189 / 18%) 1px, transparent 1px);
+  background-size: 37.8px 37.8px;
+}
+
+.ofc-app--paragraph-marks .dc-text-semantic [role="paragraph"]::after {
+  content: " ¶";
+  color: var(--ofc-accent);
+}
+
+.ofc-slide-sorter {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  height: 100%;
+  padding: 20px;
+  overflow: auto;
+  background: #eceff1;
+}
+
+.ofc-slide-sorter button {
+  padding: 8px;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.ofc-slide-sorter button[aria-pressed="true"] {
+  border-color: var(--ofc-accent);
+}
+
+.ofc-slide-sorter img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+}
+
+.ofc-slide-sorter span {
+  display: block;
+  margin-top: 6px;
+  text-align: center;
+}
+
+@media print {
+  .ofc-titlebar,
+  .ofc-ribbon,
+  .ofc-ruler,
+  .ofc-formulabar,
+  .ofc-statusbar,
+  .ofc-view-grid {
+    display: none !important;
+  }
+}
