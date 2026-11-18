@@ -57,6 +57,7 @@
 | 0051 | Шрифты Carlito — ленивый общий ассет | [`0051-font-assets.md`](0051-font-assets.md) |
 | 0052 | PDF — бэкенд без знания форматов и отдельные адаптеры экспорта | [`0052-pdf-backend-boundary.md`](0052-pdf-backend-boundary.md) |
 | 0053 | Единый runtime вьюеров — запросы, ошибки и отмена | [`0053-viewer-runtime.md`](0053-viewer-runtime.md) |
+| 0054 | Локальный OOXML-редактор — patch исходного ZIP в отдельном Worker | [`0054-ooxml-editor.md`](0054-ooxml-editor.md) |
 
 ADR-0050…0053 — предложения по итогам архитектурного аудита 23.10.2026
 (`docs/analysis/architecture-audit-2026-10-23.md`); они ещё не приняты.

@@ -1,7 +1,10 @@
 import { useState, type ChangeEvent, type ReactElement } from 'react';
 import { FrameMeters } from '../../components/FrameMeters.js';
 import {
+  DrawingPad,
+  HelpDialog,
   Icon,
+  LoadingOverlay,
   LogoWord,
   RibbonButton,
   RibbonGroup,
@@ -12,6 +15,7 @@ import {
   Ruler,
   StatusBar,
   StatusZoom,
+  SpellcheckDialog,
   TitleBar,
   type IconName,
   type RibbonTab,
@@ -79,7 +83,7 @@ function zoomLabel(value: number): string {
 /** Группа команд вкладки-заглушки. */
 interface RibbonSpec {
   label: string;
-  buttons: { icon: IconName; label: string }[];
+  buttons: { icon: IconName; label: string; command: string }[];
 }
 
 /**
@@ -87,138 +91,83 @@ interface RibbonSpec {
  * вкладка переключается, лента не пустует, а делать ничего не обещает.
  */
 const OTHER_RIBBONS: Record<string, RibbonSpec[]> = {
-  file: [
-    {
-      label: 'Документ',
-      buttons: [
-        { icon: 'file', label: 'Создать' },
-        { icon: 'save', label: 'Сохранить' },
-        { icon: 'print', label: 'Печать' },
-        { icon: 'share', label: 'Поделиться' },
-      ],
-    },
-  ],
+  file: [{ label: 'Документ', buttons: [
+    { icon: 'file', label: 'Создать', command: 'create' },
+    { icon: 'save', label: 'Сохранить', command: 'save' },
+    { icon: 'print', label: 'Печать', command: 'print' },
+    { icon: 'share', label: 'Поделиться', command: 'share' },
+  ] }],
   insert: [
-    {
-      label: 'Страницы',
-      buttons: [
-        { icon: 'file', label: 'Титульная страница' },
-        { icon: 'page-setup', label: 'Разрыв' },
-      ],
-    },
-    { label: 'Таблицы', buttons: [{ icon: 'table', label: 'Таблица' }] },
-    {
-      label: 'Иллюстрации',
-      buttons: [
-        { icon: 'picture', label: 'Рисунок' },
-        { icon: 'chart', label: 'Диаграмма' },
-      ],
-    },
+    { label: 'Страницы', buttons: [
+      { icon: 'file', label: 'Титульная страница', command: 'insert-cover' },
+      { icon: 'page-setup', label: 'Разрыв', command: 'insert-break' },
+    ] },
+    { label: 'Таблицы', buttons: [{ icon: 'table', label: 'Таблица', command: 'insert-table' }] },
+    { label: 'Иллюстрации', buttons: [
+      { icon: 'picture', label: 'Рисунок', command: 'insert-picture' },
+      { icon: 'chart', label: 'Диаграмма', command: 'insert-chart' },
+    ] },
   ],
-  draw: [
-    {
-      label: 'Перо',
-      buttons: [
-        { icon: 'format-painter', label: 'Перо' },
-        { icon: 'highlight', label: 'Маркер' },
-        { icon: 'clear', label: 'Ластик' },
-      ],
-    },
-  ],
-  design: [
-    {
-      label: 'Стили документа',
-      buttons: [
-        { icon: 'styles', label: 'Темы' },
-        { icon: 'format', label: 'Набор стилей' },
-      ],
-    },
-  ],
+  draw: [{ label: 'Перо', buttons: [
+    { icon: 'format-painter', label: 'Перо', command: 'pen' },
+    { icon: 'highlight', label: 'Маркер', command: 'marker' },
+    { icon: 'clear', label: 'Ластик', command: 'eraser' },
+  ] }],
+  design: [{ label: 'Стили документа', buttons: [
+    { icon: 'styles', label: 'Темы', command: 'theme' },
+    { icon: 'format', label: 'Набор стилей', command: 'style-set' },
+  ] }],
   layout: [
-    {
-      label: 'Параметры страницы',
-      buttons: [
-        { icon: 'page-setup', label: 'Поля' },
-        { icon: 'sheet', label: 'Ориентация' },
-        { icon: 'text', label: 'Размер' },
-      ],
-    },
-    {
-      label: 'Абзац',
-      buttons: [
-        { icon: 'indent-decrease', label: 'Отступ слева' },
-        { icon: 'indent-increase', label: 'Отступ справа' },
-      ],
-    },
+    { label: 'Параметры страницы', buttons: [
+      { icon: 'page-setup', label: 'Поля', command: 'page-margins' },
+      { icon: 'sheet', label: 'Ориентация', command: 'page-orientation' },
+      { icon: 'text', label: 'Размер', command: 'page-size' },
+    ] },
+    { label: 'Абзац', buttons: [
+      { icon: 'indent-decrease', label: 'Отступ слева', command: 'indent-left' },
+      { icon: 'indent-increase', label: 'Отступ справа', command: 'indent-right' },
+    ] },
   ],
   refs: [
-    {
-      label: 'Оглавление',
-      buttons: [
-        { icon: 'multilevel-list', label: 'Оглавление' },
-        { icon: 'link', label: 'Ссылка' },
-      ],
-    },
-    {
-      label: 'Названия',
-      buttons: [
-        { icon: 'cell', label: 'Вставить название' },
-        { icon: 'text', label: 'Перекрёстная ссылка' },
-      ],
-    },
+    { label: 'Оглавление', buttons: [
+      { icon: 'multilevel-list', label: 'Оглавление', command: 'insert-toc' },
+      { icon: 'link', label: 'Ссылка', command: 'insert-link' },
+    ] },
+    { label: 'Названия', buttons: [
+      { icon: 'cell', label: 'Вставить название', command: 'insert-caption' },
+      { icon: 'text', label: 'Перекрёстная ссылка', command: 'insert-cross-ref' },
+    ] },
   ],
-  mail: [
-    {
-      label: 'Начало слияния',
-      buttons: [
-        { icon: 'file', label: 'Начать слияние' },
-        { icon: 'select', label: 'Выбрать получателей' },
-      ],
-    },
-  ],
+  mail: [{ label: 'Начало слияния', buttons: [
+    { icon: 'file', label: 'Начать слияние', command: 'mail-start' },
+    { icon: 'select', label: 'Выбрать получателей', command: 'mail-recipients' },
+  ] }],
   review: [
-    {
-      label: 'Рецензирование',
-      buttons: [
-        { icon: 'comment', label: 'Создать примечание' },
-        { icon: 'review', label: 'Принять' },
-        { icon: 'cancel', label: 'Отклонить' },
-      ],
-    },
-    {
-      label: 'Правописание',
-      buttons: [
-        { icon: 'spell-check', label: 'Орфография' },
-        { icon: 'find', label: 'Область проверки' },
-      ],
-    },
+    { label: 'Рецензирование', buttons: [
+      { icon: 'comment', label: 'Создать примечание', command: 'add-comment' },
+      { icon: 'review', label: 'Принять', command: 'accept-changes' },
+      { icon: 'cancel', label: 'Отклонить', command: 'reject-changes' },
+    ] },
+    { label: 'Правописание', buttons: [
+      { icon: 'spell-check', label: 'Орфография', command: 'spellcheck' },
+      { icon: 'find', label: 'Область проверки', command: 'find' },
+    ] },
   ],
   view: [
-    {
-      label: 'Режимы просмотра',
-      buttons: [
-        { icon: 'view', label: 'Режим чтения' },
-        { icon: 'cell', label: 'Разметка страницы' },
-      ],
-    },
-    {
-      label: 'Отображение',
-      buttons: [
-        { icon: 'ruler', label: 'Линейка' },
-        { icon: 'grid', label: 'Сетка' },
-        { icon: 'paragraph-mark', label: 'Знаки абзацев' },
-      ],
-    },
+    { label: 'Режимы просмотра', buttons: [
+      { icon: 'view', label: 'Режим чтения', command: 'reading' },
+      { icon: 'cell', label: 'Разметка страницы', command: 'page-layout' },
+    ] },
+    { label: 'Отображение', buttons: [
+      { icon: 'ruler', label: 'Линейка', command: 'ruler' },
+      { icon: 'grid', label: 'Сетка', command: 'grid' },
+      { icon: 'paragraph-mark', label: 'Знаки абзацев', command: 'paragraph-marks' },
+    ] },
   ],
-  help: [
-    {
-      label: 'Справка',
-      buttons: [
-        { icon: 'help', label: 'Справка' },
-        { icon: 'comment', label: 'Отзыв' },
-      ],
-    },
-  ],
+  help: [{ label: 'Справка', buttons: [
+    { icon: 'help', label: 'Справка', command: 'help' },
+    { icon: 'comment', label: 'Отзыв', command: 'feedback' },
+  ] }],
 };
 
 /** Пропсы ленты «Главная»: всё, что доступно от вьюера и страницы. */
@@ -240,10 +189,18 @@ interface HomeRibbonProps {
   editTarget: string | null;
   onEditText: (text: string) => void;
   onEditRun: () => void;
+  onCommand: (command: string, args?: Record<string, unknown>) => void;
 }
 
 /** Лента «Главная»: та же, что в Word, и так же разложена по группам. */
 function HomeRibbon(props: HomeRibbonProps): ReactElement {
+  const [fontFamily, setFontFamily] = useState('Calibri');
+  const [fontSize, setFontSize] = useState('11');
+  const [toggles, setToggles] = useState<Record<string, boolean>>({});
+  const run = (command: string, args: Record<string, unknown> = {}, toggle = false): void => {
+    props.onCommand(command, args);
+    if (toggle) setToggles((current) => ({ ...current, [command]: !current[command] }));
+  };
   return (
     <div className="ofc-ribbon-body">
       {/* Открыть — первое, что делает страница: файл с диска или фикстура из
@@ -280,73 +237,63 @@ function HomeRibbon(props: HomeRibbonProps): ReactElement {
         </div>
       </RibbonGroup>
       <RibbonGroup label="Буфер обмена">
-        <RibbonButton icon="paste" label="Вставить" large disabled />
+        <RibbonButton icon="paste" label="Вставить" large disabled={!props.opened} onClick={() => run('paste')} />
         <div className="ofc-stack">
           <div className="ofc-row">
-            <RibbonButton icon="cut" label="Вырезать" disabled />
-            <RibbonButton icon="copy" label="Копировать" disabled />
+            <RibbonButton icon="cut" label="Вырезать" disabled={!props.opened} onClick={() => run('cut')} />
+            <RibbonButton icon="copy" label="Копировать" disabled={!props.opened} onClick={() => run('copy')} />
           </div>
           <div className="ofc-row">
-            <RibbonButton icon="format-painter" label="Формат по образцу" disabled />
+            <RibbonButton icon="format-painter" label="Формат по образцу" disabled={!props.opened} onClick={() => run('format-painter')} />
           </div>
         </div>
       </RibbonGroup>
       <RibbonGroup label="Шрифт">
         <div className="ofc-stack">
           <div className="ofc-row">
-            <RibbonSelect options={FONTS} value="Calibri" ariaLabel="Гарнитура" width={96} disabled />
-            <RibbonSelect options={SIZES} value="11" ariaLabel="Размер шрифта" width={44} disabled />
-            <RibbonButton icon="text-color" label="Цвет текста" disabled />
-            <RibbonButton icon="highlight" label="Выделение цветом" disabled />
+            <RibbonSelect options={FONTS} value={fontFamily} ariaLabel="Гарнитура" width={96} disabled={!props.opened} onChange={(value) => { setFontFamily(value); run('font-family', { value }); }} />
+            <RibbonSelect options={SIZES} value={fontSize} ariaLabel="Размер шрифта" width={44} disabled={!props.opened} onChange={(value) => { setFontSize(value); run('font-size', { value: Number(value) }); }} />
+            <RibbonButton icon="text-color" label="Цвет текста" disabled={!props.opened} onClick={() => { const value = window.prompt('Цвет текста RRGGBB', '000000'); if (value) run('text-color', { value }); }} />
+            <RibbonButton icon="highlight" label="Выделение цветом" disabled={!props.opened} onClick={() => { const value = window.prompt('Цвет выделения', 'yellow'); if (value) run('highlight', { value }); }} />
           </div>
           <div className="ofc-row">
-            <RibbonToggle icon="bold" label="Полужирный" disabled />
-            <RibbonToggle icon="italic" label="Курсив" disabled />
-            <RibbonToggle icon="underline" label="Подчёркнутый" disabled />
-            <RibbonToggle icon="strikethrough" label="Зачёркнутый" disabled />
-            <RibbonToggle icon="subscript" label="Подстрочный знак" disabled />
-            <RibbonToggle icon="superscript" label="Надстрочный знак" disabled />
+            <RibbonToggle icon="bold" label="Полужирный" active={toggles['toggle-bold'] ?? false} disabled={!props.opened} onClick={() => run('toggle-bold', {}, true)} />
+            <RibbonToggle icon="italic" label="Курсив" active={toggles['toggle-italic'] ?? false} disabled={!props.opened} onClick={() => run('toggle-italic', {}, true)} />
+            <RibbonToggle icon="underline" label="Подчёркнутый" active={toggles['toggle-underline'] ?? false} disabled={!props.opened} onClick={() => run('toggle-underline', {}, true)} />
+            <RibbonToggle icon="strikethrough" label="Зачёркнутый" active={toggles['toggle-strikethrough'] ?? false} disabled={!props.opened} onClick={() => run('toggle-strikethrough', {}, true)} />
+            <RibbonToggle icon="subscript" label="Подстрочный знак" active={toggles['toggle-subscript'] ?? false} disabled={!props.opened} onClick={() => run('toggle-subscript', {}, true)} />
+            <RibbonToggle icon="superscript" label="Надстрочный знак" active={toggles['toggle-superscript'] ?? false} disabled={!props.opened} onClick={() => run('toggle-superscript', {}, true)} />
           </div>
         </div>
       </RibbonGroup>
       <RibbonGroup label="Абзац">
         <div className="ofc-stack">
           <div className="ofc-row">
-            <RibbonButton icon="bullets" label="Маркированный список" disabled />
-            <RibbonButton icon="numbering" label="Нумерованный список" disabled />
-            <RibbonButton icon="multilevel-list" label="Многоуровневый список" disabled />
-            <RibbonButton icon="line-spacing" label="Междустрочный интервал" disabled />
+            <RibbonButton icon="bullets" label="Маркированный список" disabled={!props.opened} onClick={() => run('bullets', {}, true)} />
+            <RibbonButton icon="numbering" label="Нумерованный список" disabled={!props.opened} onClick={() => run('numbering', {}, true)} />
+            <RibbonButton icon="multilevel-list" label="Многоуровневый список" disabled={!props.opened} onClick={() => run('multilevel-list', {}, true)} />
+            <RibbonButton icon="line-spacing" label="Междустрочный интервал" disabled={!props.opened} onClick={() => { const value = window.prompt('Междустрочный интервал', '1.5'); if (value) run('line-spacing', { value: Number(value) }); }} />
           </div>
           <div className="ofc-row">
-            <RibbonButton icon="align-left" label="Выровнять по левому краю" disabled />
-            <RibbonButton icon="align-center" label="Выровнять по центру" disabled />
-            <RibbonButton icon="align-right" label="Выровнять по правому краю" disabled />
-            <RibbonButton icon="align-justify" label="Выровнять по ширине" disabled />
-            <RibbonButton icon="indent-decrease" label="Уменьшить отступ" disabled />
-            <RibbonButton icon="indent-increase" label="Увеличить отступ" disabled />
+            <RibbonButton icon="align-left" label="Выровнять по левому краю" disabled={!props.opened} onClick={() => run('align', { value: 'left' })} />
+            <RibbonButton icon="align-center" label="Выровнять по центру" disabled={!props.opened} onClick={() => run('align', { value: 'center' })} />
+            <RibbonButton icon="align-right" label="Выровнять по правому краю" disabled={!props.opened} onClick={() => run('align', { value: 'right' })} />
+            <RibbonButton icon="align-justify" label="Выровнять по ширине" disabled={!props.opened} onClick={() => run('align', { value: 'justify' })} />
+            <RibbonButton icon="indent-decrease" label="Уменьшить отступ" disabled={!props.opened} onClick={() => run('indent', { value: 'left', delta: -360 })} />
+            <RibbonButton icon="indent-increase" label="Увеличить отступ" disabled={!props.opened} onClick={() => run('indent', { value: 'left', delta: 360 })} />
           </div>
         </div>
       </RibbonGroup>
       <RibbonGroup label="Стили">
-        <RibbonTile
-          title="Обычный"
-          sample="Обычный"
-          className="ofc-tile--normal ofc-tile--narrow"
-          disabled
-        />
-        <RibbonTile
-          title="Заголовок 1"
-          sample="Заголовок"
-          className="ofc-tile--title1 ofc-tile--narrow"
-          disabled
-        />
+        <RibbonTile title="Обычный" sample="Обычный" className="ofc-tile--normal ofc-tile--narrow" disabled={!props.opened} onClick={() => run('style', { value: 'Normal' })} />
+        <RibbonTile title="Заголовок 1" sample="Заголовок" className="ofc-tile--title1 ofc-tile--narrow" disabled={!props.opened} onClick={() => run('style', { value: 'Heading1' })} />
       </RibbonGroup>
       <RibbonGroup label="Редактирование">
         <div className="ofc-stack">
           <div className="ofc-row">
-            <RibbonButton icon="find" label="Найти" disabled />
-            <RibbonButton icon="replace" label="Заменить" disabled />
-            <RibbonButton icon="select" label="Выделить" disabled />
+            <RibbonButton icon="find" label="Найти" disabled={!props.opened} onClick={() => run('find')} />
+            <RibbonButton icon="replace" label="Заменить" disabled={!props.opened} onClick={() => run('replace')} />
+            <RibbonButton icon="select" label="Выделить" disabled={!props.opened} onClick={() => run('select-all')} />
           </div>
           {/* Правка текста: клик по тексту документа заполняет поле адресом
               run'а, Enter применяет правку и перераскладывает документ. */}
@@ -465,11 +412,18 @@ export default function DocxPage(): ReactElement {
   const groups = OTHER_RIBBONS[tab];
 
   return (
-    <div className="ofc-app">
+    <div className={`ofc-app${page.reading ? ' ofc-app--reading' : ''}${page.showParagraphMarks ? ' ofc-app--paragraph-marks' : ''}`}>
       <TitleBar
         logo={<LogoWord size={20} />}
         app="Слово"
         documentName={page.label ?? 'Документ1'}
+        onSearch={() => page.onCommand('find')}
+        onUndo={page.onUndo}
+        onRedo={page.onRedo}
+        onSave={page.onSave}
+        canUndo={page.canUndo}
+        canRedo={page.canRedo}
+        saveDisabled={!page.opened}
       />
       <div className="ofc-ribbon">
         <RibbonTabs tabs={TABS} activeId={tab} onSelect={setTab} />
@@ -491,29 +445,37 @@ export default function DocxPage(): ReactElement {
             editTarget={page.editTarget}
             onEditText={page.onEditText}
             onEditRun={page.onEditRun}
+            onCommand={page.onCommand}
           />
         ) : (
           <div className="ofc-ribbon-body">
             {groups?.map((group) => (
               <RibbonGroup key={group.label} label={group.label}>
                 {group.buttons.map((button) => (
-                  <RibbonButton key={button.label} icon={button.icon} label={button.label} disabled />
+                  <RibbonButton
+                    key={button.label}
+                    icon={button.icon}
+                    label={button.label}
+                    disabled={!page.opened && button.command !== 'create' && button.command !== 'help' && button.command !== 'feedback'}
+                    active={button.command === 'ruler' ? page.showRuler : button.command === 'grid' ? page.showGrid : button.command === 'paragraph-marks' ? page.showParagraphMarks : button.command === 'reading' ? page.reading : button.command === 'page-layout' ? !page.reading : false}
+                    onClick={() => page.onCommand(button.command)}
+                  />
                 ))}
               </RibbonGroup>
             ))}
           </div>
         )}
       </div>
-      <Ruler zoom={page.zoom} />
-      {/* Хост вьюера пуст: разметку внутри него рисует вьюер, а React в неё не
-          вмешивается — иначе он снёс бы её при любом своём обновлении. */}
+      {page.showRuler ? <Ruler zoom={page.zoom} /> : null}
+      {/* Вьюер добавляет свой scroller рядом с необязательной сеткой; собственные
+          узлы внутри scroller React не трогает. */}
       <main
         id="viewer"
         ref={page.hostRef}
         onDragOver={page.onDragOver}
         onDragLeave={page.onDragLeave}
         onDrop={page.onDrop}
-      />
+      >{page.showGrid ? <div className="ofc-view-grid" aria-hidden="true" /> : null}</main>
       <StatusBar
         left={
           <>
@@ -543,6 +505,14 @@ export default function DocxPage(): ReactElement {
         {/* Кэш документов: метрика подвала, меняется редко — состоянием React. */}
         <span id="cache">{page.cacheLabel}</span>
       </StatusBar>
+      {page.dialog === 'help' ? <HelpDialog onClose={page.closeDialog} /> : null}
+      {page.dialog === 'pen' || page.dialog === 'marker' || page.dialog === 'eraser' ? (
+        <DrawingPad mode={page.dialog} onClose={page.closeDialog} onInsert={page.insertDrawing} />
+      ) : null}
+      {page.dialog === 'spellcheck' ? (
+        <SpellcheckDialog text={page.editText} onClose={page.closeDialog} onApply={page.applySpellcheck} />
+      ) : null}
+      {page.busyLabel !== null ? <LoadingOverlay label={page.busyLabel} /> : null}
     </div>
   );
 }

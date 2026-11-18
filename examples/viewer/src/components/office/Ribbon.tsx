@@ -188,14 +188,18 @@ export function RibbonTile(props: {
   sample: string;
   className?: string;
   disabled?: boolean;
+  active?: boolean;
+  onClick?: () => void;
 }): ReactElement {
   return (
     <button
       type="button"
-      className={`ofc-tile${props.className === undefined ? '' : ` ${props.className}`}`}
+      className={`ofc-tile${props.className === undefined ? '' : ` ${props.className}`}${props.active === true ? ' ofc-tile--active' : ''}`}
       title={props.title}
       aria-label={props.title}
+      aria-pressed={props.active}
       disabled={props.disabled === true}
+      onClick={props.onClick}
     >
       <span className="ofc-tile__sample">{props.sample}</span>
     </button>

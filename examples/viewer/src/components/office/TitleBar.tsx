@@ -14,6 +14,12 @@ export function TitleBar(props: {
   documentName: string;
   children?: ReactNode;
   onSearch?: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  onSave?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  saveDisabled?: boolean;
 }): ReactElement {
   return (
     <header className="ofc-titlebar">
@@ -27,8 +33,14 @@ export function TitleBar(props: {
         <span className="ofc-titlebar__actions">{props.children}</span>
       )}
       <span className="ofc-titlebar__spacer" />
-      {/* Поиск ничего не ищет, пока страница не дала обработчика: без него
-          кнопка недоступна, а не «нажимается в пустоту». */}
+      {props.onUndo === undefined ? null : (
+        <span className="ofc-titlebar__quick">
+          <button type="button" title="Отменить (Ctrl+Z)" aria-label="Отменить" disabled={props.canUndo !== true} onClick={props.onUndo}><Icon name="undo" size={16} /></button>
+          <button type="button" title="Повторить (Ctrl+Y)" aria-label="Повторить" disabled={props.canRedo !== true} onClick={props.onRedo}><Icon name="redo" size={16} /></button>
+          <button type="button" title="Сохранить (Ctrl+S)" aria-label="Сохранить" disabled={props.saveDisabled === true} onClick={props.onSave}><Icon name="save" size={16} /></button>
+        </span>
+      )}
+      {/* Поиск открывает ту же команду, что и «Найти» на вкладке «Главная». */}
       <button
         type="button"
         className="ofc-titlebar__search"

@@ -18,6 +18,7 @@ import { clearViewer, publishViewer } from '../../lib/bridge.js';
 import { cacheStats, fileDocumentKey, getDocument, putDocument } from '../../lib/doc_cache.js';
 import { downloadBlob } from '../../lib/download.js';
 import { fetchFixture, listFixtures } from '../../lib/fixtures.js';
+import { useEditor } from '../../lib/use_editor.js';
 import { useViewer } from '../../lib/use_viewer.js';
 import {
   releaseAllWasmUrls,
@@ -26,6 +27,7 @@ import {
   warmPdfWasmCache,
   xlsxWorkerUrl,
 } from '../../lib/viewer_urls.js';
+import type { EditorArgs, EditorResult } from '../../editor/types.js';
 
 /**
  * Логика страницы XLSX: вьюер книги и всё, что страница о нём знает.
@@ -137,6 +139,20 @@ export interface XlsxPageApi {
   exportDisabled: boolean;
   onExportSheet: () => void;
   onExportBook: () => void;
+  /** Команда OOXML-редактора; изменившиеся байты возвращаются ленте как есть. */
+  runCommand: (command: string, args?: EditorArgs) => Promise<EditorResult>;
+  undo: () => Promise<void>;
+  redo: () => Promise<void>;
+  save: () => Promise<void>;
+  copyCell: () => Promise<void>;
+  cutCell: () => Promise<void>;
+  pasteCell: () => Promise<void>;
+  copyFormat: () => Promise<void>;
+  pasteFormat: () => Promise<void>;
+  /** Сообщение в строку состояния: результат команды, а не только отказ. */
+  report: (message: string) => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 /** Хук страницы «ДваИксель»: вьюер книги и управление им. */
@@ -161,6 +177,10 @@ export function useXlsxPage(): XlsxPageApi {
   const hitSeqRef = useRef(0);
   /** Ячейка под курсором `(строка, столбец)`, 0-based — цель правки `#edit-cell`. */
   const currentCellRef = useRef<[number, number] | null>(null);
+
+  // Редактор — синглтон на страницу: он держит разобранный пакет книги и
+  // историю правок, пока страница жива.
+  const editor = useEditor();
 
   const { hostRef, viewer, error } = useViewer(
     async (host) =>
@@ -218,37 +238,151 @@ export function useXlsxPage(): XlsxPageApi {
   useEffect(() => clearViewer, []);
 
   /** Открыть книгу байтами и подписью — общий путь файла, фикстуры и перетаскивания. */
-  const show = async (bytes: ArrayBuffer, name: string): Promise<void> => {
-    const active = viewer;
-    if (!active) return;
-    setStatus(`разбираю ${name}…`);
-    const started = performance.now();
-    let list: SheetInfo[];
-    setLoading(true);
+  const show = useCallback(
+    async (bytes: ArrayBuffer, name: string, fromEditor = false): Promise<void> => {
+      const active = viewer;
+      if (!active) return;
+      setStatus(`разбираю ${name}…`);
+      const started = performance.now();
+      let list: SheetInfo[];
+      setLoading(true);
+      try {
+        // Редактор получает копию: вьюер вправе забрать свой буфер переносом, а
+        // редактору байты нужны и после `open` — для правок и истории.
+        if (!fromEditor) await editor.open('xlsx', bytes.slice(0), name);
+        list = await active.open(bytes);
+      } catch (e) {
+        // Подпись снимается — экспортировать нечего, — а список листов остаётся:
+        // книга, показанная раньше, из вьюера никуда не делась.
+        setLabel(null);
+        setStatus(`не открылось: ${messageOf(e)}`);
+        return;
+      } finally {
+        setLoading(false);
+      }
+      const elapsed = Math.round(performance.now() - started);
+      setLabel(name);
+      setSheets(list);
+      // Показывается первый нескрытый лист: скрытый открывать нечего.
+      const first = list.findIndex((sheet) => !sheet.hidden);
+      const index = first < 0 ? 0 : first;
+      setSheetIndex(index);
+      active.showSheet(index);
+      setStatus(`${name}: ${list.length} лист(ов) за ${elapsed} мс`);
+      // К этому моменту байты уже в кэше (фикстуру кладёт `fetchFixture`), а файл
+      // пользователя — `openFile`: индикатору остаётся их посчитать.
+      void refreshCache();
+    },
+    [viewer, editor.open, refreshCache],
+  );
+
+  /**
+   * Команда OOXML-редактора: правка живёт в editor-worker, поэтому вьюеру
+   * отдаются изменившиеся байты заново — подпись книги при этом не меняется.
+   */
+  const runCommand = useCallback(
+    async (command: string, args: EditorArgs = {}): Promise<EditorResult> => {
+      // Без выделения командовать нечем: адрес — ячейка под курсором (её же
+      // правит `#edit-cell`), а явные `row`/`col`/`range` в аргументах важнее.
+      const cell = currentCellRef.current;
+      const target: EditorArgs = cell === null ? {} : { row: cell[0], col: cell[1] };
+      try {
+        const result = await editor.execute(command, { ...target, ...args });
+        if (result.changed && result.bytes) {
+          await show(result.bytes, label ?? 'Книга.xlsx', true);
+        }
+        return result;
+      } catch (e) {
+        // Отказ команды — тоже состояние страницы: лента остаётся живой, а
+        // причина видна в строке состояния, а не только в консоли.
+        setStatus(`команда «${command}» не выполнена: ${messageOf(e)}`);
+        throw e;
+      }
+    },
+    [editor.execute, label, show],
+  );
+
+  /** Отмена правки: редактор отдаёт прежние байты, вьюер показывает их снова. */
+  const undo = useCallback(async (): Promise<void> => {
+    const result = await editor.undo();
+    if (result.bytes) await show(result.bytes, label ?? 'Книга.xlsx', true);
+  }, [editor.undo, label, show]);
+
+  /** Повтор отменённой правки — тем же путём, что и отмена. */
+  const redo = useCallback(async (): Promise<void> => {
+    const result = await editor.redo();
+    if (result.bytes) await show(result.bytes, label ?? 'Книга.xlsx', true);
+  }, [editor.redo, label, show]);
+
+  /** Сохранение книги: байты собирает редактор, скачивает страница. */
+  const save = useCallback(async (): Promise<void> => {
+    const result = await editor.save();
+    if (!result.bytes) return;
+    // Имя кладёт редактор (то же, что ушло в `open`); без него — подпись книги.
+    const value = (result.value ?? {}) as { name?: string };
+    const name = value.name ?? label ?? 'document.xlsx';
+    downloadBlob(
+      new Uint8Array(result.bytes),
+      name,
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+  }, [editor.save, label]);
+
+  /** Копировать текст ячейки под курсором в системный буфер. */
+  const copyCell = useCallback(async (): Promise<void> => {
     try {
-      list = await active.open(bytes);
+      const result = await runCommand('get-cell');
+      const value = (result.value ?? {}) as { text?: string };
+      const text = value.text ?? '';
+      await navigator.clipboard.writeText(text);
+      setStatus(text ? `скопировано: ${text}` : 'ячейка пуста');
     } catch (e) {
-      // Подпись снимается — экспортировать нечего, — а список листов остаётся:
-      // книга, показанная раньше, из вьюера никуда не делась.
-      setLabel(null);
-      setStatus(`не открылось: ${messageOf(e)}`);
-      return;
-    } finally {
-      setLoading(false);
+      setStatus(`копирование не удалось: ${messageOf(e)}`);
     }
-    const elapsed = Math.round(performance.now() - started);
-    setLabel(name);
-    setSheets(list);
-    // Показывается первый нескрытый лист: скрытый открывать нечего.
-    const first = list.findIndex((sheet) => !sheet.hidden);
-    const index = first < 0 ? 0 : first;
-    setSheetIndex(index);
-    active.showSheet(index);
-    setStatus(`${name}: ${list.length} лист(ов) за ${elapsed} мс`);
-    // К этому моменту байты уже в кэше (фикстуру кладёт `fetchFixture`), а файл
-    // пользователя — `openFile`: индикатору остаётся их посчитать.
-    void refreshCache();
-  };
+  }, [runCommand]);
+
+  /** Вырезать — копия в буфер и очистка ячейки одной командой. */
+  const cutCell = useCallback(async (): Promise<void> => {
+    try {
+      const result = await runCommand('get-cell');
+      const value = (result.value ?? {}) as { text?: string };
+      await navigator.clipboard.writeText(value.text ?? '');
+      await runCommand('set-cell', { value: '' });
+      setStatus('ячейка вырезана');
+    } catch (e) {
+      setStatus(`вырезание не удалось: ${messageOf(e)}`);
+    }
+  }, [runCommand]);
+
+  /** Вставить текст из системного буфера в ячейку под курсором. */
+  const pasteCell = useCallback(async (): Promise<void> => {
+    try {
+      const text = await navigator.clipboard.readText();
+      await runCommand('set-cell', { value: text });
+      setStatus('вставлено из буфера обмена');
+    } catch (e) {
+      setStatus(`вставка не удалась: ${messageOf(e)}`);
+    }
+  }, [runCommand]);
+
+  /** Формат по образцу: снимок стиля с ячейки и перенос на другую. */
+  const copyFormat = useCallback(async (): Promise<void> => {
+    try {
+      await runCommand('copy-format');
+      setStatus('формат скопирован');
+    } catch (e) {
+      setStatus(`формат не скопирован: ${messageOf(e)}`);
+    }
+  }, [runCommand]);
+
+  const pasteFormat = useCallback(async (): Promise<void> => {
+    try {
+      await runCommand('paste-format');
+      setStatus('формат применён');
+    } catch (e) {
+      setStatus(`формат не применён: ${messageOf(e)}`);
+    }
+  }, [runCommand]);
 
   /**
    * Экспорт в PDF: файл собирает Rust в воркере, странице остаётся скачивание.
@@ -448,5 +582,17 @@ export function useXlsxPage(): XlsxPageApi {
         ' (все листы)',
       );
     },
+    runCommand,
+    undo,
+    redo,
+    save,
+    copyCell,
+    cutCell,
+    pasteCell,
+    copyFormat,
+    pasteFormat,
+    report: setStatus,
+    canUndo: editor.canUndo,
+    canRedo: editor.canRedo,
   };
 }
