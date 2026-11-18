@@ -1,5 +1,16 @@
 # @meerrec/svelte
 
+## 2.2.0
+
+### Patch Changes
+
+- Исправления после 2.1.0: висящие hit-test/hyperlink при destroy и ошибке
+  воркера, пробелы в текстовых XLSX, парные теги нумерации DOCX, выравнивание
+  DisplayList; xlsx больше не зависит от chrono.
+- Updated dependencies
+- Updated dependencies [d6d0adb]
+  - @meerrec/core@2.2.0
+
 ## 2.1.0
 
 ### Patch Changes

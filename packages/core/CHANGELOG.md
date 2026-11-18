@@ -1,5 +1,21 @@
 # @doc-converter/core
 
+## 2.2.0
+
+### Minor Changes
+
+- Исправления после 2.1.0: висящие hit-test/hyperlink при destroy и ошибке
+  воркера, пробелы в текстовых XLSX, парные теги нумерации DOCX, выравнивание
+  DisplayList; xlsx больше не зависит от chrono.
+
+### Patch Changes
+
+- d6d0adb: Исправлены висящие промисы `hitTest`/`hyperlinkAt`: при `destroy` и ошибке
+  воркера запросы отклоняются, а клик по гиперссылке больше не оставляет
+  unhandled rejection.
+- Updated dependencies
+  - @meerrec/wasm@2.2.0
+
 ## 2.1.0
 
 ### Minor Changes

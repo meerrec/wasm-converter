@@ -1,5 +1,25 @@
 # @doc-converter/cli
 
+## 2.2.0
+
+### Minor Changes
+
+- Исправления после 2.1.0: висящие hit-test/hyperlink при destroy и ошибке
+  воркера, пробелы в текстовых XLSX, парные теги нумерации DOCX, выравнивание
+  DisplayList; xlsx больше не зависит от chrono.
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies [d6d0adb]
+  - @meerrec/core@2.2.0
+  - @meerrec/wasm-docx@2.2.0
+  - @meerrec/wasm-pdf@2.2.0
+  - @meerrec/wasm-odt@2.2.0
+  - @meerrec/wasm-odp@2.2.0
+  - @meerrec/wasm-pptx@2.2.0
+  - @meerrec/wasm-pptx-pdf@2.2.0
+
 ## 2.1.0
 
 ### Minor Changes

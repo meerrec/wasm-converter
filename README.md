@@ -24,8 +24,8 @@
 раскладка DOCX и XLSX, оба транспорта кадра first-class, просмотрщики,
 экспорт PDF/Markdown/HTML/текста, CLI с батч-конвертацией, оракул против
 LibreOffice, бенчмарки против JS-библиотек; спайк LibreOffice-WASM закрыт
-решением no-go. Текущий релиз — `2.1.0`, тег `v2.1.0`: четырнадцать пакетов
-`@meerrec/*@2.1.0` в npmjs.org — основной реестр, установка без токена
+решением no-go. Текущий релиз — `2.2.0`, тег `v2.2.0`: четырнадцать пакетов
+`@meerrec/*@2.2.0` в npmjs.org — основной реестр, установка без токена
 ([ADR-0027](docs/adr/0027-npmjs-primary-registry.md); GitHub Packages —
 зеркало, crates.io — non-goal,
 [ADR-0026](docs/adr/0026-rust-crates-distribution.md)). В релиз вошли
@@ -35,6 +35,12 @@ DOM-overlay для доступности
 ([ADR-0040](docs/adr/0040-bidi-strategy.md)), RTL-fallback шрифтов
 ([ADR-0042](docs/adr/0042-rtl-font-coverage.md)) и обёртки
 `@meerrec/react`/`@meerrec/vue`/`@meerrec/svelte`.
+
+В `2.2.0` вошли исправления после `2.1.0` (висящие hit-test/hyperlink,
+пробелы в текстовых XLSX, парные теги нумерации DOCX, выравнивание DisplayList,
+отказ от chrono в xlsx) и демо-редактор OOXML: ленты DOCX/XLSX/PPTX правят
+исходный пакет в отдельном воркере и сохраняют настоящий файл
+([ADR-0054](docs/adr/0054-ooxml-editor.md)); в npm-пакеты редактор не входит.
 
 В `2.1.0` вошли также правка текста в рантайме
 ([ADR-0043](docs/adr/0043-runtime-text-edits.md)), четыре ленивых wasm-модуля
@@ -52,7 +58,8 @@ XLSB/ODS/ODT/ODP ([ADR-0047](docs/adr/0047-odf-plugin.md),
 <https://meerrec.github.io/wasm-converter/viewer/> и это три страницы:
 «Слово» на `#/docx`, «ДваИксель» на `#/xlsx` и «PowerPoint» на `#/pptx`
 (корень демо ведёт на `#/docx`). Публикуется workflow `Pages` при пуше
-в `main`.
+в `main`. В демо работает OOXML-редактор: команды лент DOCX/XLSX/PPTX
+правят исходный пакет и сохраняют его ([ADR-0054](docs/adr/0054-ooxml-editor.md)).
 
 Страницы «Конвертер» (x2t-wasm, конвертер ONLYOFFICE) и «Euro-Office»
 (self-host движка Euro-Office, форк ONLYOFFICE, AGPL-3.0-only) вынесены вместе
@@ -75,7 +82,7 @@ GitHub Pages не отдаёт заголовки cross-origin isolation (COOP/C
 
 ### Установка
 
-Четырнадцать пакетов `@meerrec/*` версии `2.1.0`: `core`, `wasm`, `wasm-docx`,
+Четырнадцать пакетов `@meerrec/*` версии `2.2.0`: `core`, `wasm`, `wasm-docx`,
 `wasm-pdf`, `wasm-pptx`, `wasm-pptx-pdf`, `wasm-xlsb`, `wasm-ods`, `wasm-odt`,
 `wasm-odp`, `cli`, `react`, `vue`, `svelte`.
 Основной реестр — `registry.npmjs.org`, установка без токена
@@ -93,8 +100,8 @@ npm install -g @meerrec/cli
 ```
 
 Тарболы — в ассетах
-релиза [`v2.1.0`](https://github.com/meerrec/wasm-converter/releases/tag/v2.1.0)
-(`meerrec-*.tgz`, ставится как `npm install ./meerrec-core-2.1.0.tgz`).
+релиза [`v2.2.0`](https://github.com/meerrec/wasm-converter/releases/tag/v2.2.0)
+(`meerrec-*.tgz`, ставится как `npm install ./meerrec-core-2.2.0.tgz`).
 
 `wasm-docx`, `wasm-pdf`, `wasm-pptx`, `wasm-pptx-pdf`, `wasm-xlsb`, `wasm-ods`,
 `wasm-odt` и `wasm-odp` — ленивые модули: воркер грузит их по URL при открытии
