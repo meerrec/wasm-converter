@@ -154,6 +154,25 @@ describe('автомат выделения', () => {
     controller.destroy();
   });
 
+  it('не теряет движение, пришедшее до ответа hit-test на pointerdown', async () => {
+    const { host, getState } = makeHost();
+    let resolveDown: ((hit: SheetHit) => void) | undefined;
+    let resolveMove: ((hit: SheetHit) => void) | undefined;
+    host.hitTest = vi.fn()
+      .mockImplementationOnce(() => new Promise<SheetHit>((resolve) => { resolveDown = resolve; }))
+      .mockImplementationOnce(() => new Promise<SheetHit>((resolve) => { resolveMove = resolve; }));
+    const controller = createSelectionController(host, canvas as unknown as HTMLCanvasElement, scroller as unknown as HTMLDivElement);
+    canvas.dispatch('pointerdown', { button: 0, pointerId: 1, clientX: 1, clientY: 1, ctrlKey: false, metaKey: false, shiftKey: false });
+    canvas.dispatch('pointermove', { pointerId: 1, clientX: 3, clientY: 2 });
+    resolveDown?.({ kind: 'cell', row: 1, col: 1 });
+    await flush();
+    canvas.dispatch('pointerup', { pointerId: 1 });
+    resolveMove?.({ kind: 'cell', row: 2, col: 3 });
+    await flush();
+    expect(getState()?.ranges[0]).toEqual({ start: address(1, 1), end: address(2, 3) });
+    controller.destroy();
+  });
+
   it('не принимает ответ после destroy', async () => {
     const { host, getState } = makeHost();
     const before = getState();

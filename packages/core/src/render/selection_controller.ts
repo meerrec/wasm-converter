@@ -42,6 +42,15 @@ export interface SelectionController {
   destroy(): void;
 }
 
+interface PendingPointer {
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+  moved: boolean;
+  released: boolean;
+  cancelled: boolean;
+}
+
 interface Drag {
   id: number;
   pointerId: number;
@@ -67,6 +76,8 @@ export function createSelectionController(
   let destroyed = false;
   let generation = 0;
   let drag: Drag | null = null;
+  let pendingPointer: PendingPointer | null = null;
+  let finishedDragId: number | null = null;
   let hitInFlight = false;
   let queuedPoint: { x: number; y: number } | null = null;
   let autoFrame: number | null = null;
@@ -152,9 +163,12 @@ export function createSelectionController(
     if (!point) return;
     void host.hitTest(point.x, point.y).then((hit) => {
       hitInFlight = false;
-      if (destroyed || drag?.id !== current.id) return;
+      const active = drag?.id === current.id;
+      const finished = finishedDragId === current.id;
+      if (destroyed || (!active && !finished)) return;
       applyDrag(current, hit);
-      if (queuedPoint) updateDrag(queuedPoint.x, queuedPoint.y);
+      if (finished) finishedDragId = null;
+      if (active && queuedPoint) updateDrag(queuedPoint.x, queuedPoint.y);
     }, () => {
       hitInFlight = false;
     });
@@ -189,7 +203,14 @@ export function createSelectionController(
 
   const finishDrag = (event?: PointerEvent): void => {
     stopAutoScroll();
+    if (event && pendingPointer?.pointerId === event.pointerId) {
+      pendingPointer.released = true;
+      pendingPointer.cancelled = event.type === 'pointercancel';
+    } else if (!event) {
+      pendingPointer = null;
+    }
     const current = drag;
+    if (current) finishedDragId = current.id;
     drag = null;
     queuedPoint = null;
     if (current && event && canvas.hasPointerCapture(current.pointerId)) {
@@ -202,10 +223,22 @@ export function createSelectionController(
     event.preventDefault();
     host.focus();
     ctrlAAll = false;
+    finishedDragId = null;
+    pendingPointer = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      moved: false,
+      released: false,
+      cancelled: false,
+    };
     const seq = ++generation;
     void host.hitTest(event.clientX, event.clientY).then((hit) => {
       const state = host.getSelection();
       if (destroyed || seq !== generation || !state || hit.kind === 'outside') return;
+      const pending = pendingPointer?.pointerId === event.pointerId ? pendingPointer : null;
+      pendingPointer = null;
+      if (pending?.cancelled) return;
       const add = additive(event) || state.mode === 'add';
       const extend = event.shiftKey || state.mode === 'extend';
       if (hit.kind === 'select-all') {
@@ -254,7 +287,7 @@ export function createSelectionController(
         mode: state.mode,
       };
       apply(next);
-      drag = {
+      const nextDrag: Drag = {
         id: generation,
         pointerId: event.pointerId,
         kind,
@@ -264,11 +297,29 @@ export function createSelectionController(
         clientX: event.clientX,
         clientY: event.clientY,
       };
+      if (pending?.released) {
+        if (pending.moved) {
+          void host.hitTest(pending.clientX, pending.clientY).then((lastHit) => {
+            if (!destroyed && generation === nextDrag.id) applyDrag(nextDrag, lastHit);
+          }).catch(() => undefined);
+        }
+        return;
+      }
+      if (!pending) return;
+      drag = nextDrag;
       canvas.setPointerCapture(event.pointerId);
+      if (pending.moved) updateDrag(pending.clientX, pending.clientY);
     }).catch(() => undefined);
   };
 
   const onPointerMove = (event: PointerEvent): void => {
+    if (pendingPointer?.pointerId === event.pointerId) {
+      pendingPointer.clientX = event.clientX;
+      pendingPointer.clientY = event.clientY;
+      pendingPointer.moved = true;
+      event.preventDefault();
+      return;
+    }
     if (!drag || event.pointerId !== drag.pointerId) return;
     event.preventDefault();
     updateDrag(event.clientX, event.clientY);
