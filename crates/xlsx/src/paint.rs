@@ -26,7 +26,7 @@ use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_CACHE, DEFAULT_FONT_
 use doc_converter_render::text_measure::{break_lines, measure_text};
 use doc_converter_render::viewport::Viewport;
 
-use crate::cellref::{column_name, row_name, CellRef, Range};
+use crate::cellref::{column_name, row_name, CellRef, Range, MAX_COL, MAX_ROW};
 use crate::conditional::{EffectiveStyle, RuleIndex, Visual};
 use crate::drawing::ImageAnchor;
 use crate::layout::{SheetLayout, PX_PER_POINT};
@@ -194,7 +194,7 @@ fn sheet_layout(sheet: &Sheet) -> SheetLayout {
         match caches.layouts.get(&key) {
             Some((fingerprint, layout)) if *fingerprint == identity => layout.clone(),
             _ => {
-                let layout = SheetLayout::new(sheet);
+                let layout = SheetLayout::full(sheet);
                 caches.layouts.insert(key, (identity, layout.clone()));
                 layout
             }
@@ -457,6 +457,45 @@ impl Geometry {
     }
 }
 
+/// Точка интерактивного листа, включая полосы заголовков.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SheetHit {
+    Cell(crate::cellref::CellRef),
+    RowHeader { row: u32 },
+    ColumnHeader { col: u32 },
+    SelectAll,
+    Outside,
+}
+
+/// Расширенный hit-test: зона листа и адрес в физических пикселях canvas.
+#[must_use]
+pub fn sheet_hit_test(
+    sheet: &Sheet,
+    viewport: Viewport,
+    show_headers: bool,
+    x: f32,
+    y: f32,
+) -> SheetHit {
+    if x < 0.0 || y < 0.0 || x >= viewport.w || y >= viewport.h {
+        return SheetHit::Outside;
+    }
+    let geometry = Geometry::new(sheet, viewport, show_headers);
+    let layout = &geometry.layout;
+    let cell = crate::cellref::CellRef::new(
+        layout.row_at(geometry.layout_y(y)).min(MAX_ROW),
+        layout.column_at(geometry.layout_x(x)).min(MAX_COL),
+    );
+    if show_headers && x < geometry.header_w && y < geometry.header_h {
+        SheetHit::SelectAll
+    } else if show_headers && y < geometry.header_h {
+        SheetHit::ColumnHeader { col: cell.col }
+    } else if show_headers && x < geometry.header_w {
+        SheetHit::RowHeader { row: cell.row }
+    } else {
+        SheetHit::Cell(cell)
+    }
+}
+
 /// Ячейка под точкой окна, в физических пикселях canvas.
 ///
 /// Точка в полосе заголовков даёт крайнюю ячейку: заголовок — это тоже место
@@ -526,6 +565,25 @@ pub fn build(
     out: &mut DisplayList,
     cancelled: &CancelCell<bool>,
 ) -> Result<(), XlsxError> {
+    build_with_selection(book, sheet, viewport, options, None, out, cancelled)
+}
+
+/// Собрать лист и интерактивное выделение в `DisplayList`.
+///
+/// # Errors
+/// [`XlsxError::Cancelled`] — флаг взведён между полосами.
+// Единый проход кадра: локальные контексты видимых квадрантов не разрываются
+// ради счётчика строк, выделение использует их же после содержимого.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub fn build_with_selection(
+    book: &Workbook,
+    sheet: &Sheet,
+    viewport: Viewport,
+    options: &PaintOptions,
+    selection: Option<&crate::Selection>,
+    out: &mut DisplayList,
+    cancelled: &CancelCell<bool>,
+) -> Result<(), XlsxError> {
     reset_frame_caches(book);
     // Правки привязаны к индексу листа в книге; `build` получает лист ссылкой.
     // Чужой лист (не из этой книги) правок не найдёт — так и задумано.
@@ -581,7 +639,8 @@ pub fn build(
         (first_col, last_col),
     );
 
-    for (rows, cols) in regions {
+    let mut frame_regions = Vec::with_capacity(regions.len());
+    for &(rows, cols) in &regions {
         if rows.0 > rows.1 || cols.0 > cols.1 {
             continue;
         }
@@ -629,6 +688,7 @@ pub fn build(
                 (viewport.h - screen_y).max(0.0),
             ),
         };
+        frame_regions.push(region);
         draw_region(
             book,
             sheet,
@@ -639,6 +699,18 @@ pub fn build(
             &region,
             options,
             &frame_font,
+            out,
+        );
+    }
+
+    if let Some(selection) = selection {
+        draw_selection(
+            sheet,
+            &layout,
+            scale,
+            selection,
+            &frame_regions,
+            options,
             out,
         );
     }
@@ -657,12 +729,160 @@ pub fn build(
                 view_left,
                 view_top,
                 font: header_font,
+                selection,
             },
             out,
         );
     }
 
     Ok(())
+}
+
+const SELECTION_ACCENT: Color = Color(0x21_73_46_FF);
+const SELECTION_FILL: Color = Color(0xD9_E7_DD_66);
+const SELECTION_FILL_DARK: Color = Color(0x2B_4A_38_88);
+const SELECTION_HEADER: Color = Color(0xD2_E3_D8_FF);
+const SELECTION_HEADER_DARK: Color = Color(0x35_50_40_FF);
+
+/// Видимая часть диапазона в одном квадранте, физические пиксели canvas.
+fn range_screen_rect(
+    layout: &SheetLayout,
+    scale: f32,
+    region: &Region,
+    range: Range,
+) -> Option<(f32, f32, f32, f32)> {
+    let range = range.normalized();
+    let first_row = range.first.row.max(region.rows.0);
+    let last_row = range.last.row.min(region.rows.1);
+    let first_col = range.first.col.max(region.cols.0);
+    let last_col = range.last.col.min(region.cols.1);
+    if first_row > last_row || first_col > last_col {
+        return None;
+    }
+    let x0 = region.screen_x(layout.column_x(first_col), scale);
+    let y0 = region.screen_y(layout.row_y(first_row), scale);
+    let x1 = region.screen_x(layout.column_x(last_col + 1), scale);
+    let y1 = region.screen_y(layout.row_y(last_row + 1), scale);
+    Some((x0, y0, x1, y1))
+}
+
+fn stroke_selection_rect(out: &mut DisplayList, rect: (f32, f32, f32, f32), scale: f32) {
+    let (x, y, right, bottom) = rect;
+    out.push(DrawCommand::Rect {
+        x,
+        y,
+        w: (right - x).max(0.0),
+        h: (bottom - y).max(0.0),
+        fill: Color(0),
+        stroke: SELECTION_ACCENT,
+        stroke_w: 2.0 * scale,
+        radius: [0.0; 4],
+    });
+}
+
+/// Заливка диапазона с прямоугольным отверстием активной ячейки: не больше
+/// четырёх команд, независимо от числа выделенных строк и столбцов.
+fn fill_with_hole(
+    out: &mut DisplayList,
+    rect: (f32, f32, f32, f32),
+    hole: Option<(f32, f32, f32, f32)>,
+    color: Color,
+) {
+    let (x0, y0, x1, y1) = rect;
+    let Some((hx0, hy0, hx1, hy1)) = hole else {
+        fill_rect(out, x0, y0, x1 - x0, y1 - y0, color);
+        return;
+    };
+    let hx0 = hx0.max(x0);
+    let hy0 = hy0.max(y0);
+    let hx1 = hx1.min(x1);
+    let hy1 = hy1.min(y1);
+    if hy0 > y0 {
+        fill_rect(out, x0, y0, x1 - x0, hy0 - y0, color);
+    }
+    if hy1 < y1 {
+        fill_rect(out, x0, hy1, x1 - x0, y1 - hy1, color);
+    }
+    if hx0 > x0 {
+        fill_rect(out, x0, hy0, hx0 - x0, hy1 - hy0, color);
+    }
+    if hx1 < x1 {
+        fill_rect(out, hx1, hy0, x1 - hx1, hy1 - hy0, color);
+    }
+}
+
+/// Выделение поверх содержимого, но под заголовками: только видимые
+/// пересечения диапазонов и четырёх квадрантов закрепления.
+fn draw_selection(
+    sheet: &Sheet,
+    layout: &SheetLayout,
+    scale: f32,
+    selection: &crate::Selection,
+    regions: &[Region],
+    options: &PaintOptions,
+    out: &mut DisplayList,
+) {
+    let active = sheet.merges.covering(selection.active).map_or_else(
+        || Range {
+            first: selection.active,
+            last: selection.active,
+        },
+        Range::normalized,
+    );
+    let fill = if options.dark {
+        SELECTION_FILL_DARK
+    } else {
+        SELECTION_FILL
+    };
+
+    for region in regions {
+        let active_rect = range_screen_rect(layout, scale, region, active);
+        out.push(DrawCommand::PushClip {
+            x: region.clip.0,
+            y: region.clip.1,
+            w: region.clip.2,
+            h: region.clip.3,
+        });
+        for range in &selection.ranges {
+            let Some(rect) = range_screen_rect(layout, scale, region, *range) else {
+                continue;
+            };
+            let hole = active_rect.filter(|_| {
+                active.first.row >= range.first.row
+                    && active.last.row <= range.last.row
+                    && active.first.col >= range.first.col
+                    && active.last.col <= range.last.col
+            });
+            fill_with_hole(out, rect, hole, fill);
+            stroke_selection_rect(out, rect, scale);
+        }
+        if let Some((x0, y0, x1, y1)) = active_rect {
+            stroke_selection_rect(out, (x0, y0, x1, y1), scale);
+            let size = 6.0 * scale;
+            fill_rect(
+                out,
+                x1 - size / 2.0,
+                y1 - size / 2.0,
+                size,
+                size,
+                SELECTION_ACCENT,
+            );
+        }
+        out.push(DrawCommand::PopClip);
+    }
+}
+
+/// Выделена ли строка или столбец хотя бы одним диапазоном.
+fn selection_contains(selection: Option<&crate::Selection>, row: u32, col: u32) -> bool {
+    selection.is_some_and(|selection| {
+        selection.ranges.iter().any(|range| {
+            let range = range.normalized();
+            row >= range.first.row
+                && row <= range.last.row
+                && col >= range.first.col
+                && col <= range.last.col
+        })
+    })
 }
 
 /// Квадранты окна, которые нужно нарисовать, в порядке отрисовки.
@@ -1482,6 +1702,8 @@ struct Headers<'a> {
     view_top: f32,
     /// Подпись заголовков: один intern на кадр.
     font: StringRef,
+    /// Выделенные строки и столбцы подсвечиваются теми же диапазонами.
+    selection: Option<&'a crate::Selection>,
 }
 
 /// Полосы заголовков: буквы столбцов сверху, номера строк слева.
@@ -1573,6 +1795,20 @@ fn draw_column_headers(headers: &Headers<'_>, out: &mut DisplayList) {
                 w: visible_w,
                 h: header_h,
             });
+            if selection_contains(headers.selection, 0, col) {
+                fill_rect(
+                    out,
+                    visible_x,
+                    0.0,
+                    visible_w,
+                    header_h,
+                    if options.dark {
+                        SELECTION_HEADER_DARK
+                    } else {
+                        SELECTION_HEADER
+                    },
+                );
+            }
             out.push(DrawCommand::Text {
                 x: x + w / 2.0,
                 y: header_h / 2.0,
@@ -1622,6 +1858,24 @@ fn draw_row_headers(headers: &Headers<'_>, out: &mut DisplayList) {
             let h = layout.row_height(row) * scale;
             if h <= 0.0 || y + h < header_h {
                 continue;
+            }
+            if selection_contains(headers.selection, row, 0) {
+                let visible_y = y.max(header_h);
+                let visible_h = (y + h - visible_y).min(viewport.h - visible_y);
+                if visible_h > 0.0 {
+                    fill_rect(
+                        out,
+                        0.0,
+                        visible_y,
+                        header_w,
+                        visible_h,
+                        if options.dark {
+                            SELECTION_HEADER_DARK
+                        } else {
+                            SELECTION_HEADER
+                        },
+                    );
+                }
             }
             let text = out.intern(&row_name(row));
             out.push(DrawCommand::Text {
@@ -2296,6 +2550,89 @@ mod tests {
             cells: builder.finish(),
             ..SheetContent::default()
         }
+    }
+
+    #[test]
+    fn detailed_hit_test_distinguishes_headers_and_honours_hidden_chrome() {
+        let book = book_with(numbers(), StyleTable::default());
+        let sheet = &book.sheets()[0];
+        let viewport = Viewport {
+            w: 800.0,
+            h: 600.0,
+            scale: 1.0,
+            ..Viewport::default()
+        };
+        assert_eq!(
+            sheet_hit_test(sheet, viewport, true, 1.0, 1.0),
+            SheetHit::SelectAll
+        );
+        assert_eq!(
+            sheet_hit_test(sheet, viewport, true, 50.0, 10.0),
+            SheetHit::ColumnHeader { col: 0 }
+        );
+        assert_eq!(
+            sheet_hit_test(sheet, viewport, true, 10.0, 30.0),
+            SheetHit::RowHeader { row: 0 }
+        );
+        assert_eq!(
+            sheet_hit_test(sheet, viewport, true, 50.0, 30.0),
+            SheetHit::Cell(CellRef::new(0, 0))
+        );
+        assert_eq!(
+            sheet_hit_test(sheet, viewport, false, 1.0, 1.0),
+            SheetHit::Cell(CellRef::new(0, 0))
+        );
+        assert_eq!(
+            sheet_hit_test(sheet, viewport, true, -1.0, 0.0),
+            SheetHit::Outside
+        );
+    }
+
+    #[test]
+    fn full_sheet_selection_has_constant_command_count() {
+        let book = book_with(numbers(), StyleTable::default());
+        let selection = crate::Selection {
+            active: CellRef::new(0, 0),
+            ranges: vec![Range {
+                first: CellRef::new(0, 0),
+                last: CellRef::new(MAX_ROW, MAX_COL),
+            }],
+        };
+        let mut dl = DisplayList::new();
+        build_with_selection(
+            &book,
+            &book.sheets()[0],
+            Viewport {
+                w: 800.0,
+                h: 600.0,
+                scale: 1.0,
+                ..Viewport::default()
+            },
+            &PaintOptions::default(),
+            Some(&selection),
+            &mut dl,
+            &CancelCell::new(false),
+        )
+        .expect("кадр с полным выделением собирается");
+
+        assert!(
+            count(
+                &dl,
+                |cmd| matches!(cmd, DrawCommand::Rect { fill, .. } if *fill == SELECTION_FILL)
+            ) > 0
+        );
+        assert!(
+            count(
+                &dl,
+                |cmd| matches!(cmd, DrawCommand::Rect { stroke, .. } if *stroke == SELECTION_ACCENT)
+            ) < 20
+        );
+        assert!(
+            count(
+                &dl,
+                |cmd| matches!(cmd, DrawCommand::Rect { fill, .. } if *fill == SELECTION_HEADER)
+            ) > 0
+        );
     }
 
     #[test]

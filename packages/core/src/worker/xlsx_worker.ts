@@ -12,19 +12,25 @@ import {
 } from '@meerrec/wasm';
 import type { BuildStatsWire } from '../generated/wire.js';
 import type { InMsg, RenderRequest } from '../protocol.js';
-import { frameTarget, toViewport } from './frame_args.js';
+import { frameTarget, toOptions, toViewport } from './frame_args.js';
 import {
   buildXlsxInto,
   buildXlsxSab,
   cellEdits,
+  cellRect,
+  currentRegion,
   exportPdf,
   exportPdfBook,
   hitTest,
   hyperlinkAt,
   images,
+  navigateSelection,
+  normalizeSelection,
   openXlsx,
+  pageSelection,
   openXlsxStream,
   setCellText,
+  sheetHitTest,
 } from './wasm_typed.js';
 import { post, postError, WorkerCore } from './worker_core.js';
 
@@ -92,6 +98,66 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       } catch {
         // Точка вне книги — не ошибка, а отсутствие ответа.
         post({ type: 'hit', id: msg.id, cell: null });
+      }
+      break;
+    }
+    case 'sheet-hit-test': {
+      try {
+        const hit = sheetHitTest(
+          msg.sheet,
+          toViewport(msg.viewport),
+          toOptions(msg.config),
+          msg.x,
+          msg.y,
+        );
+        post({ type: 'sheet-hit', id: msg.id, hit });
+      } catch (e) {
+        postError(String(e), { id: msg.id, code: 'internal' });
+      }
+      break;
+    }
+    case 'normalize-selection': {
+      try {
+        const selection = normalizeSelection(msg.sheet, msg.selection);
+        post({ type: 'selection-normalized', id: msg.id, selection });
+      } catch (e) {
+        postError(String(e), { id: msg.id, code: 'internal' });
+      }
+      break;
+    }
+    case 'navigate-selection': {
+      try {
+        const active = msg.command.startsWith('page-') && msg.viewport && msg.config
+          ? pageSelection(
+            msg.sheet,
+            msg.active,
+            toViewport(msg.viewport),
+            toOptions(msg.config),
+            msg.command === 'page-left' || msg.command === 'page-right',
+            msg.command === 'page-up' || msg.command === 'page-left',
+          )
+          : navigateSelection(msg.sheet, msg.active, msg.command);
+        post({ type: 'selection-navigated', id: msg.id, active });
+      } catch (e) {
+        postError(String(e), { id: msg.id, code: 'internal' });
+      }
+      break;
+    }
+    case 'current-region': {
+      try {
+        const range = currentRegion(msg.sheet, msg.active);
+        post({ type: 'current-region', id: msg.id, range });
+      } catch (e) {
+        postError(String(e), { id: msg.id, code: 'internal' });
+      }
+      break;
+    }
+    case 'cell-rect': {
+      try {
+        const rect = cellRect(msg.sheet, msg.active);
+        post({ type: 'cell-rect', id: msg.id, rect });
+      } catch (e) {
+        postError(String(e), { id: msg.id, code: 'internal' });
       }
       break;
     }

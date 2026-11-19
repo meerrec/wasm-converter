@@ -14,11 +14,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use doc_converter_core::wire::{
-    BBoxWire, BlockKindWire, BuildStatsWire, DiagnosticCodeWire, DiagnosticLayerWire,
-    DiagnosticWire, HyperlinkInfoWire, ImageInfoWire, MarginsWire, OrientationWire, PageInfoWire,
-    PageRunsWire, PageSizeWire, PaintStatsWire, PdfOptionsWire, RenderOptionsWire, SheetInfoWire,
-    SlideInfoWire, TableContextWire, TextAlignWire, TextDirectionWire, TextLayerWire, TextRunWire,
-    TextStyleWire, ViewportWire,
+    BBoxWire, BlockKindWire, BuildStatsWire, CellAddressWire, CellRangeWire, DiagnosticCodeWire,
+    DiagnosticLayerWire, DiagnosticWire, HyperlinkInfoWire, ImageInfoWire, MarginsWire,
+    OrientationWire, PageInfoWire, PageRunsWire, PageSizeWire, PaintStatsWire, PdfOptionsWire,
+    RenderOptionsWire, SelectionWire, SheetHitWire, SheetInfoWire, SlideInfoWire, TableContextWire,
+    TextAlignWire, TextDirectionWire, TextLayerWire, TextRunWire, TextStyleWire, ViewportWire,
 };
 use ts_rs::TS;
 
@@ -36,6 +36,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         MarginsWire::decl(),
         PdfOptionsWire::decl(),
         ViewportWire::decl(),
+        CellAddressWire::decl(),
+        CellRangeWire::decl(),
+        SelectionWire::decl(),
+        SheetHitWire::decl(),
         RenderOptionsWire::decl(),
         SheetInfoWire::decl(),
         PageInfoWire::decl(),
@@ -68,8 +72,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // `decl()` отдаёт объявление без `export`: дописываем его сами, чтобы
         // типы можно было импортировать из `protocol.ts` поимённо.
         out.push_str("export ");
-        out.push_str(decl.trim_end());
-        out.push_str("\n\n");
+        for line in decl.trim_end().lines() {
+            out.push_str(line.trim_end());
+            out.push('\n');
+        }
+        out.push('\n');
     }
 
     let path =

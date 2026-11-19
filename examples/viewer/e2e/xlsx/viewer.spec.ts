@@ -81,7 +81,7 @@ test('закреплённые строки остаются на месте п�
   expect(errors).toEqual([]);
 });
 
-test('зовёт ячейку по имени под курсором', async ({ page }) => {
+test('выделяет ячейку кликом и показывает её адрес', async ({ page }) => {
   const errors = await boot(page, '/xlsx');
 
   await page.selectOption('#fixture', 'content-table.xlsx');
@@ -90,8 +90,8 @@ test('зовёт ячейку по имени под курсором', async ({
   const box = await page.locator('#viewer > div').boundingBox();
   expect(box).not.toBeNull();
   // Точка внутри первой ячейки данных: заголовок столбцов 20 px, строк 44 px.
-  await page.mouse.move(box!.x + 50, box!.y + 30);
-  await expect(page.locator('#cell')).toHaveText('A1');
+  await page.mouse.click(box!.x + 50, box!.y + 30);
+  await expect(page.locator('#cell')).toHaveValue('A1');
 
   expect(errors).toEqual([]);
 });

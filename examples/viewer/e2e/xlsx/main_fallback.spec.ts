@@ -33,3 +33,23 @@ test('рисует таблицу на main-потоке, когда OffscreenCa
 
   expect(errors).toEqual([]);
 });
+
+test('выделение рисуется тем же main-painter без OffscreenCanvas', async ({ page }) => {
+  await page.addInitScript(() => {
+    delete (
+      HTMLCanvasElement.prototype as { transferControlToOffscreen?: unknown }
+    ).transferControlToOffscreen;
+  });
+  const errors = await boot(page, '/xlsx');
+  await page.selectOption('#fixture', 'content-table.xlsx');
+  await expect(page.locator('#status')).toContainText('1 лист', { timeout: 30_000 });
+
+  const box = await page.locator('#viewer canvas').boundingBox();
+  if (!box) throw new Error('нет canvas');
+  await page.mouse.click(box.x + 50, box.y + 30);
+  await expect(page.locator('#cell')).toHaveValue('A1');
+  await expect(page.locator('#cmds')).not.toHaveText('0');
+  const after = await frameStats(page);
+  expect(after.signature).not.toBe('');
+  expect(errors).toEqual([]);
+});

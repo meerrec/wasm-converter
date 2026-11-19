@@ -387,6 +387,7 @@ export async function createViewerBase<S, O extends ViewerBaseOptions>(
   }
 
   const onScroll = (): void => {
+    spec.onScroll?.(state);
     placeCanvas();
     schedule();
   };

@@ -17,7 +17,7 @@
 //! столбцу, а складывается из отрезков: полосы одинаковой ширины из `<cols>` и
 //! общая ширина между ними.
 
-use crate::cellref::MAX_COL;
+use crate::cellref::{MAX_COL, MAX_ROW};
 use crate::dims::SheetFormat;
 use crate::model::Sheet;
 
@@ -142,17 +142,30 @@ impl SheetLayout {
     /// То же, но с явным запасом строк и столбцов за используемым диапазоном.
     #[must_use]
     pub fn with_margin(sheet: &Sheet, margin: u32) -> Self {
-        let format = sheet.dims.format;
         // Границы — по видимым ячейкам: пустой стилевой запас листа за
         // значениями не должен растягивать ни прокрутку, ни печать.
         let used = sheet.visible_used_range();
         let (cols, rows) = used.map_or((1, 1), |range| {
             (
                 (range.last.col + 1 + margin).min(MAX_COL + 1),
-                range.last.row + 1 + margin,
+                (range.last.row + 1 + margin).min(MAX_ROW + 1),
             )
         });
+        Self::with_size(sheet, cols, rows)
+    }
 
+    /// Полный интерактивный лист Excel: от `A1` до `XFD1048576`.
+    ///
+    /// Пустые адреса не материализуются: полосы столбцов и нестандартные
+    /// высоты строк остаются разреженными, как у сокращённой раскладки.
+    #[must_use]
+    pub fn full(sheet: &Sheet) -> Self {
+        Self::with_size(sheet, MAX_COL + 1, MAX_ROW + 1)
+    }
+
+    /// Раскладка с явным числом адресов по осям.
+    fn with_size(sheet: &Sheet, cols: u32, rows: u32) -> Self {
+        let format = sheet.dims.format;
         let default_col_width = if format.default_col_width_declared {
             width_to_px(format.default_col_width)
         } else {
@@ -678,5 +691,16 @@ mod tests {
                 "столбец {col} без полос"
             );
         }
+    }
+
+    #[test]
+    fn full_layout_covers_all_excel_addresses_without_cells() {
+        let layout = SheetLayout::full(&grid(&[0], &[0]));
+        assert_eq!(layout.cols(), MAX_COL + 1);
+        assert_eq!(layout.rows(), MAX_ROW + 1);
+        assert!(layout.column_x(MAX_COL) > 0.0);
+        assert!(layout.row_y(MAX_ROW) > 0.0);
+        assert_eq!(layout.column_at(layout.column_x(MAX_COL)), MAX_COL);
+        assert_eq!(layout.row_at(layout.row_y(MAX_ROW)), MAX_ROW);
     }
 }

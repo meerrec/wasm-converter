@@ -20,6 +20,7 @@ export const toOptions = (config: RenderConfig): RenderOptionsWire => ({
   showGrid: config.showGrid,
   showHeaders: config.showHeaders,
   dark: config.theme === 'dark',
+  ...(config.selection === undefined ? {} : { selection: config.selection }),
 });
 
 /**

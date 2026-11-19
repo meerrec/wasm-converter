@@ -9,7 +9,8 @@ use std::cell::Cell;
 use std::cell::RefCell;
 
 use doc_converter_core::wire::{
-    CellEditWire, HyperlinkInfoWire, ImageInfoWire, RenderOptionsWire, SheetInfoWire,
+    BBoxWire, CellAddressWire, CellEditWire, CellRangeWire, HyperlinkInfoWire, ImageInfoWire,
+    RenderOptionsWire, SelectionWire, SheetHitWire, SheetInfoWire,
 };
 use doc_converter_render::display_list::DisplayList;
 use doc_converter_wasm_common::frame;
@@ -65,7 +66,7 @@ pub(crate) fn install_book(book: doc_converter_xlsx::Workbook) -> Result<JsValue
         .iter()
         .enumerate()
         .map(|(index, sheet)| {
-            let layout = doc_converter_xlsx::SheetLayout::new(sheet);
+            let layout = doc_converter_xlsx::SheetLayout::full(sheet);
             let pane = sheet.view.pane.filter(|pane| !pane.is_empty());
             SheetInfoWire {
                 name: sheet.meta.name.clone(),
@@ -150,14 +151,23 @@ pub(crate) fn viewport_of(value: JsValue) -> Result<Viewport, JsValue> {
     frame::viewport_of(value)
 }
 
-fn options_of(value: JsValue) -> Result<PaintOptions, JsValue> {
+fn options_of(
+    value: JsValue,
+) -> Result<(PaintOptions, Option<doc_converter_xlsx::Selection>), JsValue> {
     let js: RenderOptionsWire = serde_wasm_bindgen::from_value(value).map_err(to_js)?;
-    Ok(PaintOptions {
-        show_grid: js.show_grid,
-        show_headers: js.show_headers,
-        dark: js.dark,
-        ..PaintOptions::default()
-    })
+    let selection = js.selection.map(|selection| doc_converter_xlsx::Selection {
+        active: address_of(selection.active),
+        ranges: selection.ranges.into_iter().map(range_of).collect(),
+    });
+    Ok((
+        PaintOptions {
+            show_grid: js.show_grid,
+            show_headers: js.show_headers,
+            dark: js.dark,
+            ..PaintOptions::default()
+        },
+        selection,
+    ))
 }
 
 /// Собрать кадр листа в `frame` и вернуть число команд.
@@ -174,6 +184,7 @@ fn build_frame(
     sheet: usize,
     viewport: Viewport,
     options: &PaintOptions,
+    selection: Option<&doc_converter_xlsx::Selection>,
     frame: &mut DisplayList,
 ) -> Result<u32, JsValue> {
     DOC.with(|doc| {
@@ -184,8 +195,9 @@ fn build_frame(
             .get(sheet)
             .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
 
-        let built =
-            CANCEL.with(|cancelled| paint::build(book, sheet, viewport, options, frame, cancelled));
+        let built = CANCEL.with(|cancelled| {
+            paint::build_with_selection(book, sheet, viewport, options, selection, frame, cancelled)
+        });
         // Флаг одноразовый (ADR-0032): попытка сборки его гасит — иначе
         // отменённый кадр отменял бы и следующий.
         CANCEL.with(|cancelled| cancelled.set(false));
@@ -219,9 +231,9 @@ pub fn xlsx_build_display_list_sab(
     options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let viewport = viewport_of(viewport)?;
-    let options = options_of(options)?;
+    let (options, selection) = options_of(options)?;
     let stats = frame::build_sab(sab, slot_capacity, &FRAME, &SCRATCH, |frame| {
-        build_frame(sheet, viewport, &options, frame)
+        build_frame(sheet, viewport, &options, selection.as_ref(), frame)
     })?;
     serde_wasm_bindgen::to_value(&stats).map_err(to_js)
 }
@@ -243,9 +255,9 @@ pub fn xlsx_build_display_list_into(
     options: JsValue,
 ) -> Result<JsValue, JsValue> {
     let viewport = viewport_of(viewport)?;
-    let options = options_of(options)?;
+    let (options, selection) = options_of(options)?;
     let stats = frame::build_into(out, &FRAME, &SCRATCH, |frame| {
-        build_frame(sheet, viewport, &options, frame)
+        build_frame(sheet, viewport, &options, selection.as_ref(), frame)
     })?;
     serde_wasm_bindgen::to_value(&stats).map_err(to_js)
 }
@@ -266,6 +278,235 @@ pub fn xlsx_hit_test(sheet: usize, viewport: JsValue, x: f32, y: f32) -> Result<
             .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
         let cell = paint::hit_test(sheet, viewport, x, y);
         serde_wasm_bindgen::to_value(&(cell.row, cell.col)).map_err(to_js)
+    })
+}
+
+/// Зона листа под точкой: ячейка, заголовок или общий угол.
+///
+/// # Errors
+/// Если книга не открыта, листа нет или окно описано неверно.
+#[wasm_bindgen]
+pub fn xlsx_sheet_hit_test(
+    sheet: usize,
+    viewport: JsValue,
+    options: JsValue,
+    x: f32,
+    y: f32,
+) -> Result<JsValue, JsValue> {
+    let viewport = viewport_of(viewport)?;
+    let options: RenderOptionsWire = serde_wasm_bindgen::from_value(options).map_err(to_js)?;
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
+        let sheet = book
+            .sheets()
+            .get(sheet)
+            .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
+        let hit = match paint::sheet_hit_test(sheet, viewport, options.show_headers, x, y) {
+            paint::SheetHit::Cell(cell) => SheetHitWire::Cell {
+                row: cell.row,
+                col: cell.col,
+            },
+            paint::SheetHit::RowHeader { row } => SheetHitWire::RowHeader { row },
+            paint::SheetHit::ColumnHeader { col } => SheetHitWire::ColumnHeader { col },
+            paint::SheetHit::SelectAll => SheetHitWire::SelectAll,
+            paint::SheetHit::Outside => SheetHitWire::Outside,
+        };
+        serde_wasm_bindgen::to_value(&hit).map_err(to_js)
+    })
+}
+
+fn address_of(value: CellAddressWire) -> CellRef {
+    CellRef::new(
+        value.row.min(doc_converter_xlsx::cellref::MAX_ROW),
+        value.col.min(doc_converter_xlsx::cellref::MAX_COL),
+    )
+}
+
+fn address_wire(value: CellRef) -> CellAddressWire {
+    CellAddressWire {
+        row: value.row,
+        col: value.col,
+    }
+}
+
+fn range_of(value: CellRangeWire) -> doc_converter_xlsx::Range {
+    doc_converter_xlsx::Range {
+        first: address_of(value.start),
+        last: address_of(value.end),
+    }
+    .normalized()
+}
+
+fn range_wire(value: doc_converter_xlsx::Range) -> CellRangeWire {
+    let value = value.normalized();
+    CellRangeWire {
+        start: address_wire(value.first),
+        end: address_wire(value.last),
+    }
+}
+
+/// Нормализовать выделение по объединённым ячейкам текущей книги.
+///
+/// # Errors
+/// Если книга не открыта, листа нет или снимок имеет неверную форму.
+#[wasm_bindgen]
+pub fn xlsx_normalize_selection(sheet: usize, selection: JsValue) -> Result<JsValue, JsValue> {
+    let selection: SelectionWire = serde_wasm_bindgen::from_value(selection).map_err(to_js)?;
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
+        let sheet = book
+            .sheets()
+            .get(sheet)
+            .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
+        let normalized = doc_converter_xlsx::selection::normalize(
+            sheet,
+            &doc_converter_xlsx::Selection {
+                active: address_of(selection.active),
+                ranges: selection.ranges.into_iter().map(range_of).collect(),
+            },
+        );
+        let result = SelectionWire {
+            active: address_wire(normalized.active),
+            ranges: normalized.ranges.into_iter().map(range_wire).collect(),
+        };
+        serde_wasm_bindgen::to_value(&result).map_err(to_js)
+    })
+}
+
+/// Адрес назначения клавиатурной навигации по модели книги.
+///
+/// # Errors
+/// Если книга не открыта, листа нет или команда неизвестна.
+#[wasm_bindgen]
+pub fn xlsx_navigate_selection(
+    sheet: usize,
+    active: JsValue,
+    command: String,
+) -> Result<JsValue, JsValue> {
+    use doc_converter_xlsx::NavigationCommand as Command;
+    let active: CellAddressWire = serde_wasm_bindgen::from_value(active).map_err(to_js)?;
+    let command = if let Some(rest) = command.strip_prefix("steps-") {
+        let Some((direction, count)) = rest.rsplit_once('-') else {
+            return Err(to_js(format!("unknown navigation command `{command}`")));
+        };
+        let count = count
+            .parse::<u32>()
+            .map_err(|_| to_js(format!("unknown navigation command `{command}`")))?
+            .clamp(1, 1_000);
+        match direction {
+            "left" => Command::StepLeft(count),
+            "right" => Command::StepRight(count),
+            "up" => Command::StepUp(count),
+            "down" => Command::StepDown(count),
+            _ => return Err(to_js(format!("unknown navigation command `{command}`"))),
+        }
+    } else {
+        match command.as_str() {
+            "left" => Command::Left,
+            "right" => Command::Right,
+            "up" => Command::Up,
+            "down" => Command::Down,
+            "ctrl-left" => Command::CtrlLeft,
+            "ctrl-right" => Command::CtrlRight,
+            "ctrl-up" => Command::CtrlUp,
+            "ctrl-down" => Command::CtrlDown,
+            "home" => Command::Home,
+            "ctrl-home" => Command::CtrlHome,
+            "ctrl-end" => Command::CtrlEnd,
+            _ => return Err(to_js(format!("unknown navigation command `{command}`"))),
+        }
+    };
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
+        let sheet = book
+            .sheets()
+            .get(sheet)
+            .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
+        let target = doc_converter_xlsx::selection::navigate(sheet, address_of(active), command);
+        serde_wasm_bindgen::to_value(&address_wire(target)).map_err(to_js)
+    })
+}
+
+/// Переход на один видимый экран по фактическим размерам строк и столбцов.
+///
+/// # Errors
+/// Если книга не открыта, листа нет или окно описано неверно.
+#[wasm_bindgen]
+pub fn xlsx_page_selection(
+    sheet: usize,
+    active: JsValue,
+    viewport: JsValue,
+    options: JsValue,
+    horizontal: bool,
+    backward: bool,
+) -> Result<JsValue, JsValue> {
+    let active: CellAddressWire = serde_wasm_bindgen::from_value(active).map_err(to_js)?;
+    let viewport = viewport_of(viewport)?;
+    let options: RenderOptionsWire = serde_wasm_bindgen::from_value(options).map_err(to_js)?;
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
+        let sheet = book
+            .sheets()
+            .get(sheet)
+            .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
+        let target = doc_converter_xlsx::selection::page_navigate(
+            sheet,
+            address_of(active),
+            viewport,
+            options.show_headers,
+            horizontal,
+            backward,
+        );
+        serde_wasm_bindgen::to_value(&address_wire(target)).map_err(to_js)
+    })
+}
+
+/// Область данных вокруг активной ячейки для Ctrl+A либо `null`.
+///
+/// # Errors
+/// Если книга не открыта или листа нет.
+#[wasm_bindgen]
+pub fn xlsx_current_region(sheet: usize, active: JsValue) -> Result<JsValue, JsValue> {
+    let active: CellAddressWire = serde_wasm_bindgen::from_value(active).map_err(to_js)?;
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
+        let sheet = book
+            .sheets()
+            .get(sheet)
+            .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
+        let region = doc_converter_xlsx::selection::current_region(sheet, address_of(active))
+            .map(range_wire);
+        serde_wasm_bindgen::to_value(&region).map_err(to_js)
+    })
+}
+
+/// Границы ячейки или её объединения в пикселях полной раскладки.
+///
+/// # Errors
+/// Если книга не открыта, листа нет или адрес имеет неверную форму.
+#[wasm_bindgen]
+pub fn xlsx_cell_rect(sheet: usize, active: JsValue) -> Result<JsValue, JsValue> {
+    let active: CellAddressWire = serde_wasm_bindgen::from_value(active).map_err(to_js)?;
+    DOC.with(|doc| {
+        let doc = doc.borrow();
+        let book = doc.as_ref().ok_or_else(|| to_js("no workbook is open"))?;
+        let sheet = book
+            .sheets()
+            .get(sheet)
+            .ok_or_else(|| to_js(format!("sheet {sheet} does not exist")))?;
+        let rect = doc_converter_xlsx::selection::cell_rect(sheet, address_of(active));
+        let result = BBoxWire {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+        };
+        serde_wasm_bindgen::to_value(&result).map_err(to_js)
     })
 }
 

@@ -59,6 +59,8 @@ export interface ViewerFormatSpec<S, O> {
   exportText?: (st: ViewerState<S>, format: TextExportFormat) => Promise<string>;
   /** Обновить доступный слой по требованию ядра (DOCX). */
   requestTextLayer?: (st: ViewerState<S>, page: number | null) => void;
+  /** Синхронизация форматного состояния с фактической DOM-прокруткой. */
+  onScroll?: (st: ViewerState<S>) => void;
   /** Дополнительная разметка формата: textLayer, role, подписки canvas. */
   extraInit?: (st: ViewerState<S>, canvas: HTMLCanvasElement, scroller: HTMLDivElement) => void;
   /** Форматное сообщение; `true` — ядру его обрабатывать не нужно. */

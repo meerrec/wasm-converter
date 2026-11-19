@@ -5,13 +5,13 @@ import {
   useState,
   type ChangeEvent,
   type DragEvent as ReactDragEvent,
-  type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from 'react';
 import {
   createXlsxViewer,
   type PdfOptions,
   type SheetInfo,
+  type XlsxSelection,
   type XlsxViewerHandle,
 } from '@meerrec/core';
 import { clearViewer, publishViewer } from '../../lib/bridge.js';
@@ -55,6 +55,17 @@ function columnName(col: number): string {
   return name;
 }
 
+/** Подпись Name Box: активный диапазон и число дополнительных. */
+function selectionLabel(selection: XlsxSelection): string {
+  const range = selection.ranges[selection.ranges.length - 1];
+  const cell = `${columnName(selection.active.col)}${selection.active.row + 1}`;
+  if (!range) return cell;
+  const first = `${columnName(range.start.col)}${range.start.row + 1}`;
+  const last = `${columnName(range.end.col)}${range.end.row + 1}`;
+  const primary = first === last ? first : `${first}:${last}`;
+  return selection.ranges.length > 1 ? `${primary}; ещё ${selection.ranges.length - 1}` : primary;
+}
+
 /** Текст ошибки: у исключений он есть, у остальных значений — их запись строкой. */
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -82,10 +93,10 @@ export interface XlsxPageApi {
   viewer: XlsxViewerHandle | null;
   /** Хост вьюера: на `<main id="viewer">`, всегда пустой. */
   hostRef: RefObject<HTMLElement | null>;
-  /** Поле имени ячейки в строке состояния: на `<span id="cell">`. */
-  cellRef: RefObject<HTMLSpanElement | null>;
-  /** Наведение: адрес ячейки под курсором. */
-  onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
+  /** Name Box: адрес активной ячейки или диапазона. */
+  cellRef: RefObject<HTMLInputElement | null>;
+  /** Переход к адресу, введённому в Name Box. */
+  onCellReference: (reference: string) => void;
   /** Перетаскивание книги в окно — рамка на хосте. */
   onDragOver: (event: ReactDragEvent<HTMLElement>) => void;
   onDragLeave: (event: ReactDragEvent<HTMLElement>) => void;
@@ -118,8 +129,8 @@ export interface XlsxPageApi {
   onShowGrid: (checked: boolean) => void;
   onShowHeaders: (checked: boolean) => void;
   /**
-   * Правка ячейки под курсором: текст из поля `#edit-cell` (Enter в нём).
-   * Цель — последняя ячейка, на которой останавливался курсор.
+   * Правка активной ячейки: текст из поля `#edit-cell` (Enter в нём).
+   * Цель — активная ячейка текущего выделения.
    */
   onEditCell: (text: string) => void;
   /** Листов нет или вьюер не поднялся — править нечего. */
@@ -172,10 +183,8 @@ export function useXlsxPage(): XlsxPageApi {
   const [exporting, setExporting] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const cellRef = useRef<HTMLSpanElement | null>(null);
-  /** Номер последнего запроса `hitTest`: ответы по старым точкам не должны обгонять свежие. */
-  const hitSeqRef = useRef(0);
-  /** Ячейка под курсором `(строка, столбец)`, 0-based — цель правки `#edit-cell`. */
+  const cellRef = useRef<HTMLInputElement | null>(null);
+  /** Активная ячейка `(строка, столбец)`, 0-based — цель правки `#edit-cell`. */
   const currentCellRef = useRef<[number, number] | null>(null);
 
   // Редактор — синглтон на страницу: он держит разобранный пакет книги и
@@ -195,6 +204,10 @@ export function useXlsxPage(): XlsxPageApi {
         ...(new URLSearchParams(window.location.search).has('a11y') ? { a11y: true } : {}),
       }),
     (handle) => {
+      handle.onSelectionChange((selection) => {
+        currentCellRef.current = [selection.active.row, selection.active.col];
+        if (cellRef.current) cellRef.current.value = selectionLabel(selection);
+      });
       publishViewer({ kind: 'xlsx', viewer: handle });
     },
   );
@@ -243,6 +256,8 @@ export function useXlsxPage(): XlsxPageApi {
       const active = viewer;
       if (!active) return;
       setStatus(`разбираю ${name}…`);
+      const previousSheet = active.sheetIndex;
+      const previousSelection = fromEditor ? active.getSelection() : null;
       const started = performance.now();
       let list: SheetInfo[];
       setLoading(true);
@@ -263,11 +278,16 @@ export function useXlsxPage(): XlsxPageApi {
       const elapsed = Math.round(performance.now() - started);
       setLabel(name);
       setSheets(list);
-      // Показывается первый нескрытый лист: скрытый открывать нечего.
+      // При обычном открытии — первый нескрытый лист; после команды
+      // редактора восстанавливаются прежние лист и выделение.
       const first = list.findIndex((sheet) => !sheet.hidden);
-      const index = first < 0 ? 0 : first;
+      const restored = previousSelection && list[previousSheet] && !list[previousSheet].hidden
+        ? previousSheet
+        : -1;
+      const index = restored >= 0 ? restored : first < 0 ? 0 : first;
       setSheetIndex(index);
       active.showSheet(index);
+      if (previousSelection) await active.restoreSelection(previousSelection);
       setStatus(`${name}: ${list.length} лист(ов) за ${elapsed} мс`);
       // К этому моменту байты уже в кэше (фикстуру кладёт `fetchFixture`), а файл
       // пользователя — `openFile`: индикатору остаётся их посчитать.
@@ -282,8 +302,8 @@ export function useXlsxPage(): XlsxPageApi {
    */
   const runCommand = useCallback(
     async (command: string, args: EditorArgs = {}): Promise<EditorResult> => {
-      // Без выделения командовать нечем: адрес — ячейка под курсором (её же
-      // правит `#edit-cell`), а явные `row`/`col`/`range` в аргументах важнее.
+      // Цель — активная ячейка текущего выделения (её же правит
+      // `#edit-cell`), а явные `row`/`col`/`range` в аргументах важнее.
       const cell = currentCellRef.current;
       const target: EditorArgs = cell === null ? {} : { row: cell[0], col: cell[1] };
       try {
@@ -328,7 +348,7 @@ export function useXlsxPage(): XlsxPageApi {
     );
   }, [editor.save, label]);
 
-  /** Копировать текст ячейки под курсором в системный буфер. */
+  /** Копировать текст активной ячейки в системный буфер. */
   const copyCell = useCallback(async (): Promise<void> => {
     try {
       const result = await runCommand('get-cell');
@@ -451,25 +471,12 @@ export function useXlsxPage(): XlsxPageApi {
     await show(bytes, name);
   };
 
-  const onPointerMove = (event: ReactPointerEvent<HTMLElement>): void => {
+  const onCellReference = (reference: string): void => {
     const active = viewer;
-    if (!active) return;
-    const seq = ++hitSeqRef.current;
-    void active.hitTest(event.clientX, event.clientY).then(
-      (cell) => {
-        // Ответ устарел, если мышь успела перейти на другую ячейку: пишет
-        // только последний запрос, иначе строка формул мигала бы задним числом.
-        if (seq !== hitSeqRef.current) return;
-        currentCellRef.current = cell;
-        const output = cellRef.current;
-        if (!output) return;
-        output.textContent = cell ? `${columnName(cell[1])}${cell[0] + 1}` : '—';
-      },
-      () => {
-        // Вьюер убрали посреди запроса: подсказка устарела вместе с ним, а
-        // необработанный отказ засорил бы консоль.
-      },
-    );
+    if (!active || !reference.trim()) return;
+    void active.setSelection(reference).catch((e: unknown) => {
+      setStatus(`не удалось перейти: ${messageOf(e)}`);
+    });
   };
 
   const onDragOver = (event: ReactDragEvent<HTMLElement>): void => {
@@ -503,10 +510,6 @@ export function useXlsxPage(): XlsxPageApi {
   const onSheetChange = (value: string): void => {
     const index = Number(value);
     setSheetIndex(index);
-    // Ячейка под курсором осталась от прежнего листа: на новом листе её нет,
-    // и правка в `#edit-cell` целиться в неё не должна.
-    currentCellRef.current = null;
-    if (cellRef.current) cellRef.current.textContent = '—';
     viewer?.showSheet(index);
   };
 
@@ -517,9 +520,8 @@ export function useXlsxPage(): XlsxPageApi {
   };
 
   /**
-   * Правка ячейки под курсором: сырой текст встаёт на место показанного
-   * значения, кадр перерисовывается сразу, PDF-экспорт видит правку. Цель —
-   * ячейка последнего `hitTest`: без курсора над листом править нечего.
+   * Правка активной ячейки: сырой текст встаёт на место показанного
+   * значения, кадр перерисовывается сразу, PDF-экспорт видит правку.
    */
   const onEditCell = (text: string): void => {
     const active = viewer;
@@ -529,7 +531,7 @@ export function useXlsxPage(): XlsxPageApi {
       return;
     }
     if (!cell) {
-      setStatus('наведите курсор на ячейку, которую правите');
+      setStatus('выделите ячейку, которую правите');
       return;
     }
     active.setCellText(sheetIndex, cell[0], cell[1], text);
@@ -540,7 +542,7 @@ export function useXlsxPage(): XlsxPageApi {
     viewer,
     hostRef,
     cellRef,
-    onPointerMove,
+    onCellReference,
     onDragOver,
     onDragLeave,
     onDrop,
