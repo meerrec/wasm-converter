@@ -1,5 +1,12 @@
 # @meerrec/react
 
+## 2.3.0
+
+### Patch Changes
+
+- Updated dependencies [8a5c02a]
+  - @meerrec/core@2.3.0
+
 ## 2.2.0
 
 ### Patch Changes

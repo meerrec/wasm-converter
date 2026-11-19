@@ -1,5 +1,11 @@
 # @meerrec/wasm-pptx
 
+## 2.3.0
+
+### Patch Changes
+
+- Версия синхронизирована с релизом 2.3.0 в общем lockstep четырнадцати пакетов.
+
 ## 2.2.0
 
 ### Patch Changes

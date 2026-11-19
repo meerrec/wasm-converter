@@ -24,8 +24,8 @@
 раскладка DOCX и XLSX, оба транспорта кадра first-class, просмотрщики,
 экспорт PDF/Markdown/HTML/текста, CLI с батч-конвертацией, оракул против
 LibreOffice, бенчмарки против JS-библиотек; спайк LibreOffice-WASM закрыт
-решением no-go. Текущий релиз — `2.2.0`, тег `v2.2.0`: четырнадцать пакетов
-`@meerrec/*@2.2.0` в npmjs.org — основной реестр, установка без токена
+решением no-go. Текущий релиз — `2.3.0`, тег `v2.3.0`: четырнадцать пакетов
+`@meerrec/*@2.3.0` в npmjs.org — основной реестр, установка без токена
 ([ADR-0027](docs/adr/0027-npmjs-primary-registry.md); GitHub Packages —
 зеркало, crates.io — non-goal,
 [ADR-0026](docs/adr/0026-rust-crates-distribution.md)). В релиз вошли
@@ -35,6 +35,11 @@ DOM-overlay для доступности
 ([ADR-0040](docs/adr/0040-bidi-strategy.md)), RTL-fallback шрифтов
 ([ADR-0042](docs/adr/0042-rtl-font-coverage.md)) и обёртки
 `@meerrec/react`/`@meerrec/vue`/`@meerrec/svelte`.
+
+В `2.3.0` добавлено выделение ячеек XLSX как в Excel на полном листе до
+`XFD1048576`: мышь, клавиатура, несмежные диапазоны, строки, столбцы, полный
+лист, виртуальная прокрутка и API выделения
+([ADR-0055](docs/adr/0055-xlsx-cell-selection.md)). Выделение не меняет книгу.
 
 В `2.2.0` вошли исправления после `2.1.0` (висящие hit-test/hyperlink,
 пробелы в текстовых XLSX, парные теги нумерации DOCX, выравнивание DisplayList,
@@ -82,7 +87,7 @@ GitHub Pages не отдаёт заголовки cross-origin isolation (COOP/C
 
 ### Установка
 
-Четырнадцать пакетов `@meerrec/*` версии `2.2.0`: `core`, `wasm`, `wasm-docx`,
+Четырнадцать пакетов `@meerrec/*` версии `2.3.0`: `core`, `wasm`, `wasm-docx`,
 `wasm-pdf`, `wasm-pptx`, `wasm-pptx-pdf`, `wasm-xlsb`, `wasm-ods`, `wasm-odt`,
 `wasm-odp`, `cli`, `react`, `vue`, `svelte`.
 Основной реестр — `registry.npmjs.org`, установка без токена
@@ -100,8 +105,8 @@ npm install -g @meerrec/cli
 ```
 
 Тарболы — в ассетах
-релиза [`v2.2.0`](https://github.com/meerrec/wasm-converter/releases/tag/v2.2.0)
-(`meerrec-*.tgz`, ставится как `npm install ./meerrec-core-2.2.0.tgz`).
+релиза [`v2.3.0`](https://github.com/meerrec/wasm-converter/releases/tag/v2.3.0)
+(`meerrec-*.tgz`, ставится как `npm install ./meerrec-core-2.3.0.tgz`).
 
 `wasm-docx`, `wasm-pdf`, `wasm-pptx`, `wasm-pptx-pdf`, `wasm-xlsb`, `wasm-ods`,
 `wasm-odt` и `wasm-odp` — ленивые модули: воркер грузит их по URL при открытии
