@@ -1,7 +1,11 @@
 import type {
+  CellAddress,
+  CellRange,
+  CellRect,
   FrameTransport,
   HyperlinkInfo,
   InMsg,
+  OutMsg,
   PaintStats,
   PdfModuleUrls,
   PdfOptions,
@@ -9,7 +13,17 @@ import type {
   RenderMode,
   SheetInfo,
   Viewport,
+  XlsxSelection,
 } from '../protocol.js';
+import { createLogicalScroll, type LogicalScroll } from './logical_scroll.js';
+import { createSelectionController, type SelectionController } from './selection_controller.js';
+import {
+  createSelection,
+  publicSelection,
+  selectionName,
+  sheetSelection,
+  type SelectionState,
+} from './selection.js';
 import {
   createViewerBase,
   type ViewerSpec,
@@ -72,6 +86,21 @@ export interface XlsxViewerHandle {
    * видна в кадре и попадает в PDF-экспорт; кадр перерисовывается сразу.
    */
   setCellText(sheet: number, row: number, col: number, text: string): void;
+  /** Текущее выделение активного листа либо `null` после `clearSelection`. */
+  getSelection(): XlsxSelection | null;
+  /** Выбрать адрес/диапазон A1, полные строки или столбцы и показать его. */
+  setSelection(
+    reference: string | CellRange,
+    options?: { add?: boolean; scrollIntoView?: boolean },
+  ): Promise<void>;
+  /** Восстановить снимок после повторного открытия той же книги. */
+  restoreSelection(selection: XlsxSelection): Promise<void>;
+  /** Убрать выделение без изменения книги. */
+  clearSelection(): void;
+  /** Прокрутить минимально, чтобы ячейка или её объединение стало видимым. */
+  scrollCellIntoView(address: CellAddress): Promise<void>;
+  /** Изменения активной ячейки или диапазонов. */
+  onSelectionChange(handler: (selection: XlsxSelection) => void): () => void;
   /** Текущий кадр картинкой PNG — им проверяют, что нарисовалось. */
   exportPng(opts?: { signal?: AbortSignal }): Promise<Uint8Array>;
   /**
@@ -144,13 +173,28 @@ export interface XlsxViewerOptions {
 }
 
 /** Форматное состояние книги: что отличает её от DOCX/PPTX. */
+interface XlsxRequest {
+  responseType: OutMsg['type'];
+  resolve: (msg: OutMsg) => void;
+  reject: (error: Error) => void;
+}
+
 interface XlsxState {
   sheets: SheetInfo[];
   sheetIndex: number;
+  scroll: LogicalScroll;
   showGrid: boolean;
   showHeaders: boolean;
   theme: 'light' | 'dark';
+  selections: Map<number, SelectionState>;
+  selectionHandlers: Set<(selection: XlsxSelection) => void>;
+  requests: Map<number, XlsxRequest>;
+  controller: SelectionController | null;
+  liveRegion: HTMLElement | null;
+  activeCell: HTMLElement | null;
 }
+
+let nextActiveCellId = 0;
 
 /**
  * Вьюер XLSX: холст над областью прокрутки.
@@ -164,11 +208,126 @@ export async function createXlsxViewer(
   host: HTMLElement,
   options: XlsxViewerOptions = {},
 ): Promise<XlsxViewerHandle> {
+  function currentSelection(st: ViewerState<XlsxState>): SelectionState | null {
+    return st.data.selections.get(st.data.sheetIndex) ?? null;
+  }
+
+  function setSelectionState(st: ViewerState<XlsxState>, next: SelectionState | null): void {
+    if (next) st.data.selections.set(st.data.sheetIndex, next);
+    else st.data.selections.delete(st.data.sheetIndex);
+    const label = next ? `Текущая ячейка ${selectionName(next)}` : 'Выделение очищено';
+    st.scroller.setAttribute('aria-label', `Лист Excel. ${label}`);
+    if (st.data.liveRegion) st.data.liveRegion.textContent = label;
+    if (st.data.activeCell) {
+      st.data.activeCell.textContent = next ? selectionName(next) : '—';
+      st.data.activeCell.setAttribute('aria-label', label);
+    }
+    if (next) {
+      const snapshot = publicSelection(next);
+      for (const handler of st.data.selectionHandlers) handler(snapshot);
+    }
+    st.schedule();
+  }
+
+  function request<T>(
+    st: ViewerState<XlsxState>,
+    responseType: OutMsg['type'],
+    message: (id: number) => InMsg,
+    unwrap: (msg: OutMsg) => T,
+  ): Promise<T> {
+    if (st.destroyed) return Promise.reject(new Error('viewer destroyed'));
+    const id = st.nextRequestId++;
+    return new Promise<T>((resolve, reject) => {
+      st.data.requests.set(id, {
+        responseType,
+        resolve: (msg) => resolve(unwrap(msg)),
+        reject,
+      });
+      st.worker.postMessage(message(id));
+    });
+  }
+
+  function rejectRequests(st: ViewerState<XlsxState>, error: Error, id?: number): void {
+    if (id !== undefined) {
+      const request = st.data.requests.get(id);
+      st.data.requests.delete(id);
+      request?.reject(error);
+      return;
+    }
+    for (const request of st.data.requests.values()) request.reject(error);
+    st.data.requests.clear();
+  }
+
+  function extraMsg(st: ViewerState<XlsxState>, msg: OutMsg): boolean {
+    if (msg.type === 'error') {
+      rejectRequests(st, new Error(msg.message), msg.id);
+      return false;
+    }
+    if (!('id' in msg)) return false;
+    const request = st.data.requests.get(msg.id);
+    if (!request || request.responseType !== msg.type) return false;
+    st.data.requests.delete(msg.id);
+    request.resolve(msg);
+    return true;
+  }
+
+  function scrollCss(st: ViewerState<XlsxState>, x: number, y: number): void {
+    const [left, top] = st.data.scroll.scrollTo(x, y);
+    st.scroller.scrollLeft = left;
+    st.scroller.scrollTop = top;
+    st.refresh();
+  }
+
+  function cellRect(st: ViewerState<XlsxState>, active: CellAddress): Promise<CellRect> {
+    return request(st, 'cell-rect', (id) => ({
+      type: 'cell-rect', id, sheet: st.data.sheetIndex, active,
+    }), (msg) => {
+      if (msg.type !== 'cell-rect') throw new Error('unexpected cell-rect response');
+      return msg.rect;
+    });
+  }
+
+  async function ensureVisible(st: ViewerState<XlsxState>, active: CellAddress): Promise<void> {
+    const rect = await cellRect(st, active);
+    const sheet = st.data.sheets[st.data.sheetIndex];
+    if (!sheet) return;
+    const headerX = st.data.showHeaders ? 44 : 0;
+    const headerY = st.data.showHeaders ? 20 : 0;
+    const availableW = Math.max(1, st.scroller.clientWidth / st.zoom - headerX - sheet.frozenWidth);
+    const availableH = Math.max(1, st.scroller.clientHeight / st.zoom - headerY - sheet.frozenHeight);
+    let x = st.data.scroll.x;
+    let y = st.data.scroll.y;
+    const currentX = x / st.zoom;
+    const currentY = y / st.zoom;
+    const left = sheet.frozenWidth + currentX;
+    const top = sheet.frozenHeight + currentY;
+    const right = left + availableW;
+    const bottom = top + availableH;
+    let layoutX = currentX;
+    let layoutY = currentY;
+    if (rect.x >= sheet.frozenWidth) {
+      if (rect.x < left) layoutX = Math.max(0, rect.x - sheet.frozenWidth);
+      if (rect.x + rect.width > right) {
+        layoutX = Math.max(0, rect.x + rect.width - sheet.frozenWidth - availableW);
+      }
+    }
+    if (rect.y >= sheet.frozenHeight) {
+      if (rect.y < top) layoutY = Math.max(0, rect.y - sheet.frozenHeight);
+      if (rect.y + rect.height > bottom) {
+        layoutY = Math.max(0, rect.y + rect.height - sheet.frozenHeight - availableH);
+      }
+    }
+    if (layoutX !== currentX || layoutY !== currentY) {
+      scrollCss(st, layoutX * st.zoom, layoutY * st.zoom);
+    }
+  }
+
   /** Окно в единицах рендера: прокрутка браузера — в пикселях экрана, а раскладка — до зума. */
   function viewport(st: ViewerState<XlsxState>): Viewport {
+    st.data.scroll.syncFromDom(st.scroller.scrollLeft, st.scroller.scrollTop);
     return {
-      x: st.scroller.scrollLeft / st.zoom,
-      y: st.scroller.scrollTop / st.zoom,
+      x: st.data.scroll.x / st.zoom,
+      y: st.data.scroll.y / st.zoom,
       w: st.scroller.clientWidth * st.dpr,
       h: st.scroller.clientHeight * st.dpr,
       scale: st.zoom * st.dpr,
@@ -178,7 +337,14 @@ export async function createXlsxViewer(
   /** Настройки рисования, общие для кадра и запросов по точке. */
   function renderConfig(st: ViewerState<XlsxState>): RenderConfig {
     const d = st.data;
-    return { showGrid: d.showGrid, showHeaders: d.showHeaders, theme: d.theme, dpr: st.dpr };
+    const selection = currentSelection(st);
+    return {
+      showGrid: d.showGrid,
+      showHeaders: d.showHeaders,
+      theme: d.theme,
+      dpr: st.dpr,
+      ...(selection ? { selection: sheetSelection(selection) } : {}),
+    };
   }
 
   /** Точка события мыши в физических пикселях холста. */
@@ -239,16 +405,34 @@ export async function createXlsxViewer(
     openedResponse: 'opened',
     onOpened(st, msg) {
       if (msg.type !== 'opened') return;
+      rejectRequests(st, new Error('workbook reopened'));
+      st.data.selections.clear();
       st.data.sheets = msg.sheets;
+      setSelectionState(st, createSelection(st.data.sheetIndex));
+      st.data.scroll.scrollTo(0, 0);
       st.applyLayout();
       st.schedule();
     },
     applyLayout(st) {
       const sheet = st.data.sheets[st.data.sheetIndex];
       if (!sheet) return;
-      st.spacer.style.width = `${sheet.width * st.zoom}px`;
-      st.spacer.style.height = `${sheet.height * st.zoom}px`;
+      st.data.scroll.configure(
+        sheet.width,
+        sheet.height,
+        st.zoom,
+        st.scroller.clientWidth,
+        st.scroller.clientHeight,
+      );
+      st.spacer.style.width = `${st.data.scroll.width}px`;
+      st.spacer.style.height = `${st.data.scroll.height}px`;
+      const [left, top] = st.data.scroll.scrollTo(st.data.scroll.x, st.data.scroll.y);
+      if (st.scroller.scrollLeft !== left) st.scroller.scrollLeft = left;
+      if (st.scroller.scrollTop !== top) st.scroller.scrollTop = top;
     },
+    onScroll(st) {
+      st.data.scroll.syncFromDom(st.scroller.scrollLeft, st.scroller.scrollTop);
+    },
+    extraMsg,
     viewport,
     openMsg(_st, id, bytes) {
       return { type: 'open', id, format: 'xlsx', bytes } satisfies InMsg;
@@ -257,9 +441,16 @@ export async function createXlsxViewer(
       return {
         sheets: [],
         sheetIndex: 0,
+        scroll: createLogicalScroll(),
         showGrid: opts.showGrid ?? true,
         showHeaders: opts.showHeaders ?? true,
         theme: opts.theme ?? 'light',
+        selections: new Map(),
+        selectionHandlers: new Set(),
+        requests: new Map(),
+        controller: null,
+        liveRegion: null,
+        activeCell: null,
       };
     },
     initOptions: (opts) => ({ pdf: opts.pdfWasm }),
@@ -279,8 +470,84 @@ export async function createXlsxViewer(
       } satisfies InMsg;
     },
     extraInit(st, canvas) {
-      // Доступная книга: область прокрутки отвечает скринридеру как документ.
-      if (options.a11y === true) st.scroller.setAttribute('role', 'document');
+      st.scroller.tabIndex = 0;
+      st.scroller.setAttribute('role', 'grid');
+      st.scroller.setAttribute('aria-multiselectable', 'true');
+      st.scroller.setAttribute('aria-label', 'Лист Excel');
+      canvas.setAttribute('aria-hidden', 'true');
+      const activeRow = document.createElement('div');
+      activeRow.setAttribute('role', 'row');
+      activeRow.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);';
+      const activeCell = document.createElement('span');
+      activeCell.setAttribute('role', 'gridcell');
+      activeCell.setAttribute('aria-selected', 'true');
+      activeCell.id = `xlsx-active-cell-${++nextActiveCellId}`;
+      activeCell.tabIndex = -1;
+      activeRow.append(activeCell);
+      st.scroller.append(activeRow);
+      st.scroller.setAttribute('aria-activedescendant', activeCell.id);
+      st.data.activeCell = activeCell;
+
+      const live = document.createElement('span');
+      live.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;';
+      live.setAttribute('role', 'status');
+      live.setAttribute('aria-live', 'polite');
+      st.host.append(live);
+      st.data.liveRegion = live;
+
+      st.data.controller = createSelectionController({
+        getSelection: () => currentSelection(st),
+        setSelection: (next) => setSelectionState(st, next),
+        hitTest: (clientX, clientY) => {
+          const [x, y] = canvasPoint(st, clientX, clientY);
+          return request(st, 'sheet-hit', (id) => ({
+            type: 'sheet-hit-test', id, sheet: st.data.sheetIndex, x, y,
+            viewport: viewport(st), config: renderConfig(st),
+          }), (msg) => {
+            if (msg.type !== 'sheet-hit') throw new Error('unexpected sheet-hit response');
+            return msg.hit;
+          });
+        },
+        normalize: (selection) => request(st, 'selection-normalized', (id) => ({
+          type: 'normalize-selection', id, sheet: st.data.sheetIndex, selection,
+        }), (msg) => {
+          if (msg.type !== 'selection-normalized') throw new Error('unexpected normalization response');
+          return msg.selection;
+        }),
+        navigate: (active, command) => request(st, 'selection-navigated', (id) => ({
+          type: 'navigate-selection', id, sheet: st.data.sheetIndex, active, command,
+        }), (msg) => {
+          if (msg.type !== 'selection-navigated') throw new Error('unexpected navigation response');
+          return msg.active;
+        }),
+        currentRegion: (active) => request(st, 'current-region', (id) => ({
+          type: 'current-region', id, sheet: st.data.sheetIndex, active,
+        }), (msg) => {
+          if (msg.type !== 'current-region') throw new Error('unexpected region response');
+          return msg.range;
+        }),
+        pageMove: async (active, horizontal, backward) => {
+          const command = horizontal
+            ? backward ? 'page-left' : 'page-right'
+            : backward ? 'page-up' : 'page-down';
+          return request(st, 'selection-navigated', (id) => ({
+            type: 'navigate-selection', id, sheet: st.data.sheetIndex, active, command,
+            viewport: viewport(st), config: renderConfig(st),
+          }), (msg) => {
+            if (msg.type !== 'selection-navigated') throw new Error('unexpected page response');
+            return msg.active;
+          });
+        },
+        ensureVisible: (active) => ensureVisible(st, active),
+        scrollBy: (x, y) => scrollCss(st, st.data.scroll.x + x, st.data.scroll.y + y),
+        focus: () => st.scroller.focus({ preventScroll: true }),
+      }, canvas, st.scroller);
+      st.disposers.add(() => {
+        st.data.controller?.destroy();
+        st.data.controller = null;
+        rejectRequests(st, new Error('viewer destroyed'));
+      });
+
       // Клик по холсту: ссылку ищем там же, где ячейку для подсказки адреса.
       // Книги может не быть вовсе — тогда и спрашивать нечего.
       const onCanvasClick = (ev: MouseEvent): void => {
@@ -330,14 +597,26 @@ export async function createXlsxViewer(
     showSheet(index: number): void {
       if (index < 0 || index >= st.data.sheets.length) return;
       st.data.sheetIndex = index;
+      const selection = currentSelection(st) ?? createSelection(index);
+      setSelectionState(st, selection);
+      st.data.scroll.scrollTo(0, 0);
       st.scroller.scrollTop = 0;
       st.scroller.scrollLeft = 0;
       st.applyLayout();
       st.refresh();
     },
 
-    setZoom: base.setZoom,
-    scrollTo: base.scrollTo,
+    setZoom(next: number): void {
+      base.setZoom(next);
+      const active = currentSelection(st)?.active;
+      if (active) void ensureVisible(st, active).catch(() => undefined);
+    },
+    scrollTo(x: number, y: number): void {
+      const [left, top] = st.data.scroll.scrollTo(x * st.zoom, y * st.zoom);
+      st.scroller.scrollLeft = left;
+      st.scroller.scrollTop = top;
+      st.refresh();
+    },
 
     setView(next: { showGrid?: boolean; showHeaders?: boolean; theme?: 'light' | 'dark' }): void {
       if (next.showGrid !== undefined) st.data.showGrid = next.showGrid;
@@ -356,6 +635,34 @@ export async function createXlsxViewer(
       // Кадр перерисовывается сразу: сообщения воркер читает по порядку, и
       // правка ляжет в книгу раньше следующего `render`.
       st.schedule();
+    },
+
+    getSelection(): XlsxSelection | null {
+      const selection = currentSelection(st);
+      if (!selection) return null;
+      return {
+        ...publicSelection(selection),
+        active: { ...selection.active },
+        ranges: selection.ranges.map((range) => ({ start: { ...range.start }, end: { ...range.end } })),
+      };
+    },
+    setSelection(reference, options) {
+      if (!st.data.controller) return Promise.reject(new Error('viewer destroyed'));
+      return st.data.controller.setSelection(reference, options?.add ?? false, options?.scrollIntoView ?? true);
+    },
+    restoreSelection(selection) {
+      if (!st.data.controller) return Promise.reject(new Error('viewer destroyed'));
+      return st.data.controller.restoreSelection(selection);
+    },
+    clearSelection(): void {
+      st.data.controller?.clearSelection();
+    },
+    scrollCellIntoView(active: CellAddress): Promise<void> {
+      return ensureVisible(st, active);
+    },
+    onSelectionChange(handler) {
+      st.data.selectionHandlers.add(handler);
+      return () => st.data.selectionHandlers.delete(handler);
     },
 
     exportPng: base.exportPng,

@@ -86,9 +86,11 @@ export default [
     //
     // 480 → 490 КБ в 2.0.2: редактирование ячеек (xlsx_set_cell_text,
     // снимок правок для lazy pdf-wasm) — +2,6 КБ gzip.
+    // 490 → 500 КБ: полное выделение XLSX (ADR-0055) — навигация, hit-test
+    // заголовков и подсветка диапазонов добавили 5,7 КБ gzip.
     name: 'wasm (viewer)',
     path: 'packages/wasm/pkg/*.wasm',
-    limit: '490 KB',
+    limit: '500 KB',
     gzip: true,
     modifyEsbuildConfig: (config) => ({ ...config, loader: { '.wasm': 'copy' } }),
   },

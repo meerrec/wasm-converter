@@ -33,9 +33,48 @@ pub struct ViewportWire {
     pub scale: f32,
 }
 
+/// Адрес ячейки, 0-based: `A1` — `(0, 0)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct CellAddressWire {
+    pub row: u32,
+    pub col: u32,
+}
+
+/// Нормализованный прямоугольный диапазон, границы включительно.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct CellRangeWire {
+    pub start: CellAddressWire,
+    pub end: CellAddressWire,
+}
+
+/// Выделение одного листа; сам номер листа остаётся в запросе кадра.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct SelectionWire {
+    pub active: CellAddressWire,
+    pub ranges: Vec<CellRangeWire>,
+}
+
+/// Точка интерактивного листа: ячейка либо одна из полос заголовков.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum SheetHitWire {
+    Cell { row: u32, col: u32 },
+    RowHeader { row: u32 },
+    ColumnHeader { col: u32 },
+    SelectAll,
+    Outside,
+}
+
 /// Настройки рисования XLSX. Поля необязательны: интерфейс может прислать
 /// только то, что меняет, а остальное остаётся как в Excel.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RenderOptionsWire {
@@ -46,6 +85,10 @@ pub struct RenderOptionsWire {
     /// Тёмное оформление; `false` — светлое, как в Excel.
     #[serde(default)]
     pub dark: bool,
+    /// Выделение интерактивного просмотрщика; PDF его не получает.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub selection: Option<SelectionWire>,
 }
 
 /// Описание листа для интерфейса: имя, размеры и закрепления.

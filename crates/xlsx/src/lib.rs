@@ -40,6 +40,7 @@ pub mod numfmt;
 pub mod paint;
 pub mod plugin;
 pub mod print_settings;
+pub mod selection;
 pub mod sheet_meta;
 pub mod strings;
 pub mod styles;
@@ -67,6 +68,7 @@ pub use model::{
 };
 pub use paint::{build as paint_sheet, PaintOptions};
 pub use print_settings::{Orientation, PageMargins, PrintSettings, PrintTitles, Span};
+pub use selection::{CellRect, NavigationCommand, Selection};
 pub use sheet_meta::{Hyperlink, HyperlinkTarget, Merges, Pane, PaneKind, PaneState, SheetView};
 pub use strings::SharedStrings;
 pub use workbook::WorkbookMeta;

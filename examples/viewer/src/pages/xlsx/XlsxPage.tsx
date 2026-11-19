@@ -132,7 +132,7 @@ interface RibbonProps {
 
 /**
  * Лента «Главная»: открытие, буфер, формат, редактирование, экспорт и вид.
- * Команды адресуются ячейке под курсором; диапазон спрашивается там, где он
+ * Команды адресуются активной ячейке; диапазон спрашивается там, где он
  * нужен команде (объединение, сортировка, область печати).
  */
 function HomeRibbon({ page }: RibbonProps): ReactElement {
@@ -1086,7 +1086,6 @@ export default function XlsxPage(): ReactElement {
       <main
         id="viewer"
         ref={page.hostRef}
-        onPointerMove={page.onPointerMove}
         onDragOver={page.onDragOver}
         onDragLeave={page.onDragLeave}
         onDrop={page.onDrop}
@@ -1118,18 +1117,29 @@ export default function XlsxPage(): ReactElement {
                 )}
               </select>
             </label>
-            <span className="ofc-statusbar__cell">
-              ячейка <span id="cell" ref={page.cellRef}>—</span>
-            </span>
+            <label className="ofc-statusbar__cell">
+              ячейка
+              <input
+                id="cell"
+                className="ofc-name-box"
+                ref={page.cellRef}
+                defaultValue="—"
+                title="Адрес активной ячейки или диапазона; Enter — перейти"
+                disabled={page.editDisabled}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') page.onCellReference(event.currentTarget.value);
+                }}
+              />
+            </label>
             <span id="hint">перетащите .xlsx в окно</span>
           </>
         }
         right={
           <>
-            {/* Правка ячейки под курсором: ввод + Enter ставит сырой текст на
+            {/* Правка активной ячейки: ввод + Enter ставит сырой текст на
                 место показанного значения, карточка перерисовывается, PDF видит
-                правку. Цель — ячейка последнего `hitTest`. */}
-            <label className="ofc-edit-cell" title="Текст ячейки под курсором; Enter применяет правку">
+                правку. Цель — активная ячейка текущего выделения. */}
+            <label className="ofc-edit-cell" title="Текст активной ячейки; Enter применяет правку">
               править ячейку
               <input
                 id="edit-cell"

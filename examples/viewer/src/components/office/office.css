@@ -927,6 +927,23 @@
   font-weight: 600;
 }
 
+.ofc-name-box {
+  width: 112px;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--ofc-field-line);
+  border-radius: 3px;
+  background: #fff;
+  color: var(--ofc-text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.ofc-name-box:focus {
+  border-color: var(--ofc-accent);
+  outline: none;
+}
+
 /* --- Быстрые команды, диалоги и редактор -------------------------------- */
 
 .ofc-titlebar__quick {

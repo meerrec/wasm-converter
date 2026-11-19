@@ -20,6 +20,12 @@ export type {
   PageInfo,
   SlideInfo,
   HyperlinkInfo,
+  CellAddress,
+  CellRange,
+  CellRect,
+  SheetHit,
+  SheetSelection,
+  XlsxSelection,
   TextLayer,
   TextRun,
 } from './protocol.js';

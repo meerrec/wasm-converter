@@ -22,13 +22,13 @@ test('экспортирует всю книгу с закладками', async
 
   const book = await downloadPdf(page, '#export-book-pdf');
   // Подпись «(все листы)» отличает книгу от одиночного листа ещё в имени файла.
-  // WebKit санитизирует имя из `<a download>`: пробелы становятся
-  // подчёркиваниями, поэтому `suggestedFilename()` отличается от Chromium и
-  // Firefox. Проверяем фактическое поведение браузера, не подменяя его.
+  // WebKit санитизирует имя из `<a download>` не во всех версиях: пробелы
+  // могут стать подчёркиваниями либо сохраниться. Принимаем ровно эти две
+  // формы; Chromium и Firefox по-прежнему возвращают имя с пробелами.
   const bookName = test.info().project.name === 'webkit'
-    ? 'sheets-three_(все_листы).pdf'
-    : 'sheets-three (все листы).pdf';
-  expect(book.name).toBe(bookName);
+    ? ['sheets-three_(все_листы).pdf', 'sheets-three (все листы).pdf']
+    : ['sheets-three (все листы).pdf'];
+  expect(bookName).toContain(book.name);
   expect(book.name).not.toBe(sheet.name);
 
   const sheetProbe = probePdf(sheet.bytes);

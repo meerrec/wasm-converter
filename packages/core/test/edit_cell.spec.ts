@@ -76,6 +76,12 @@ class FakeElement {
   scrollLeft = 0;
   scrollTop = 0;
 
+  setAttribute(_name: string, _value: string): void {}
+  focus(): void {}
+  setPointerCapture(_id: number): void {}
+  releasePointerCapture(_id: number): void {}
+  hasPointerCapture(_id: number): boolean { return false; }
+
   append(...nodes: FakeElement[]): void {
     this.children.push(...nodes);
   }

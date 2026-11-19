@@ -211,6 +211,31 @@ impl Worksheet {
         row.get(i)
     }
 
+    /// Следующая строка с содержимым в указанном столбце.
+    ///
+    /// Поиск идёт по разреженным `row_ids`, а не по всем адресам листа:
+    /// Ctrl-навигации на пустом листе не нужен миллион пустых lookups.
+    #[must_use]
+    pub fn next_row_with_content(&self, col: u32, from: u32, forward: bool) -> Option<u32> {
+        let has_content = |row: &&u32| {
+            let cells = self.cells_of_row(**row);
+            cells
+                .binary_search_by_key(&col, |cell| cell.col)
+                .ok()
+                .and_then(|index| cells.get(index))
+                .is_some_and(|cell| {
+                    !matches!(cell.value, CellValue::Empty) || cell.formula.is_some()
+                })
+        };
+        if forward {
+            let start = self.row_ids.partition_point(|row| *row <= from);
+            self.row_ids[start..].iter().find(has_content).copied()
+        } else {
+            let end = self.row_ids.partition_point(|row| *row < from);
+            self.row_ids[..end].iter().rev().find(has_content).copied()
+        }
+    }
+
     /// Обход непустых строк по возрастанию номера.
     pub fn rows(&self) -> impl Iterator<Item = (u32, &[Cell])> + '_ {
         (0..self.row_ids.len()).map(|i| (self.row_ids[i], self.cells_of_row(self.row_ids[i])))

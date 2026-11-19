@@ -47,6 +47,13 @@ async function openFixture(page: Page, errors: string[]): Promise<void> {
   await page.selectOption('#fixture', 'content-dense.xlsx');
   await expect(page.locator('#status')).toContainText('1 лист', { timeout: 30_000 });
   await expect(page.locator('#cmds')).not.toHaveText('0');
+  // Метрика резкости сетки измеряет содержимое без акцентной рамки A1;
+  // выделение проверяется отдельным сценарием ниже.
+  await page.evaluate(() => {
+    const bridge = window.docConverter;
+    if (bridge?.kind !== 'xlsx') throw new Error('ожидался XLSX-вьюер');
+    bridge.viewer.clearSelection();
+  });
 }
 
 /** PNG кадра в base64: перенести картинку в другую страницу иначе нечем. */
@@ -362,6 +369,18 @@ test('DPR=2: вдвое больше физических пикселей пр�
 
     expectDoubleResolution(await measureFrames(page, await exportPngBase64(page), await exportPngBase64(refPage)));
     expect(await cellsAt(page, contentPoints)).toEqual(await cellsAt(refPage, contentPoints));
+
+    // Выделение использует ту же DPR-геометрию, а полный лист ограничивает
+    // CSS-распорку даже при удвоенной физической плотности кадра.
+    await page.locator('#cell').fill('XFD1048576');
+    await page.locator('#cell').press('Enter');
+    await expect(page.locator('#cell')).toHaveValue('XFD1048576');
+    const fullScroll = await page.locator('#viewer > div').evaluate((element) => ({
+      width: element.scrollWidth,
+      height: element.scrollHeight,
+    }));
+    expect(fullScroll.width).toBeLessThanOrEqual(8_000_800);
+    expect(fullScroll.height).toBeLessThanOrEqual(8_000_600);
 
     expect(errors).toEqual([]);
   } finally {

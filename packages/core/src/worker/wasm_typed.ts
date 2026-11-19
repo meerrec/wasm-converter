@@ -8,21 +8,32 @@ import {
   stream_open_xlsx,
   xlsx_build_display_list_into,
   xlsx_build_display_list_sab,
+  xlsx_cell_rect,
+  xlsx_current_region,
   xlsx_edits,
   xlsx_hit_test,
+  xlsx_navigate_selection,
+  xlsx_normalize_selection,
+  xlsx_page_selection,
+  xlsx_sheet_hit_test,
   xlsx_hyperlink_at,
   xlsx_images,
   xlsx_open,
   xlsx_set_cell_text,
 } from '@meerrec/wasm';
 import type {
+  BBoxWire,
   BuildStatsWire,
+  CellAddressWire,
+  CellRangeWire,
   HyperlinkInfoWire,
   ImageInfoWire,
   PageInfoWire,
   PaintStatsWire,
   PdfOptionsWire,
   RenderOptionsWire,
+  SelectionWire,
+  SheetHitWire,
   SheetInfoWire,
   SlideInfoWire,
   TextLayerWire,
@@ -175,6 +186,45 @@ export const hitTest = (
   x: number,
   y: number,
 ): [number, number] => xlsx_hit_test(sheet, viewport, x, y) as unknown as [number, number];
+
+/** Зона листа под точкой окна с учётом заголовков. */
+export const sheetHitTest = (
+  sheet: number,
+  viewport: ViewportWire,
+  options: RenderOptionsWire,
+  x: number,
+  y: number,
+): SheetHitWire => xlsx_sheet_hit_test(sheet, viewport, options, x, y) as unknown as SheetHitWire;
+
+/** Нормализация диапазонов по объединённым ячейкам. */
+export const normalizeSelection = (sheet: number, selection: SelectionWire): SelectionWire =>
+  xlsx_normalize_selection(sheet, selection) as unknown as SelectionWire;
+
+/** Цель клавиатурной навигации по модели книги. */
+export const navigateSelection = (
+  sheet: number,
+  active: CellAddressWire,
+  command: string,
+): CellAddressWire => xlsx_navigate_selection(sheet, active, command) as unknown as CellAddressWire;
+
+/** Переход на один видимый экран по фактической раскладке. */
+export const pageSelection = (
+  sheet: number,
+  active: CellAddressWire,
+  viewport: ViewportWire,
+  options: RenderOptionsWire,
+  horizontal: boolean,
+  backward: boolean,
+): CellAddressWire =>
+  xlsx_page_selection(sheet, active, viewport, options, horizontal, backward) as unknown as CellAddressWire;
+
+/** Область данных вокруг активной ячейки либо `null`. */
+export const currentRegion = (sheet: number, active: CellAddressWire): CellRangeWire | null =>
+  xlsx_current_region(sheet, active) as unknown as CellRangeWire | null;
+
+/** Границы ячейки или объединения в пикселях раскладки. */
+export const cellRect = (sheet: number, active: CellAddressWire): BBoxWire =>
+  xlsx_cell_rect(sheet, active) as unknown as BBoxWire;
 
 /** Правка ячейки: снимок для экспортёра PDF, поля — как в Rust `CellEditWire`. */
 export interface CellEdit {

@@ -17,8 +17,8 @@ const SHEET = {
   name: 'Лист1',
   index: 0,
   hidden: false,
-  width: 800,
-  height: 600,
+  width: 1600,
+  height: 1200,
   frozenCols: 0,
   frozenRows: 0,
   frozenWidth: 0,
@@ -95,6 +95,12 @@ class FakeElement {
   scrollTop = 0;
 
   constructor(readonly tag: string) {}
+
+  setAttribute(_name: string, _value: string): void {}
+  focus(): void {}
+  setPointerCapture(_id: number): void {}
+  releasePointerCapture(_id: number): void {}
+  hasPointerCapture(_id: number): boolean { return false; }
 
   append(...nodes: FakeElement[]): void {
     this.children.push(...nodes);
@@ -224,9 +230,11 @@ describe('клик по гиперссылке', () => {
     const scroller = elements[0] as FakeElement;
     scroller.scrollLeft = 100;
     scroller.scrollTop = 50;
+    scroller.dispatch('scroll', {});
 
     canvas.dispatch('click', { clientX: 120, clientY: 40 });
     await flush();
+
 
     expect(worker.last('hyperlink-at')).toMatchObject({
       x: 240,

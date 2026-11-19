@@ -2,12 +2,16 @@
 // здесь; payload'ы описаны в Rust (`crates/core/src/wire.rs`) и сгенерированы
 // в `generated/wire.ts` (ADR-0028). Руками payload'ы не правятся.
 import type {
+  CellAddressWire,
+  CellRangeWire,
   DiagnosticWire,
   HyperlinkInfoWire,
   ImageInfoWire,
   PageInfoWire,
   PaintStatsWire,
   PdfOptionsWire,
+  SelectionWire,
+  SheetHitWire,
   SheetInfoWire,
   SlideInfoWire,
   TextLayerWire,
@@ -40,7 +44,16 @@ export interface RenderConfig {
   showHeaders: boolean;
   theme: 'light' | 'dark';
   dpr: number;
+  /** Выделение XLSX; другие форматы поле не передают. */
+  selection?: SelectionWire;
 }
+
+export type CellAddress = CellAddressWire;
+export type CellRange = CellRangeWire;
+export type SheetSelection = SelectionWire;
+export type XlsxSelection = SelectionWire & { sheetIndex: number };
+export type SheetHit = SheetHitWire;
+export type CellRect = { x: number; y: number; width: number; height: number };
 
 export type CellRef = { kind: 'cell'; sheet: number; row: number; col: number };
 export type TextPos = { kind: 'text'; page: number; offset: number };
@@ -424,6 +437,49 @@ export interface HitTestMsg {
   viewport: Viewport;
   config: RenderConfig;
 }
+/** Расширенный hit-test интерактивного листа. */
+export interface SheetHitTestMsg {
+  type: 'sheet-hit-test';
+  id: number;
+  sheet: number;
+  x: number;
+  y: number;
+  viewport: Viewport;
+  config: RenderConfig;
+}
+/** Нормализация выделения по объединённым ячейкам. */
+export interface NormalizeSelectionMsg {
+  type: 'normalize-selection';
+  id: number;
+  sheet: number;
+  selection: SheetSelection;
+}
+/** Модельно-зависимая клавиатурная навигация. */
+export interface NavigateSelectionMsg {
+  type: 'navigate-selection';
+  id: number;
+  sheet: number;
+  active: CellAddress;
+  command: string;
+  /** Размер окна для PageUp/PageDown; у остальных команд полей нет. */
+  viewport?: Viewport;
+  config?: RenderConfig;
+}
+/** Область данных вокруг активной ячейки для Ctrl+A. */
+export interface CurrentRegionMsg {
+  type: 'current-region';
+  id: number;
+  sheet: number;
+  active: CellAddress;
+}
+/** Границы ячейки или объединения в пикселях раскладки. */
+export interface CellRectMsg {
+  type: 'cell-rect';
+  id: number;
+  sheet: number;
+  active: CellAddress;
+}
+
 export interface ExportPngMsg { type: 'export-png'; id: number }
 
 /**
@@ -558,6 +614,11 @@ export type InMsg =
   | CancelMsg
   | RenderMsg
   | HitTestMsg
+  | SheetHitTestMsg
+  | NormalizeSelectionMsg
+  | NavigateSelectionMsg
+  | CurrentRegionMsg
+  | CellRectMsg
   | HyperlinkAtMsg
   | EditCellMsg
   | EditDocxMsg
@@ -618,6 +679,23 @@ export interface PptxOpenedMsg { type: 'pptx-opened'; id: number; slides: SlideI
 export interface DocxEditedMsg { type: 'docx-edited'; id: number; pages: PageInfo[] }
 /** Ответ на `hit-test`: строка и столбец либо ничего, если точка мимо. */
 export interface HitMsg { type: 'hit'; id: number; cell: [number, number] | null }
+export interface SheetHitResultMsg { type: 'sheet-hit'; id: number; hit: SheetHit }
+export interface SelectionNormalizedMsg {
+  type: 'selection-normalized';
+  id: number;
+  selection: SheetSelection;
+}
+export interface SelectionNavigatedMsg {
+  type: 'selection-navigated';
+  id: number;
+  active: CellAddress;
+}
+export interface CurrentRegionResultMsg {
+  type: 'current-region';
+  id: number;
+  range: CellRange | null;
+}
+export interface CellRectResultMsg { type: 'cell-rect'; id: number; rect: CellRect }
 /** Ответ на `hyperlink-at`: ссылка под точкой либо ничего. */
 export interface HyperlinkMsg { type: 'hyperlink'; id: number; link: HyperlinkInfo | null }
 export interface PngMsg { type: 'png'; id: number; bytes: Uint8Array }
@@ -681,6 +759,11 @@ export type OutMsg =
   | PptxOpenedMsg
   | DocxEditedMsg
   | HitMsg
+  | SheetHitResultMsg
+  | SelectionNormalizedMsg
+  | SelectionNavigatedMsg
+  | CurrentRegionResultMsg
+  | CellRectResultMsg
   | HyperlinkMsg
   | DocxTextMsg
   | TextLayerResultMsg
