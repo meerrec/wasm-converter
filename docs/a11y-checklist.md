@@ -12,7 +12,7 @@ VoiceOver зависит от ОС, браузера и настроек реч�
 
 | Гейт | Где | Что проверяет |
 |---|---|---|
-| DOM и ARIA | `examples/viewer/e2e/docx/a11y.spec.ts` | `.dc-text-layer[role=document]`, `aria-hidden` на canvas и визуальном слое, уровни заголовков, 3 таблицы, `aria-rowindex`/`aria-colindex` |
+| DOM и ARIA | `examples/viewer/e2e/docx/a11y.spec.ts`, `examples/viewer/e2e/xlsx/selection.spec.ts` | `.dc-text-layer[role=document]`, `aria-hidden` на canvas и визуальном слое, уровни заголовков, 3 таблицы, `aria-rowindex`/`aria-colindex`; у XLSX — `role=grid`, `aria-multiselectable`, live-region активной ячейки |
 | axe-core | `examples/viewer/e2e/axe.spec.ts` | 0 violations по WCAG 2 A/AA на 18 DOCX и 11 XLSX (chromium); полный список фикстур — в самом спеке |
 | Выделение и копирование | `examples/viewer/e2e/docx/selection.spec.ts` | drag через три страницы в порядке чтения, таблица как TSV, Ctrl+A на весь документ |
 | RTL | `examples/viewer/e2e/docx/rtl.spec.ts` | `direction`/`bidiLevel`, монотонный `readingOrder`, `w:bidiVisual` при логическом `col` |

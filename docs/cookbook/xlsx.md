@@ -79,10 +79,9 @@ viewer.setZoom(Math.max(0.5, viewer.zoom / 1.1));
 viewer.scrollTo(0, 0);          // в начало листа
 viewer.scrollTo(500, 300);      // на 500 px правее и 300 px ниже начала
 
-// Координаты конкретных ячеек в пикселях раскладки в API просмотрщика не
-// выставляются — их знает Rust-раскладка; для «прыжка к ячейке» используйте
-// свои известные координаты или результат hitTest'а вкупе с размерами листа
-// (см. рецепт 2).
+// Минимально прокрутить так, чтобы ячейка или её объединение стало видимым.
+// Адрес 0-based, геометрию вычисляет Rust — свои координаты не нужны.
+await viewer.scrollCellIntoView({ row: 999, col: 25 });
 ```
 
 **Под капотом.** Единицы в запросе кадра разные и это важно: `viewport.x/y`
@@ -243,6 +242,44 @@ console.log(`Зум: ${viewer.zoom}, эффективный масштаб ка�
 DPR, клампированным лимитом 16M пикселей холста (`computeDpr`), а запрос
 кадра несёт `scale = zoom × DPR` — поэтому ручной учёт DPR в приложении
 только сломает картинку.
+
+---
+
+### <a id="xlsx-09"></a>Рецепт 9. Выделение ячеек и диапазонов
+
+**Задача.** Подсветить диапазон программно, узнать активную ячейку и реагировать
+на изменения пользователем.
+
+```ts
+import type { XlsxSelection } from '@meerrec/core';
+
+await viewer.setSelection('B2:D10');
+await viewer.setSelection('F2', { add: true });       // несмежное выделение
+await viewer.setSelection('XFD1048576');              // край полного листа
+await viewer.setSelection('2:4');                     // полные строки
+await viewer.setSelection('B:D', { scrollIntoView: false });
+
+const unsubscribe = viewer.onSelectionChange((selection: XlsxSelection) => {
+  console.log(selection.sheetIndex, selection.active, selection.ranges);
+});
+
+const current = viewer.getSelection();
+if (current) await viewer.restoreSelection(current);  // после повторного open той же книги
+
+unsubscribe();
+viewer.clearSelection();                              // книга при этом не меняется
+```
+
+Мышь и клавиатура работают внутри вьюера без подписок хоста: drag,
+Shift+расширение, Ctrl/Command+добавление, заголовки строк и столбцов, общий
+угол, Ctrl+A, стрелки, Home/End, PageUp/PageDown, Tab/Enter и автопрокрутка.
+Полный лист доступен до `XFD1048576`; браузерная распорка виртуализируется, а
+выделение всего листа остаётся одним диапазоном и не создаёт список ячеек.
+
+Выделение — рантайм-состояние: оно не попадает в PDF, байты книги или слой
+`setCellText`. Автозаполнение, перемещение содержимого и clipboard в этот API не
+входят. `restoreSelection` нужен только при повторном открытии той же книги,
+например после команды внешнего редактора.
 
 ---
 
