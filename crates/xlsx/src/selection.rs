@@ -235,16 +235,10 @@ fn jump_vertical(sheet: &Sheet, at: CellRef, down: bool) -> CellRef {
         }
         target
     } else {
-        let mut candidate = next;
-        loop {
-            if has_content(sheet, candidate) {
-                break candidate.row;
-            }
-            let Some(following) = offset(candidate.row, step, MAX_ROW) else {
-                break boundary;
-            };
-            candidate.row = following;
-        }
+        sheet
+            .cells
+            .next_row_with_content(at.col, at.row, down)
+            .unwrap_or(boundary)
     };
 
     let target = CellRef::new(target, at.col);
@@ -322,7 +316,7 @@ pub fn page_navigate(
 /// Переместить активную ячейку по команде навигации.
 #[must_use]
 pub fn navigate(sheet: &Sheet, active: CellRef, command: NavigationCommand) -> CellRef {
-    let simple = match command {
+    let step = match command {
         NavigationCommand::StepLeft(count) => {
             return visible_steps(sheet, active, 0, -1, count);
         }
@@ -335,14 +329,31 @@ pub fn navigate(sheet: &Sheet, active: CellRef, command: NavigationCommand) -> C
         NavigationCommand::StepDown(count) => {
             return visible_steps(sheet, active, 1, 0, count);
         }
-        NavigationCommand::Left => Some(visible_step(sheet, active, 0, -1)),
-        NavigationCommand::Right => Some(visible_step(sheet, active, 0, 1)),
-        NavigationCommand::Up => Some(visible_step(sheet, active, -1, 0)),
-        NavigationCommand::Down => Some(visible_step(sheet, active, 1, 0)),
+        NavigationCommand::Left => Some((0, -1)),
+        NavigationCommand::Right => Some((0, 1)),
+        NavigationCommand::Up => Some((-1, 0)),
+        NavigationCommand::Down => Some((1, 0)),
         _ => None,
     };
-    if let Some(target) = simple {
-        return target.unwrap_or(active);
+    if let Some((row_delta, col_delta)) = step {
+        // Из объединения выходим за его ближайшую границу, иначе нормализация
+        // вернёт следующий шаг обратно к якорю и стрелка застрянет.
+        let origin = sheet.merges.covering(active).map_or(active, |merge| {
+            let merge = merge.normalized();
+            CellRef::new(
+                if row_delta > 0 {
+                    merge.last.row
+                } else {
+                    merge.first.row
+                },
+                if col_delta > 0 {
+                    merge.last.col
+                } else {
+                    merge.first.col
+                },
+            )
+        });
+        return visible_step(sheet, origin, row_delta, col_delta).unwrap_or(active);
     }
 
     match command {
@@ -527,6 +538,54 @@ mod tests {
             false,
         );
         assert_eq!(target, CellRef::new(9, 0));
+    }
+
+    #[test]
+    fn arrows_leave_a_merge_and_skip_adjacent_hidden_columns() {
+        let mut book = sheet(&[(1, &[1])]);
+        let active = CellRef::new(1, 1);
+        assert_eq!(
+            navigate(&book, active, NavigationCommand::Right),
+            CellRef::new(1, 3)
+        );
+        assert_eq!(
+            navigate(&book, active, NavigationCommand::Left),
+            CellRef::new(1, 0)
+        );
+        assert_eq!(
+            navigate(&book, active, NavigationCommand::Down),
+            CellRef::new(3, 1)
+        );
+        assert_eq!(
+            navigate(&book, active, NavigationCommand::Up),
+            CellRef::new(0, 1)
+        );
+        book.dims.cols.push(crate::ColWidth {
+            first: 3,
+            last: 3,
+            width: 8.43,
+            custom: false,
+            hidden: true,
+            best_fit: false,
+        });
+        assert_eq!(
+            navigate(&book, active, NavigationCommand::Right),
+            CellRef::new(1, 4)
+        );
+    }
+
+    #[test]
+    fn ctrl_vertical_navigation_uses_sparse_row_ids() {
+        let book = sheet(&[(1_000, &[0])]);
+        assert_eq!(
+            navigate(&book, CellRef::new(0, 0), NavigationCommand::CtrlDown),
+            CellRef::new(1_000, 0)
+        );
+        let empty = sheet(&[]);
+        assert_eq!(
+            navigate(&empty, CellRef::new(0, 0), NavigationCommand::CtrlDown),
+            CellRef::new(MAX_ROW, 0)
+        );
     }
 
     #[test]
