@@ -108,12 +108,13 @@ test('без сетки и заголовков кадр проще', async ({ p
   expect(withHeaders).toEqual([245, 245, 245]);
 
   const withChrome = await frameStats(page);
+  const frameBefore = await page.locator('#frame').textContent();
 
   await page.uncheck('#grid');
   await page.uncheck('#headers');
   await page.waitForFunction(
-    (before) => document.querySelector('#cmds')?.textContent !== before,
-    String(withChrome.colors),
+    (before) => document.querySelector('#frame')?.textContent !== before,
+    frameBefore,
   );
   await page.waitForTimeout(200);
 
