@@ -113,6 +113,23 @@ test('Name Box достигает XFD1048576 и Ctrl+Home возвращает A
   expect(errors).toEqual([]);
 });
 
+test('стрелки выходят из merge, а Ctrl+Down использует разреженные строки', async ({ page }) => {
+  const errors = await openBook(page, 'layout-merged.xlsx');
+  await page.evaluate(async () => {
+    const bridge = window.docConverter;
+    if (bridge?.kind !== 'xlsx') throw new Error('ожидался XLSX-вьюер');
+    await bridge.viewer.setSelection('C1');
+    (document.querySelector('#viewer > div') as HTMLElement).focus();
+  });
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#cell')).toHaveValue('E1');
+
+  await page.keyboard.press(`${PRIMARY}+ArrowDown`);
+  await expect(page.locator('#cell')).toHaveValue('E1048576');
+
+  expect(errors).toEqual([]);
+});
+
 test('каждый лист сохраняет своё выделение', async ({ page }) => {
   const errors = await openBook(page, 'sheets-three.xlsx');
   const box = await canvasBox(page);

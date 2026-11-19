@@ -154,6 +154,22 @@ describe('автомат выделения', () => {
     controller.destroy();
   });
 
+  it('не начинает drag, если pointerup уже прошёл', async () => {
+    const { host, getState } = makeHost();
+    let resolveHit: ((hit: SheetHit) => void) | undefined;
+    host.hitTest = vi.fn(() => new Promise<SheetHit>((resolve) => { resolveHit = resolve; }));
+    const controller = createSelectionController(host, canvas as unknown as HTMLCanvasElement, scroller as unknown as HTMLDivElement);
+    canvas.dispatch('pointerdown', { button: 0, pointerId: 1, clientX: 1, clientY: 1, ctrlKey: false, metaKey: false, shiftKey: false });
+    canvas.dispatch('pointerup', { pointerId: 1 });
+    resolveHit?.({ kind: 'cell', row: 1, col: 1 });
+    await flush();
+    expect(getState()?.active).toEqual(address(1, 1));
+    canvas.dispatch('pointermove', { pointerId: 1, clientX: 3, clientY: 3 });
+    await flush();
+    expect(getState()?.ranges[0]).toEqual({ start: address(1, 1), end: address(1, 1) });
+    controller.destroy();
+  });
+
   it('не теряет движение, пришедшее до ответа hit-test на pointerdown', async () => {
     const { host, getState } = makeHost();
     let resolveDown: ((hit: SheetHit) => void) | undefined;
