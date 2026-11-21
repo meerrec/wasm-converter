@@ -42,7 +42,7 @@
 Используются стандартные GitHub-чекбоксы:
 
 - `[ ]` — работа не начата или не завершена;
-- `[x]` — Definition of Done выполнен и подтверждён артефактами;
+- `[x] — Definition of Done выполнен и подтверждён артефактами;
 - `(в работе)` рядом с чекбоксом — задача начата, но ещё не завершена;
 - `(заблокировано: причина)` — выполнение невозможно без указанного решения.
 
@@ -265,7 +265,7 @@ reference + actual     → автономный diff → report.json + report.ht
 - [ ] Проверить Latin, Cyrillic, RTL, CJK, combining marks и emoji по матрице.
 - [ ] Передавать positioned glyph runs в DisplayList.
 - [ ] Использовать одни координаты для canvas, PDF, hit testing и TextLayer.
-- [ ] Добавить unit/golden-тесты переносов и advances.
+- [ ] Сохранять существующие worker/main и SAB/bytes транспорты.
 
 ### 7.3 Layout IR и программный вывод
 
@@ -274,7 +274,7 @@ reference + actual     → автономный diff → report.json + report.ht
 - [ ] Измерить кросс-браузерные различия canvas после перехода на glyph runs.
 - [ ] При сохранении различий реализовать собственный software rasterizer в `crates/render`.
 - [ ] Поддержать RGBA output, alpha blending, antialiasing, DPR и zoom.
-- [ ] Сохранить существующие worker/main и SAB/bytes транспорты.
+- [ ] Сохранять существующие worker/main и SAB/bytes транспорты.
 
 **DoD этапа 2:** canvas, PDF и TextLayer используют одну геометрию; зафиксированная среда даёт стабильные кадры; Chrome, Firefox и Safari проходят согласованные golden-тесты при одинаковых DPR и zoom.
 
@@ -286,7 +286,6 @@ reference + actual     → автономный diff → report.json + report.ht
 
 - [ ] Точные переносы строк и табуляция.
 - [ ] Widow/orphan, keep-next и keep-lines.
-- [ ] Секции, колонки и разрывы.
 - [ ] Headers/footers и варианты first/even/odd.
 - [ ] Поля, docGrid и межстрочные интервалы.
 - [ ] Пагинация полей, TOC и перекрёстных ссылок по принятой матрице.
