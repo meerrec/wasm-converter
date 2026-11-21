@@ -261,15 +261,6 @@ reference + actual     → автономный diff → report.json + report.ht
 ### 7.2 Единый shaping и измерение
 
 - [ ] Построить конвейер Unicode → bidi → script itemization → shaping → kerning/ligatures → advances → line breaking.
-- [ ] Использовать одинаковые байты шрифтов для layout, raster/PDF и TextLayer.
-- [ ] Реализовать явный resolver family/style/weight.
-- [ ] Зафиксировать fallback-цепочки и отображать каждую подстановку.
-- [ ] Проверить embedded fonts и лицензионные ограничения.
-- [ ] Запретить незаявленный системный fallback в сертифицированном режиме.
-
-### 7.2 Единый shaping и измерение
-
-- [ ] Построить конвейер Unicode → bidi → script itemization → shaping → kerning/ligatures → advances → line breaking.
 - [ ] Устранить разницу между измеренной строкой и повторным shaping браузера.
 - [ ] Проверить Latin, Cyrillic, RTL, CJK, combining marks и emoji по матрице.
 - [ ] Передавать positioned glyph runs в DisplayList.
