@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Strict viewer: подготовка эталонов и offline-сертификация",
+    "output": "strict-viewer-offline-dataflow.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "reference-preparation",
+        "label": "Подготовка reference",
+        "focus": [
+          "corpus",
+          "office",
+          "baseline"
+        ],
+        "note": "Office Online участвует только в отдельной подготовке неизменяемых reference-артефактов."
+      },
+      {
+        "id": "offline-certification",
+        "label": "Offline-сертификация",
+        "focus": [
+          "viewer",
+          "actual",
+          "baseline",
+          "compare",
+          "reports",
+          "gate"
+        ],
+        "note": "Продуктовый рендер, сравнение и CI используют только локальные артефакты."
+      }
+    ],
+    "viewBox": [
+      1075,
+      520
+    ]
+  },
+  "stages": [
+    {
+      "label": "Входной корпус"
+    },
+    {
+      "label": "Два независимых рендера"
+    },
+    {
+      "label": "Артефакты"
+    },
+    {
+      "label": "Offline diff"
+    },
+    {
+      "label": "Результат"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "corpus",
+      "type": "database",
+      "label": "DOCX / XLSX",
+      "sublabel": "fixtures + SHA-256",
+      "tag": "accepted corpus",
+      "stage": 0,
+      "row": 1,
+      "width": 132
+    },
+    {
+      "id": "office",
+      "type": "external",
+      "label": "Office Online",
+      "sublabel": "capture harness",
+      "tag": "только подготовка",
+      "stage": 1,
+      "row": 0,
+      "width": 132
+    },
+    {
+      "id": "viewer",
+      "type": "backend",
+      "label": "Own viewer",
+      "sublabel": "Rust / WASM",
+      "tag": "без внешнего engine",
+      "stage": 1,
+      "row": 2,
+      "width": 132
+    },
+    {
+      "id": "baseline",
+      "type": "database",
+      "label": "Reference",
+      "sublabel": "PNG + manifest",
+      "tag": "immutable · LFS",
+      "stage": 2,
+      "row": 0,
+      "width": 132
+    },
+    {
+      "id": "actual",
+      "type": "database",
+      "label": "Actual",
+      "sublabel": "PNG + metadata",
+      "tag": "каждый прогон",
+      "stage": 2,
+      "row": 2,
+      "width": 132
+    },
+    {
+      "id": "compare",
+      "type": "security",
+      "label": "Strict compare",
+      "sublabel": "visual-v1 + pages",
+      "tag": "offline",
+      "stage": 3,
+      "row": 1,
+      "width": 132
+    },
+    {
+      "id": "reports",
+      "type": "frontend",
+      "label": "Отчёты",
+      "sublabel": "report.json + HTML",
+      "tag": "diff evidence",
+      "stage": 4,
+      "row": 0,
+      "width": 132
+    },
+    {
+      "id": "gate",
+      "type": "security",
+      "label": "CI gate",
+      "sublabel": "exit codes 0–3",
+      "tag": "blocking",
+      "stage": 4,
+      "row": 2,
+      "width": 132
+    }
+  ],
+  "flows": [
+    {
+      "from": "corpus",
+      "to": "office",
+      "label": "исходный fixture",
+      "variant": "emphasis"
+    },
+    {
+      "from": "corpus",
+      "to": "viewer",
+      "label": "тот же fixture",
+      "variant": "emphasis"
+    },
+    {
+      "from": "office",
+      "to": "baseline",
+      "label": "захваченный эталон",
+      "variant": "emphasis",
+      "labelDy": -23
+    },
+    {
+      "from": "viewer",
+      "to": "actual",
+      "label": "результат рендера",
+      "variant": "emphasis",
+      "labelDy": -23
+    },
+    {
+      "from": "baseline",
+      "to": "compare",
+      "label": "reference + masks"
+    },
+    {
+      "from": "actual",
+      "to": "compare",
+      "label": "actual + view state"
+    },
+    {
+      "from": "compare",
+      "to": "reports",
+      "label": "metrics + diff",
+      "variant": "emphasis"
+    },
+    {
+      "from": "compare",
+      "to": "gate",
+      "label": "pass / fail",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Граница online / offline",
+      "items": [
+        "Online нужен только capture harness при подготовке baseline",
+        "Viewer, comparator и обычный CI не обращаются к Office Online"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Воспроизводимое сравнение",
+      "items": [
+        "RGB tolerance ≤ 2, exact alpha и ноль out-of-tolerance pixels",
+        "SSIM диагностический; обновление PNG только явным baseline PR"
+      ]
+    }
+  ]
+}
