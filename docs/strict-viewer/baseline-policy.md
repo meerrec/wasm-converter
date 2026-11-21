@@ -1,31 +1,31 @@
 # Политика хранения и обновления визуального baseline
 
-**Версия политики:** `0.1.0-draft.1`  
-**Состояние:** `draft`; хранилище, лимиты и approvers имеют статус `proposed`  
+**Версия политики:** `1.0.0`  
+**Состояние:** `accepted`; решения `accept-storage` и `accept-baseline` приняты 22.11.2026  
 **Задача:** [#79](https://github.com/meerrec/wasm-converter/issues/79)  
 **Связанные документы:** [`certification-matrix.md`](certification-matrix.md), [`manifest.schema.json`](manifest.schema.json)
 
 Наличие исходной фикстуры, SHA-256 или снимка экрана не делает его принятым baseline. Эталоном становится только неизменяемый набор, связанный с версией матрицы, проверенным manifest, средой Office Online и явным решением reviewer. Обычные build/test команды не имеют права создавать, заменять или удалять reference PNG.
 
-## 1. Предлагаемая модель хранения
+## 1. Принятая модель хранения
 
-| Решение | Предложение | Состояние |
+| Решение | Принятое правило | Состояние |
 |---|---|---|
-| Метаданные | Один `manifest.json` на документ в `test-fixtures/strict-viewer/<format>/<fixture-id>/`; схема и corpus index версионируются в Git | `proposed` |
-| PNG | Git LFS, отдельный path-scoped набор `test-fixtures/strict-viewer/**/reference/*.png`; никаких PNG в этом документальном PR | `proposed` |
-| PDF от Word Online | Сохранять рядом через Git LFS, потому что он связывает экспорт Office с rasterized PNG и позволяет проверить повторную растеризацию | `proposed` |
-| Предел одного PNG | 4 МиБ; превышение требует проверки размера страницы и отдельного решения, а не JPEG или уменьшения DPR | `proposed` |
-| Предел первого корпуса | 250 МиБ суммарно для PNG и PDF; фактический размер публикуется в PR #75 | `proposed` |
-| Retention | Принятые baseline не перезаписываются. Старые baseline сохраняются, пока на них ссылается release или активная ветка расследования | `proposed` |
-| Доступ CI | `git lfs pull` с явным include только для strict-viewer; после получения артефактов capture/diff работает без Office и внешней сети | `proposed` |
+| Метаданные | Один `manifest.json` на документ в `test-fixtures/strict-viewer/<format>/<fixture-id>/`; схема и corpus index версионируются в Git | `accepted` |
+| PNG | Git LFS, отдельный path-scoped набор `test-fixtures/strict-viewer/**/reference/*.png`; никаких PNG в этом документальном PR | `accepted` |
+| PDF от Word Online | Сохранять рядом через Git LFS, потому что он связывает экспорт Office с rasterized PNG и позволяет проверить повторную растеризацию | `accepted` |
+| Предел одного PNG | 4 МиБ; превышение требует проверки размера страницы и отдельного решения, а не JPEG или уменьшения DPR | `accepted` |
+| Предел первого корпуса | 250 МиБ суммарно для PNG и PDF; фактический размер публикуется в PR #75 | `accepted` |
+| Retention | Принятые baseline не перезаписываются. Старые baseline сохраняются, пока на них ссылается release или активная ветка расследования | `accepted` |
+| Доступ CI | `git lfs pull` с явным include только для strict-viewer; после получения артефактов capture/diff работает без Office и внешней сети | `accepted` |
 
-Git LFS не считается выбранным до решения `accept-storage`. При отказе от LFS допустимо заменить только storage adapter на immutable release assets или object store с content-addressed URL. Схема `corpus.storage` уже отделяет вид хранилища от состояния захвата. Нельзя добавлять ссылку на изменяемый `latest`, личный диск, временный CI artifact или Office URL как единственное хранилище baseline.
+Git LFS выбран решением `accept-storage`. Замена на immutable release assets или object store с content-addressed URL допускается только новой версией политики и явным PR. Схема `corpus.storage` уже отделяет вид хранилища от состояния захвата. Нельзя добавлять ссылку на изменяемый `latest`, личный диск, временный CI artifact или Office URL как единственное хранилище baseline.
 
 Локальные пути не входят в переносимый manifest. `image.uri` разрешается относительно `corpus.storage.rootUri`; захватчик и comparator не должны угадывать каталог по имени файла. SHA-256 обязателен и для исходного документа, и для каждого PNG, и для сохранённого PDF.
 
 ## 2. Идентичность baseline
 
-Предлагаемый `baselineId` формируется как:
+Принятый `baselineId` формируется как:
 
 ```text
 strict-viewer-<corpus-version>-<matrix-version>-<environment-id>-<short-digest>
@@ -98,7 +98,7 @@ Baseline-only PR обязан содержать:
 9. фактический суммарный размер хранилища;
 10. явные approvals maintainer и независимого reviewer захвата.
 
-Предлагаются два approvals: один maintainer и один QA/reviewer, не выполнявший захват. Это требование остаётся `proposed` до решения `accept-baseline`. Команда принятия может упаковать и проверить кандидата, но не может поставить accepted status, изменить stable corpus pointer или завершить PR без review.
+Требуются два approvals: один maintainer и один QA/reviewer, не выполнявший захват. Требование принято решением `accept-baseline`. Команда принятия может упаковать и проверить кандидата, но не может поставить accepted status, изменить stable corpus pointer или завершить PR без review.
 
 Запрещены:
 
@@ -114,7 +114,7 @@ Baseline-only PR обязан содержать:
 
 После получения baseline capture и diff не обращаются к Office. Comparator читает только immutable reference, actual и явно разрешённые маски. Каждый capture получает отдельный результат, а ошибка одной фикстуры не скрывает остальные.
 
-| Предлагаемый код | Условие | Значение |
+| Код | Условие | Значение |
 |---:|---|---|
 | 0 | Все обязательные captures имеют `match` | Успешная сертификация выбранного прогона |
 | 1 | Есть `visual-diff` или `page-mismatch` | Измеренное несоответствие, harness исправен |
@@ -131,4 +131,4 @@ Baseline-only PR обязан содержать:
 
 ## 8. Граница текущего документального PR
 
-Этот PR создаёт только контракт, JSON Schema и политику. Он не добавляет reference PNG, не выбирает окончательные 40 документов, не реализует capture/diff/validator и не меняет публичный API. После решений maintainer документы переводятся в accepted отдельным коммитом, а #75 получает окончательный corpus index и инструкцию хранения.
+Этот PR создаёт контракт, JSON Schema, политику и схемы потоков. Он не добавляет reference PNG, не выбирает окончательные 40 документов, не реализует capture/diff/validator и не меняет публичный API. Решения maintainer приняты 22.11.2026. #75 получает окончательный corpus index и использует эту инструкцию хранения.
