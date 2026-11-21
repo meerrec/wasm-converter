@@ -4,7 +4,7 @@
 
 `test-fixtures/strict-viewer/corpus.json` фиксирует 20 DOCX и 20 XLSX как **кандидатов**. Их SHA-256 проверены, но `referenceStatus` остаётся `pending`: Office Online PNG/PDF/manifest ещё не получены. Это не accepted baseline и не доказательство визуального соответствия.
 
-Синтетические PNG в `tools/png.test.mjs` проверяют только decoder/diff/exit codes. Они не входят в документный корпус.
+Синтетические PNG в `tools/strict-viewer/png.test.mjs` проверяют только decoder/diff/exit codes. Они не входят в документный корпус.
 
 ## Проверки без сети
 
