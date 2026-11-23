@@ -11,13 +11,15 @@
 
 | Решение | Принятое правило | Состояние |
 |---|---|---|
-| Метаданные | Один `manifest.json` на документ в `test-fixtures/strict-viewer/<format>/<fixture-id>/`; схема и corpus index версионируются в Git | `accepted` |
+| Метаданные | Один `manifest.json` на документ и режим в `test-fixtures/strict-viewer/<format>/<fixture-id>/<view-mode>/`; допустимые `<view-mode>`: `print-layout`, `pdf`, `normal`, `print-preview`; схема и corpus index версионируются в Git | `accepted` |
 | PNG | Git LFS, отдельный path-scoped набор `test-fixtures/strict-viewer/**/reference/*.png`; никаких PNG в этом документальном PR | `accepted` |
 | PDF от Word Online | Сохранять рядом через Git LFS, потому что он связывает экспорт Office с rasterized PNG и позволяет проверить повторную растеризацию | `accepted` |
 | Предел одного PNG | 4 МиБ; превышение требует проверки размера страницы и отдельного решения, а не JPEG или уменьшения DPR | `accepted` |
 | Предел первого корпуса | 250 МиБ суммарно для PNG и PDF; фактический размер публикуется в PR #75 | `accepted` |
 | Retention | Принятые baseline не перезаписываются. Старые baseline сохраняются, пока на них ссылается release или активная ветка расследования | `accepted` |
 | Доступ CI | `git lfs pull` с явным include только для strict-viewer; после получения артефактов capture/diff работает без Office и внешней сети | `accepted` |
+
+Один документ, захваченный в DOCX Print Layout и PDF либо в XLSX Normal view и Print Preview, получает отдельный manifest для каждого режима. Capture IDs и номера страниц уникальны внутри такого mode-specific manifest; corpus index обязан различать записи по `source.path` и `view.mode`.
 
 Git LFS выбран решением `accept-storage`. Замена на immutable release assets или object store с content-addressed URL допускается только новой версией политики и явным PR. Схема `corpus.storage` уже отделяет вид хранилища от состояния захвата. Нельзя добавлять ссылку на изменяемый `latest`, личный диск, временный CI artifact или Office URL как единственное хранилище baseline.
 
@@ -31,15 +33,15 @@ Git LFS выбран решением `accept-storage`. Замена на immuta
 strict-viewer-<corpus-version>-<matrix-version>-<environment-id>-<short-digest>
 ```
 
-`short-digest` вычисляется от канонического corpus index, содержащего отсортированные записи `source.path`, `source.sha256`, `capture.id`, `image.sha256` и все параметры среды. Алгоритм канонизации и длина digest должны быть зафиксированы реализацией #75 до первого принятого baseline. До этого нельзя сравнивать baseline только по человекочитаемой версии.
+`short-digest` вычисляется от канонического corpus index, содержащего отсортированные записи `source.path`, `source.sha256`, `view.mode`, `capture.id`, `image.sha256` и все параметры среды. Алгоритм канонизации и длина digest должны быть зафиксированы реализацией #75 до первого принятого baseline. До этого нельзя сравнивать baseline только по человекочитаемой версии.
 
 Один baseline связывается с:
 
 - полным SHA-256 каждого DOCX/XLSX;
 - версией certification matrix и схемы manifest;
-- полным набором capture ID и SHA-256 изображений;
+- режимом и полным набором capture ID и SHA-256 изображений;
 - Office application/build при доступности;
-- OS, browser, viewport, DPR, zoom, locale, timezone и font assets;
+- OS, browser, viewport, DPR, zoom, locale, timezone и font assets, когда параметр применим к режиму;
 - PDF SHA-256 и версией `pdftoppm` для `docx.pdf`;
 - Git commit, в котором принят manifest и corpus index.
 
@@ -55,11 +57,11 @@ strict-viewer-<corpus-version>-<matrix-version>-<environment-id>-<short-digest>
 6. Установить состояние из manifest: режим, лист, страницу, диапазон, scroll, zoom, DPR, comments/revisions и hidden sheets. Отключить UI Office вне области сравнения.
 7. Дождаться открытия документа, загрузки шрифтов и стабильного изображения по наблюдаемому состоянию. Не использовать длинный фиксированный sleep как доказательство готовности.
 8. Сохранить PNG напрямую. Для DOCX PDF сохранить исходный PDF и выполнить `pdftoppm -png -r 144`; промежуточный JPEG запрещён.
-9. Заполнить manifest по схеме. Добавить маски только по правилам матрицы, с прямоугольником, причиной и независимым текстовым правилом.
+9. Заполнить отдельный manifest по схеме для каждого захваченного режима. Добавить маски только по правилам матрицы, с прямоугольником, причиной и независимым текстовым правилом.
 10. Повторить захват в чистой сессии той же среды. До принятия baseline reference обязан быть стабилен; расхождение двух reference capture классифицируется как проблема среды или документа, а не маскируется.
 11. Провести независимый повторный захват вторым исполнителем по документу без устных допущений. Совпадение capture IDs, размеров, содержимого и SHA-256 либо объяснённая разница фиксируется в PR.
 
-Полный набор содержит 20 DOCX и 20 XLSX. Для DOCX сохраняются все страницы каждого выбранного документа. Для XLSX отдельно перечисляются Normal view captures и все печатные страницы каждого выбранного Print Preview листа. Ограничение набора страниц возможно только явным решением с причиной; оно не позволяет заявить полную сертификацию документа.
+Полный набор содержит 20 DOCX и 20 XLSX. Для DOCX сохраняются все страницы каждого выбранного документа в каждом принятом режиме. Для XLSX отдельно перечисляются Normal view captures и все печатные страницы каждого выбранного Print Preview листа. Ограничение набора страниц возможно только явным решением с причиной; оно не позволяет заявить полную сертификацию документа.
 
 ## 4. Обязательные проверки manifest
 
@@ -67,14 +69,15 @@ JSON Schema проверяет форму, но принятие требует 
 
 - `source.path` существует, остаётся внутри `test-fixtures/`, размер и SHA-256 совпадают;
 - `source.format`, `reference.application`, `view.format` и capture kinds согласованы;
+- путь manifest заканчивается на `/<view.mode>/manifest.json`, а corpus index не содержит дублей по паре `source.path` и `view.mode`;
 - `schemaVersion` поддерживается потребителем, `matrixVersion` соответствует принятой матрице;
 - capture ID и mask ID уникальны внутри manifest;
-- DOCX page numbers непрерывны от 1, пропусков и дублей нет, число captures равно числу страниц reference;
+- DOCX page numbers непрерывны от 1 внутри режима, пропусков и дублей нет, число captures равно числу страниц reference;
 - XLSX sheet index/name существует, лист видим, captures соответствуют выбранному режиму;
 - Normal view имеет видимый диапазон, scroll и active cell; Print Preview имеет полный набор печатных страниц выбранного листа;
 - каждый URI существует, PNG имеет валидную сигнатуру и заявленный RGB8 или RGBA8, фактические размеры и SHA-256 совпадают с manifest; comparator декодирует оба варианта в RGBA;
 - каждая маска находится внутри изображения, имеет причину и текстовое правило; маски не покрывают всё изображение и не перекрывают обязательную проверку содержимого;
-- для `docx.pdf` присутствуют `exportedPdf` и `environment.rasterizer`;
+- для `docx.pdf` присутствуют `exportedPdf` и `environment.rasterizer`, а неприменимые viewport, DPR и color scheme отсутствуют;
 - среда совпадает со значениями, принятыми для baseline; незаписанный font fallback отсутствует;
 - суммарный размер и размер каждого артефакта укладываются в принятые лимиты;
 - в capture/diff runtime нет Office URL, сетевого вызова или зависимости от учётных данных Office.
@@ -131,4 +134,4 @@ Baseline-only PR обязан содержать:
 
 ## 8. Граница текущего документального PR
 
-Этот PR создаёт контракт, JSON Schema, политику и схемы потоков. Он не добавляет reference PNG, не выбирает окончательные 40 документов, не реализует capture/diff/validator и не меняет публичный API. Решения maintainer приняты 22.11.2026. #75 получает окончательный corpus index и использует эту инструкцию хранения.
+Этот PR создаёт контракт, JSON Schema и политику. Он не добавляет reference PNG, не выбирает окончательные 40 документов, не реализует capture/diff/validator и не меняет публичный API. Решения maintainer приняты 22.11.2026. #75 получает окончательный corpus index и использует эту инструкцию хранения.
