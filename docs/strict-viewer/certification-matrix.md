@@ -22,7 +22,7 @@
 
 Для `supported` обязательны четыре независимых результата: полное текстовое содержимое, точное число и порядок страниц или экранов, присутствие объектов и прохождение визуального профиля `visual-v1`. Средний SSIM по корпусу не заменяет ни один из них. Для DOCX не используется допуск «±1 страница».
 
-Пути фикстур указаны от `test-fixtures/`. Запись `требуется новая` означает блокер для перехода строки в `supported`; нельзя молча заменить её другой фикстурой. Одна фикстура может быть минимальной для нескольких строк, но каждая проверка записывается отдельно.
+Пути фикстур указаны от `test-fixtures/`. Запись `требуется новая` означает блокер для перехода соответствующей части строки в `supported`; нельзя молча заменить её другой фикстурой. Одна фикстура может быть минимальной для нескольких строк, но каждая проверка записывается отдельно.
 
 ## 2. Принятые режимы и среда
 
@@ -34,6 +34,8 @@
 | `mode-xlsx` | Сертифицировать `xlsx.normal` и `xlsx.print-preview` независимо. Normal view проверяет видимый диапазон, Print Preview проверяет каждую печатную страницу выбранного листа. | `accepted` |
 | `hidden-sheets` | Скрытые и очень скрытые листы не открывать и не печатать. Их имена, порядок и состояние включать в структурный отчёт; попытка захвата такого листа является `harness-error`. | `accepted` |
 | `revisions-comments` | Для DOCX использовать принятое отображение документа без balloons и без панели рецензирования. Отдельно фиксировать политику обнаружения ревизий и комментариев как `unsupported-visible`, пока их режимы не приняты. | `accepted` |
+
+Каждый режим документа описывается отдельным manifest. Наборы captures разных режимов не смешиваются, даже если они относятся к одному исходному DOCX/XLSX.
 
 ### 2.2 Фиксированная среда захвата
 
@@ -91,7 +93,7 @@ Office UI, лента, панели навигации, курсоры, выде
 | `docx.paragraph-runs` | `w:p`, `w:r`, whitespace, breaks, tabs | PL, PDF | `supported` | `docx/basic/multiple_runs.docx` | `docx/simple/one_paragraph.docx`, `docx/basic/breaks_and_tabs.docx` | Границы runs не меняют текст; точные line breaks, tab stops, X-координаты глифов. |
 | `docx.styles-themes` | `styles.xml`, `docDefaults`, `basedOn`, direct formatting, theme colors/fonts | PL, PDF | `supported` | `docx/styles/based_on_chain.docx` | `docx/styles/doc_defaults.docx`, `docx/styles/direct_formatting_override.docx` | Resolved style совпадает с каскадом ADR-0013; family, size, weight, color и отступы проверяются native. |
 | `docx.numbering` | `numbering.xml`, `abstractNum`, `num`, overrides, multilevel | PL, PDF | `supported` | `docx/numbering/multilevel.docx` | `docx/numbering/start_override.docx`, `docx/numbering/restart_numbering.docx` | Маркер, текст, indent, hanging и restart совпадают на каждом уровне. |
-| `docx.sections-columns` | `w:sectPr`, page size/margins, `w:cols`, section/page/column breaks | PL, PDF | `supported` | `docx/basic/sections.docx` | `требуется новая: columns` | Геометрия страниц, смена секций и число колонок. До появления columns-фикстуры колонки остаются `planned` внутри строки. |
+| `docx.sections-columns` | `w:sectPr`, page size/margins, `w:cols`, section/page/column breaks | PL, PDF | `supported` для секций; колонки `planned` | `docx/basic/sections.docx` | `требуется новая: columns` | Геометрия страниц, смена секций и число колонок. До появления columns-фикстуры колонки остаются `planned` внутри строки. |
 | `docx.headers-footers` | default/first/even/odd headers and footers, relationships | PL, PDF | `supported` | `docx/headers_footers/default_header_footer.docx` | `docx/headers_footers/even_odd.docx`, `docx/headers_footers/title_pg_first.docx` | Текст и геометрия колонтитулов на каждом типе страницы; связи не теряются. |
 | `docx.tables-fixed-autofit` | `w:tblLayout`, grid, widths, alignment | PL, PDF | `supported` | `docx/tables/simple_2x2.docx` | `docx/tables/alignment_widths.docx` | Native: X/Y ячеек, ширины, высоты, границы; visual: вся таблица на всех страницах. |
 | `docx.tables-merged-nested` | `gridSpan`, `vMerge`, nested `w:tbl` | PL, PDF | `supported` | `docx/tables/grid_span.docx` | `docx/tables/v_merge.docx`, `docx/tables/nested.docx` | Occupancy grid, границы merged-областей и вложенный контент без дублей и пропусков. |
@@ -119,7 +121,7 @@ Office UI, лента, панели навигации, курсоры, выде
 | `xlsx.values` | Cell types, shared/inline strings, booleans, errors | N, PP | `supported` | `xlsx/content-mixed-types.xlsx` | `xlsx/values-errors.xlsx`, `xlsx/values-unicode.xlsx` | Display text и тип значения совпадают; ошибки не заменяются пустыми ячейками. |
 | `xlsx.formula-cache` | Formulas with cached values, dirty/fullCalcOnLoad flags | N, PP | `supported` для cache-only | `xlsx/values-formulas.xlsx` | `xlsx/edge-formula-chain.xlsx`, `xlsx/edge-formula-error.xlsx` | Используется сохранённый cache; признаки устаревания видимы в report; полный recalculation не выполняется. |
 | `xlsx.number-formats` | Built-in/custom `numFmt`, currency, percent, fractions, scientific | N, PP | `supported` | `xlsx/formats-thousands-decimals.xlsx` | `xlsx/formats-currency-ruble.xlsx`, `xlsx/formats-fraction.xlsx` | Отображаемый текст, decimal separators, negative/zero sections и `#####` проверяются отдельно. |
-| `xlsx.dates-locales` | Serial dates, 1900/1904, date/time formats, locale | N, PP | `supported` | `xlsx/formats-date-ru.xlsx` | `xlsx/formats-date-iso.xlsx`, `требуется новая: date1904` | Epoch, serial value, locale и timezone записаны; 1900 leap-year compatibility проверяется native. |
+| `xlsx.dates-locales` | Serial dates, 1900/1904, date/time formats, locale | N, PP | `supported` для 1900; 1904 `planned` | `xlsx/formats-date-ru.xlsx` | `xlsx/formats-date-iso.xlsx`, `требуется новая: date1904` | Epoch, serial value, locale и timezone записаны; 1900 leap-year compatibility проверяется native. Сертификация 1904 начинается после добавления фикстуры. |
 | `xlsx.dimensions` | Row heights, column widths, zero sizes, defaults | N, PP | `supported` | `xlsx/layout-column-widths.xlsx` | `xlsx/layout-row-heights.xlsx`, `xlsx/edge-zero-height-row.xlsx` | Pixel boundaries каждой строки/столбца и hidden state совпадают. |
 | `xlsx.wrap-overflow` | `wrapText`, unwrapped overflow, clipping, shrink-to-fit, rotation | N, PP | `supported` для wrap/overflow; остальное `planned` | `xlsx/values-long-text.xlsx` | `xlsx/text-cyrillic-wrap.xlsx`, `требуется новая: shrink/rotation` | Точки переноса, clipping и print extent совпадают; overflow не исчезает при соседнем содержимом. |
 | `xlsx.rich-merged` | Rich text runs, merged cells and merged styling | N, PP | `supported` | `xlsx/content-rich-text.xlsx` | `xlsx/layout-merged.xlsx`, `xlsx/edge-merged-styled.xlsx` | Run formatting, anchor cell, bounds и границы merged-диапазона. |
@@ -132,9 +134,9 @@ Office UI, лента, панели навигации, курсоры, выде
 | `xlsx.charts` | Bar, line, pie, scatter, area; axes, legend, labels | N, PP | `supported` для пяти существующих видов; комбинированные `planned` | `xlsx/charts-five-kinds.xlsx` | `требуется новая: combined chart` | Chart count, type, series order, bounds, axes/legend/labels и включение в print extent. |
 | `xlsx.comments-notes` | Legacy comments/notes and threaded comments | N, PP | `unsupported-visible` | `xlsx/comments-legacy.xlsx` | `требуется новая: threaded comments` | Комментарий не влияет на page extent без явного print setting; наличие видимо в report. |
 | `xlsx.pivot-slicers-controls` | Pivot tables, slicers, form controls, ActiveX | N, PP | `excluded` | `требуется новая перед сменой статуса` | Нет | Из первой визуальной матрицы исключено; обнаружение даёт `xlsx-pivot-slicer-control-excluded`. |
-| `xlsx.print-areas-breaks` | Print areas, manual row/column breaks, page order | PP | `supported` | `xlsx/scale-ten-pages.xlsx` | `требуется новая: print area/manual breaks` | Точное число и порядок страниц, print extent и отсутствие лавинообразных пустых страниц. |
-| `xlsx.print-titles-scale` | Repeating titles, scale, fit-to-width/height | PP | `supported` | `xlsx/scale-ten-pages.xlsx` | `требуется новая: repeating titles/fit-to-page` | Заголовки повторяются, scale применяется один раз, fit limits и page breaks совпадают. |
-| `xlsx.print-headers-footers` | Print headers/footers, margins, orientation, paper size | PP | `supported` | `требуется новая: headers/footers` | Нет | Текст, положение, поля, paper size и orientation. Строка блокирует полное принятие печатной матрицы до появления фикстуры. |
+| `xlsx.print-areas-breaks` | Print areas, manual row/column breaks, page order | PP | `planned` | `xlsx/scale-ten-pages.xlsx` | `требуется новая: print area/manual breaks` | Точное число и порядок страниц, print extent и отсутствие лавинообразных пустых страниц. Переход в `supported` требует фикстуры print area/manual breaks. |
+| `xlsx.print-titles-scale` | Repeating titles, scale, fit-to-width/height | PP | `supported` для scale; repeating titles/fit `planned` | `xlsx/scale-ten-pages.xlsx` | `требуется новая: repeating titles/fit-to-page` | Scale применяется один раз. Заголовки повторяются, fit limits и page breaks совпадают после добавления соответствующей фикстуры и перехода этих возможностей в `supported`. |
+| `xlsx.print-headers-footers` | Print headers/footers, margins, orientation, paper size | PP | `planned` | `требуется новая: headers/footers` | Нет | Текст, положение, поля, paper size и orientation. Строка блокирует полное принятие печатной матрицы до появления фикстуры. |
 | `xlsx.sheets-visibility` | Sheet order, active sheet, hidden/veryHidden, multi-sheet print | N, PP | `supported` | `xlsx/sheets-three.xlsx` | `xlsx/sheets-hidden.xlsx`, `xlsx/sheets-very-hidden.xlsx` | Видимые листы сохраняют порядок; hidden листы не захватываются; multi-sheet print ограничен явным списком captures. |
 | `xlsx.external-links` | External workbook references and cached values | N, PP | `unsupported-visible` для обновления; `supported` для offline display cache | `xlsx/layout-broken-link.xlsx` | Нет | Сетевых запросов нет; cache и признак внешней связи сохраняются, обновление не выполняется. |
 
@@ -184,7 +186,7 @@ Office UI, лента, панели навигации, курсоры, выде
 
 Предварительные 20 DOCX и 20 XLSX остаются кандидатами. Обязательные шесть регрессионных фикстур уже представлены в матрице: `long_table`, `long_table_header_repeat`, `charts-five-kinds`, `images-over-data`, `values-long-text`, `layout-frozen-columns`. Их SHA-256 проверяются при создании каждого manifest.
 
-До принятия #75 необходимо закрыть пробелы, обозначенные как `требуется новая`, либо явно изменить соответствующий статус решением maintainer. Недопустимо сохранять строку `supported`, удалив отсутствующую фикстуру из проверки. Окончательный corpus index должен ссылаться на эту версию матрицы, содержать ровно выбранные документы и пройти проверки из [`baseline-policy.md`](baseline-policy.md).
+До принятия #75 необходимо закрыть пробелы, обозначенные как `требуется новая`, для возможностей `supported`, либо явно оставить соответствующую часть в `planned` или другом неподдерживаемом статусе. Недопустимо сохранять часть строки `supported`, удалив отсутствующую фикстуру из проверки. Окончательный corpus index должен ссылаться на эту версию матрицы, различать manifest по `source.path` и `view.mode`, содержать ровно выбранные документы и проходить проверки из [`baseline-policy.md`](baseline-policy.md).
 
 ## 8. Принятые решения
 
