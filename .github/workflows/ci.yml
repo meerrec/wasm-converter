@@ -406,6 +406,8 @@ jobs:
       # повтора по 30 с не доживают до его снятия. Ждём не дольше пяти минут —
       # дальше разруливают повторы с растущей паузой.
       - name: playwright browsers
+        env:
++          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: '120000'
         run: |
           set -uo pipefail
           for _ in $(seq 1 60); do
@@ -415,13 +417,13 @@ jobs:
             sleep 5
           done
           attempt=1
-          until timeout 300 pnpm --filter @meerrec/example-viewer exec playwright install --with-deps chromium firefox webkit; do
+          until timeout 600 pnpm --filter @meerrec/example-viewer exec playwright install --with-deps chromium firefox webkit; do
             if [ "$attempt" -ge 5 ]; then
               echo "::error::playwright install не удался за ${attempt} попытки — браузеры не поставлены"
               exit 1
             fi
             pause=$((attempt * 30))
-            echo "::warning::попытка ${attempt} упала (вероятно, лок apt-get) — повтор через ${pause} с"
+            echo "::warning::попытка ${attempt} упала; причина в логе выше — повтор через ${pause} с"
             sleep "$pause"
             attempt=$((attempt + 1))
           done
