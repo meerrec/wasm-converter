@@ -407,7 +407,7 @@ jobs:
       # дальше разруливают повторы с растущей паузой.
       - name: playwright browsers
         env:
-+          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: '120000'
+          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: '120000'
         run: |
           set -uo pipefail
           for _ in $(seq 1 60); do
