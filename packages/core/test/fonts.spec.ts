@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   FONT_READINESS_POINTS,
+  PAINT_FONT_PROBE_FAMILY,
   registerPaintFonts,
   resolvePaintFonts,
+  waitPaintFontsVisible,
   type FontBytesSource,
   type PaintFontContext,
 } from '../src/worker/fonts.js';
@@ -90,7 +92,9 @@ describe('registerPaintFonts', () => {
 
     await expect(registerPaintFonts(mod)).resolves.toBe(true);
 
-    expect(calls).toEqual([0, 1, 2, 3]);
+    expect(calls).toEqual([0, 1, 2, 3, 0]);
+    // Восемь рабочих лиц + канарейка: она нужна `waitPaintFontsVisible`, чтобы
+    // отличить «load() резолвнулся» от «матчер реально видит лицо».
     expect(
       fonts.added.map((face) => [face.family, face.descriptors.style, face.descriptors.weight]),
     ).toEqual([
@@ -102,10 +106,12 @@ describe('registerPaintFonts', () => {
       ['Calibri', 'italic', '400'],
       ['Carlito', 'italic', '700'],
       ['Calibri', 'italic', '700'],
+      [PAINT_FONT_PROBE_FAMILY, undefined, undefined],
     ]);
     // Байты уезжают в `FontFace` как есть: своя копия или подстановка — то же
     // самое расхождение, ради которого функция и написана. Один номер лица
     // покрывает оба canvas-имени, чтобы XLSX с `Calibri` не уходил в fallback.
+    // Канарейка — теми же байтами regular, что и лицо 0.
     expect(fonts.added.map((face) => face.source)).toEqual([
       new Uint8Array([0]),
       new Uint8Array([0]),
@@ -115,6 +121,7 @@ describe('registerPaintFonts', () => {
       new Uint8Array([2]),
       new Uint8Array([3]),
       new Uint8Array([3]),
+      new Uint8Array([0]),
     ]);
     expect(fonts.added.every((face) => face.status === 'loaded')).toBe(true);
   });
@@ -166,9 +173,8 @@ describe('registerPaintFonts', () => {
   });
 });
 
-
 describe('resolvePaintFonts', () => {
-  it('разрешает все начертания под Carlito и Calibri до первого кадра', () => {
+  it('разрешает строки точно в формате painter’а до первого кадра', () => {
     const measured: Array<{ font: string; text: string }> = [];
     const ctx: PaintFontContext = {
       font: '',
@@ -180,22 +186,96 @@ describe('resolvePaintFonts', () => {
 
     resolvePaintFonts(ctx);
 
+    // Формат совпадает с `PaintState::font_css` посимвольно, включая суффикс
+    // `, sans-serif` и Rust-Display для f32-кегля: canvas кэширует строку
+    // `ctx.font` целиком, и любое расхождение оставляет painter-строку непрогретой.
     const pxPerPoint = new Float32Array([4 / 3])[0]!;
-    const toPx = (point: number): number =>
+    const toPxF32 = (point: number): number =>
       new Float32Array([new Float32Array([point])[0]! * pxPerPoint])[0]!;
+    const rustF32 = (px: number): string => {
+      if (Number.isInteger(px)) return String(px);
+      for (let precision = 1; precision <= 9; precision += 1) {
+        const candidate = px.toFixed(precision);
+        if (new Float32Array([Number(candidate)])[0] === px) return candidate;
+      }
+      return String(px);
+    };
     const expected = (['Carlito', 'Calibri'] as const).flatMap((family) =>
-      ([
-        { style: 'normal', weight: '400' },
-        { style: 'normal', weight: '700' },
-        { style: 'italic', weight: '400' },
-        { style: 'italic', weight: '700' },
-      ] as const).flatMap(({ style, weight }) =>
-        FONT_READINESS_POINTS.map((point) => ({
-          font: `${style} ${weight} ${toPx(point)}px ${family}`,
-          text: 'Font readiness',
-        })),
+      ([false, true] as const).flatMap((bold) =>
+        ([false, true] as const).flatMap((italic) =>
+          FONT_READINESS_POINTS.map((point) => ({
+            font: `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}${rustF32(toPxF32(point))}px ${family}, sans-serif`,
+            text: 'Font readiness',
+          })),
+        ),
       ),
     );
     expect(measured).toEqual(expected);
+  });
+
+  it('кегль 11pt печатается как «14.666667px» — ровно как в кадре XLSX', () => {
+    const measured: string[] = [];
+    const ctx: PaintFontContext = {
+      font: '',
+      measureText() {
+        measured.push(this.font);
+        return {};
+      },
+    };
+
+    resolvePaintFonts(ctx);
+
+    expect(measured).toContain('14.666667px Calibri, sans-serif');
+    expect(measured).toContain('italic bold 14.666667px Calibri, sans-serif');
+    expect(measured).toContain('14.666667px Carlito, sans-serif');
+  });
+});
+
+describe('waitPaintFontsVisible', () => {
+  /** Контекст-заглушка: видимость канарейки переключается извне. */
+  function fakeProbeContext(visibleAfterMs: number): {
+    ctx: PaintFontContext;
+    fontsSeen: string[];
+  } {
+    const fontsSeen: string[] = [];
+    const startedAt = performance.now();
+    return {
+      fontsSeen,
+      ctx: {
+        font: '',
+        measureText(text: string) {
+          fontsSeen.push(this.font);
+          const visible = performance.now() - startedAt >= visibleAfterMs;
+          const width = this.font.includes(PAINT_FONT_PROBE_FAMILY)
+            ? visible
+              ? 42
+              : 40
+            : // Заведомо отсутствующее семейство: системный fallback.
+              40;
+          return { width };
+        },
+      },
+    };
+  }
+
+  it('резолвится, как только канарейка отличается по ширине от fallback', async () => {
+    const { ctx } = fakeProbeContext(80);
+
+    await expect(waitPaintFontsVisible(ctx, 5_000)).resolves.toBe(true);
+  });
+
+  it('возвращает false по таймауту, если канарейка так и не стала видна', async () => {
+    const { ctx } = fakeProbeContext(Number.POSITIVE_INFINITY);
+
+    await expect(waitPaintFontsVisible(ctx, 150)).resolves.toBe(false);
+  });
+
+  it('каждый замер использует новую строку: повторы кэша матчером не читаются', async () => {
+    const { ctx, fontsSeen } = fakeProbeContext(120);
+
+    await waitPaintFontsVisible(ctx, 5_000);
+
+    const probeFonts = fontsSeen.filter((font) => font.includes(PAINT_FONT_PROBE_FAMILY));
+    expect(new Set(probeFonts).size).toBe(probeFonts.length);
   });
 });

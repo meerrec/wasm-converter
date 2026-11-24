@@ -1,5 +1,5 @@
 import type { PaintStatsWire } from '../generated/wire.js';
-import { registerPaintFonts, resolvePaintFonts } from '../worker/fonts.js';
+import { registerPaintFonts, resolvePaintFonts, waitPaintFontsVisible } from '../worker/fonts.js';
 
 /**
  * Тип wasm-модуля берём из сгенерированных wasm-bindgen деклараций, но сам
@@ -43,13 +43,18 @@ export async function initMainPainter(
     await mod.default(wasmUrl);
     // Сабсеты Carlito — до первого кадра: Chromium запоминает промах по
     // строке `ctx.font` на всю сессию, и предпросмотр разошёлся бы с PDF.
-    if (
-      !(await registerPaintFonts({ font_bytes: mod.font_bytes })) &&
-      typeof FontFace !== 'undefined'
-    ) {
+    const registered = await registerPaintFonts({ font_bytes: mod.font_bytes });
+    if (!registered && typeof FontFace !== 'undefined') {
       throw new Error('main-режим: сабсеты Carlito недоступны');
     }
     resolvePaintFonts(ctx);
+    // `face.load()` ≠ «матчер видит лицо»: без этого ожидания первый кадр в
+    // headless-Chromium может уйти в системную подстановку fontconfig, и промах
+    // закрепится в кэше строк контекста до следующего resize. Режим без
+    // FontFace (registered === false) сюда не доходит — он рисует подстановкой.
+    if (registered && !(await waitPaintFontsVisible(ctx))) {
+      throw new Error('main-режим: сабсеты Carlito не стали видны canvas-матчеру');
+    }
     mod.init_painter_main(ctx);
     module = mod;
   } catch (e) {
