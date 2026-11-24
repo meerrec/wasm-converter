@@ -22,7 +22,7 @@
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "positiveInt": { "type": "integer", "minimum": 1 },
     "nonNegativeInt": { "type": "integer", "minimum": 0 },
-    "relativePath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)[.][.](?:/|$)).+$" },
+    "relativePath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*[\\\\:])(?!.*(?:^|/)[.][.](?:/|$)).+$" },
     "rectangle": {
       "type": "object", "additionalProperties": false, "required": ["x", "y", "width", "height"],
       "properties": { "x": { "$ref": "#/$defs/nonNegativeInt" }, "y": { "$ref": "#/$defs/nonNegativeInt" }, "width": { "$ref": "#/$defs/positiveInt" }, "height": { "$ref": "#/$defs/positiveInt" } }
@@ -83,10 +83,12 @@
   "allOf": [
     { "if": { "properties": { "source": { "properties": { "format": { "const": "docx" } }, "required": ["format"] } }, "required": ["source"] }, "then": { "properties": { "reference": { "properties": { "application": { "const": "word-online" } } }, "view": { "properties": { "format": { "const": "docx" } } }, "captures": { "items": { "properties": { "kind": { "const": "docx-page" } } } } } } },
     { "if": { "properties": { "source": { "properties": { "format": { "const": "xlsx" } }, "required": ["format"] } }, "required": ["source"] }, "then": { "properties": { "reference": { "properties": { "application": { "const": "excel-online" } } }, "view": { "properties": { "format": { "const": "xlsx" } } }, "captures": { "items": { "properties": { "kind": { "enum": ["xlsx-screen", "xlsx-print-page"] } } } } } } },
+    { "if": { "properties": { "view": { "properties": { "mode": { "const": "normal" } }, "required": ["mode"] } }, "required": ["view"] }, "then": { "properties": { "captures": { "items": { "properties": { "kind": { "const": "xlsx-screen" } } } } } } },
+    { "if": { "properties": { "view": { "properties": { "mode": { "const": "print-preview" } }, "required": ["mode"] } }, "required": ["view"] }, "then": { "properties": { "captures": { "items": { "properties": { "kind": { "const": "xlsx-print-page" } } } } } } },
     {
       "if": { "properties": { "view": { "properties": { "mode": { "const": "pdf" } }, "required": ["mode"] } }, "required": ["view"] },
       "then": { "properties": { "reference": { "required": ["exportedPdf"] }, "environment": { "required": ["rasterizer"], "properties": { "viewportCss": false, "deviceScaleFactor": false, "colorScheme": false } } } },
-      "else": { "properties": { "environment": { "required": ["viewportCss", "deviceScaleFactor", "colorScheme"] } } }
+      "else": { "properties": { "environment": { "required": ["viewportCss", "deviceScaleFactor", "colorScheme"], "properties": { "rasterizer": false } } } }
     }
   ]
 }

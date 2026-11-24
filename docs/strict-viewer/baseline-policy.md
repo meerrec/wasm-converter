@@ -67,7 +67,7 @@ strict-viewer-<corpus-version>-<matrix-version>-<environment-id>-<short-digest>
 
 JSON Schema проверяет форму, но принятие требует дополнительных семантических проверок:
 
-- `source.path` существует, остаётся внутри `test-fixtures/`, размер и SHA-256 совпадают;
+- `source.path` использует только переносимый относительный путь с `/`, без `\`, drive/UNC и сегментов `..`; после канонического resolve он остаётся внутри `test-fixtures/`, файл существует, размер и SHA-256 совпадают;
 - `source.format`, `reference.application`, `view.format` и capture kinds согласованы;
 - путь manifest заканчивается на `/<view.mode>/manifest.json`, а corpus index не содержит дублей по паре `source.path` и `view.mode`;
 - `schemaVersion` поддерживается потребителем, `matrixVersion` соответствует принятой матрице;
@@ -77,7 +77,7 @@ JSON Schema проверяет форму, но принятие требует 
 - Normal view имеет видимый диапазон, scroll и active cell; Print Preview имеет полный набор печатных страниц выбранного листа;
 - каждый URI существует, PNG имеет валидную сигнатуру и заявленный RGB8 или RGBA8, фактические размеры и SHA-256 совпадают с manifest; comparator декодирует оба варианта в RGBA;
 - каждая маска находится внутри изображения, имеет причину и текстовое правило; маски не покрывают всё изображение и не перекрывают обязательную проверку содержимого;
-- для `docx.pdf` присутствуют `exportedPdf` и `environment.rasterizer`, а неприменимые viewport, DPR и color scheme отсутствуют;
+- для `docx.pdf` присутствуют `exportedPdf` и `environment.rasterizer`, а неприменимые viewport, DPR и color scheme отсутствуют; для остальных режимов `environment.rasterizer` отсутствует;
 - среда совпадает со значениями, принятыми для baseline; незаписанный font fallback отсутствует;
 - суммарный размер и размер каждого артефакта укладываются в принятые лимиты;
 - в capture/diff runtime нет Office URL, сетевого вызова или зависимости от учётных данных Office.
