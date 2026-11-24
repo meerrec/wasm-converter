@@ -9,9 +9,13 @@
 ## Проверки без сети
 
 ```bash
+python3 -m pip install -r tools/strict-viewer/requirements.txt
 node tools/strict-viewer/verify-corpus.mjs
 node --test tools/strict-viewer/png.test.mjs
+python3 tools/strict-viewer/validate_references.py
 ```
+
+Для изоляции Python-зависимостей можно создать виртуальное окружение: `python3 -m venv /tmp/strict-viewer-venv`, затем вызывать `/tmp/strict-viewer-venv/bin/python` в командах установки и проверки references.
 
 Comparator принимает только 8-bit non-interlaced RGB/RGBA PNG, как требует manifest contract. RGB delta до 2 включительно проходит; alpha должна совпадать точно. Любой другой непокрытый маской пиксель даёт `visual-diff`. SSIM вычисляется по luminance в окнах 8×8 и служит только диагностикой.
 
@@ -60,6 +64,8 @@ STRICT_CAPTURE_PLAN=/tmp/strict-plan.json \
 STRICT_CAPTURE_OUTPUT=/tmp/strict-actual \
 pnpm --dir examples/viewer exec playwright test --config playwright.strict.config.ts
 ```
+
+Если порт `5179` уже занят, задайте свободный `STRICT_VIEWER_PORT=<port>` перед командой.
 
 Захват использует Chromium, существующий viewer bridge и worker/WASM path. DOCX PDF и XLSX Print Preview экспортируются собственным viewer и растрируются локальным `pdftoppm` при 144 DPI; DOCX `print-layout` использует 96 DPI, чтобы совпасть с Office print PNG 794×1123. Продукт не вызывает Office. Для zoom, отличного от 100 %, harness явно завершает capture с ошибкой до появления проверенного zoom adapter.
 

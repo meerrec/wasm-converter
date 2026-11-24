@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - run: python -m pip install jsonschema==4.25.1
+      - run: python -m pip install -r tools/strict-viewer/requirements.txt
       - run: node tools/strict-viewer/verify-corpus.mjs
       - run: node --test tools/strict-viewer/png.test.mjs
       - run: python tools/strict-viewer/validate_references.py
