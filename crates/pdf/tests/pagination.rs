@@ -127,8 +127,8 @@ fn drawing_hash(bytes: &[u8]) -> u64 {
 const PAGE_COUNTS: &[(&str, usize)] = &[
     ("scale-ten-pages.xlsx", 13),
     ("edge-many-rows.xlsx", 105),
-    ("content-dense.xlsx", 6),
-    ("size-20x100x1.xlsx", 10),
+    ("content-dense.xlsx", 9),
+    ("size-20x100x1.xlsx", 12),
     ("content-empty-sheet.xlsx", 1),
 ];
 
@@ -171,12 +171,13 @@ fn cursor_x_range(content: &[u8]) -> (f32, f32) {
 
 /// DoD A2: при разбивке по столбцам ни одна ячейка листа не теряется.
 ///
-/// Лист 30×30 даёт три полосы столбцов по десять; все страницы непустые, а
+/// Лист 30×30 даёт четыре полосы (9 + 9 + 9 + 3 столбца); все страницы
+/// непустые, а
 /// сумма нарисованных ячеек равна ячейкам листа. До разбивки ячейки правее
 /// области содержимого молча отбрасывались (`painter.rs:208-211`).
 ///
 /// Явный `fit_to_height` закрепляет высоту листа на одной странице; ширина
-/// остаётся естественной (100 %), и полосы столбцов делят лист по десять.
+/// остаётся естественной (100 %), и полосы делят лист по печатной ширине.
 #[test]
 fn all_cells_survive_column_split() {
     const FIXTURE: &str = "size-30x30x2.xlsx";
@@ -197,7 +198,7 @@ fn all_cells_survive_column_split() {
     );
     let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
     let pages = doc.get_pages();
-    assert_eq!(pages.len(), 3, "30 столбцов — три полосы по десять");
+    assert_eq!(pages.len(), 4, "30 столбцов — четыре полосы по девять");
 
     let mut drawn = 0;
     let mut ranges: Vec<(f32, f32)> = Vec::new();
@@ -210,16 +211,26 @@ fn all_cells_survive_column_split() {
     }
     assert_eq!(drawn, cells, "часть ячеек листа не дошла до страниц");
 
-    // Каждая полоса начинается от левого края области содержимого, поэтому
-    // размах курсоров у всех страниц один и тот же: сдвиг полосы (offset_x)
-    // вычтен, а не потерян или вычтен дважды.
+    // Каждая полоса начинается от левого края области содержимого: offset_x
+    // вычтен, а не потерян или вычтен дважды. Первые три полосы полные;
+    // последняя содержит только три столбца и потому закономерно уже.
     let (left, right) = ranges[0];
     for (index, (page_left, page_right)) in ranges.iter().enumerate() {
         assert!(
-            (page_left - left).abs() < 0.01 && (page_right - right).abs() < 0.01,
-            "страница {index} нарисована со сдвигом: {page_left}..{page_right} против {left}..{right}"
+            (page_left - left).abs() < 0.01,
+            "страница {index} нарисована со сдвигом: левый край {page_left} против {left}"
         );
+        if index < 3 {
+            assert!(
+                (page_right - right).abs() < 0.01,
+                "полная полоса {index} имеет другой правый край: {page_right} против {right}"
+            );
+        }
     }
+    assert!(
+        ranges[3].1 < right,
+        "короткая последняя полоса сохранила свою ширину"
+    );
 }
 
 #[test]
@@ -279,13 +290,13 @@ fn page_counts_are_pinned() {
 /// поэтому хеш вырос на один байт на страницу. Сам экспортируемый файл не
 /// изменился — сверено побайтово против сборки с lopdf 0.35.
 const DRAWING: &[(&str, u64)] = &[
-    ("scale-ten-pages.xlsx", 0xaf17_a30b_3166_e6ab),
+    ("scale-ten-pages.xlsx", 0xe233_2911_3e62_97be),
     ("edge-many-rows.xlsx", 0x27fb_c0c3_edfd_973f),
-    ("content-dense.xlsx", 0x5ea8_4e0e_3a7a_0add),
-    ("size-20x100x1.xlsx", 0x4509_1691_ad0d_d99c),
+    ("content-dense.xlsx", 0x5e68_4dbd_7839_cd18),
+    ("size-20x100x1.xlsx", 0x717e_bae6_ee5d_09c0),
     ("values-strings.xlsx", 0xaff1_7aae_6dad_3a4e),
-    ("layout-column-widths.xlsx", 0xbb58_15bf_3418_053c),
-    ("edge-merged-styled.xlsx", 0x5ae2_3b4b_802b_aa5f),
+    ("layout-column-widths.xlsx", 0x436a_cb59_0045_91fb),
+    ("edge-merged-styled.xlsx", 0x9e48_ea52_a89f_c5df),
     ("content-empty-sheet.xlsx", 0x0a06_e1e5_c37a_af6d),
 ];
 
@@ -525,13 +536,13 @@ fn first_columns_repeat_on_every_page() {
     );
     let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
     let pages = doc.get_pages();
-    // Область содержимого A4 — 680,3 px, столбец фикстуры — 64 px. Повтор
-    // отнимает 64 px, в полосу влезает 9 столбцов из 29 неповторяемых:
-    // полосы 9 + 9 + 9 + 2, то есть четыре страницы.
+    // Область содержимого A4 — 680,3 px, печатный столбец — 68,1 px. Повтор
+    // отнимает 68,1 px, в полосу влезает 8 столбцов из 29 неповторяемых:
+    // полосы 8 + 8 + 8 + 5, то есть четыре страницы.
     assert_eq!(pages.len(), 4, "повтор столбца не отнял место у полосы");
 
     // На каждой странице — все 30 ячеек повторяемого столбца плюс её полоса.
-    let expected = [300, 300, 300, 90];
+    let expected = [270, 270, 270, 180];
     for ((number, page_id), expected) in pages.iter().zip(expected) {
         let content = doc.get_page_content(*page_id);
         assert_eq!(
@@ -982,10 +993,10 @@ fn merged_cell_survives_column_bands() {
     );
     let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
     let pages = doc.get_pages();
-    assert_eq!(pages.len(), 3, "30 столбцов — три полосы");
-    // Полосы идут в порядке страниц: объединение нужно первой и второй, третьей
-    // (за границей 13-го столбца) — нет.
-    let expected = [1, 1, 0];
+    assert_eq!(pages.len(), 4, "30 столбцов — четыре полосы");
+    // Полосы идут в порядке страниц: объединение нужно первой и второй, двум
+    // последующим (за границей 13-го столбца) — нет.
+    let expected = [1, 1, 0, 0];
     for ((number, page_id), expected) in pages.iter().zip(expected) {
         assert_eq!(
             text_count(&doc, *page_id, TEXT),
@@ -1030,7 +1041,7 @@ fn merged_cell_inside_one_band_prints_once() {
     );
     let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается lopdf");
     let pages = doc.get_pages();
-    assert_eq!(pages.len(), 3, "30 столбцов — три полосы");
+    assert_eq!(pages.len(), 4, "30 столбцов — четыре полосы");
     let total: usize = pages
         .values()
         .map(|page_id| text_count(&doc, *page_id, TEXT))

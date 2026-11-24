@@ -87,7 +87,7 @@
     { "if": { "properties": { "view": { "properties": { "mode": { "const": "print-preview" } }, "required": ["mode"] } }, "required": ["view"] }, "then": { "properties": { "captures": { "items": { "properties": { "kind": { "const": "xlsx-print-page" } } } } } } },
     {
       "if": { "properties": { "view": { "properties": { "mode": { "const": "pdf" } }, "required": ["mode"] } }, "required": ["view"] },
-      "then": { "properties": { "reference": { "required": ["exportedPdf"] }, "environment": { "required": ["rasterizer"], "properties": { "viewportCss": false, "deviceScaleFactor": false, "colorScheme": false } } } },
+      "then": { "properties": { "reference": { "required": ["exportedPdf"] }, "environment": { "required": ["rasterizer"] } } },
       "else": { "properties": { "environment": { "required": ["viewportCss", "deviceScaleFactor", "colorScheme"], "properties": { "rasterizer": false } } } }
     }
   ]

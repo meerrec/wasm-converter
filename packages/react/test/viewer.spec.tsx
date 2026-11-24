@@ -122,7 +122,13 @@ describe('@meerrec/react', () => {
 
   it('useXlsxViewer отдаёт готовую ручку (null до создания)', async () => {
     const handle = fakeXlsxHandle();
-    mocks.createXlsxViewer.mockResolvedValue(handle);
+    // Промис создаётся вручную: resolve до первого assert делал тест зависимым
+    // от того, успела ли микрозадача `mockResolvedValue` выполниться в CI.
+    let release!: (value: XlsxViewerHandle) => void;
+    const ready = new Promise<XlsxViewerHandle>((resolve) => {
+      release = resolve;
+    });
+    mocks.createXlsxViewer.mockReturnValue(ready);
     let seen: XlsxViewerHandle | null = null;
 
     function Probe(): ReactElement {
@@ -134,6 +140,7 @@ describe('@meerrec/react', () => {
 
     render(<Probe />);
     expect(seen).toBeNull();
+    release(handle);
     await waitFor(() => expect(seen).toBe(handle));
   });
 

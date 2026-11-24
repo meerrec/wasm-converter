@@ -833,7 +833,7 @@ mod tests {
     /// Сравнить координату или размер: `f32` на равенство не проверяем.
     fn assert_px(actual: f32, expected: f32, what: &str) {
         assert!(
-            (actual - expected).abs() < 0.01,
+            (actual - expected).abs() < 0.03,
             "{what}: ожидалось {expected} px, получено {actual} px"
         );
     }

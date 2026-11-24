@@ -1,0 +1,112 @@
+{
+  "schemaVersion": "1.0.0",
+  "corpus": {
+    "id": "strict-viewer-stage1",
+    "version": "1.0.0",
+    "matrixVersion": "1.0.0",
+    "baselineId": "office-online-2026-11-23-candidate",
+    "storage": {
+      "kind": "git-lfs",
+      "rootUri": "test-fixtures/strict-viewer/references"
+    }
+  },
+  "source": {
+    "path": "test-fixtures/docx/tables/borders_shading.docx",
+    "format": "docx",
+    "sha256": "ac556b53f02c1f79d4d778632455a6a189d0bd19aae42269f0b1fba0cc694858",
+    "bytes": 3471
+  },
+  "reference": {
+    "provider": "office-online",
+    "application": "word-online",
+    "applicationVersion": "16.0.20717.41014",
+    "capturedAt": "2026-11-23T13:39:55.450Z",
+    "captureMethod": "semi-automated",
+    "operator": "wasm-converter-stage1-capture"
+  },
+  "environment": {
+    "os": {
+      "name": "Linux",
+      "version": "6.18.62",
+      "architecture": "x86_64"
+    },
+    "browser": {
+      "name": "chromium",
+      "version": "151.0.7922.108"
+    },
+    "viewportCss": {
+      "width": 1440,
+      "height": 900
+    },
+    "deviceScaleFactor": 1,
+    "applicationZoomPercent": 100,
+    "browserZoomPercent": 100,
+    "locale": "ru-RU",
+    "timezone": "UTC",
+    "colorScheme": "light",
+    "fonts": {
+      "package": "office-online-embedded-subsets",
+      "version": "16.0.20717.41014",
+      "assets": [
+        {
+          "family": "Calibri",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "a1a982208d6cff5a3cdae02c83d6eca49ae497ef4eaaffb27f8120088d2cbc51",
+          "source": "Embedded subset in reference.pdf (ttf)"
+        },
+        {
+          "family": "Calibri",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "a1a982208d6cff5a3cdae02c83d6eca49ae497ef4eaaffb27f8120088d2cbc51",
+          "source": "Embedded subset in reference.pdf (ttf)"
+        },
+        {
+          "family": "Calibri-Bold",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "001cb683646d61323a916e2b7a31e0806e76266fa850ed4cd1ee8c55fc83ec2c",
+          "source": "Embedded subset in reference.pdf (ttf)"
+        }
+      ]
+    }
+  },
+  "dynamicData": {
+    "dates": "fixed-value",
+    "fields": "cached-result",
+    "formulaCache": {
+      "policy": "cached-values-only",
+      "dirty": false,
+      "fullCalcOnLoad": false,
+      "forceFullCalc": false
+    },
+    "externalLinks": "cached-values-no-network"
+  },
+  "comparisonProfile": "visual-v1",
+  "notes": [
+    "Candidate reference: acceptance requires the independent baseline approval policy.",
+    "Captured on Linux; certification matrix 1.0.0 Windows 11 is not certified by this artifact."
+  ],
+  "view": {
+    "format": "docx",
+    "mode": "print-layout",
+    "revisions": "accepted",
+    "comments": "hidden"
+  },
+  "captures": [
+    {
+      "id": "docx-10-print-page-1",
+      "kind": "docx-page",
+      "pageNumber": 1,
+      "image": {
+        "uri": "page-1.png",
+        "sha256": "5f55408b5f627223e2159530d490601514611fd8ad992ee12130d31d61ef73e5",
+        "width": 794,
+        "height": 1123,
+        "bytes": 8664,
+        "colorType": "RGBA8"
+      }
+    }
+  ]
+}

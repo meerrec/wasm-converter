@@ -198,7 +198,7 @@ describe('адаптер рендера: main-режим', () => {
     // Размеры холста — физические пиксели, не CSS.
     expect(canvas.width).toBe(1600);
     expect(canvas.height).toBe(1200);
-    expect(painter.resizeMainCanvas).toHaveBeenCalledWith(800, 600, 2);
+    expect(painter.resizeMainCanvas).toHaveBeenCalledWith(canvas.context, 800, 600, 2);
     // Смена размеров сбросила кэш painter'а — картинка вернулась в него.
     expect(painter.registerMainBitmap).toHaveBeenLastCalledWith(3, bitmap);
 

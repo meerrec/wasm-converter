@@ -177,7 +177,7 @@ function createMainAdapter(opts: MainRenderAdapterOptions): MainRenderAdapter {
       canvas.width = Math.max(1, Math.round(cssW * dpr));
       canvas.height = Math.max(1, Math.round(cssH * dpr));
       if (ctx === null) return;
-      resizeMainCanvas(cssW, cssH, dpr);
+      resizeMainCanvas(ctx, cssW, cssH, dpr);
       // Смена размеров сбросила кэш `ImageBitmap`: возвращаем картинки в кэш,
       // иначе следующий кадр нарисует их подстановкой.
       for (const [id, bitmap] of bitmaps) registerMainBitmap(id, bitmap);

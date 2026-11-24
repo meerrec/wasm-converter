@@ -1,0 +1,98 @@
+{
+  "schemaVersion": "1.0.0",
+  "corpus": {
+    "id": "strict-viewer-stage1",
+    "version": "1.0.0",
+    "matrixVersion": "1.0.0",
+    "baselineId": "office-online-2026-11-23-candidate",
+    "storage": {
+      "kind": "git-lfs",
+      "rootUri": "test-fixtures/strict-viewer/references"
+    }
+  },
+  "source": {
+    "path": "test-fixtures/docx/images/anchor_wrap_square.docx",
+    "format": "docx",
+    "sha256": "9c5d824daf536cc191bdccc5538c299cf7e485499e89f7530111921faa05ca7f",
+    "bytes": 4258
+  },
+  "reference": {
+    "provider": "office-online",
+    "application": "word-online",
+    "applicationVersion": "16.0.20717.41014",
+    "capturedAt": "2026-11-21T22:46:08.551Z",
+    "captureMethod": "semi-automated",
+    "operator": "wasm-converter-stage1-capture"
+  },
+  "environment": {
+    "os": {
+      "name": "Linux",
+      "version": "6.18.62",
+      "architecture": "x86_64"
+    },
+    "browser": {
+      "name": "chromium",
+      "version": "151.0.7922.108"
+    },
+    "viewportCss": {
+      "width": 1440,
+      "height": 900
+    },
+    "deviceScaleFactor": 1,
+    "applicationZoomPercent": 100,
+    "browserZoomPercent": 100,
+    "locale": "ru-RU",
+    "timezone": "UTC",
+    "colorScheme": "light",
+    "fonts": {
+      "package": "office-online-embedded-subsets",
+      "version": "16.0.20717.41014",
+      "assets": [
+        {
+          "family": "Calibri",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "14758a65ae390240c6799bc6564dcc6992b325c3f60a81322cb4797846ee68d3",
+          "source": "Embedded subset in reference.pdf (ttf)"
+        }
+      ]
+    }
+  },
+  "dynamicData": {
+    "dates": "fixed-value",
+    "fields": "cached-result",
+    "formulaCache": {
+      "policy": "cached-values-only",
+      "dirty": false,
+      "fullCalcOnLoad": false,
+      "forceFullCalc": false
+    },
+    "externalLinks": "cached-values-no-network"
+  },
+  "comparisonProfile": "visual-v1",
+  "notes": [
+    "Candidate reference: acceptance requires the independent baseline approval policy.",
+    "Captured on Linux; certification matrix 1.0.0 Windows 11 is not certified by this artifact."
+  ],
+  "view": {
+    "format": "docx",
+    "mode": "print-layout",
+    "revisions": "accepted",
+    "comments": "hidden"
+  },
+  "captures": [
+    {
+      "id": "docx-18-print-page-1",
+      "kind": "docx-page",
+      "pageNumber": 1,
+      "image": {
+        "uri": "page-1.png",
+        "sha256": "a973f35d251d0bb54b5d43d874834e756aa0a6cf94e4e8c328c415ceef6692c4",
+        "width": 794,
+        "height": 1123,
+        "bytes": 28566,
+        "colorType": "RGBA8"
+      }
+    }
+  ]
+}

@@ -1,0 +1,343 @@
+{
+  "schemaVersion": "1.0.0",
+  "corpus": {
+    "id": "strict-viewer-stage1",
+    "version": "1.0.0",
+    "matrixVersion": "1.0.0",
+    "baselineId": "office-online-2026-11-23-candidate",
+    "storage": {
+      "kind": "git-lfs",
+      "rootUri": "test-fixtures/strict-viewer/references"
+    }
+  },
+  "source": {
+    "path": "test-fixtures/xlsx/values-long-text.xlsx",
+    "format": "xlsx",
+    "sha256": "1ed0c45ab25fee3d80af5b2c78e93d4c918c39ebbc443732b4d9dfa790505f73",
+    "bytes": 6649
+  },
+  "reference": {
+    "provider": "office-online",
+    "application": "excel-online",
+    "applicationVersion": "16.0.20709.42309",
+    "capturedAt": "2026-11-23T13:57:45.495Z",
+    "captureMethod": "semi-automated",
+    "operator": "wasm-converter-stage1-capture"
+  },
+  "environment": {
+    "os": {
+      "name": "Linux",
+      "version": "6.18.62",
+      "architecture": "x86_64"
+    },
+    "browser": {
+      "name": "chromium",
+      "version": "151.0.7922.108"
+    },
+    "viewportCss": {
+      "width": 1440,
+      "height": 900
+    },
+    "deviceScaleFactor": 1,
+    "applicationZoomPercent": 100,
+    "browserZoomPercent": 100,
+    "locale": "ru-RU",
+    "timezone": "UTC",
+    "colorScheme": "light",
+    "fonts": {
+      "package": "office-online-embedded-subsets",
+      "version": "16.0.20709.42309",
+      "assets": [
+        {
+          "family": "segoeui.woff",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "3d785eb0a0168e5c79e66aa0085a932d5fe2ad04f3577547e2267fa589df677d",
+          "source": "Office Online response: https://res.public.onecdn.static.microsoft"
+        },
+        {
+          "family": "27970306811",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "ded7515aa064578485a09c11a798a05d0303bdacdd7f2de92d0521f3bc7793ba",
+          "source": "Office Online response: https://res.public.onecdn.static.microsoft"
+        },
+        {
+          "family": "segoeui-regular.woff2",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "94ef87ee295c67526205d67124f404e246226105e939e14c435a20c29a956f49",
+          "source": "Office Online response: https://res-1.cdn.office.net"
+        },
+        {
+          "family": "segoeui-semibold.woff2",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "22e7ac6e00b3f7463f2c89c577877ed717686d6f219614c890317d86560c413d",
+          "source": "Office Online response: https://res-1.cdn.office.net"
+        },
+        {
+          "family": "38412632070",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "29dfdec50c23a86c86c949498ad6b622bc053bc20ff2465ec0d89ea6c41acf02",
+          "source": "Office Online response: https://res.public.onecdn.static.microsoft"
+        },
+        {
+          "family": "41119599467",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "fcb0c4655a6bc4fd3e9fef00d5c90622e27710914cb1471e6b04c420bf489ded",
+          "source": "Office Online response: https://res.public.onecdn.static.microsoft"
+        },
+        {
+          "family": "37395953589",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "3e1d8f79c4d0c7b005d4660197c67a416853364ac3fdc84b14271b6f9dd28290",
+          "source": "Office Online response: https://res.public.onecdn.static.microsoft"
+        },
+        {
+          "family": "GetHierFontMetadata",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "19e1447b83b6873c8d70d1a9afc361b010746d0325ca6e287eb18da5aaee69fd",
+          "source": "Office Online response: https://sg3-excel.officeapps.live.com"
+        }
+      ]
+    }
+  },
+  "dynamicData": {
+    "dates": "fixed-value",
+    "fields": "cached-result",
+    "formulaCache": {
+      "policy": "cached-values-only",
+      "dirty": false,
+      "fullCalcOnLoad": false,
+      "forceFullCalc": false
+    },
+    "externalLinks": "cached-values-no-network"
+  },
+  "comparisonProfile": "visual-v1",
+  "notes": [
+    "Candidate reference: acceptance requires the independent baseline approval policy.",
+    "Captured on Linux; certification matrix 1.0.0 Windows 11 is not certified by this artifact."
+  ],
+  "view": {
+    "format": "xlsx",
+    "mode": "print-preview",
+    "activeSheet": {
+      "index": 0,
+      "name": "Длинный текст"
+    },
+    "hiddenSheets": "exclude",
+    "showGridLines": true,
+    "showHeadings": true
+  },
+  "captures": [
+    {
+      "id": "xlsx-18-sheet-1-print-page-1",
+      "kind": "xlsx-print-page",
+      "pageNumber": 1,
+      "sheet": {
+        "index": 0,
+        "name": "Длинный текст"
+      },
+      "image": {
+        "uri": "page-1.png",
+        "sha256": "5bb59f751a1bba0279f5af703d19c4ff7aba68ed5d68b0a3f6d771058854d42b",
+        "width": 594,
+        "height": 815,
+        "bytes": 20698,
+        "colorType": "RGBA8"
+      }
+    },
+    {
+      "id": "xlsx-18-sheet-1-print-page-2",
+      "kind": "xlsx-print-page",
+      "pageNumber": 2,
+      "sheet": {
+        "index": 0,
+        "name": "Длинный текст"
+      },
+      "image": {
+        "uri": "page-2.png",
+        "sha256": "db7842d54bcf0f8b4c2552e3af54c797fae84a41384b316ff069e976b8f4a496",
+        "width": 594,
+        "height": 815,
+        "bytes": 20806,
+        "colorType": "RGBA8"
+      }
+    },
+    {
+      "id": "xlsx-18-sheet-1-print-page-3",
+      "kind": "xlsx-print-page",
+      "pageNumber": 3,
+      "sheet": {
+        "index": 0,
+        "name": "Длинный текст"
+      },
+      "image": {
+        "uri": "page-3.png",
+        "sha256": "f57a868c0e25efab3410b22fd1e0d626c4bcf456559644f2486e765f13b93a21",
+        "width": 594,
+        "height": 815,
+        "bytes": 20881,
+        "colorType": "RGBA8"
+      }
+    },
+    {
+      "id": "xlsx-18-sheet-1-print-page-4",
+      "kind": "xlsx-print-page",
+      "pageNumber": 4,
+      "sheet": {
+        "index": 0,
+        "name": "Длинный текст"
+      },
+      "image": {
+        "uri": "page-4.png",
+        "sha256": "991fc8b61fb0a4f38cfaa9370a70493adbafd0bcaf0ac1e65617b0facb82078a",
+        "width": 594,
+        "height": 815,
+        "bytes": 20881,
+        "colorType": "RGBA8"
+      }
+    },
+    {
+      "id": "xlsx-18-sheet-1-print-page-5",
+      "kind": "xlsx-print-page",
+      "pageNumber": 5,
+      "sheet": {
+        "index": 0,
+        "name": "Длинный текст"
+      },
+      "image": {
+        "uri": "page-5.png",
+        "sha256": "805ea8b8d87280f48700de22f6ef2a46971f31841c7101dcf951d7e4e3d203e7",
+        "width": 594,
+        "height": 815,
+        "bytes": 20880,
+        "colorType": "RGBA8"
+      }
+    },
+    {
+      "id": "xlsx-18-sheet-1-print-page-6",
+      "kind": "xlsx-print-page",
+      "pageNumber": 6,
+      "sheet": {
+        "index": 0,
+        "name": "Длинный текст"
+      },
+      "image": {
+        "uri": "page-6.png",
+        "sha256": "881da42808181a313a94bd87e3427bb366c7a42895a4a175c14baa41dc04544a",
+        "width": 594,
+        "height": 815,
+        "bytes": 20550,
+        "colorType": "RGBA8"
+      }
+    },
+    {
+      "id": "xlsx-18-sheet-1-print-page-7",
+      "kind": "xlsx-print-page",
+      "pageNumber": 7,
+      "sheet": {
+        "index": 0,
+        "name": "Длинный текст"
+      },
+      "image": {
+        "uri": "page-7.png",
+        "sha256": "daaf7463279cf456a30ce86cb0373d036ac195dc0eaeb4746aa11cc223347d80",
+        "width": 594,
+        "height": 815,
+        "bytes": 20473,
+        "colorType": "RGBA8"
+      }
+    },
+    {
+      "id": "xlsx-18-sheet-1-print-page-8",
+      "kind": "xlsx-print-page",
+      "pageNumber": 8,
+      "sheet": {
+        "index": 0,
+        "name": "Длинный текст"
+      },
+      "image": {
+        "uri": "page-8.png",
+        "sha256": "74acd1de471c77412ecb3d95962f533f21301fe5911467f5bf7010cd34e80136",
+        "width": 594,
+        "height": 815,
+        "bytes": 20647,
+        "colorType": "RGBA8"
+      }
+    },
+    {
+      "id": "xlsx-18-sheet-1-print-page-9",
+      "kind": "xlsx-print-page",
+      "pageNumber": 9,
+      "sheet": {
+        "index": 0,
+        "name": "Длинный текст"
+      },
+      "image": {
+        "uri": "page-9.png",
+        "sha256": "bd2512c813d5299b32d572ccf8b0ef836ad8cf9e31e97dfae894ca8472770afb",
+        "width": 594,
+        "height": 815,
+        "bytes": 20827,
+        "colorType": "RGBA8"
+      }
+    },
+    {
+      "id": "xlsx-18-sheet-1-print-page-10",
+      "kind": "xlsx-print-page",
+      "pageNumber": 10,
+      "sheet": {
+        "index": 0,
+        "name": "Длинный текст"
+      },
+      "image": {
+        "uri": "page-10.png",
+        "sha256": "2b5984c51bc9a21be08b49515ae8946f4630c5bf00f7e6c1ecbd51cff2d4ef69",
+        "width": 594,
+        "height": 815,
+        "bytes": 20558,
+        "colorType": "RGBA8"
+      }
+    },
+    {
+      "id": "xlsx-18-sheet-1-print-page-11",
+      "kind": "xlsx-print-page",
+      "pageNumber": 11,
+      "sheet": {
+        "index": 0,
+        "name": "Длинный текст"
+      },
+      "image": {
+        "uri": "page-11.png",
+        "sha256": "6d04c63b54e9d71712db32faf0dc57187d8dff0b086f512c96e3a31da8a5cf65",
+        "width": 594,
+        "height": 815,
+        "bytes": 20895,
+        "colorType": "RGBA8"
+      }
+    },
+    {
+      "id": "xlsx-18-sheet-1-print-page-12",
+      "kind": "xlsx-print-page",
+      "pageNumber": 12,
+      "sheet": {
+        "index": 0,
+        "name": "Длинный текст"
+      },
+      "image": {
+        "uri": "page-12.png",
+        "sha256": "f146abfe354786bd5d7037f3fe4c4e678b9328b95145ac767331884a2fac162e",
+        "width": 594,
+        "height": 815,
+        "bytes": 13586,
+        "colorType": "RGBA8"
+      }
+    }
+  ]
+}

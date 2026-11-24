@@ -182,7 +182,7 @@ fn grid_lines_follow_layout_edges() {
     let name = "content-mixed-types.xlsx";
     let book = open(name);
     let sheet = book.sheets().first().expect("лист есть");
-    let layout = SheetLayout::new(sheet);
+    let layout = SheetLayout::new(sheet).for_print();
     let used = sheet.cells.used_range().expect("лист не пуст");
     let bytes = export(name, 0, true);
     let doc = lopdf::Document::load_mem(&bytes).expect("PDF разбирается");

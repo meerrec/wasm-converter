@@ -1,5 +1,5 @@
 import type { PaintStatsWire } from '../generated/wire.js';
-import { registerPaintFonts } from '../worker/fonts.js';
+import { registerPaintFonts, resolvePaintFonts, waitPaintFontsVisible } from '../worker/fonts.js';
 
 /**
  * Тип wasm-модуля берём из сгенерированных wasm-bindgen деклараций, но сам
@@ -43,7 +43,18 @@ export async function initMainPainter(
     await mod.default(wasmUrl);
     // Сабсеты Carlito — до первого кадра: Chromium запоминает промах по
     // строке `ctx.font` на всю сессию, и предпросмотр разошёлся бы с PDF.
-    await registerPaintFonts({ font_bytes: mod.font_bytes });
+    const registered = await registerPaintFonts({ font_bytes: mod.font_bytes });
+    if (!registered && typeof FontFace !== 'undefined') {
+      throw new Error('main-режим: сабсеты Carlito недоступны');
+    }
+    resolvePaintFonts(ctx);
+    // `face.load()` ≠ «матчер видит лицо»: без этого ожидания первый кадр в
+    // headless-Chromium может уйти в системную подстановку fontconfig, и промах
+    // закрепится в кэше строк контекста до следующего resize. Режим без
+    // FontFace (registered === false) сюда не доходит — он рисует подстановкой.
+    if (registered && !(await waitPaintFontsVisible(ctx))) {
+      throw new Error('main-режим: сабсеты Carlito не стали видны canvas-матчеру');
+    }
     mod.init_painter_main(ctx);
     module = mod;
   } catch (e) {
@@ -71,8 +82,16 @@ export function paintDisplayList(bytes: Uint8Array): PaintStatsWire {
  * Пересчитать холст под DPR. Установка размеров сбрасывает 2D-контекст и кэш
  * битмапов painter'а, поэтому вызывающий регистрирует картинки заново.
  */
-export function resizeMainCanvas(cssW: number, cssH: number, dpr: number): void {
+export function resizeMainCanvas(
+  ctx: CanvasRenderingContext2D,
+  cssW: number,
+  cssH: number,
+  dpr: number,
+): void {
   wasm().resize_canvas(cssW, cssH, dpr);
+  // Установка размеров сбрасывает состояние холста: без повторного разрешения
+  // первый текст после resize снова может уйти в системный fallback.
+  resolvePaintFonts(ctx);
 }
 
 /** Вернуть `ImageBitmap` в кэш painter'а: воркер отдал его переводом. */

@@ -5,6 +5,8 @@ import { defineConfig, devices } from '@playwright/test';
  * и в привычке. Сервер поднимает сам Playwright.
  */
 const PORT = 5178;
+// Автономный corpus запускается отдельным конфигом и требует capture plan.
+const STRICT_CAPTURE_TESTS = '**/strict/**';
 
 export default defineConfig({
   testDir: './e2e',
@@ -28,17 +30,17 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
       // DPR-сценарию нужен свой `deviceScaleFactor`: он идёт отдельным проектом.
-      testIgnore: /dpr\.spec\.ts/,
+      testIgnore: [/dpr\.spec\.ts/, STRICT_CAPTURE_TESTS],
     },
     {
       name: 'firefox',
       use: { ...devices['Desktop Firefox'] },
-      testIgnore: /dpr\.spec\.ts/,
+      testIgnore: [/dpr\.spec\.ts/, STRICT_CAPTURE_TESTS],
     },
     {
       name: 'webkit',
       use: { ...devices['Desktop Safari'] },
-      testIgnore: /dpr\.spec\.ts/,
+      testIgnore: [/dpr\.spec\.ts/, STRICT_CAPTURE_TESTS],
       // На раннере WebKit падает не на конкретном тесте, а в случайном месте
       // цепочки: «Target crashed», таймауты `waitForFunction` и открытия
       // фикстуры. Двух глобальных попыток не хватает — набор падающих тестов

@@ -37,8 +37,9 @@ test('рисует пять диаграмм на холсте и в PDF век�
   await expect(page.locator('#status')).toContainText('PDF готов', { timeout: 30_000 });
 
   const probe = probePdf(bytes);
-  // Клип диаграммы — `q … W n … Q`; пять диаграмм — пять клипов, как и в
-  // нативном тесте.
+  // Клип диаграммы — `q … W n … Q`. Пять диаграмм после учёта печатной
+  // геометрии дают семь видимых частей: две пересекают границы полос, как и в
+  // нативном `crates/pdf/tests/chart.rs`.
   let blocks = 0;
   for (const [page, ops] of probe.pages.entries()) {
     for (const { start, end } of clips(ops)) {
@@ -50,7 +51,7 @@ test('рисует пять диаграмм на холсте и в PDF век�
       expect(block, `${where}: внутри XObject вместо вектора`).not.toContain('Do');
     }
   }
-  expect(blocks, 'число клипов диаграмм').toBe(5);
+  expect(blocks, 'число клипов диаграмм').toBe(7);
 
   expect(errors).toEqual([]);
 });

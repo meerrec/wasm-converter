@@ -1,0 +1,114 @@
+{
+  "schemaVersion": "1.0.0",
+  "corpus": {
+    "id": "strict-viewer-stage1",
+    "version": "1.0.0",
+    "matrixVersion": "1.0.0",
+    "baselineId": "office-online-2026-11-23-candidate",
+    "storage": {
+      "kind": "git-lfs",
+      "rootUri": "test-fixtures/strict-viewer/references"
+    }
+  },
+  "source": {
+    "path": "test-fixtures/docx/tables/grid_span.docx",
+    "format": "docx",
+    "sha256": "aa0a5f9ba2c422a63125964476cd3830353cc6c02e0d511ddacefe122b2e9942",
+    "bytes": 3444
+  },
+  "reference": {
+    "provider": "office-online",
+    "application": "word-online",
+    "applicationVersion": "16.0.20717.41014",
+    "capturedAt": "2026-11-21T22:43:31.833Z",
+    "captureMethod": "semi-automated",
+    "operator": "wasm-converter-stage1-capture",
+    "exportedPdf": {
+      "uri": "../reference.pdf",
+      "sha256": "5e236e08e2d632045f302fa340f11b88bf8be5cb49acd20c7fde636da9af204a"
+    }
+  },
+  "environment": {
+    "os": {
+      "name": "Linux",
+      "version": "6.18.62",
+      "architecture": "x86_64"
+    },
+    "browser": {
+      "name": "chromium",
+      "version": "151.0.7922.108"
+    },
+    "viewportCss": {
+      "width": 1440,
+      "height": 900
+    },
+    "deviceScaleFactor": 1,
+    "applicationZoomPercent": 100,
+    "browserZoomPercent": 100,
+    "locale": "ru-RU",
+    "timezone": "UTC",
+    "colorScheme": "light",
+    "fonts": {
+      "package": "office-online-embedded-subsets",
+      "version": "16.0.20717.41014",
+      "assets": [
+        {
+          "family": "Calibri",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "7476edd82220f62fc58506f10a13322248f4d453d56a31af14aef8e47b64ff7d",
+          "source": "Embedded subset in reference.pdf (ttf)"
+        },
+        {
+          "family": "Calibri",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "7476edd82220f62fc58506f10a13322248f4d453d56a31af14aef8e47b64ff7d",
+          "source": "Embedded subset in reference.pdf (ttf)"
+        }
+      ]
+    },
+    "rasterizer": {
+      "name": "pdftoppm",
+      "version": "version",
+      "dpi": 144
+    }
+  },
+  "dynamicData": {
+    "dates": "fixed-value",
+    "fields": "cached-result",
+    "formulaCache": {
+      "policy": "cached-values-only",
+      "dirty": false,
+      "fullCalcOnLoad": false,
+      "forceFullCalc": false
+    },
+    "externalLinks": "cached-values-no-network"
+  },
+  "comparisonProfile": "visual-v1",
+  "notes": [
+    "Candidate reference: acceptance requires the independent baseline approval policy.",
+    "Captured on Linux; certification matrix 1.0.0 Windows 11 is not certified by this artifact."
+  ],
+  "view": {
+    "format": "docx",
+    "mode": "pdf",
+    "revisions": "accepted",
+    "comments": "hidden"
+  },
+  "captures": [
+    {
+      "id": "docx-11-pdf-page-1",
+      "kind": "docx-page",
+      "pageNumber": 1,
+      "image": {
+        "uri": "page-1.png",
+        "sha256": "6649bee6c71d20e4b2bc13ca651c6b44a6f8912255812a2bf4bfbc5b838e2e10",
+        "width": 1191,
+        "height": 1684,
+        "bytes": 22527,
+        "colorType": "RGBA8"
+      }
+    }
+  ]
+}

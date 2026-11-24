@@ -787,3 +787,45 @@ fn test_layout_unknown_fields_stay_unresolved() {
         ["Date:", "Date (fldSimple):"]
     );
 }
+
+#[test]
+fn office_long_table_page_breaks_and_repeated_header() {
+    for (fixture, expected_rows) in [
+        ("tables/long_table.docx", [31, 29]),
+        ("tables/long_table_header_repeat.docx", [31, 10]),
+    ] {
+        let layout = layout_of(fixture);
+        assert_eq!(layout.pages.len(), 2, "{fixture}");
+        let tables: Vec<_> = layout
+            .pages
+            .iter()
+            .map(|page| {
+                page.items
+                    .iter()
+                    .find_map(|item| match item {
+                        LayoutItem::Table { rows, .. } => Some(rows),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("нет таблицы: {fixture}"))
+            })
+            .collect();
+        assert_eq!(tables[0].len(), expected_rows[0], "{fixture}");
+        assert_eq!(tables[1].len(), expected_rows[1], "{fixture}");
+        for row in tables.iter().flat_map(|rows| rows.iter()) {
+            assert!(
+                (row.height - 30.666666).abs() < 0.001,
+                "{fixture}: {}",
+                row.height
+            );
+            assert!(!row.continues_below && !row.continued_above, "{fixture}");
+        }
+        let repeats = tables[1].iter().filter(|row| row.header_repeat).count();
+        assert_eq!(
+            repeats,
+            usize::from(fixture.contains("header_repeat")),
+            "{fixture}"
+        );
+        let body = tables[1].iter().find(|row| !row.header_repeat).unwrap();
+        assert_eq!(body.cells[0].row, 31, "{fixture}");
+    }
+}

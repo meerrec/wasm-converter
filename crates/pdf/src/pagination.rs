@@ -31,9 +31,14 @@
 
 use std::ops::Range;
 
+use doc_converter_render::display_list::TextAlign;
+use doc_converter_render::font::{FontRegistry, DEFAULT_FONT_ID};
+use doc_converter_render::text_measure::measure_text;
+use doc_converter_xlsx::cellref::{MAX_COL, MAX_ROW};
+use doc_converter_xlsx::drawing::ImageAnchor;
 use doc_converter_xlsx::layout::SheetLayout;
-use doc_converter_xlsx::paint::display_text;
-use doc_converter_xlsx::{Cell, CellRef, Sheet, Workbook};
+use doc_converter_xlsx::paint::{anchor_rect, display_text};
+use doc_converter_xlsx::{Cell, CellRef, Range as CellRange, Sheet, Workbook};
 
 use crate::border;
 use crate::fonts::{Face, FaceSet};
@@ -47,6 +52,121 @@ use crate::styles::{self, CellStyle};
 /// содержимого ровно, может оказаться на доли пикселя шире её. 0,05 px на
 /// печати — сотые доли миллиметра: незаметны, зато не дают лишней страницы.
 const BAND_EPS_PX: f32 = 0.05;
+
+/// Excel показывает и печатает в ячейке не больше 1024 символов; остаток
+/// доступен в строке формул, но не продолжает overflow на соседние столбцы.
+const MAX_DISPLAYED_CELL_CHARS: usize = 1024;
+
+fn text_overflow_end(
+    book: &Workbook,
+    sheet_index: usize,
+    sheet: &Sheet,
+    layout: &SheetLayout,
+    fonts: &mut FontRegistry,
+    at: CellRef,
+    cell: &Cell,
+) -> u32 {
+    let style = styles::resolve(book, cell);
+    if style.wrap || style.align != TextAlign::Left {
+        return at.col;
+    }
+    let Some(text) = display_text(book, sheet_index, at, cell, style.number_format) else {
+        return at.col;
+    };
+    if text.is_empty() {
+        return at.col;
+    }
+    let displayed: String = text.chars().take(MAX_DISPLAYED_CELL_CHARS).collect();
+    let text_width = measure_text(
+        fonts,
+        DEFAULT_FONT_ID,
+        style.font_size_pt * doc_converter_xlsx::layout::PX_PER_POINT,
+        &displayed,
+    ) + 8.0 / 3.0;
+    let cell_width = layout.column_x(at.col + 1) - layout.column_x(at.col);
+    if text_width <= cell_width {
+        return at.col;
+    }
+    let mut end = at.col;
+    let mut available = cell_width;
+    while end < MAX_COL && available < text_width {
+        let next = CellRef::new(at.row, end + 1);
+        if let Some(next_cell) = sheet.cells.cell(next) {
+            let next_style = styles::resolve(book, next_cell);
+            if has_visible_content(book, sheet_index, next, next_cell, &next_style) {
+                break;
+            }
+        }
+        end += 1;
+        available += layout.column_x(end + 1) - layout.column_x(end);
+    }
+    end
+}
+
+fn extend_range(range: &mut CellRange, first: CellRef, last: CellRef) {
+    range.first.row = range.first.row.min(first.row);
+    range.first.col = range.first.col.min(first.col);
+    range.last.row = range.last.row.max(last.row);
+    range.last.col = range.last.col.max(last.col);
+}
+
+/// Печатная область поверх экранных ячеек: объекты и видимый overflow текста.
+/// Экранный `Sheet::visible_used_range` намеренно не изменяется.
+#[must_use]
+pub fn print_extent(book: &Workbook, sheet: &Sheet, layout: &SheetLayout) -> Option<CellRange> {
+    let mut used = sheet.visible_used_range();
+    let sheet_index = book.sheet_index(sheet).unwrap_or(usize::MAX);
+    let mut fonts = FontRegistry::new(1024);
+    for (row, cells) in sheet.cells.rows() {
+        for cell in cells {
+            let at = cell.at(row);
+            let end = text_overflow_end(book, sheet_index, sheet, layout, &mut fonts, at, cell);
+            if end != at.col {
+                let range = used.get_or_insert(CellRange {
+                    first: at,
+                    last: at,
+                });
+                extend_range(range, at, CellRef::new(at.row, end));
+            }
+        }
+    }
+    let anchors = sheet
+        .images
+        .iter()
+        .map(|image| &image.anchor)
+        .chain(sheet.charts.iter().map(|chart| &chart.anchor));
+    for anchor in anchors {
+        let (x, y, w, h) = anchor_rect(layout, *anchor);
+        if w <= 0.0 || h <= 0.0 {
+            continue;
+        }
+        let (first, last) = match anchor {
+            ImageAnchor::OneCell { from, .. } => {
+                let mut last = *from;
+                while last.col < MAX_COL && layout.column_x(last.col + 1) < x + w {
+                    last.col += 1;
+                }
+                while last.row < MAX_ROW && layout.row_y(last.row + 1) < y + h {
+                    last.row += 1;
+                }
+                (
+                    CellRef::new(from.row, from.col),
+                    CellRef::new(last.row, last.col),
+                )
+            }
+            ImageAnchor::TwoCell { from, to } => {
+                let last = CellRef::new(
+                    to.row.saturating_sub(u32::from(to.row_off <= 0.0)),
+                    to.col.saturating_sub(u32::from(to.col_off <= 0.0)),
+                );
+                (CellRef::new(from.row, from.col), last)
+            }
+        };
+        let range = used.get_or_insert(CellRange { first, last });
+        extend_range(range, first, last);
+    }
+    used
+}
 
 /// Срез листа, который печатает одна страница.
 ///
@@ -121,8 +241,29 @@ const MIN_FIT_SCALE: f32 = 0.1;
 /// (в Excel это взаимоисключающие настройки), и лист не увеличивает: то, что и
 /// так помещается в N страниц, печатается в 100%. Заданы обе границы — берётся
 /// меньший масштаб, как у Excel «уместить на N страниц в ширину и M в высоту».
+#[cfg(test)]
 #[must_use]
 pub fn print_scale(cfg: &PageConfig, sheet: &Sheet, layout: &SheetLayout) -> f32 {
+    scale_for_extent(cfg, sheet, layout, sheet.visible_used_range())
+}
+
+/// Масштаб с учётом полной печатной области книги, включая объекты и overflow.
+#[must_use]
+pub fn print_book_scale(
+    cfg: &PageConfig,
+    book: &Workbook,
+    sheet: &Sheet,
+    layout: &SheetLayout,
+) -> f32 {
+    scale_for_extent(cfg, sheet, layout, print_extent(book, sheet, layout))
+}
+
+fn scale_for_extent(
+    cfg: &PageConfig,
+    sheet: &Sheet,
+    layout: &SheetLayout,
+    used: Option<CellRange>,
+) -> f32 {
     let pages_wide = cfg.fit_to_width.filter(|pages| *pages > 0);
     let pages_tall = cfg.fit_to_height.filter(|pages| *pages > 0);
     if pages_wide.is_none() && pages_tall.is_none() {
@@ -132,7 +273,7 @@ pub fn print_scale(cfg: &PageConfig, sheet: &Sheet, layout: &SheetLayout) -> f32
     }
     // Ужимать есть смысл по видимым ячейкам: пустой стилевой запас листа за
     // значениями не печатается и в ширину полосы не входит.
-    let Some(used) = sheet.visible_used_range() else {
+    let Some(used) = used else {
         return 1.0;
     };
     // Область содержимого в пикселях раскладки — по геометрии при 100%, чтобы
@@ -192,13 +333,14 @@ fn fit_height_scale(
             ..cfg.clone()
         });
         let header_end = repeat_count(cfg.repeat_header_rows, last_row);
-        row_bands(
+        row_bands_to(
             sheet,
             layout,
             &page,
             cfg,
             header_end,
             layout.row_y(header_end),
+            last_row,
         )
         .len()
     };
@@ -246,7 +388,7 @@ pub fn paginate<'a>(
     page: &PageGeometry,
     cfg: &PageConfig,
 ) -> SheetPagination<'a> {
-    let Some(used) = sheet.visible_used_range() else {
+    let Some(used) = print_extent(book, sheet, layout) else {
         return SheetPagination {
             faces: FaceSet::default(),
             pages: vec![empty_page()],
@@ -263,7 +405,15 @@ pub fn paginate<'a>(
     let repeat_w_px = layout.column_x(repeat_cols.end);
 
     let mut bands_x = column_bands(repeat_cols.end, used.last.col, layout, page, repeat_w_px);
-    let mut bands_y = row_bands(sheet, layout, page, cfg, header_rows.end, header_h_px);
+    let mut bands_y = row_bands_to(
+        sheet,
+        layout,
+        page,
+        cfg,
+        header_rows.end,
+        header_h_px,
+        used.last.row,
+    );
     // Повторяемая часть может занять лист целиком: полос потока тогда нет, но
     // страница с одной шапкой остаться должна — пустой срез её и описывает.
     if bands_x.is_empty() {
@@ -286,6 +436,7 @@ pub fn paginate<'a>(
         .collect();
 
     let mut faces = FaceSet::default();
+    let mut measure_fonts = FontRegistry::new(1024);
     // Корзины по числу полос: индекс — «полоса столбцов * полос строк + полоса
     // строк», поэтому обход корзин по порядку и есть порядок страниц.
     let mut buckets: Vec<Vec<PaintedCell<'a>>> = (0..bands_x.len() * bands_y.len())
@@ -308,7 +459,18 @@ pub fn paginate<'a>(
             // которую пересекает: painter вычтет сдвиг полосы, и часть,
             // вышедшая за край листа, отсечётся краем страницы, а не пропадёт
             // вместе со всей ячейкой.
-            let (col_span, row_span) = cell_span(sheet, at);
+            let (mut col_span, row_span) = cell_span(sheet, at);
+            col_span.end = col_span.end.max(
+                text_overflow_end(
+                    book,
+                    sheet_index,
+                    sheet,
+                    layout,
+                    &mut measure_fonts,
+                    at,
+                    cell,
+                ) + 1,
+            );
             let in_repeat = repeat_cols.contains(&at.col);
             let rows = if in_header {
                 0..bands_y.len()
@@ -345,11 +507,13 @@ pub fn paginate<'a>(
         }
     }
     let mut pages = Vec::with_capacity(buckets.len());
+    let has_objects = !sheet.images.is_empty() || !sheet.charts.is_empty();
     for (index, cells) in buckets.into_iter().enumerate() {
-        if cells.is_empty() {
+        let (col_band, row_band) = (index / bands_y.len(), index % bands_y.len());
+        if cells.is_empty() && !has_objects {
             continue;
         }
-        let (col_band, row_band) = (index / bands_y.len(), index % bands_y.len());
+
         pages.push(SheetPage {
             slice: page_slice(
                 &bands_y[row_band],
@@ -499,17 +663,18 @@ struct FlowRow {
 /// его строк, второй — вверх, если следующая страница началась бы слишком
 /// коротким хвостом блока. На разрыв внутри строки они не влияют: границей
 /// распоряжается уже `avoid_row_break`.
-fn row_bands(
+fn row_bands_to(
     sheet: &Sheet,
     layout: &SheetLayout,
     page: &PageGeometry,
     cfg: &PageConfig,
     header_end: u32,
     header_h_px: f32,
+    last_row: u32,
 ) -> Vec<RowBand> {
     let (_, content_h_px) = page.content_px();
     let max_h_px = (content_h_px - header_h_px).max(0.0);
-    let flow: Vec<FlowRow> = sheet
+    let mut flow: Vec<FlowRow> = sheet
         .cells
         .rows()
         .filter(|(row, _)| *row >= header_end)
@@ -519,6 +684,19 @@ fn row_bands(
             bottom: layout.row_y(row + 1),
         })
         .collect();
+    // Объект может лежать ниже последней ячейки. Добавляем только этот хвост:
+    // разреженные блоки ячеек остаются нетронутыми для widow/orphan.
+    if let Some(next) = sheet
+        .cells
+        .last_row()
+        .map_or(Some(header_end), |row| (row < last_row).then_some(row + 1))
+    {
+        flow.extend((next.max(header_end)..=last_row).map(|row| FlowRow {
+            row,
+            top: layout.row_y(row),
+            bottom: layout.row_y(row + 1),
+        }));
+    }
     let blocks = block_starts(&flow);
     let mut bands: Vec<RowBand> = Vec::new();
     let mut start = 0;
@@ -556,6 +734,26 @@ fn row_bands(
         offset = next_offset;
     }
     bands
+}
+
+#[cfg(test)]
+fn row_bands(
+    sheet: &Sheet,
+    layout: &SheetLayout,
+    page: &PageGeometry,
+    cfg: &PageConfig,
+    header_end: u32,
+    header_h_px: f32,
+) -> Vec<RowBand> {
+    row_bands_to(
+        sheet,
+        layout,
+        page,
+        cfg,
+        header_end,
+        header_h_px,
+        sheet.cells.last_row().unwrap_or(header_end),
+    )
 }
 
 /// Начала блоков в потоке: индексы, с которых начинается новый блок.
@@ -2225,5 +2423,74 @@ mod tests {
             vec![1..2, 2..3, 3..4],
             "строка потока раздроблена при нулевой полосе"
         );
+    }
+
+    #[test]
+    fn office_print_extent_targets_have_expected_page_counts() {
+        for (fixture, expected) in [
+            ("layout-frozen-columns.xlsx", 2),
+            ("values-long-text.xlsx", 12),
+            ("charts-five-kinds.xlsx", 3),
+            ("images-over-data.xlsx", 1821),
+        ] {
+            let book = open(fixture);
+            let sheet = &book.sheets()[0];
+            let layout = SheetLayout::new(sheet).for_print();
+            let mut cfg = PageConfig::default();
+            crate::painter::resolve_page_scale(&mut cfg, sheet);
+            let page = PageGeometry::new(&PageConfig {
+                scale: print_book_scale(&cfg, &book, sheet, &layout),
+                ..cfg.clone()
+            });
+            let pagination = paginate(&book, sheet, &layout, &page, &cfg);
+            assert_eq!(
+                pagination.pages.len(),
+                expected,
+                "{fixture}: extent={:?}, first={:?}, last={:?}",
+                print_extent(&book, sheet, &layout),
+                pagination.pages.first().map(|p| &p.slice.cols),
+                pagination.pages.last().map(|p| &p.slice.cols),
+            );
+        }
+    }
+
+    #[test]
+    fn distant_one_cell_image_lands_on_the_last_page() {
+        let book = open("images-over-data.xlsx");
+        let sheet = &book.sheets()[0];
+        let image = sheet
+            .images
+            .iter()
+            .find(|image| matches!(image.anchor, ImageAnchor::OneCell { from, .. } if from.col == 16_381))
+            .expect("фикстура содержит дальний oneCellAnchor");
+        let ImageAnchor::OneCell { from, .. } = image.anchor else {
+            unreachable!()
+        };
+        let layout = SheetLayout::new(sheet).for_print();
+        let cfg = PageConfig::default();
+        let page = PageGeometry::new(&cfg);
+        let pagination = paginate(&book, sheet, &layout, &page, &cfg);
+        let last = pagination
+            .pages
+            .last()
+            .expect("дальний anchor даёт страницы");
+        assert_eq!(pagination.pages.len(), 1821);
+        assert!(last.slice.cols.contains(&from.col));
+        assert!(last.slice.rows.contains(&from.row));
+        let previous = &pagination.pages[pagination.pages.len() - 2];
+        assert!(
+            !previous.slice.cols.contains(&from.col) || !previous.slice.rows.contains(&from.row),
+            "дальнее изображение не должно дублироваться на предпоследней странице"
+        );
+    }
+
+    #[test]
+    fn print_extent_does_not_change_screen_used_range() {
+        let book = open("values-long-text.xlsx");
+        let sheet = &book.sheets()[0];
+        let screen = sheet.visible_used_range().unwrap();
+        let printed = print_extent(&book, sheet, &SheetLayout::new(sheet)).unwrap();
+        assert!(printed.last.col > screen.last.col);
+        assert_eq!(sheet.visible_used_range().unwrap(), screen);
     }
 }

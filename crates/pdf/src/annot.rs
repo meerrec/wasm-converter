@@ -418,7 +418,7 @@ mod tests {
     use super::{annotation_to_dict, comment_placements};
     use crate::layout::PageGeometry;
     use crate::options::{Margins, PageConfig, PageSize};
-    use crate::pagination::{paginate, print_scale, SheetPagination};
+    use crate::pagination::{paginate, print_book_scale, SheetPagination};
     use crate::pdf::ops::{Actions, Annotation, LinkAnnotation, Pt, Rect, TextAnnotation};
     use doc_converter_xlsx::layout::SheetLayout;
     use doc_converter_xlsx::{
@@ -635,7 +635,7 @@ mod tests {
         let sheet = &book.sheets()[0];
         let layout = SheetLayout::new(sheet);
         let mut cfg = cfg.clone();
-        cfg.scale = print_scale(&cfg, sheet, &layout);
+        cfg.scale = print_book_scale(&cfg, book, sheet, &layout);
         let page = PageGeometry::new(&cfg);
         let pages = paginate(book, sheet, &layout, &page, &cfg);
         (layout, pages)

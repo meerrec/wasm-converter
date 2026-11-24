@@ -125,8 +125,8 @@ fn chart_is_vector_not_image() {
     let blocks = clip_blocks(&ops);
     assert_eq!(
         blocks.len(),
-        5,
-        "пять диаграмм — пять клипов, нашли {}",
+        7,
+        "пять диаграмм дают семь видимых частей на печатной геометрии Excel: две пересекают границы полос, нашли {}",
         blocks.len()
     );
     for &bounds in &blocks {
