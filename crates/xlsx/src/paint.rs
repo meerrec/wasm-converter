@@ -254,9 +254,14 @@ impl<'a> FrameFont<'a> {
     }
 
     /// Ссылка шрифта: дефолтное семейство переиспользует общий `StringRef`,
-    /// собственное имя ячейки интернируется отдельно, как раньше.
+    /// собственное имя ячейки интернируется отдельно, как раньше. Пустое имя
+    /// — шрифт записи без `<name/>` (Excel рендерит его шрифтом книги) — тоже
+    /// уходит в дефолт: пустая строка в команде `Text` давала бы canvas'у
+    /// font-spec без семейства, и подстановка fontconfig превращала бы кадр
+    /// в недетерминированную лотерею (строгий оракул ловил это как флак
+    /// repeatability).
     fn reference_for(&self, name: &str, out: &mut DisplayList) -> StringRef {
-        if name == self.family {
+        if name.is_empty() || name == self.family {
             self.reference
         } else {
             out.intern(name)
@@ -2946,6 +2951,66 @@ mod tests {
             !texts.iter().any(|(text, _)| text == "3"),
             "вторая строка должна была прокрутиться"
         );
+    }
+
+    #[test]
+    fn nameless_cell_font_falls_back_to_frame_family() {
+        // Шрифт записи без `<name/>` (Excel рендерит его шрифтом книги) не должен
+        // уходить в кадр как пустое семейство: font-spec без имени — лотерея
+        // fontconfig, строгий оракул ловил её как флак repeatability.
+        let styles = StyleTable::new(
+            vec![
+                CellFormat::default(),
+                CellFormat {
+                    font: 1,
+                    ..CellFormat::default()
+                },
+            ],
+            vec![
+                Font {
+                    name: "Calibri".into(),
+                    ..Font::default()
+                },
+                Font {
+                    name: String::new(),
+                    bold: true,
+                    ..Font::default()
+                },
+            ],
+            vec![Fill::default()],
+            vec![Border::default()],
+            BTreeMap::new(),
+        );
+        let mut builder = WorksheetBuilder::new(PART);
+        builder
+            .push(0, Cell::new(0, 1, CellValue::Number(1.0)))
+            .unwrap();
+        let book = book_with(
+            SheetContent {
+                cells: builder.finish(),
+                ..SheetContent::default()
+            },
+            styles,
+        );
+        let dl = painted(
+            &book,
+            Viewport::default(),
+            &PaintOptions {
+                show_grid: false,
+                show_headers: false,
+                ..PaintOptions::default()
+            },
+        );
+        let first_text = (0..dl.len())
+            .filter_map(|i| dl.cmd(i))
+            .find(|cmd| matches!(cmd, DrawCommand::Text { .. }));
+        match first_text {
+            Some(DrawCommand::Text { font, bold, .. }) => {
+                assert_eq!(dl.string(*font), "Calibri");
+                assert!(*bold);
+            }
+            other => panic!("ожидался текст, а не {other:?}"),
+        }
     }
 
     #[test]
