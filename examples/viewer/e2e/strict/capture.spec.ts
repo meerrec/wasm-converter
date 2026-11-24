@@ -11,21 +11,29 @@ const results: any[] = [];
 // Холодный CI-раннер первый раз компилирует lazy DOCX-модуль дольше минуты.
 // Порог относится к реальному открытию документа, а не к фиксированной паузе.
 const OPEN_TIMEOUT_MS = 120_000;
+// Прогреву неважно, какой DOCX открывать: нужен один прогон загрузки модуля.
+// Минимальная фикстура не тащит за собой особенности первого документа плана.
+const WARMUP_TIMEOUT_MS = 180_000;
 
 // Прогрев выполняется один раз на worker: строгий план идёт одним worker'ом,
 // а первый DOCX в списке не должен оплачивать компиляцию wasm вместо всего корпуса.
 test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage();
+  let errors: string[] = [];
   try {
     await page.setViewportSize(plan.environment.viewportCss);
-    await boot(page, '/docx');
-    const firstDocx = plan.documents.find((document: any) => document.manifest.source.format === 'docx');
-    const fixture = firstDocx.manifest.source.path.replace(/^test-fixtures\/docx\//, '');
-    await page.selectOption('#fixture', fixture);
+    errors = await boot(page, '/docx');
+    await page.selectOption('#fixture', 'simple/one_paragraph.docx');
     await page.waitForFunction(
       () => window.docConverter?.kind === 'docx' && window.docConverter.viewer.pageCount > 0,
       undefined,
-      { timeout: OPEN_TIMEOUT_MS },
+      { timeout: WARMUP_TIMEOUT_MS },
+    );
+  } catch (error) {
+    const status = await page.locator('#status').textContent().catch(() => null);
+    throw new Error(
+      `DOCX warm-up failed: ${error instanceof Error ? error.message : String(error)}; ` +
+        `status: ${status ?? '—'}; errors: ${errors.length > 0 ? errors.join(' | ') : '—'}`,
     );
   } finally {
     await page.close();
