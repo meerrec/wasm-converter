@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  FONT_READINESS_POINTS,
   registerPaintFonts,
   resolvePaintFonts,
   type FontBytesSource,
@@ -179,15 +180,22 @@ describe('resolvePaintFonts', () => {
 
     resolvePaintFonts(ctx);
 
-    expect(measured).toEqual([
-      { font: 'normal 400 16px Carlito', text: 'Font readiness' },
-      { font: 'normal 700 16px Carlito', text: 'Font readiness' },
-      { font: 'italic 400 16px Carlito', text: 'Font readiness' },
-      { font: 'italic 700 16px Carlito', text: 'Font readiness' },
-      { font: 'normal 400 16px Calibri', text: 'Font readiness' },
-      { font: 'normal 700 16px Calibri', text: 'Font readiness' },
-      { font: 'italic 400 16px Calibri', text: 'Font readiness' },
-      { font: 'italic 700 16px Calibri', text: 'Font readiness' },
-    ]);
+    const pxPerPoint = new Float32Array([4 / 3])[0]!;
+    const toPx = (point: number): number =>
+      new Float32Array([new Float32Array([point])[0]! * pxPerPoint])[0]!;
+    const expected = (['Carlito', 'Calibri'] as const).flatMap((family) =>
+      ([
+        { style: 'normal', weight: '400' },
+        { style: 'normal', weight: '700' },
+        { style: 'italic', weight: '400' },
+        { style: 'italic', weight: '700' },
+      ] as const).flatMap(({ style, weight }) =>
+        FONT_READINESS_POINTS.map((point) => ({
+          font: `${style} ${weight} ${toPx(point)}px ${family}`,
+          text: 'Font readiness',
+        })),
+      ),
+    );
+    expect(measured).toEqual(expected);
   });
 });

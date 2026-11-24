@@ -28,6 +28,23 @@ export interface FontBytesSource {
  */
 const CANVAS_FAMILIES = ['Carlito', 'Calibri'] as const;
 
+/**
+ * Кегли, которые прогреваются в canvas-контексте. OOXML хранит размер в
+ * полупунктах, а painter передаёт в `ctx.font` f32-значение в px; Chromium
+ * запоминает fallback по точной строке, поэтому одного 16px-замера недостаточно.
+ * Диапазон покрывает стандартные Office-кегли от 6 до 40 pt с шагом 0.5.
+ */
+export const FONT_READINESS_POINTS: readonly number[] = Object.freeze(
+  Array.from({ length: 69 }, (_, index) => 6 + index / 2),
+);
+
+/** `crates/xlsx::layout::PX_PER_POINT` и умножение выполняются в f32. */
+const PX_PER_POINT_F32 = new Float32Array([4 / 3])[0]!;
+
+function point_size_px_f32(point: number): number {
+  return new Float32Array([new Float32Array([point])[0]! * PX_PER_POINT_F32])[0]!;
+}
+
 /** Лица сабсета: номер в wasm и дескрипторы `FontFace`, под которыми регистрируем. */
 const FACES: readonly {
   readonly face: number;
@@ -55,8 +72,10 @@ export interface PaintFontContext {
 export function resolvePaintFonts(ctx: PaintFontContext): void {
   for (const family of CANVAS_FAMILIES) {
     for (const { style, weight } of FACES) {
-      ctx.font = `${style} ${weight} 16px ${family}`;
-      ctx.measureText('Font readiness');
+      for (const point of FONT_READINESS_POINTS) {
+        ctx.font = `${style} ${weight} ${point_size_px_f32(point)}px ${family}`;
+        ctx.measureText('Font readiness');
+      }
     }
   }
 }
