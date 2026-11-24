@@ -113,6 +113,9 @@ export class OffscreenRenderAdapter implements RenderAdapter {
     // успел поднять рендер, и трогать нечего.
     if (this.ctx === null) return;
     resize_canvas(cssW, cssH, dpr);
+    // Смена размеров сбрасывает состояние 2D-контекста: шрифты разрешаем
+    // заново, иначе первый текст после resize рисуется системным fallback.
+    if (typeof this.ctx.measureText === 'function') resolvePaintFonts(this.ctx);
     this.opts.onAfterResize();
   }
 

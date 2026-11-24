@@ -84,7 +84,7 @@ afterEach(() => {
 });
 
 describe('registerPaintFonts', () => {
-  it('заводит четыре лица Carlito и дожидается их разбора', async () => {
+  it('заводит четыре начертания под Carlito и Calibri и дожидается их разбора', async () => {
     const { calls, mod } = fakeModule();
 
     await expect(registerPaintFonts(mod)).resolves.toBe(true);
@@ -94,16 +94,25 @@ describe('registerPaintFonts', () => {
       fonts.added.map((face) => [face.family, face.descriptors.style, face.descriptors.weight]),
     ).toEqual([
       ['Carlito', 'normal', '400'],
+      ['Calibri', 'normal', '400'],
       ['Carlito', 'normal', '700'],
+      ['Calibri', 'normal', '700'],
       ['Carlito', 'italic', '400'],
+      ['Calibri', 'italic', '400'],
       ['Carlito', 'italic', '700'],
+      ['Calibri', 'italic', '700'],
     ]);
     // Байты уезжают в `FontFace` как есть: своя копия или подстановка — то же
-    // самое расхождение, ради которого функция и написана.
+    // самое расхождение, ради которого функция и написана. Один номер лица
+    // покрывает оба canvas-имени, чтобы XLSX с `Calibri` не уходил в fallback.
     expect(fonts.added.map((face) => face.source)).toEqual([
       new Uint8Array([0]),
+      new Uint8Array([0]),
+      new Uint8Array([1]),
       new Uint8Array([1]),
       new Uint8Array([2]),
+      new Uint8Array([2]),
+      new Uint8Array([3]),
       new Uint8Array([3]),
     ]);
     expect(fonts.added.every((face) => face.status === 'loaded')).toBe(true);
@@ -158,7 +167,7 @@ describe('registerPaintFonts', () => {
 
 
 describe('resolvePaintFonts', () => {
-  it('разрешает regular, bold, italic и bold italic в контексте до первого кадра', () => {
+  it('разрешает все начертания под Carlito и Calibri до первого кадра', () => {
     const measured: Array<{ font: string; text: string }> = [];
     const ctx: PaintFontContext = {
       font: '',
@@ -175,6 +184,10 @@ describe('resolvePaintFonts', () => {
       { font: 'normal 700 16px Carlito', text: 'Font readiness' },
       { font: 'italic 400 16px Carlito', text: 'Font readiness' },
       { font: 'italic 700 16px Carlito', text: 'Font readiness' },
+      { font: 'normal 400 16px Calibri', text: 'Font readiness' },
+      { font: 'normal 700 16px Calibri', text: 'Font readiness' },
+      { font: 'italic 400 16px Calibri', text: 'Font readiness' },
+      { font: 'italic 700 16px Calibri', text: 'Font readiness' },
     ]);
   });
 });

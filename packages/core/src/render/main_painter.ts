@@ -77,8 +77,16 @@ export function paintDisplayList(bytes: Uint8Array): PaintStatsWire {
  * Пересчитать холст под DPR. Установка размеров сбрасывает 2D-контекст и кэш
  * битмапов painter'а, поэтому вызывающий регистрирует картинки заново.
  */
-export function resizeMainCanvas(cssW: number, cssH: number, dpr: number): void {
+export function resizeMainCanvas(
+  ctx: CanvasRenderingContext2D,
+  cssW: number,
+  cssH: number,
+  dpr: number,
+): void {
   wasm().resize_canvas(cssW, cssH, dpr);
+  // Установка размеров сбрасывает состояние холста: без повторного разрешения
+  // первый текст после resize снова может уйти в системный fallback.
+  resolvePaintFonts(ctx);
 }
 
 /** Вернуть `ImageBitmap` в кэш painter'а: воркер отдал его переводом. */

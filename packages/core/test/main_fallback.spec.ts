@@ -204,7 +204,12 @@ describe('выбор режима', () => {
     // Painter поднят на main, шрифты и resize — тоже там: воркеру о размерах
     // холста знать нечего.
     expect(painter.initMainPainter).toHaveBeenCalledTimes(1);
-    expect(painter.resizeMainCanvas).toHaveBeenCalledWith(800, 600, 1);
+    expect(painter.resizeMainCanvas).toHaveBeenCalledWith(
+      expect.objectContaining({ canvas: expect.objectContaining({ tag: 'canvas' }) }),
+      800,
+      600,
+      1,
+    );
     expect(worker.last('resize')).toBeUndefined();
   });
 
@@ -289,7 +294,12 @@ describe('DOCX на main-потоке', () => {
 
     expect(viewer.renderMode).toBe('main');
     expect(painter.initMainPainter).toHaveBeenCalledTimes(1);
-    expect(painter.resizeMainCanvas).toHaveBeenCalledWith(800, 600, 1);
+    expect(painter.resizeMainCanvas).toHaveBeenCalledWith(
+      expect.objectContaining({ canvas: expect.objectContaining({ tag: 'canvas' }) }),
+      800,
+      600,
+      1,
+    );
     expect(worker.last('resize')).toBeUndefined();
 
     const png = await viewer.exportPng();

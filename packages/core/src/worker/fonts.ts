@@ -1,8 +1,8 @@
 // Регистрация сабсетов Carlito в области видимости воркера.
 //
-// Painter ставит canvas'у `ctx.font` с именем семейства из кадра, а имя там
-// каноническое — `Carlito` (`crates/render/src/font.rs::DEFAULT_FONT_FAMILY`).
-// Системного Carlito нет ни на одной целевой платформе, поэтому без
+// Painter ставит canvas'у `ctx.font` с именем семейства из кадра: DOCX несёт
+// канонический `Carlito`, а XLSX — алиас `Calibri` (`crates/render/src/font.rs`).
+// Системного Carlito/Calibri нет ни на одной целевой платформе, поэтому без
 // `FontFace` браузер подставляет своё семейство, и ширины строк предпросмотра
 // расходятся с метриками раскладки и с PDF, куда встроены те же сабсеты.
 // Проверять `document.fonts.check` для этого бесполезно: она возвращает
@@ -21,8 +21,12 @@ export interface FontBytesSource {
   font_bytes(face: number): Uint8Array;
 }
 
-/** Имя семейства: ровно то, что уезжает в `ctx.font` из кадров painter'а. */
-const FAMILY = 'Carlito';
+/**
+ * Имена, под которыми canvas может увидеть сабсет. Кадры DOCX несут канонический
+ * `Carlito`, а алиас `Calibri` остаётся в кадрах XLSX (`render::font`): если
+ * зарегистрировать только каноническое имя, XLSX уходит в системный fallback.
+ */
+const CANVAS_FAMILIES = ['Carlito', 'Calibri'] as const;
 
 /** Лица сабсета: номер в wasm и дескрипторы `FontFace`, под которыми регистрируем. */
 const FACES: readonly {
@@ -42,16 +46,18 @@ export interface PaintFontContext {
 }
 
 /**
- * Явно разрешить все четыре начертания именно в том 2D-контексте, которым
- * будет рисовать painter. `FontFace.load()` подтверждает разбор байтов, но не
- * является гарантией того, что Chromium уже связал каждое начертание с новым
- * canvas-контекстом. Замер до первого кадра фиксирует это разрешение и не
- * оставляет видимых пикселей промежуточного fallback.
+ * Явно разрешить все комбинации canvas-имён и начертаний именно в том
+ * 2D-контексте, которым будет рисовать painter. `FontFace.load()` подтверждает
+ * разбор байтов, но не гарантирует, что Chromium уже связал лицо с текущим
+ * состоянием canvas-контекста. Замер нужен после создания контекста и каждого
+ * `resize`: установка размеров сбрасывает состояние холста.
  */
 export function resolvePaintFonts(ctx: PaintFontContext): void {
-  for (const { style, weight } of FACES) {
-    ctx.font = `${style} ${weight} 16px ${FAMILY}`;
-    ctx.measureText('Font readiness');
+  for (const family of CANVAS_FAMILIES) {
+    for (const { style, weight } of FACES) {
+      ctx.font = `${style} ${weight} 16px ${family}`;
+      ctx.measureText('Font readiness');
+    }
   }
 }
 
@@ -60,9 +66,10 @@ export function resolvePaintFonts(ctx: PaintFontContext): void {
  * `document.fonts`, если функция зовётся на main-потоке. У `Window` свойства
  * `fonts` нет — набор шрифтов документа живёт в `document.fonts`.
  *
- * Возвращает `true`, только если все четыре лица добавлены и разобраны:
- * тогда `ctx.font = "…px Carlito"` разрешается в настоящий сабсет, а ширины
- * предпросмотра сходятся с раскладкой и PDF.
+ * Возвращает `true`, только если все комбинации двух canvas-имён и четырёх
+ * начертаний добавлены и разобраны: тогда `ctx.font` с `Carlito` или алиасом
+ * `Calibri` разрешается в один и тот же сабсет, а предпросмотр не уходит
+ * в системный fallback со своими метриками.
  *
  * Не падает там, где API нет (недоверенные рантаймы, области видимости без
  * `FontFace`/`self.fonts`): возвращается `false` — «не зарегистрировано», и
@@ -98,12 +105,14 @@ export async function registerPaintFonts(mod: FontBytesSource): Promise<boolean>
   try {
     // Сначала собираем все лица, и только потом добавляем: сломанный модуль
     // или незнакомый номер лица не должны оставить набор наполовину.
-    const faces = FACES.map((spec) => {
+    const faces = FACES.flatMap((spec) => {
       // Приведение к `BufferSource`: типы lib различают `ArrayBuffer` и
       // `SharedArrayBuffer` (`Uint8Array<ArrayBufferLike>`), а `FontFace`
       // ждёт не shared-вариант. wasm-bindgen отдаёт обычный буфер.
       const bytes = mod.font_bytes(spec.face) as BufferSource;
-      return new FaceCtor(FAMILY, bytes, { style: spec.style, weight: spec.weight });
+      return CANVAS_FAMILIES.map(
+        (family) => new FaceCtor(family, bytes, { style: spec.style, weight: spec.weight }),
+      );
     });
     for (const face of faces) fonts.add(face);
     // Первый кадр может собраться сразу после `init`: без этого ожидания
