@@ -12,7 +12,8 @@ for (const manifestPath of manifestPaths) {
 }
 const first = documents[0].manifest;
 for (const { manifestPath, manifest } of documents) {
-  if (JSON.stringify(manifest.environment) !== JSON.stringify(first.environment)) throw new Error(`${manifestPath}: run one pinned environment per capture plan`);
+  const runtimeEnvironment = ({ fonts, rasterizer, ...environment }) => environment;
+  if (JSON.stringify(runtimeEnvironment(manifest.environment)) !== JSON.stringify(runtimeEnvironment(first.environment))) throw new Error(`${manifestPath}: run one pinned environment per capture plan`);
   if (manifest.corpus.baselineId !== first.corpus.baselineId) throw new Error(`${manifestPath}: mixed baseline IDs`);
 }
 const plan = { schemaVersion: '1.0.0', baselineId: first.corpus.baselineId, environment: first.environment, documents };

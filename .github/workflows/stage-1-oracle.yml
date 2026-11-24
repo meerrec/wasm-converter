@@ -1,0 +1,144 @@
+name: Stage 1 offline oracle
+
+on:
+  push:
+    branches: [main, 'stage-1/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  offline-validation:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install jsonschema==4.25.1
+      - run: node tools/strict-viewer/verify-corpus.mjs
+      - run: node --test tools/strict-viewer/png.test.mjs
+      - run: python tools/strict-viewer/validate_references.py
+      - name: References are not modified by checks
+        run: git diff --exit-code -- test-fixtures/strict-viewer/references test-fixtures/strict-viewer/corpus.json
+
+  native:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: stage-1-native
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: qpdf poppler-utils
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --all-features --no-fail-fast
+
+  capture-and-compare:
+    needs: offline-validation
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: stage-1-wasm
+      - run: cargo install wasm-pack --version 0.15.1 --locked
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: chromium poppler-utils
+      - run: bash scripts/build-wasm.sh
+      - run: pnpm turbo run typecheck build --filter=@meerrec/core --filter=@meerrec/example-viewer
+      - name: Build capture plan
+        run: |
+          find test-fixtures/strict-viewer/references -name manifest.json -print0 | \
+            xargs -0 node tools/strict-viewer/build-capture-plan.mjs "$RUNNER_TEMP/strict-plan.json"
+      - name: Capture actual run 1
+        env:
+          STRICT_CAPTURE_PLAN: ${{ runner.temp }}/strict-plan.json
+          STRICT_CAPTURE_OUTPUT: ${{ runner.temp }}/strict-actual-run1
+          CHROMIUM_PATH: /usr/bin/chromium
+        run: pnpm --dir examples/viewer exec playwright test --config playwright.strict.config.ts
+      - name: Capture actual run 2
+        env:
+          STRICT_CAPTURE_PLAN: ${{ runner.temp }}/strict-plan.json
+          STRICT_CAPTURE_OUTPUT: ${{ runner.temp }}/strict-actual-run2
+          CHROMIUM_PATH: /usr/bin/chromium
+        run: pnpm --dir examples/viewer exec playwright test --config playwright.strict.config.ts
+      - name: Verify actual repeatability
+        run: |
+          node tools/strict-viewer/compare-capture-runs.mjs \
+            "$RUNNER_TEMP/strict-actual-run1" "$RUNNER_TEMP/strict-actual-run2" \
+            "$RUNNER_TEMP/strict-repeatability.json"
+      - name: Compare complete corpus and classify failures
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set +e
+          node tools/strict-viewer/compare-corpus.mjs \
+            "$RUNNER_TEMP/strict-plan.json" "$RUNNER_TEMP/strict-actual-run1" \
+            "$RUNNER_TEMP/strict-report"
+          status=$?
+          set -e
+          python tools/strict-viewer/classify_report.py \
+            --plan "$RUNNER_TEMP/strict-plan.json" \
+            --report "$RUNNER_TEMP/strict-report/report.json" \
+            --output "$RUNNER_TEMP/strict-report"
+          cp "$RUNNER_TEMP/strict-plan.json" "$RUNNER_TEMP/strict-report/capture-plan.json"
+          cp "$RUNNER_TEMP/strict-repeatability.json" "$RUNNER_TEMP/strict-report/repeatability.json"
+          echo "$status" > "$RUNNER_TEMP/strict-report/comparator-exit-code.txt"
+          if [ "$status" -gt 3 ]; then exit 3; fi
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stage-1-oracle-report
+          path: ${{ runner.temp }}/strict-report
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stage-1-actual-run1
+          path: ${{ runner.temp }}/strict-actual-run1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stage-1-actual-run2
+          path: ${{ runner.temp }}/strict-actual-run2
+          if-no-files-found: error
+      - name: References remain immutable
+        if: always()
+        run: git diff --exit-code -- test-fixtures/strict-viewer/references test-fixtures/strict-viewer/corpus.json

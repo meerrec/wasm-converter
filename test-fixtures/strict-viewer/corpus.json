@@ -6,45 +6,485 @@
   "sourceRevision": "0ab64fcfaa1a61c7a8f39aafd224e14873b4d85c",
   "referenceSource": "Office Online",
   "documents": [
-    {"id":"docx-01","kind":"docx","path":"test-fixtures/docx/simple/one_paragraph.docx","sha256":"2c55e888ce8b72b3bf6eb6dbe43319339331f30f342b5040a506736bf3f8f850","coverage":"Базовый текст","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-02","kind":"docx","path":"test-fixtures/docx/basic/multiple_runs.docx","sha256":"b0503a023402e58807f584d29d7a42021d301942d10c4440ce7610decc4e8fcb","coverage":"Runs и форматирование","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-03","kind":"docx","path":"test-fixtures/docx/basic/breaks_and_tabs.docx","sha256":"979e1c1e19e19f2dcfc5f2aaa535d21ac9a2c2bb144ea1a45b4169e627f62b8e","coverage":"Разрывы и табуляция","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-04","kind":"docx","path":"test-fixtures/docx/styles/based_on_chain.docx","sha256":"86e2306f60f1d0171e31775f87e3ca12fde61cf677b31fe5a9fb48ea033a21de","coverage":"Каскад стилей","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-05","kind":"docx","path":"test-fixtures/docx/numbering/multilevel.docx","sha256":"d9d483e15e7c60f3fd1451bddeb3b96d603ec827f9c78e767860e62cba29f302","coverage":"Многоуровневая нумерация","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-06","kind":"docx","path":"test-fixtures/docx/basic/sections.docx","sha256":"a07ddfb385a57fe6769e4bd5390dee0d9b31643d4b6c05edd462475801722cd2","coverage":"Секции","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-07","kind":"docx","path":"test-fixtures/docx/headers_footers/default_header_footer.docx","sha256":"ac988420da873f6e989993fe50791dd72ff33118394688677a3f8e62bebdc27b","coverage":"Колонтитулы","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-08","kind":"docx","path":"test-fixtures/docx/headers_footers/even_odd.docx","sha256":"281ca5f2f7502c8a9fa8b81fc1587345b4ac8ecf801c52036ef9702e0b35526b","coverage":"Even/odd колонтитулы","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-09","kind":"docx","path":"test-fixtures/docx/tables/simple_2x2.docx","sha256":"a17c2bf26a8445b3c677bc7255a5c016f1ee420ea0cf5d64bbee070e478389a7","coverage":"Базовая таблица","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-10","kind":"docx","path":"test-fixtures/docx/tables/borders_shading.docx","sha256":"ac556b53f02c1f79d4d778632455a6a189d0bd19aae42269f0b1fba0cc694858","coverage":"Границы и заливка","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-11","kind":"docx","path":"test-fixtures/docx/tables/grid_span.docx","sha256":"aa0a5f9ba2c422a63125964476cd3830353cc6c02e0d511ddacefe122b2e9942","coverage":"Horizontal merge/gridSpan","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-12","kind":"docx","path":"test-fixtures/docx/tables/v_merge.docx","sha256":"a0629c27e26dcdac3fd3abbccbc1b51de9eac5635d850978917a9e146be8ecd0","coverage":"Vertical merge","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-13","kind":"docx","path":"test-fixtures/docx/tables/nested.docx","sha256":"d9ded005a5005833b00b6036e4b9b28254a2d2d21fc8ad04dbf8d4fa4993a835","coverage":"Вложенные таблицы","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-14","kind":"docx","path":"test-fixtures/docx/tables/long_table.docx","sha256":"9842e659e6a5a075ebd22ce4aac3d3a355cc04d7a4c4a4ddbed0dd9c198a9308","coverage":"ОБЯЗАТЕЛЬНАЯ: длинная таблица","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-15","kind":"docx","path":"test-fixtures/docx/tables/long_table_header_repeat.docx","sha256":"b91649e357cae0139e8615a6cefcf1265f6a68ff65eed880fb32c9700a578d99","coverage":"ОБЯЗАТЕЛЬНАЯ: повтор заголовка","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-16","kind":"docx","path":"test-fixtures/docx/images/inline.docx","sha256":"b2ba28f3af18e91a1a441d3c10535814733ff1212cdb62e0194bb5f59bf4d043","coverage":"Inline image","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-17","kind":"docx","path":"test-fixtures/docx/images/multiple_sizes.docx","sha256":"3082eed9c050fd3342ea975091121c5f65b8241c2cad80c0cfb5fab1dbc701bd","coverage":"Размеры изображений","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-18","kind":"docx","path":"test-fixtures/docx/images/anchor_wrap_square.docx","sha256":"9c5d824daf536cc191bdccc5538c299cf7e485499e89f7530111921faa05ca7f","coverage":"Floating anchor/wrap","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-19","kind":"docx","path":"test-fixtures/docx/fields/fld_simple.docx","sha256":"36c1aa0e0ed1944c9c0dd3ff6e8832292f50fb66d3ce28ee9ac57bb1125c1506","coverage":"Простое поле","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"docx-20","kind":"docx","path":"test-fixtures/docx/edge_cases/multilingual.docx","sha256":"2cdd4e55daf157d042f9b7813926c266c3ac685b49e1aa45a8c98e6466845a85","coverage":"Многоязычный текст","modes":["docx.print-layout","docx.pdf"],"referenceStatus":"pending"},
-    {"id":"xlsx-01","kind":"xlsx","path":"test-fixtures/xlsx/content-mixed-types.xlsx","sha256":"46f23f9362a65fcd454a3e24f6edb0daa23342a7ed90c7fea25f2e539516f724","coverage":"Типы значений","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-02","kind":"xlsx","path":"test-fixtures/xlsx/content-rich-text.xlsx","sha256":"4ce2e88e227c157ba755a003a2f029ebf3e7127f8004a669d014a8b826ce2fac","coverage":"Rich text","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-03","kind":"xlsx","path":"test-fixtures/xlsx/formats-thousands-decimals.xlsx","sha256":"952992737a71b97e462f814447658759694ca8e85cc1f3fe835c6711d83a3f16","coverage":"Числовой формат","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-04","kind":"xlsx","path":"test-fixtures/xlsx/formats-date-ru.xlsx","sha256":"6b5ede5698c8b72d5b77518c5d2fd4f2b9cdf7ccf2f5011bdee43e1f31b0cca0","coverage":"Дата и локаль","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-05","kind":"xlsx","path":"test-fixtures/xlsx/values-formulas.xlsx","sha256":"7e160894693f571ee909c5714ff3a5e938a92fddd96a57b636847263a194ada7","coverage":"Cached formula values","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-06","kind":"xlsx","path":"test-fixtures/xlsx/values-errors.xlsx","sha256":"45d7b6dd7cb38e23e5c853aa94e829e99b8d8d25acd6929860c58e4c557616a9","coverage":"Ошибки Excel","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-07","kind":"xlsx","path":"test-fixtures/xlsx/styles-bold-italic.xlsx","sha256":"5573158a7bb64c6f8b24b562b0f74c7a9a0f3be15c7bd773df61e81ccfff18fc","coverage":"Базовые стили","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-08","kind":"xlsx","path":"test-fixtures/xlsx/styles-border-styles.xlsx","sha256":"0baa9e0c6f87b5970306254f1f418364cbb34426bba0a880d1f7b90f89bcf457","coverage":"Границы","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-09","kind":"xlsx","path":"test-fixtures/xlsx/styles-pattern-fills.xlsx","sha256":"72f5d353d1429b8bab7376fa1eca428eb7d7d65b25e1022b31282918e5612ac4","coverage":"Заливки","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-10","kind":"xlsx","path":"test-fixtures/xlsx/styles-alignment.xlsx","sha256":"5b384431a58422f2a85ea6bd366357ea38a22b387b7cc0107488c93326ec2149","coverage":"Alignment","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-11","kind":"xlsx","path":"test-fixtures/xlsx/text-cyrillic-wrap.xlsx","sha256":"a2c8b802c2e4ea5705a51b4beb624d7344fd7b6bfd8cad127c6c42235064d185","coverage":"Кириллица и wrap","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-12","kind":"xlsx","path":"test-fixtures/xlsx/layout-merged.xlsx","sha256":"31c6d5edd25fba6a14399164ea83fafde55552e96ea658bc982fe5bb3fcf7021","coverage":"Merged cells","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-13","kind":"xlsx","path":"test-fixtures/xlsx/layout-hidden-columns.xlsx","sha256":"cce384b4678cc234acb5f617ccb55fbe4639726a69eef5c0859985e2a73c971a","coverage":"Hidden columns","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-14","kind":"xlsx","path":"test-fixtures/xlsx/layout-hidden-rows.xlsx","sha256":"020a8e36a0821d90e561e7bafcabaf351bbda17d8c1010b92d96bdee32ec4464","coverage":"Hidden rows","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-15","kind":"xlsx","path":"test-fixtures/xlsx/layout-frozen-columns.xlsx","sha256":"adc135dc4921ed079701099c7120f695479837bf7d5394071f972648ed771a67","coverage":"ОБЯЗАТЕЛЬНАЯ: frozen columns/overflow","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-16","kind":"xlsx","path":"test-fixtures/xlsx/charts-five-kinds.xlsx","sha256":"36c1d601817098a0f6f18471f8be25ba2960334c6f7d356ffd0875143a76043a","coverage":"ОБЯЗАТЕЛЬНАЯ: диаграммы","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-17","kind":"xlsx","path":"test-fixtures/xlsx/images-over-data.xlsx","sha256":"c41cb59bb6e7db85bf9276b9b1659881bc8e8655615b811ec9f0da96907ec192","coverage":"ОБЯЗАТЕЛЬНАЯ: images/anchors","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-18","kind":"xlsx","path":"test-fixtures/xlsx/values-long-text.xlsx","sha256":"1ed0c45ab25fee3d80af5b2c78e93d4c918c39ebbc443732b4d9dfa790505f73","coverage":"ОБЯЗАТЕЛЬНАЯ: overflow текста","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-19","kind":"xlsx","path":"test-fixtures/xlsx/scale-ten-pages.xlsx","sha256":"e2d6fdd0703ba115d01368599b7dcef124178b9202fdd610a537a628bd82e3b1","coverage":"Печатная пагинация","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"},
-    {"id":"xlsx-20","kind":"xlsx","path":"test-fixtures/xlsx/sheets-three.xlsx","sha256":"3d27dcd5a2417d22861061581ea8206a78794c6fe54cbe3df70bd124749d3a54","coverage":"Несколько листов","modes":["xlsx.normal","xlsx.print-preview"],"referenceStatus":"pending"}
+    {
+      "id": "docx-01",
+      "kind": "docx",
+      "path": "test-fixtures/docx/simple/one_paragraph.docx",
+      "sha256": "2c55e888ce8b72b3bf6eb6dbe43319339331f30f342b5040a506736bf3f8f850",
+      "coverage": "Базовый текст",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-02",
+      "kind": "docx",
+      "path": "test-fixtures/docx/basic/multiple_runs.docx",
+      "sha256": "b0503a023402e58807f584d29d7a42021d301942d10c4440ce7610decc4e8fcb",
+      "coverage": "Runs и форматирование",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-03",
+      "kind": "docx",
+      "path": "test-fixtures/docx/basic/breaks_and_tabs.docx",
+      "sha256": "979e1c1e19e19f2dcfc5f2aaa535d21ac9a2c2bb144ea1a45b4169e627f62b8e",
+      "coverage": "Разрывы и табуляция",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-04",
+      "kind": "docx",
+      "path": "test-fixtures/docx/styles/based_on_chain.docx",
+      "sha256": "86e2306f60f1d0171e31775f87e3ca12fde61cf677b31fe5a9fb48ea033a21de",
+      "coverage": "Каскад стилей",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-05",
+      "kind": "docx",
+      "path": "test-fixtures/docx/numbering/multilevel.docx",
+      "sha256": "d9d483e15e7c60f3fd1451bddeb3b96d603ec827f9c78e767860e62cba29f302",
+      "coverage": "Многоуровневая нумерация",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-06",
+      "kind": "docx",
+      "path": "test-fixtures/docx/basic/sections.docx",
+      "sha256": "a07ddfb385a57fe6769e4bd5390dee0d9b31643d4b6c05edd462475801722cd2",
+      "coverage": "Секции",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-07",
+      "kind": "docx",
+      "path": "test-fixtures/docx/headers_footers/default_header_footer.docx",
+      "sha256": "ac988420da873f6e989993fe50791dd72ff33118394688677a3f8e62bebdc27b",
+      "coverage": "Колонтитулы",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-08",
+      "kind": "docx",
+      "path": "test-fixtures/docx/headers_footers/even_odd.docx",
+      "sha256": "281ca5f2f7502c8a9fa8b81fc1587345b4ac8ecf801c52036ef9702e0b35526b",
+      "coverage": "Even/odd колонтитулы",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-09",
+      "kind": "docx",
+      "path": "test-fixtures/docx/tables/simple_2x2.docx",
+      "sha256": "a17c2bf26a8445b3c677bc7255a5c016f1ee420ea0cf5d64bbee070e478389a7",
+      "coverage": "Базовая таблица",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-10",
+      "kind": "docx",
+      "path": "test-fixtures/docx/tables/borders_shading.docx",
+      "sha256": "ac556b53f02c1f79d4d778632455a6a189d0bd19aae42269f0b1fba0cc694858",
+      "coverage": "Границы и заливка",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-11",
+      "kind": "docx",
+      "path": "test-fixtures/docx/tables/grid_span.docx",
+      "sha256": "aa0a5f9ba2c422a63125964476cd3830353cc6c02e0d511ddacefe122b2e9942",
+      "coverage": "Horizontal merge/gridSpan",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-12",
+      "kind": "docx",
+      "path": "test-fixtures/docx/tables/v_merge.docx",
+      "sha256": "a0629c27e26dcdac3fd3abbccbc1b51de9eac5635d850978917a9e146be8ecd0",
+      "coverage": "Vertical merge",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-13",
+      "kind": "docx",
+      "path": "test-fixtures/docx/tables/nested.docx",
+      "sha256": "d9ded005a5005833b00b6036e4b9b28254a2d2d21fc8ad04dbf8d4fa4993a835",
+      "coverage": "Вложенные таблицы",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-14",
+      "kind": "docx",
+      "path": "test-fixtures/docx/tables/long_table.docx",
+      "sha256": "9842e659e6a5a075ebd22ce4aac3d3a355cc04d7a4c4a4ddbed0dd9c198a9308",
+      "coverage": "ОБЯЗАТЕЛЬНАЯ: длинная таблица",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-15",
+      "kind": "docx",
+      "path": "test-fixtures/docx/tables/long_table_header_repeat.docx",
+      "sha256": "b91649e357cae0139e8615a6cefcf1265f6a68ff65eed880fb32c9700a578d99",
+      "coverage": "ОБЯЗАТЕЛЬНАЯ: повтор заголовка",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-16",
+      "kind": "docx",
+      "path": "test-fixtures/docx/images/anchor_wrap_tight.docx",
+      "sha256": "5b29bc6b4fdba0a9daa12f68ef93b8d64de09fa12c299c02e3db065876733c59",
+      "coverage": "Floating anchor/tight wrap",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-17",
+      "kind": "docx",
+      "path": "test-fixtures/docx/images/multiple_sizes.docx",
+      "sha256": "3082eed9c050fd3342ea975091121c5f65b8241c2cad80c0cfb5fab1dbc701bd",
+      "coverage": "Размеры изображений",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-18",
+      "kind": "docx",
+      "path": "test-fixtures/docx/images/anchor_wrap_square.docx",
+      "sha256": "9c5d824daf536cc191bdccc5538c299cf7e485499e89f7530111921faa05ca7f",
+      "coverage": "Floating anchor/wrap",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-19",
+      "kind": "docx",
+      "path": "test-fixtures/docx/fields/fld_simple.docx",
+      "sha256": "36c1aa0e0ed1944c9c0dd3ff6e8832292f50fb66d3ce28ee9ac57bb1125c1506",
+      "coverage": "Простое поле",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "docx-20",
+      "kind": "docx",
+      "path": "test-fixtures/docx/edge_cases/multilingual.docx",
+      "sha256": "2cdd4e55daf157d042f9b7813926c266c3ac685b49e1aa45a8c98e6466845a85",
+      "coverage": "Многоязычный текст",
+      "modes": [
+        "docx.print-layout",
+        "docx.pdf"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-01",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/content-mixed-types.xlsx",
+      "sha256": "46f23f9362a65fcd454a3e24f6edb0daa23342a7ed90c7fea25f2e539516f724",
+      "coverage": "Типы значений",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-02",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/content-rich-text.xlsx",
+      "sha256": "4ce2e88e227c157ba755a003a2f029ebf3e7127f8004a669d014a8b826ce2fac",
+      "coverage": "Rich text",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-03",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/formats-thousands-decimals.xlsx",
+      "sha256": "952992737a71b97e462f814447658759694ca8e85cc1f3fe835c6711d83a3f16",
+      "coverage": "Числовой формат",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-04",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/formats-date-ru.xlsx",
+      "sha256": "6b5ede5698c8b72d5b77518c5d2fd4f2b9cdf7ccf2f5011bdee43e1f31b0cca0",
+      "coverage": "Дата и локаль",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-05",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/values-formulas.xlsx",
+      "sha256": "7e160894693f571ee909c5714ff3a5e938a92fddd96a57b636847263a194ada7",
+      "coverage": "Cached formula values",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-06",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/values-errors.xlsx",
+      "sha256": "45d7b6dd7cb38e23e5c853aa94e829e99b8d8d25acd6929860c58e4c557616a9",
+      "coverage": "Ошибки Excel",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-07",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/styles-bold-italic.xlsx",
+      "sha256": "5573158a7bb64c6f8b24b562b0f74c7a9a0f3be15c7bd773df61e81ccfff18fc",
+      "coverage": "Базовые стили",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-08",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/styles-border-styles.xlsx",
+      "sha256": "0baa9e0c6f87b5970306254f1f418364cbb34426bba0a880d1f7b90f89bcf457",
+      "coverage": "Границы",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-09",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/styles-pattern-fills.xlsx",
+      "sha256": "72f5d353d1429b8bab7376fa1eca428eb7d7d65b25e1022b31282918e5612ac4",
+      "coverage": "Заливки",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-10",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/styles-alignment.xlsx",
+      "sha256": "5b384431a58422f2a85ea6bd366357ea38a22b387b7cc0107488c93326ec2149",
+      "coverage": "Alignment",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-11",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/text-cyrillic-wrap.xlsx",
+      "sha256": "a2c8b802c2e4ea5705a51b4beb624d7344fd7b6bfd8cad127c6c42235064d185",
+      "coverage": "Кириллица и wrap",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-12",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/layout-merged.xlsx",
+      "sha256": "31c6d5edd25fba6a14399164ea83fafde55552e96ea658bc982fe5bb3fcf7021",
+      "coverage": "Merged cells",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-13",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/layout-hidden-columns.xlsx",
+      "sha256": "cce384b4678cc234acb5f617ccb55fbe4639726a69eef5c0859985e2a73c971a",
+      "coverage": "Hidden columns",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-14",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/layout-hidden-rows.xlsx",
+      "sha256": "020a8e36a0821d90e561e7bafcabaf351bbda17d8c1010b92d96bdee32ec4464",
+      "coverage": "Hidden rows",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-15",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/layout-frozen-columns.xlsx",
+      "sha256": "adc135dc4921ed079701099c7120f695479837bf7d5394071f972648ed771a67",
+      "coverage": "ОБЯЗАТЕЛЬНАЯ: frozen columns/overflow",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-16",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/charts-five-kinds.xlsx",
+      "sha256": "36c1d601817098a0f6f18471f8be25ba2960334c6f7d356ffd0875143a76043a",
+      "coverage": "ОБЯЗАТЕЛЬНАЯ: диаграммы",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-17",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/images-over-data.xlsx",
+      "sha256": "c41cb59bb6e7db85bf9276b9b1659881bc8e8655615b811ec9f0da96907ec192",
+      "coverage": "ОБЯЗАТЕЛЬНАЯ: images/anchors",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-18",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/values-long-text.xlsx",
+      "sha256": "1ed0c45ab25fee3d80af5b2c78e93d4c918c39ebbc443732b4d9dfa790505f73",
+      "coverage": "ОБЯЗАТЕЛЬНАЯ: overflow текста",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-19",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/scale-ten-pages.xlsx",
+      "sha256": "e2d6fdd0703ba115d01368599b7dcef124178b9202fdd610a537a628bd82e3b1",
+      "coverage": "Печатная пагинация",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    },
+    {
+      "id": "xlsx-20",
+      "kind": "xlsx",
+      "path": "test-fixtures/xlsx/sheets-three.xlsx",
+      "sha256": "3d27dcd5a2417d22861061581ea8206a78794c6fe54cbe3df70bd124749d3a54",
+      "coverage": "Несколько листов",
+      "modes": [
+        "xlsx.normal",
+        "xlsx.print-preview"
+      ],
+      "referenceStatus": "pending"
+    }
   ]
 }

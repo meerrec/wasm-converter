@@ -1,5 +1,5 @@
 import type { PaintStatsWire } from '../generated/wire.js';
-import { registerPaintFonts } from '../worker/fonts.js';
+import { registerPaintFonts, resolvePaintFonts } from '../worker/fonts.js';
 
 /**
  * Тип wasm-модуля берём из сгенерированных wasm-bindgen деклараций, но сам
@@ -43,7 +43,13 @@ export async function initMainPainter(
     await mod.default(wasmUrl);
     // Сабсеты Carlito — до первого кадра: Chromium запоминает промах по
     // строке `ctx.font` на всю сессию, и предпросмотр разошёлся бы с PDF.
-    await registerPaintFonts({ font_bytes: mod.font_bytes });
+    if (
+      !(await registerPaintFonts({ font_bytes: mod.font_bytes })) &&
+      typeof FontFace !== 'undefined'
+    ) {
+      throw new Error('main-режим: сабсеты Carlito недоступны');
+    }
+    resolvePaintFonts(ctx);
     mod.init_painter_main(ctx);
     module = mod;
   } catch (e) {

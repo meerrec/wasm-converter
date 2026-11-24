@@ -35,7 +35,7 @@ use crate::image;
 use crate::layout::{PageGeometry, RectPx};
 use crate::options::{Margins, PageConfig, PageOrientation, PdfOptions};
 use crate::overlay::{self, Align, OverlayMargins, PageContext, Watermark, WatermarkLayer};
-use crate::pagination::{paginate, print_scale, PageSlice, PaintedCell, SheetPage};
+use crate::pagination::{paginate, print_book_scale, PageSlice, PaintedCell, SheetPage};
 use crate::pdf::content;
 use crate::pdf::export;
 use crate::pdf::ops::{
@@ -245,11 +245,11 @@ fn image_placements<'b>(
         .iter()
         .map(|image| (image.id, image))
         .collect();
-    let (_, content_h_px) = page.content_px();
+    let (content_width_px, content_height_px) = page.content_px();
     let mut pages_placements = Vec::with_capacity(pages.len());
     for sheet_page in pages {
         let band_top = sheet_page.slice.offset_y;
-        let band_bottom = band_top + content_h_px;
+        let band_bottom = band_top + content_height_px;
         let mut placements: Vec<image::Placement<'_>> = Vec::new();
         // Порядок `Sheet.images` — порядок наложения: первые лежат ниже, и
         // `place_all` сохраняет его в операциях.
@@ -261,13 +261,21 @@ fn image_placements<'b>(
                 continue;
             };
             let (x, y, w, h) = anchor_rect(layout, placed.anchor);
-            let rect = page_rect(RectPx::new(x, y, w, h), &sheet_page.slice);
-            let top = rect.y.max(band_top);
-            let bottom = (rect.y + rect.h).min(band_bottom);
-            if bottom <= top {
+            let band_left = sheet_page.slice.offset_x;
+            let band_right = band_left + content_width_px;
+            let top = y.max(band_top);
+            let bottom = (y + h).min(band_bottom);
+            let left = x.max(band_left);
+            let right = (x + w).min(band_right);
+            if bottom <= top || right <= left {
                 continue;
             }
-            let visible = RectPx::new(rect.x, top, rect.w, bottom - top);
+            let visible = RectPx::new(
+                left - sheet_page.slice.offset_x + sheet_page.slice.center_x_px,
+                top + sheet_page.slice.center_y_px,
+                right - left,
+                bottom - top,
+            );
             placements.push(image::Placement {
                 id: &media.media,
                 mime: &media.mime,
@@ -739,17 +747,27 @@ fn draw_charts(
     if charts.is_empty() {
         return;
     }
-    let (_, content_h_px) = page.content_px();
+    let (content_width_px, content_height_px) = page.content_px();
     let band_top = sheet_page.slice.offset_y;
-    let band_bottom = band_top + content_h_px;
+    let band_bottom = band_top + content_height_px;
+    let band_left = sheet_page.slice.offset_x;
+    let band_right = band_left + content_width_px;
     for placed in charts {
-        let rect = page_rect(placed.rect(), &sheet_page.slice);
+        let rect = placed.rect();
         let clip_top = rect.y.max(band_top);
         let clip_bottom = (rect.y + rect.h).min(band_bottom);
-        if clip_bottom <= clip_top {
+        let clip_left = rect.x.max(band_left);
+        let clip_right = (rect.x + rect.w).min(band_right);
+        if clip_bottom <= clip_top || clip_right <= clip_left {
             continue;
         }
-        let clip = RectPx::new(rect.x, clip_top, rect.w, clip_bottom - clip_top);
+        let clip = RectPx::new(
+            clip_left - sheet_page.slice.offset_x + sheet_page.slice.center_x_px,
+            clip_top + sheet_page.slice.center_y_px,
+            clip_right - clip_left,
+            clip_bottom - clip_top,
+        );
+        let rect = page_rect(rect, &sheet_page.slice);
         // Кегль и начертание диаграммы задаёт `layout` в пикселях, а в PDF
         // текст идёт regular: `ChartPrim::Text` начертаний не несёт.
         chart::draw(
@@ -847,7 +865,7 @@ fn fit_pages(pages: u32) -> Option<u32> {
 // Сравнение с умолчанием точное: `1.0` — литерал `PageConfig::default`, а не
 // результат вычислений.
 #[allow(clippy::float_cmp)]
-fn resolve_page_scale(page: &mut PageConfig, sheet: &Sheet) {
+pub(crate) fn resolve_page_scale(page: &mut PageConfig, sheet: &Sheet) {
     let print = &sheet.print;
     if page.fit_to_width.is_some() || page.fit_to_height.is_some() {
         return;
@@ -888,7 +906,10 @@ fn prepare_sheet<'a>(
         .sheets()
         .get(sheet_index)
         .ok_or(PdfError::NoSuchSheet(sheet_index))?;
-    let layout = SheetLayout::new(sheet);
+    // Печатные ширины столбцов Excel отличаются от экранных. Одна раскладка
+    // проходит через extent, pagination и painter, поэтому границы полос,
+    // ячейки и двухъячеечные anchors не расходятся между собой.
+    let layout = SheetLayout::new(sheet).for_print();
     let mut page_cfg = options.page.clone();
     // Поля лист несёт сам (`<pageMargins>`): приложение печатает лист с ними, и
     // без этой подстановки лист уезжает от эталона на разницу полей. Заданные
@@ -932,7 +953,7 @@ fn prepare_sheet<'a>(
     resolve_page_scale(&mut page_cfg, sheet);
     // `fit_to_width` пересчитывает масштаб до сборки геометрии: от него зависят
     // и полосы, и координаты ячеек.
-    page_cfg.scale = print_scale(&page_cfg, sheet, &layout);
+    page_cfg.scale = print_book_scale(&page_cfg, book, sheet, &layout);
     let page = PageGeometry::new(&page_cfg);
     // `page_cfg` несёт и масштаб, и повтор шапки/первых столбцов: пагинация
     // читает их одним конфигом, а геометрия — уже с итоговым масштабом.

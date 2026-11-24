@@ -78,6 +78,12 @@ fn quantize_twips(px: f32) -> f32 {
     (px * 15.0 + 1e-3).floor() / 15.0
 }
 
+fn quantize_row_height(px: f32) -> f32 {
+    const UNITS_PER_POINT: f32 = 2.0;
+    (px * PX_PER_POINT.recip() * UNITS_PER_POINT - 1e-3).ceil()
+        / (UNITS_PER_POINT * PX_PER_POINT.recip())
+}
+
 /// Минимальная высота строки таблицы в пикселях.
 ///
 /// Применяется к готовой высоте строки, а не к `w:trHeight`: там `0.0` означает
@@ -347,8 +353,18 @@ pub fn compute_table_frame(table: &Table, x: f32, available_width: f32) -> Table
     let col_widths = compute_column_widths(table, available_width);
     let width: f32 = col_widths.iter().sum();
     let offset = table_offset(table, available_width.max(0.0), width);
+    let default_text_inset = if table.jc.is_none() && table.indent.is_none() {
+        twips_to_px(
+            table
+                .cell_margins
+                .left
+                .unwrap_or(Twips::new(DEFAULT_SIDE_MARGIN_TWIPS)),
+        )
+    } else {
+        0.0
+    };
     TableFrame {
-        x: x + offset,
+        x: x + offset - default_text_inset,
         col_widths,
         bidi_visual: table.bidi_visual,
     }
@@ -555,6 +571,9 @@ pub fn layout_table_fragments(
                     } else {
                         avail
                     };
+                    if done && dropped && (body > 0 || remainder <= next.height + EPS) {
+                        break;
+                    }
                     pieces.push(RowPiece {
                         row,
                         y: cursor,
@@ -1144,7 +1163,7 @@ fn measure_rows<'a>(
             None => content_height,
         };
         measured.push(MeasuredRow {
-            height: quantize_twips(height.max(MIN_ROW_HEIGHT)),
+            height: quantize_row_height(height.max(MIN_ROW_HEIGHT)),
             margin_top,
             margin_bottom,
             border_top,
@@ -2725,8 +2744,8 @@ mod tests {
             "граница `sz=4` не добавила 0.5 pt к высоте: {bordered} против {plain}"
         );
         assert!(
-            (bordered - twips_to_px(Twips::new(459))).abs() < EPS,
-            "строка с границей — 22.95 pt целым twip, как у эталона: {bordered}"
+            (bordered - twips_to_px(Twips::new(460))).abs() < EPS,
+            "строка с границей — 23 pt на сетке 0,5 pt Office: {bordered}"
         );
 
         let thick = row_height(all_single(20));
@@ -2741,7 +2760,7 @@ mod tests {
     /// странице фикстуры `tables/long_table.docx` 32 строки, а не 31. Надбавка
     /// `w:line` над базовым интерлиньяжем отбрасывается вместе с ним.
     #[test]
-    fn the_trailing_after_is_dropped_when_the_row_ends_the_page() {
+    fn the_whole_row_moves_when_only_trailing_after_does_not_fit() {
         // Таблица 2×1 с границами: высота строки 30.65 px, из них строка
         // текста 19.32 px и интервал после 10.67 px.
         let mut table = table(2, 1, None, TableLook::default());
@@ -2771,15 +2790,12 @@ mod tests {
 
         assert_eq!(
             fragments.len(),
-            1,
-            "вторая строка остаётся на странице — интервал после отброшен"
+            2,
+            "строка целиком переносится на продолжение"
         );
-        assert_eq!(fragments[0].rows.len(), 2, "обе строки — на одной странице");
-        assert!(
-            (fragments[0].rows[1].height - quantize_twips(base + border)).abs() < EPS,
-            "строка сжата до базового интерлиньяжа и границы целым twip: {}",
-            fragments[0].rows[1].height
-        );
+        assert_eq!(fragments[0].rows.len(), 1);
+        assert_eq!(fragments[1].rows.len(), 1);
+        assert_eq!(fragments[1].rows[0].cells[0].row, 1);
     }
 
     /// Надбавка `w:line` отбрасывается на разрыве вместе с хвостовым
@@ -2787,7 +2803,7 @@ mod tests {
     /// `tables/long_table_header_repeat.docx` высотой 278 twip (база
     /// 268 + граница 10), а не 300 (база с множителем 289 + граница).
     #[test]
-    fn the_line_rule_excess_is_dropped_with_the_trailing_after() {
+    fn the_whole_row_moves_when_only_line_excess_does_not_fit() {
         let mut table = table(2, 1, None, TableLook::default());
         table.borders = all_single(4);
         table.rows[0].cells[0].items = vec![fixture_paragraph(10)];
@@ -2814,15 +2830,13 @@ mod tests {
 
         assert_eq!(
             fragments.len(),
-            1,
-            "вторая строка остаётся на странице — надбавка `w:line` отброшена"
+            2,
+            "строка переносится целиком, как в Office"
         );
-        assert_eq!(fragments[0].rows.len(), 2, "обе строки — на одной странице");
-        assert!(
-            (fragments[0].rows[1].height - quantize_twips(base + border)).abs() < EPS,
-            "строка сжата до базового интерлиньяжа и границы целым twip: {}",
-            fragments[0].rows[1].height
-        );
+        assert_eq!(fragments[0].rows.len(), 1);
+        assert_eq!(fragments[1].rows.len(), 1);
+        assert!((fragments[1].rows[0].height - quantize_row_height(row)).abs() < EPS);
+        assert!(!fragments[1].rows[0].continued_above);
     }
 
     /// Полосу ряда задают поля `w:tcMar` по максимуму от ячеек, а не поля самой

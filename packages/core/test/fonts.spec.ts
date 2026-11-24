@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { registerPaintFonts, type FontBytesSource } from '../src/worker/fonts.js';
+import {
+  registerPaintFonts,
+  resolvePaintFonts,
+  type FontBytesSource,
+  type PaintFontContext,
+} from '../src/worker/fonts.js';
 
 /**
  * Лицо-заглушка: регистрация трогает конструктор, `add` и `load` — больше от
@@ -148,5 +153,28 @@ describe('registerPaintFonts', () => {
 
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0]?.[1])).toContain('font parse failed');
+  });
+});
+
+
+describe('resolvePaintFonts', () => {
+  it('разрешает regular, bold, italic и bold italic в контексте до первого кадра', () => {
+    const measured: Array<{ font: string; text: string }> = [];
+    const ctx: PaintFontContext = {
+      font: '',
+      measureText(text: string) {
+        measured.push({ font: this.font, text });
+        return {};
+      },
+    };
+
+    resolvePaintFonts(ctx);
+
+    expect(measured).toEqual([
+      { font: 'normal 400 16px Carlito', text: 'Font readiness' },
+      { font: 'normal 700 16px Carlito', text: 'Font readiness' },
+      { font: 'italic 400 16px Carlito', text: 'Font readiness' },
+      { font: 'italic 700 16px Carlito', text: 'Font readiness' },
+    ]);
   });
 });

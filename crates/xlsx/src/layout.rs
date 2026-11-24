@@ -231,6 +231,27 @@ impl SheetLayout {
         }
     }
 
+    /// Печатная раскладка Excel с независимыми от экрана ширинами столбцов.
+    ///
+    /// Excel Online выводит стандартный столбец шириной 64 экранных px как
+    /// 51,075 pt, то есть как 68,1 px при 96 dpi. Текст и размеры `oneCellAnchor`
+    /// остаются в своих физических единицах; масштабируются только координаты
+    /// и ширины столбцов. Поэтому печать использует отдельную копию раскладки,
+    /// а интерактивный лист продолжает работать с исходными 64 px.
+    #[must_use]
+    pub fn for_print(&self) -> Self {
+        const EXCEL_PRINT_COLUMN_SCALE: f32 = 1.064_062_5;
+        let mut print = self.clone();
+        print.default_col_width *= EXCEL_PRINT_COLUMN_SCALE;
+        for span in &mut print.spans {
+            span.width *= EXCEL_PRINT_COLUMN_SCALE;
+        }
+        for x in &mut print.span_x0 {
+            *x *= EXCEL_PRINT_COLUMN_SCALE;
+        }
+        print
+    }
+
     /// Ширина столбца по умолчанию.
     #[must_use]
     pub fn default_col_width(&self) -> f32 {
@@ -493,6 +514,32 @@ mod tests {
         assert_eq!(width_to_px(8.43), 62.4);
         assert_eq!(width_to_px(40.0), 296.0);
         assert_eq!(height_to_px(15.0), 20.0);
+    }
+
+    #[test]
+    fn print_geometry_scales_columns_without_changing_screen_or_rows() {
+        let screen = layout_of(2, 12, |content| {
+            content.dims.cols.push(crate::ColWidth {
+                first: 2,
+                last: 4,
+                width: 20.0,
+                custom: true,
+                hidden: false,
+                best_fit: false,
+            });
+        });
+        let print = screen.for_print();
+
+        assert_eq!(screen.default_col_width(), 64.0);
+        assert_eq!(
+            screen.column_x(10),
+            640.0 - 3.0 * 64.0 + 3.0 * width_to_px(20.0)
+        );
+        assert_eq!(print.default_col_width(), 68.1);
+        assert_eq!(print.column_width(2), width_to_px(20.0) * 1.064_062_5);
+        assert_eq!(print.column_x(10), screen.column_x(10) * 1.064_062_5);
+        assert_eq!(print.row_y(1), screen.row_y(1));
+        assert_eq!(print.column_at(print.column_x(7)), 7);
     }
 
     #[test]

@@ -20,6 +20,10 @@ if (!planPath || !captureRoot || !output) {
       const expected = manifest.captures;
       for (const capture of expected) {
         const actual = byId.get(capture.id);
+        if (actual?.status === 'page-mismatch') {
+          results.push({ id: capture.id, status: 'page-mismatch', reason: actual.error, stage: actual.stage, actualPageCount: actual.actualPageCount });
+          continue;
+        }
         if (!actual || actual.status === 'capture-error') {
           results.push({ id: capture.id, status: 'capture-error', reason: actual?.error ?? 'capture result is missing', stage: actual?.stage });
           continue;
@@ -37,11 +41,20 @@ if (!planPath || !captureRoot || !output) {
           results.push({ ...result, id: capture.id, kind: capture.kind, pageNumber: capture.pageNumber, sheet: capture.sheet, images: { reference: path.relative(output, referencePath), actual: path.relative(output, actual.image.path), diff: hasDiff ? diffName : null } });
         } catch (error) { results.push({ id: capture.id, status: 'harness-error', reason: error.message }); }
       }
-      const actualForDocument = actualResults.filter((r) => r.source?.path === manifest.source.path && r.status === 'captured');
-      if (manifest.source.format === 'docx' && actualForDocument.length !== expected.length) {
-        results.push({ id: `${manifest.source.path}:pages`, status: 'page-mismatch', reason: `Expected ${expected.length} DOCX pages, captured ${actualForDocument.length}` });
+      const actualForDocument = expected
+        .map((capture) => byId.get(capture.id))
+        .filter((result) => result?.status === 'captured');
+      if (manifest.source.format === 'docx') {
+        const actualPageCount = actualForDocument[0]?.actualPageCount;
+        if (actualPageCount !== undefined && actualPageCount !== expected.length) {
+          results.push({ id: `${manifest.source.path}:pages`, status: 'page-mismatch', reason: `Expected ${expected.length} DOCX pages, actual ${actualPageCount}` });
+        }
       }
       if (manifest.source.format === 'xlsx') {
+        const actualPageCount = actualForDocument[0]?.actualPageCount;
+        if (manifest.view.mode === 'print-preview' && actualPageCount !== undefined && actualPageCount !== expected.length) {
+          results.push({ id: `${manifest.source.path}:sheet-${manifest.view.activeSheet.index}:pages`, status: 'page-mismatch', reason: `Expected ${expected.length} XLSX print pages, actual ${actualPageCount}` });
+        }
         const expectedOrder = expected.map((c) => `${c.sheet?.index ?? ''}:${c.pageNumber ?? ''}:${c.kind}`).join('|');
         const actualOrder = expected.map((c) => byId.get(c.id)).filter(Boolean).map((c) => {
           const capture = expected.find((item) => item.id === c.id);

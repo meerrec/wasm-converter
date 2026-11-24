@@ -36,6 +36,25 @@ const FACES: readonly {
   { face: 3, style: 'italic', weight: '700' },
 ];
 
+export interface PaintFontContext {
+  font: string;
+  measureText(text: string): unknown;
+}
+
+/**
+ * Явно разрешить все четыре начертания именно в том 2D-контексте, которым
+ * будет рисовать painter. `FontFace.load()` подтверждает разбор байтов, но не
+ * является гарантией того, что Chromium уже связал каждое начертание с новым
+ * canvas-контекстом. Замер до первого кадра фиксирует это разрешение и не
+ * оставляет видимых пикселей промежуточного fallback.
+ */
+export function resolvePaintFonts(ctx: PaintFontContext): void {
+  for (const { style, weight } of FACES) {
+    ctx.font = `${style} ${weight} 16px ${FAMILY}`;
+    ctx.measureText('Font readiness');
+  }
+}
+
 /**
  * Зарегистрировать сабсеты Carlito в `self.fonts` воркера либо в
  * `document.fonts`, если функция зовётся на main-потоке. У `Window` свойства

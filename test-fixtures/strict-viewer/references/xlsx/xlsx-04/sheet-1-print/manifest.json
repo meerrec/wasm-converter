@@ -1,0 +1,156 @@
+{
+  "schemaVersion": "1.0.0",
+  "corpus": {
+    "id": "strict-viewer-stage1",
+    "version": "1.0.0",
+    "matrixVersion": "1.0.0",
+    "baselineId": "office-online-2026-11-23-candidate",
+    "storage": {
+      "kind": "git-lfs",
+      "rootUri": "test-fixtures/strict-viewer/references"
+    }
+  },
+  "source": {
+    "path": "test-fixtures/xlsx/formats-date-ru.xlsx",
+    "format": "xlsx",
+    "sha256": "6b5ede5698c8b72d5b77518c5d2fd4f2b9cdf7ccf2f5011bdee43e1f31b0cca0",
+    "bytes": 6323
+  },
+  "reference": {
+    "provider": "office-online",
+    "application": "excel-online",
+    "applicationVersion": "16.0.20709.42309",
+    "capturedAt": "2026-11-23T13:36:34.174Z",
+    "captureMethod": "semi-automated",
+    "operator": "wasm-converter-stage1-capture"
+  },
+  "environment": {
+    "os": {
+      "name": "Linux",
+      "version": "6.18.62",
+      "architecture": "x86_64"
+    },
+    "browser": {
+      "name": "chromium",
+      "version": "151.0.7922.108"
+    },
+    "viewportCss": {
+      "width": 1440,
+      "height": 900
+    },
+    "deviceScaleFactor": 1,
+    "applicationZoomPercent": 100,
+    "browserZoomPercent": 100,
+    "locale": "ru-RU",
+    "timezone": "UTC",
+    "colorScheme": "light",
+    "fonts": {
+      "package": "office-online-embedded-subsets",
+      "version": "16.0.20709.42309",
+      "assets": [
+        {
+          "family": "segoeui-regular.woff2",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "94ef87ee295c67526205d67124f404e246226105e939e14c435a20c29a956f49",
+          "source": "Office Online response: https://res-1.cdn.office.net"
+        },
+        {
+          "family": "segoeui-semibold.woff2",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "22e7ac6e00b3f7463f2c89c577877ed717686d6f219614c890317d86560c413d",
+          "source": "Office Online response: https://res-1.cdn.office.net"
+        },
+        {
+          "family": "segoeui.woff",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "3d785eb0a0168e5c79e66aa0085a932d5fe2ad04f3577547e2267fa589df677d",
+          "source": "Office Online response: https://res.public.onecdn.static.microsoft"
+        },
+        {
+          "family": "27970306811",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "ded7515aa064578485a09c11a798a05d0303bdacdd7f2de92d0521f3bc7793ba",
+          "source": "Office Online response: https://res.public.onecdn.static.microsoft"
+        },
+        {
+          "family": "38412632070",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "29dfdec50c23a86c86c949498ad6b622bc053bc20ff2465ec0d89ea6c41acf02",
+          "source": "Office Online response: https://res.public.onecdn.static.microsoft"
+        },
+        {
+          "family": "41119599467",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "fcb0c4655a6bc4fd3e9fef00d5c90622e27710914cb1471e6b04c420bf489ded",
+          "source": "Office Online response: https://res.public.onecdn.static.microsoft"
+        },
+        {
+          "family": "37395953589",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "3e1d8f79c4d0c7b005d4660197c67a416853364ac3fdc84b14271b6f9dd28290",
+          "source": "Office Online response: https://res.public.onecdn.static.microsoft"
+        },
+        {
+          "family": "GetHierFontMetadata",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "19e1447b83b6873c8d70d1a9afc361b010746d0325ca6e287eb18da5aaee69fd",
+          "source": "Office Online response: https://sg3-excel.officeapps.live.com"
+        }
+      ]
+    }
+  },
+  "dynamicData": {
+    "dates": "fixed-value",
+    "fields": "cached-result",
+    "formulaCache": {
+      "policy": "cached-values-only",
+      "dirty": false,
+      "fullCalcOnLoad": false,
+      "forceFullCalc": false
+    },
+    "externalLinks": "cached-values-no-network"
+  },
+  "comparisonProfile": "visual-v1",
+  "notes": [
+    "Candidate reference: acceptance requires the independent baseline approval policy.",
+    "Captured on Linux; certification matrix 1.0.0 Windows 11 is not certified by this artifact."
+  ],
+  "view": {
+    "format": "xlsx",
+    "mode": "print-preview",
+    "activeSheet": {
+      "index": 0,
+      "name": "Формат"
+    },
+    "hiddenSheets": "exclude",
+    "showGridLines": true,
+    "showHeadings": true
+  },
+  "captures": [
+    {
+      "id": "xlsx-04-sheet-1-print-page-1",
+      "kind": "xlsx-print-page",
+      "pageNumber": 1,
+      "sheet": {
+        "index": 0,
+        "name": "Формат"
+      },
+      "image": {
+        "uri": "page-1.png",
+        "sha256": "e88e5731a5d50381c73ef5d33a4b117f46b91c70b4cf5ed71ab5f9594e61ba18",
+        "width": 594,
+        "height": 815,
+        "bytes": 19331,
+        "colorType": "RGBA8"
+      }
+    }
+  ]
+}

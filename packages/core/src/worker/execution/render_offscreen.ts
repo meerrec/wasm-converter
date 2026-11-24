@@ -7,7 +7,7 @@
 import { font_bytes, init_painter, resize_canvas } from '@meerrec/wasm';
 import type { LocalBuildResult, TransportAdapter } from '../../execution/transport.js';
 import type { PaintStats } from '../../protocol.js';
-import { registerPaintFonts } from '../fonts.js';
+import { registerPaintFonts, resolvePaintFonts } from '../fonts.js';
 import { startFrameLoop, type BuildOutcome, type FrameLoop } from '../frame_loop.js';
 import type { RenderAdapter } from './render.js';
 
@@ -79,12 +79,15 @@ export class OffscreenRenderAdapter implements RenderAdapter {
     if (canvas === null) {
       throw new Error('init: worker backend requires canvas');
     }
-    await registerPaintFonts({ font_bytes });
+    if (!(await registerPaintFonts({ font_bytes })) && typeof FontFace !== 'undefined') {
+      throw new Error('init: Carlito paint fonts are unavailable');
+    }
     const ctx = canvas.getContext('2d', {
       alpha: true,
       desynchronized: true,
     }) as Ctx | null;
     if (ctx === null) throw new Error('getContext("2d") returned null');
+    if (typeof ctx.measureText === 'function') resolvePaintFonts(ctx);
     this.ctx = ctx;
     init_painter(ctx);
     this.loop = startFrameLoop({
