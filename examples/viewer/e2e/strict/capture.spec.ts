@@ -8,9 +8,6 @@ import { frameId, waitForFrame } from '../helpers/docx_frame.js';
 const plan = JSON.parse(await readFile(process.env.STRICT_CAPTURE_PLAN!, 'utf8'));
 const output = path.resolve(process.env.STRICT_CAPTURE_OUTPUT ?? 'strict-capture-output');
 const results: any[] = [];
-// Холодный CI-раннер первый раз компилирует lazy DOCX-модуль дольше минуты.
-// Порог относится к реальному открытию документа, а не к фиксированной паузе.
-const OPEN_TIMEOUT_MS = 120_000;
 // Прогреву неважно, какой DOCX открывать: нужен один прогон загрузки модуля.
 // Минимальная фикстура не тащит за собой особенности первого документа плана.
 const WARMUP_TIMEOUT_MS = 180_000;
@@ -59,6 +56,47 @@ async function exportFrame(page: import('@playwright/test').Page, pdf: boolean):
   return Buffer.from(values as number[]);
 }
 
+/**
+ * Открыть документ плана напрямую через bridge. Strict capture проверяет
+ * viewer/WASM, а не React-обвязку страницы; UI-выпадашки и кнопки пейджера
+ * дают здесь только лишние асинхронные состояния и недетерминированные флаки.
+ */
+async function openFixture(
+  page: import('@playwright/test').Page,
+  manifest: any,
+): Promise<number | undefined> {
+  const fixture = manifest.source.path.replace(/^test-fixtures\//, '');
+  return page.evaluate(
+    async ({ fixture, format, sheetIndex, showGrid, showHeaders }) => {
+      const response = await fetch(`/fixtures/${fixture}`);
+      if (!response.ok) throw new Error(`${fixture}: HTTP ${response.status} ${response.url}`);
+      const bridge = window.docConverter;
+      if (!bridge || bridge.kind !== format) {
+        throw new Error(`viewer bridge for ${format} is unavailable`);
+      }
+      const bytes = await response.arrayBuffer();
+      if (bridge.kind === 'docx') {
+        const pages = await bridge.viewer.open(bytes);
+        return pages.length;
+      }
+      if (bridge.kind === 'xlsx') {
+        await bridge.viewer.open(bytes);
+        bridge.viewer.showSheet(sheetIndex);
+        bridge.viewer.setView({ showGrid, showHeaders });
+        return undefined;
+      }
+      throw new Error(`unsupported strict capture format: ${bridge.kind}`);
+    },
+    {
+      fixture,
+      format: manifest.source.format,
+      sheetIndex: manifest.view.activeSheet?.index ?? 0,
+      showGrid: manifest.view.showGridLines,
+      showHeaders: manifest.view.showHeadings,
+    },
+  );
+}
+
 async function stablePng(page: import('@playwright/test').Page): Promise<Buffer> {
   await page.evaluate(() => document.fonts.ready);
   let previous = '';
@@ -104,16 +142,7 @@ for (const document of plan.documents) {
       if (manifest.environment.applicationZoomPercent !== 100 || manifest.environment.browserZoomPercent !== 100) throw new Error('Non-100% zoom requires an explicitly verified viewer zoom adapter');
       await page.setViewportSize(manifest.environment.viewportCss);
       errors = await boot(page, manifest.source.format === 'docx' ? '/docx' : '/xlsx');
-      const fixture = manifest.source.path.replace(/^test-fixtures\/(docx|xlsx)\//, '');
-      await page.selectOption('#fixture', fixture);
-      let actualPageCount: number | undefined;
-      if (manifest.source.format === 'docx') {
-        await page.waitForFunction(() => window.docConverter?.kind === 'docx' && window.docConverter.viewer.pageCount > 0, undefined, { timeout: OPEN_TIMEOUT_MS });
-        actualPageCount = await page.evaluate(() => window.docConverter?.kind === 'docx' ? window.docConverter.viewer.pageCount : 0);
-      } else {
-        await page.waitForFunction(() => document.querySelector('#status')?.textContent?.includes('лист'), undefined, { timeout: 60_000 });
-        await page.selectOption('#sheet', String(manifest.view.activeSheet.index));
-      }
+      let actualPageCount = await openFixture(page, manifest);
       if (manifest.view.mode !== 'normal') {
         const work = directories.get(manifest.captures[0].id)!;
         const bytes = await exportFrame(page, true);
@@ -134,19 +163,29 @@ for (const document of plan.documents) {
           await record(capture, { status: 'captured', stage: 'complete', actualPageCount, image: { path: target, bytes: png.length }, runtime, errors });
         }
       } else {
-        let currentDocxPage = 1;
         for (const capture of manifest.captures) {
           try {
+            const before = await frameId(page);
             if (manifest.source.format === 'docx') {
               if (capture.pageNumber > actualPageCount!) throw new Error(`DOCX page mismatch: requested ${capture.pageNumber}, actual ${actualPageCount}`);
-              while (currentDocxPage < capture.pageNumber) {
-                const before = await frameId(page); await page.click('#page-next'); await waitForFrame(page, before); currentDocxPage += 1;
-              }
+              await page.evaluate((pageIndex) => {
+                const bridge = window.docConverter;
+                if (!bridge || bridge.kind !== 'docx') throw new Error('DOCX viewer bridge is unavailable');
+                bridge.viewer.showPage(pageIndex);
+              }, capture.pageNumber - 1);
             } else {
-              await page.locator('#grid').setChecked(manifest.view.showGridLines);
-              await page.locator('#headers').setChecked(manifest.view.showHeadings);
-              await page.evaluate(({ x, y }) => { const scroller = document.querySelector('#viewer > div') as HTMLElement; scroller.scrollLeft = x; scroller.scrollTop = y; }, capture.scroll ?? { x: 0, y: 0 });
+              await page.evaluate(({ showGrid, showHeaders, x, y }) => {
+                const bridge = window.docConverter;
+                if (!bridge || bridge.kind !== 'xlsx') throw new Error('XLSX viewer bridge is unavailable');
+                bridge.viewer.setView({ showGrid, showHeaders });
+                bridge.viewer.scrollTo(x, y);
+              }, {
+                showGrid: manifest.view.showGridLines,
+                showHeaders: manifest.view.showHeadings,
+                ...(capture.scroll ?? { x: 0, y: 0 }),
+              });
             }
+            await waitForFrame(page, before);
             const png = await stablePng(page), target = path.join(directories.get(capture.id)!, 'actual.png'); await writeFile(target, png);
             const runtime = await page.evaluate(() => ({ userAgent: navigator.userAgent, dpr: devicePixelRatio, viewport: { width: innerWidth, height: innerHeight } }));
             await record(capture, { status: 'captured', stage: 'complete', actualPageCount, image: { path: target, bytes: png.length }, runtime, errors });
