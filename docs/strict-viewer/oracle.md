@@ -105,7 +105,7 @@ node tools/strict-viewer/cli.mjs --reference reference.png --actual actual.png -
 
 Workflow `.github/workflows/stage-1-oracle.yml` запускает на `stage-1/**`, pull requests и вручную три группы проверок: integrity/schema corpus, полный native Rust suite и browser oracle. Browser job собирает WASM и viewer, выполняет два независимых полных capture, проверяет PNG/PDF repeatability, создаёт pixel-diff/JSON/HTML и classification, затем сохраняет оба actual run и отчёты как artifacts. Exit codes comparator не подавляются: visual/page mismatch завершает job с ошибкой, но report и classification сохраняются.
 
-Workflow использует только сохранённые references и локальный Chromium/poppler. Office Online, LibreOffice и внешние renderer в нём не вызываются. После всех проверок отдельный `git diff --exit-code` подтверждает, что capture/diff не изменили `references` или `corpus.json`.
+Workflow использует только сохранённые references, Chromium из Playwright и системный poppler. Пакет `chromium` из apt не используется: в актуальном образе Ubuntu 22.04 для него нет installation candidate. Office Online, LibreOffice и внешние renderer в workflow не вызываются. После всех проверок отдельный `git diff --exit-code` подтверждает, что capture/diff не изменили `references` или `corpus.json`.
 
 ## Явное принятие baseline
 

@@ -78,9 +78,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: ./.github/actions/apt-install
         with:
-          packages: chromium poppler-utils
+          packages: poppler-utils
+      - run: pnpm --dir examples/viewer exec playwright install chromium
       - run: bash scripts/build-wasm.sh
       - run: pnpm turbo run typecheck build --filter=@meerrec/core --filter=@meerrec/example-viewer
+      - name: Resolve Playwright Chromium
+        id: playwright-chromium
+        run: |
+          path="$(pnpm --dir examples/viewer exec node -e "process.stdout.write(require('@playwright/test').chromium.executablePath())")"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
       - name: Build capture plan
         run: |
           find test-fixtures/strict-viewer/references -name manifest.json -print0 | \
@@ -89,13 +95,13 @@ jobs:
         env:
           STRICT_CAPTURE_PLAN: ${{ runner.temp }}/strict-plan.json
           STRICT_CAPTURE_OUTPUT: ${{ runner.temp }}/strict-actual-run1
-          CHROMIUM_PATH: /usr/bin/chromium
+          CHROMIUM_PATH: ${{ steps.playwright-chromium.outputs.path }}
         run: pnpm --dir examples/viewer exec playwright test --config playwright.strict.config.ts
       - name: Capture actual run 2
         env:
           STRICT_CAPTURE_PLAN: ${{ runner.temp }}/strict-plan.json
           STRICT_CAPTURE_OUTPUT: ${{ runner.temp }}/strict-actual-run2
-          CHROMIUM_PATH: /usr/bin/chromium
+          CHROMIUM_PATH: ${{ steps.playwright-chromium.outputs.path }}
         run: pnpm --dir examples/viewer exec playwright test --config playwright.strict.config.ts
       - name: Verify actual repeatability
         run: |
