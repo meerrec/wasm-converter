@@ -8,6 +8,29 @@ import { frameId, waitForFrame } from '../helpers/docx_frame.js';
 const plan = JSON.parse(await readFile(process.env.STRICT_CAPTURE_PLAN!, 'utf8'));
 const output = path.resolve(process.env.STRICT_CAPTURE_OUTPUT ?? 'strict-capture-output');
 const results: any[] = [];
+// Холодный CI-раннер первый раз компилирует lazy DOCX-модуль дольше минуты.
+// Порог относится к реальному открытию документа, а не к фиксированной паузе.
+const OPEN_TIMEOUT_MS = 120_000;
+
+// Прогрев выполняется один раз на worker: строгий план идёт одним worker'ом,
+// а первый DOCX в списке не должен оплачивать компиляцию wasm вместо всего корпуса.
+test.beforeAll(async ({ browser }) => {
+  const page = await browser.newPage();
+  try {
+    await page.setViewportSize(plan.environment.viewportCss);
+    await boot(page, '/docx');
+    const firstDocx = plan.documents.find((document: any) => document.manifest.source.format === 'docx');
+    const fixture = firstDocx.manifest.source.path.replace(/^test-fixtures\/docx\//, '');
+    await page.selectOption('#fixture', fixture);
+    await page.waitForFunction(
+      () => window.docConverter?.kind === 'docx' && window.docConverter.viewer.pageCount > 0,
+      undefined,
+      { timeout: OPEN_TIMEOUT_MS },
+    );
+  } finally {
+    await page.close();
+  }
+});
 
 async function exportFrame(page: import('@playwright/test').Page, pdf: boolean): Promise<Buffer> {
   const values = await page.evaluate(async (asPdf) => {
@@ -68,7 +91,7 @@ for (const document of plan.documents) {
       await page.selectOption('#fixture', fixture);
       let actualPageCount: number | undefined;
       if (manifest.source.format === 'docx') {
-        await page.waitForFunction(() => window.docConverter?.kind === 'docx' && window.docConverter.viewer.pageCount > 0, undefined, { timeout: 60_000 });
+        await page.waitForFunction(() => window.docConverter?.kind === 'docx' && window.docConverter.viewer.pageCount > 0, undefined, { timeout: OPEN_TIMEOUT_MS });
         actualPageCount = await page.evaluate(() => window.docConverter?.kind === 'docx' ? window.docConverter.viewer.pageCount : 0);
       } else {
         await page.waitForFunction(() => document.querySelector('#status')?.textContent?.includes('лист'), undefined, { timeout: 60_000 });
