@@ -23,7 +23,16 @@ test.beforeAll(async ({ browser }) => {
   try {
     await page.setViewportSize(plan.environment.viewportCss);
     errors = await boot(page, '/docx');
-    await page.selectOption('#fixture', 'simple/one_paragraph.docx');
+    // UI-список страницы прогреву не нужен: запрос идёт напрямую в bridge.
+    // Так warm-up проверяет реальный HTTP-ответ фикстуры и lazy-модуль DOCX,
+    // а не состояние React-обвязки и побочные 404 вроде favicon.
+    await page.evaluate(async () => {
+      const response = await fetch('/fixtures/docx/simple/one_paragraph.docx');
+      if (!response.ok) throw new Error(`DOCX fixture HTTP ${response.status}: ${response.url}`);
+      const bridge = window.docConverter;
+      if (!bridge || bridge.kind !== 'docx') throw new Error('DOCX viewer bridge is unavailable');
+      await bridge.viewer.open(await response.arrayBuffer());
+    });
     await page.waitForFunction(
       () => window.docConverter?.kind === 'docx' && window.docConverter.viewer.pageCount > 0,
       undefined,
