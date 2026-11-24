@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/meerrec/wasm-converter/main/docs/strict-viewer/manifest.schema.json",
+  "title": "Strict viewer Office Online reference manifest",
+  "description": "Mode-specific manifest for an immutable Office Online reference capture. Each document and view mode has a separate manifest. Schema validation does not replace semantic checks for unique capture IDs, existing artifacts, PNG signatures, page completeness, or approved baseline status.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "corpus", "source", "reference", "environment", "view", "dynamicData", "captures"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "corpus": { "$ref": "#/$defs/corpus" },
+    "source": { "$ref": "#/$defs/source" },
+    "reference": { "$ref": "#/$defs/reference" },
+    "environment": { "$ref": "#/$defs/environment" },
+    "view": { "$ref": "#/$defs/view" },
+    "dynamicData": { "$ref": "#/$defs/dynamicData" },
+    "comparisonProfile": { "const": "visual-v1", "default": "visual-v1" },
+    "captures": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/capture" } },
+    "notes": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "positiveInt": { "type": "integer", "minimum": 1 },
+    "nonNegativeInt": { "type": "integer", "minimum": 0 },
+    "relativePath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*[\\\\:])(?!.*(?:^|/)[.][.](?:/|$)).+$" },
+    "rectangle": {
+      "type": "object", "additionalProperties": false, "required": ["x", "y", "width", "height"],
+      "properties": { "x": { "$ref": "#/$defs/nonNegativeInt" }, "y": { "$ref": "#/$defs/nonNegativeInt" }, "width": { "$ref": "#/$defs/positiveInt" }, "height": { "$ref": "#/$defs/positiveInt" } }
+    },
+    "corpus": {
+      "type": "object", "additionalProperties": false, "required": ["id", "version", "matrixVersion", "baselineId", "storage"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" }, "version": { "type": "string", "minLength": 1 }, "matrixVersion": { "type": "string", "minLength": 1 }, "baselineId": { "type": "string", "minLength": 1 },
+        "storage": { "type": "object", "additionalProperties": false, "required": ["kind", "rootUri"], "properties": { "kind": { "enum": ["git-lfs", "release-asset", "object-store"] }, "rootUri": { "type": "string", "format": "uri-reference", "minLength": 1 }, "maxCorpusBytes": { "$ref": "#/$defs/positiveInt" } } }
+      }
+    },
+    "source": { "type": "object", "additionalProperties": false, "required": ["path", "format", "sha256", "bytes"], "properties": { "path": { "$ref": "#/$defs/relativePath" }, "format": { "enum": ["docx", "xlsx"] }, "sha256": { "$ref": "#/$defs/sha256" }, "bytes": { "$ref": "#/$defs/positiveInt" } } },
+    "reference": {
+      "type": "object", "additionalProperties": false, "required": ["provider", "application", "capturedAt", "captureMethod", "operator"],
+      "properties": {
+        "provider": { "const": "office-online" }, "application": { "enum": ["word-online", "excel-online"] }, "applicationVersion": { "type": "string", "minLength": 1 }, "capturedAt": { "type": "string", "format": "date-time" }, "captureMethod": { "enum": ["manual", "semi-automated"] }, "operator": { "type": "string", "minLength": 1 },
+        "exportedPdf": { "type": "object", "additionalProperties": false, "required": ["uri", "sha256"], "properties": { "uri": { "type": "string", "format": "uri-reference", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" } } }
+      }
+    },
+    "fontAsset": { "type": "object", "additionalProperties": false, "required": ["family", "style", "weight", "sha256"], "properties": { "family": { "type": "string", "minLength": 1 }, "style": { "type": "string", "minLength": 1 }, "weight": { "type": "integer", "minimum": 1, "maximum": 1000 }, "sha256": { "$ref": "#/$defs/sha256" }, "source": { "type": "string", "minLength": 1 } } },
+    "environment": {
+      "type": "object", "additionalProperties": false, "required": ["os", "browser", "applicationZoomPercent", "browserZoomPercent", "locale", "timezone", "fonts"],
+      "properties": {
+        "os": { "type": "object", "additionalProperties": false, "required": ["name", "version"], "properties": { "name": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 }, "architecture": { "type": "string", "minLength": 1 } } },
+        "browser": { "type": "object", "additionalProperties": false, "required": ["name", "version"], "properties": { "name": { "const": "chromium" }, "version": { "type": "string", "minLength": 1 } } },
+        "viewportCss": { "type": "object", "additionalProperties": false, "required": ["width", "height"], "properties": { "width": { "$ref": "#/$defs/positiveInt" }, "height": { "$ref": "#/$defs/positiveInt" } } },
+        "deviceScaleFactor": { "type": "number", "exclusiveMinimum": 0 }, "applicationZoomPercent": { "type": "number", "exclusiveMinimum": 0 }, "browserZoomPercent": { "type": "number", "exclusiveMinimum": 0 }, "locale": { "type": "string", "minLength": 2 }, "timezone": { "type": "string", "minLength": 1 }, "colorScheme": { "const": "light" },
+        "fonts": { "type": "object", "additionalProperties": false, "required": ["package", "version", "assets"], "properties": { "package": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 }, "assets": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/fontAsset" } } } },
+        "rasterizer": { "type": "object", "additionalProperties": false, "required": ["name", "version", "dpi"], "properties": { "name": { "const": "pdftoppm" }, "version": { "type": "string", "minLength": 1 }, "dpi": { "const": 144 } } }
+      }
+    },
+    "sheetSelector": { "type": "object", "additionalProperties": false, "required": ["index", "name"], "properties": { "index": { "type": "integer", "minimum": 0 }, "name": { "type": "string", "minLength": 1 } } },
+    "view": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["format", "mode", "revisions", "comments"], "properties": { "format": { "const": "docx" }, "mode": { "enum": ["print-layout", "pdf"] }, "revisions": { "const": "accepted" }, "comments": { "const": "hidden" } } },
+      { "type": "object", "additionalProperties": false, "required": ["format", "mode", "activeSheet", "hiddenSheets", "showGridLines", "showHeadings"], "properties": { "format": { "const": "xlsx" }, "mode": { "enum": ["normal", "print-preview"] }, "activeSheet": { "$ref": "#/$defs/sheetSelector" }, "hiddenSheets": { "const": "exclude" }, "showGridLines": { "type": "boolean" }, "showHeadings": { "type": "boolean" } } }
+    ] },
+    "dynamicData": {
+      "type": "object", "additionalProperties": false, "required": ["dates", "fields", "formulaCache", "externalLinks"],
+      "properties": { "dates": { "enum": ["fixed-value", "masked"] }, "fields": { "const": "cached-result" }, "formulaCache": { "type": "object", "additionalProperties": false, "required": ["policy", "dirty", "fullCalcOnLoad", "forceFullCalc"], "properties": { "policy": { "const": "cached-values-only" }, "dirty": { "type": "boolean" }, "fullCalcOnLoad": { "type": "boolean" }, "forceFullCalc": { "type": "boolean" } } }, "externalLinks": { "const": "cached-values-no-network" } }
+    },
+    "image": { "type": "object", "additionalProperties": false, "required": ["uri", "sha256", "width", "height", "bytes", "colorType"], "properties": { "uri": { "type": "string", "format": "uri-reference", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" }, "width": { "$ref": "#/$defs/positiveInt" }, "height": { "$ref": "#/$defs/positiveInt" }, "bytes": { "$ref": "#/$defs/positiveInt" }, "colorType": { "enum": ["RGB8", "RGBA8"] } } },
+    "mask": { "type": "object", "additionalProperties": false, "required": ["id", "reason", "rect", "textRule"], "properties": { "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" }, "reason": { "enum": ["dynamic-date", "documented-nondeterminism"] }, "rect": { "$ref": "#/$defs/rectangle" }, "textRule": { "type": "string", "minLength": 1 } } },
+    "captureBase": {
+      "type": "object", "additionalProperties": false, "required": ["id", "kind", "image"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$" }, "kind": { "enum": ["docx-page", "xlsx-screen", "xlsx-print-page"] }, "pageNumber": { "$ref": "#/$defs/positiveInt" }, "sheet": { "$ref": "#/$defs/sheetSelector" }, "visibleRange": { "type": "string", "pattern": "^\\$?[A-Z]{1,3}\\$?[1-9][0-9]*:\\$?[A-Z]{1,3}\\$?[1-9][0-9]*$" },
+        "scroll": { "type": "object", "additionalProperties": false, "required": ["x", "y"], "properties": { "x": { "type": "number", "minimum": 0 }, "y": { "type": "number", "minimum": 0 } } }, "activeCell": { "type": "string", "pattern": "^\\$?[A-Z]{1,3}\\$?[1-9][0-9]*$" }, "image": { "$ref": "#/$defs/image" }, "masks": { "type": "array", "items": { "$ref": "#/$defs/mask" }, "uniqueItems": true }, "expectedText": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "capture": { "allOf": [
+      { "$ref": "#/$defs/captureBase" },
+      { "if": { "properties": { "kind": { "const": "docx-page" } }, "required": ["kind"] }, "then": { "required": ["pageNumber"], "properties": { "sheet": false, "visibleRange": false, "scroll": false, "activeCell": false } } },
+      { "if": { "properties": { "kind": { "enum": ["xlsx-screen", "xlsx-print-page"] } }, "required": ["kind"] }, "then": { "required": ["sheet"] } },
+      { "if": { "properties": { "kind": { "const": "xlsx-screen" } }, "required": ["kind"] }, "then": { "required": ["visibleRange", "scroll", "activeCell"], "properties": { "pageNumber": false } } },
+      { "if": { "properties": { "kind": { "const": "xlsx-print-page" } }, "required": ["kind"] }, "then": { "required": ["pageNumber"], "properties": { "visibleRange": false, "scroll": false, "activeCell": false } } }
+    ] }
+  },
+  "allOf": [
+    { "if": { "properties": { "source": { "properties": { "format": { "const": "docx" } }, "required": ["format"] } }, "required": ["source"] }, "then": { "properties": { "reference": { "properties": { "application": { "const": "word-online" } } }, "view": { "properties": { "format": { "const": "docx" } } }, "captures": { "items": { "properties": { "kind": { "const": "docx-page" } } } } } } },
+    { "if": { "properties": { "source": { "properties": { "format": { "const": "xlsx" } }, "required": ["format"] } }, "required": ["source"] }, "then": { "properties": { "reference": { "properties": { "application": { "const": "excel-online" } } }, "view": { "properties": { "format": { "const": "xlsx" } } }, "captures": { "items": { "properties": { "kind": { "enum": ["xlsx-screen", "xlsx-print-page"] } } } } } } },
+    { "if": { "properties": { "view": { "properties": { "mode": { "const": "normal" } }, "required": ["mode"] } }, "required": ["view"] }, "then": { "properties": { "captures": { "items": { "properties": { "kind": { "const": "xlsx-screen" } } } } } } },
+    { "if": { "properties": { "view": { "properties": { "mode": { "const": "print-preview" } }, "required": ["mode"] } }, "required": ["view"] }, "then": { "properties": { "captures": { "items": { "properties": { "kind": { "const": "xlsx-print-page" } } } } } } },
+    {
+      "if": { "properties": { "view": { "properties": { "mode": { "const": "pdf" } }, "required": ["mode"] } }, "required": ["view"] },
+      "then": { "properties": { "reference": { "required": ["exportedPdf"] }, "environment": { "required": ["rasterizer"], "properties": { "viewportCss": false, "deviceScaleFactor": false, "colorScheme": false } } } },
+      "else": { "properties": { "environment": { "required": ["viewportCss", "deviceScaleFactor", "colorScheme"], "properties": { "rasterizer": false } } } }
+    }
+  ]
+}
