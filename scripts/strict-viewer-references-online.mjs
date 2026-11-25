@@ -53,13 +53,14 @@ const WORD_HOME = 'https://word.cloud.microsoft/';
  */
 const DOCX_EDGE_ALPHA = { left: 221, right: 220 };
 
-// Геометрия actual-кадров демо-вьюера при viewport 1440×900, DPR 1, zoom 1
-// (замерено по `pnpm visual-oracle capture`): страница DOCX — 794 px (A4,
-// 96 dpi) с левым краем x=323 и верхом y=0 на прозрачном поле 1440×692;
-// сетка XLSX — непрозрачные 1440×682, содержимое A1 начинается в (44, 21).
+// Геометрия actual-кадров демо-вьюера при viewport 1440×900, DPR 1, zoom 1.
+// DOCX print-layout — модель «страница + поля» (b7444c9): кадр равен
+// странице плюс 2×pad (pad = 450), страница вверху, следующая страница
+// стека видна снизу, ниже последней — белое продолжение листа. Геометрия
+// per fixture берётся из geometry.json (замер по actual-кадрам оракула).
+// Сетка XLSX — непрозрачные 1440×682, содержимое A1 начинается в (44, 21).
 // Эталон обязан совпасть с actual по размерам, иначе сравнение даст
 // page-mismatch без пиксельных метрик (visual-v1, правило 1).
-const DOCX_FRAME = { width: 1440, height: 692, pageLeft: 323, pageTop: 0 };
 const XLSX_FRAME = { width: 1440, height: 682, cellA1X: 44, cellA1Y: 21 };
 
 // Матрица §4: строки excluded/planned не имеют визуального профиля — их
@@ -248,19 +249,27 @@ async function cmdProbe(args) {
   await context.close();
 }
 
-const command = process.argv[2];
-if (command === 'login') {
-  await cmdLogin();
-} else if (command === 'probe') {
-  await cmdProbe(parseArgs(process.argv.slice(3)));
-} else if (command === 'capture') {
-  await cmdCapture(parseArgs(process.argv.slice(3)));
-} else {
-  process.stderr.write(
-    'usage: strict-viewer-references-online.mjs <login|probe|capture> [options]\n',
-  );
-  process.exitCode = 2;
+const isMainModule =
+  process.argv[1] !== undefined &&
+  import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]).href;
+
+if (isMainModule) {
+  const command = process.argv[2];
+  if (command === 'login') {
+    await cmdLogin();
+  } else if (command === 'probe') {
+    await cmdProbe(parseArgs(process.argv.slice(3)));
+  } else if (command === 'capture') {
+    await cmdCapture(parseArgs(process.argv.slice(3)));
+  } else {
+    process.stderr.write(
+      'usage: strict-viewer-references-online.mjs <login|probe|capture> [options]\n',
+    );
+    process.exitCode = 2;
+  }
 }
+
+export { composeDocxStackFrame, cropToWhitePage };
 
 // ---------------------------------------------------------------------------
 // Сборка drop и импорт manifest
@@ -650,10 +659,16 @@ async function stableContentShot(frame, index, { maxTries = 20, gapMs = 3000 } =
 }
 
 /**
- * Компоновка эталона страницы DOCX: содержимое Word Online кладётся в
- * прозрачный кадр 1440×692 в геометрию actual-кадра вьюера (pageLeft из
- * geometry.json). Вертикаль обрезается высотой кадра — actual тоже
- * показывает страницу с верха. Две кромочные колонки доводятся до
+ * Компоновка эталона страницы DOCX: стек страниц Word Online в кадр
+ * actual-кадра демо-вьюера. Модель кадра из b7444c9: «страница + поля» —
+ * кадр равен странице плюс 2×pad, страница стоит вверху (y=0), следующая
+ * страница стека видна ниже, ниже последней страницы вьюер рисует белое
+ * продолжение листа шириной в страницу.
+ *
+ * Word Online округляет размер страницы вниз, вьюер — вверх (A4: 793×1122
+ * против 794×1123), поэтому снимок кладётся со сдвигом +1 по X; нижний
+ * полуряд страницы (дробная высота листа, alpha 128 у вьюера) и верхний
+ * полуряд следующей страницы синтезируются. Кромочные колонки доводятся до
  * альфа-профиля вьюера (DOCX_EDGE_ALPHA): это границы кадра, а не
  * содержимое документа.
  */
@@ -699,39 +714,98 @@ function scaleToWidth(pngBuffer, targetWidth) {
   return PNG.sync.write(out);
 }
 
-function composeDocxReference(contentPng, pageGeo) {
-  let content = PNG.sync.read(contentPng);
-  const frame = new PNG({ width: DOCX_FRAME.width, height: DOCX_FRAME.height });
-  const left = pageGeo.left;
-  const span = pageGeo.width;
-  if (content.width !== span) {
-    process.stderr.write(
-      `[warn] ширина PageContent Word Online ${content.width} px, кадр вьюера ждёт ${span} px — масштабирую\n`,
-    );
-    content = PNG.sync.read(scaleToWidth(contentPng, span));
-  }
-  const rows = Math.min(content.height, DOCX_FRAME.height);
-  for (let y = 0; y < rows; y += 1) {
-    content.data.copy(
-      frame.data,
-      (y * frame.width + left) * 4,
-      y * content.width * 4,
-      (y * content.width + span) * 4,
-    );
-  }
-  // Кромочные колонки: белый с частичным покрытием, как у вьюера.
-  const setColumn = (x, alpha) => {
+function composeDocxStackFrame(shots, geo, index) {
+  const { frame } = geo;
+  const page = geo.pages[`page-${index + 1}`];
+  const out = new PNG({ width: frame.width, height: frame.height });
+  const left = page.left;
+  const right = page.left + page.width - 1;
+  const pageRows = page.height;
+
+  const paste = (shot, destX, destY) => {
+    const rows = Math.min(shot.height, frame.height - destY);
+    const cols = Math.min(shot.width, frame.width - destX);
+    if (rows <= 0 || cols <= 0) return;
     for (let y = 0; y < rows; y += 1) {
-      const i = (y * frame.width + x) * 4;
-      frame.data[i] = 255;
-      frame.data[i + 1] = 255;
-      frame.data[i + 2] = 255;
-      frame.data[i + 3] = alpha;
+      shot.data.copy(
+        out.data,
+        ((destY + y) * frame.width + destX) * 4,
+        y * shot.width * 4,
+        (y * shot.width + cols) * 4,
+      );
     }
   };
-  setColumn(left, DOCX_EDGE_ALPHA.left);
-  setColumn(left + span - 1, DOCX_EDGE_ALPHA.right);
-  return PNG.sync.write(frame);
+  const fillWhite = (x0, x1, y0, y1, alpha) => {
+    for (let y = y0; y < y1; y += 1) {
+      const start = (y * frame.width + x0) * 4;
+      for (let x = x0; x <= x1; x += 1) {
+        const i = start + (x - x0) * 4;
+        out.data[i] = 255;
+        out.data[i + 1] = 255;
+        out.data[i + 2] = 255;
+        out.data[i + 3] = alpha;
+      }
+    }
+  };
+
+  const last = index + 1 >= shots.length || page.nextTop === null;
+  // Скриншот Word Online включает собственные AA-полуколонки клипа (794 px
+  // у A4): он ложится ровно в левый край страницы вьюера, а кромочные
+  // колонки (450/1243) перезаписываются профилем вьюера ниже. Внутренние
+  // колонки при этом совпадают 1:1.
+  let shot = PNG.sync.read(shots[index]);
+  const wantWidth = page.width;
+  if (shot.width !== wantWidth) {
+    process.stderr.write(
+      `[warn] ширина PageContent Word Online ${shot.width} px, кадр вьюера ждёт ${wantWidth} px — масштабирую\n`,
+    );
+    shot = PNG.sync.read(scaleToWidth(shots[index], wantWidth));
+  }
+  paste(shot, left, 0);
+
+  let nextRows = 0;
+  if (!last && page.nextTop < frame.height) {
+    // Следующая страница стека видна в кадре снизу.
+    let nextShot = PNG.sync.read(shots[index + 1]);
+    if (nextShot.width !== wantWidth) {
+      nextShot = PNG.sync.read(scaleToWidth(shots[index + 1], wantWidth));
+    }
+    paste(nextShot, left, page.nextTop);
+    nextRows = Math.min(nextShot.height, frame.height - page.nextTop);
+    // Верхний полуряд следующей страницы: дробная позиция в стеке.
+    fillWhite(left + 1, right - 1, page.nextTop, page.nextTop + 1, 128);
+    // Нижний полуряд самой страницы: дробная высота листа у вьюера.
+    fillWhite(left + 1, right - 1, pageRows - 1, pageRows, 128);
+  } else {
+    // Белое продолжение листа ниже последней страницы (Word Online рисует
+    // пустую страницу, вьюер повторяет её белым).
+    fillWhite(left, right, pageRows - 1, frame.height, 255);
+  }
+
+  // Кромочные колонки — профиль вьюера: на высоту страницы, на видимую часть
+  // следующей страницы стека и на продолжение листа. Зазор между страницами
+  // остаётся прозрачным.
+  const setEdgeColumns = (y0, y1) => {
+    for (let y = y0; y < y1; y += 1) {
+      const li = (y * frame.width + left) * 4;
+      out.data[li] = 255;
+      out.data[li + 1] = 255;
+      out.data[li + 2] = 255;
+      out.data[li + 3] = DOCX_EDGE_ALPHA.left;
+      const ri = (y * frame.width + right) * 4;
+      out.data[ri] = 255;
+      out.data[ri + 1] = 255;
+      out.data[ri + 2] = 255;
+      out.data[ri + 3] = DOCX_EDGE_ALPHA.right;
+    }
+  };
+  setEdgeColumns(0, pageRows);
+  if (last) {
+    setEdgeColumns(pageRows, frame.height);
+  } else {
+    setEdgeColumns(page.nextTop, page.nextTop + nextRows);
+  }
+  return PNG.sync.write(out);
 }
 
 /** Снять print-layout эталон одного docx: загрузка, страницы, компоновка. */
@@ -781,13 +855,16 @@ async function captureDocxPrintLayout(page, fixture, pageGeo, fixturesDir) {
     throw new Error(`страниц в Word Online: ${pages.length}, в actual: ${expected}`);
   }
 
-  const captures = [];
   // Сырые скриншоты и метаданные — для диагностики воспроизводимости между
   // сессиями (reference-capture §2 п.4). В drop не входят.
   const rawDir = path.join(REPO_ROOT, 'target', 'office-online-probe', 'raw');
   await mkdir(rawDir, { recursive: true });
+  // Сначала все страницы: кадр каждой страницы включает верх следующей
+  // (модель «страница + поля»), поэтому компоновка идёт по всему стеку.
+  const shots = [];
   for (let index = 0; index < pages.length; index += 1) {
     const { cropped, raw } = await stableContentShot(frame, index);
+    shots.push(cropped);
     const stamp = Date.now();
     await writeFile(path.join(rawDir, `${fixture.slug}-p${index + 1}-${stamp}.png`), raw);
     const meta = await frame.evaluate((pageIndex) => {
@@ -809,10 +886,14 @@ async function captureDocxPrintLayout(page, fixture, pageGeo, fixturesDir) {
       path.join(rawDir, `${fixture.slug}-p${index + 1}-${stamp}.json`),
       `${JSON.stringify(meta, null, 2)}\n`,
     );
-    const composed = composeDocxReference(cropped, pageGeo.pages[`page-${index + 1}`]);
+  }
+
+  const captures = [];
+  for (let index = 0; index < pages.length; index += 1) {
+    const composed = composeDocxStackFrame(shots, pageGeo, index);
     captures.push({ id: `page-${index + 1}`, pageNumber: index + 1, png: composed });
     process.stdout.write(
-      `[page ${index + 1}] ${pages[index].width}×${pages[index].height} → кадр ${DOCX_FRAME.width}×${DOCX_FRAME.height} @x=${pageGeo.pages[`page-${index + 1}`].left}\n`,
+      `[page ${index + 1}] ${pages[index].width}×${pages[index].height} → кадр ${pageGeo.frame.width}×${pageGeo.frame.height}\n`,
     );
   }
   return captures;
