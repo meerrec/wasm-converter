@@ -116,8 +116,6 @@ export interface PageRegion {
  * захвата создаёт окно один раз, а страница у каждой фикстуры своя.
  */
 export interface DocxCaptureWindow {
-  /** Текущие размеры области прокрутки в CSS-пикселях. */
-  measure(page: Page): Promise<{ width: number; height: number }>;
   /** Поставить размер области прокрутки; `null` — снять переопределение. */
   apply(page: Page, size: { width: number; height: number } | null): Promise<void>;
   /**
@@ -725,14 +723,18 @@ export async function captureDocxPageFrame(deps: {
   viewer: StableFrameViewer;
   window: DocxCaptureWindow;
   capture: ManifestCapture;
+  /** Окно браузера, в котором запущен вьюер (manifest viewportCss либо PDF_VIEWPORT). */
+  viewport: { width: number; height: number };
   options: { timeoutMs?: number; signal?: AbortSignal };
   outDir: string;
 }): Promise<{ image: CapturedImage; stable: StableFrameResult }> {
   const { page, window, capture } = deps;
   const pageNumber = requireDocxPage(capture).pageNumber;
   const pageSize = await readDocxPageSize(page, pageNumber, capture.id);
-  const viewport = await window.measure(page);
-  const frame = pageFrameSize(pageSize, viewport);
+  // Вьюпорт берётся из параметров запуска, а не с замером области прокрутки:
+  // та к моменту второго кадра уже переопределена (или сброшена) предыдущей
+  // страницей, и кадры соседних страниц получали бы разную геометрию.
+  const frame = pageFrameSize(pageSize, deps.viewport);
 
   try {
     await window.apply(page, frame);
@@ -791,6 +793,7 @@ async function captureDocxCanvas(
       viewer,
       window,
       capture,
+      viewport: contextOptions(plan).viewport,
       options: stableOptions(ctx),
       outDir: ctx.outDir,
     });

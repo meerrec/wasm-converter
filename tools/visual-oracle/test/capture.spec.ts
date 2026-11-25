@@ -408,9 +408,6 @@ describe('captureDocxPageFrame', () => {
       },
     };
     const window = {
-      async measure() {
-        return { width: 1440, height: 900 };
-      },
       async apply(_page: Page, size: { width: number; height: number } | null) {
         applied.push(size);
       },
@@ -436,6 +433,7 @@ describe('captureDocxPageFrame', () => {
         viewer,
         window,
         capture,
+        viewport: { width: 1440, height: 900 },
         options: {},
         outDir: root,
       });
@@ -444,6 +442,29 @@ describe('captureDocxPageFrame', () => {
       expect(image.frame).toEqual({ cssWidth: 794 + 900, cssHeight: 1123 + 900 });
       // В файл ушло именно стабильное доказательство, а не свежий снимок.
       expect(image.sha256).toBe(sha256Hex(await readFile(image.path)));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('берёт поля из вьюпорта запуска, а не из состояния окна кадра', async () => {
+    // Окно кадра мутируется между страницами (apply/сброс), поэтому кадр
+    // считается от вьюпорта запуска: соседние страницы обязаны получать
+    // одинаковую геометрию.
+    const root = await mkdtemp(path.join(tmpdir(), 'oracle-page-'));
+    try {
+      const { page, viewer, window, capture, applied } = setup();
+      await captureDocxPageFrame({
+        page,
+        viewer,
+        window,
+        capture,
+        viewport: { width: 1000, height: 800 },
+        options: {},
+        outDir: root,
+      });
+      // pad = floor(min(1000, 800) / 2) = 400.
+      expect(applied).toEqual([{ width: 794 + 800, height: 1123 + 800 }, null]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

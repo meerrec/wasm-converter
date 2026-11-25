@@ -277,10 +277,13 @@ function Invoke-NativeCaptureViaCmd {
 # неё рассчитывать.
 function Assert-ChildPath {
     param([string]$Path, [string]$Root, [string]$What)
-    $full = [IO.Path]::GetFullPath($Path)
     # Оба разделителя, а не литерал: файл кодируется в UTF-8 без BOM, и
     # одиночная обратная косая черта в кавычках ломается на стыке разбора.
     $separators = [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    # TrimEnd обязателен и у кандидата: GetFullPath на .NET сохраняет хвостовой
+    # разделитель, и путь, равный корню с «/» на конце, прошёл бы проверку
+    # как «внутренний», а Remove-Item по нему удалил бы сам корень.
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd($separators)
     $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd($separators)
     $inside = $full.StartsWith($rootFull + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
     if (-not $inside) {

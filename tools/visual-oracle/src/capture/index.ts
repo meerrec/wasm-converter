@@ -92,11 +92,6 @@ const VIEWER_SCROLLER = '#viewer > div';
  */
 export function pageDocxWindow(): DocxCaptureWindow {
   return {
-    measure: (page) =>
-      page.evaluate((selector) => {
-        const node = (globalThis as unknown as PageWindow).document.querySelector(selector);
-        return { width: node?.clientWidth ?? 0, height: node?.clientHeight ?? 0 };
-      }, VIEWER_SCROLLER),
     apply: async (page, size) => {
       await page.evaluate(
         ({ selector, target }) => {
