@@ -321,13 +321,14 @@ const smartArt: FixtureSpec = {
 const oleObject: FixtureSpec = {
     name: 'embedded/ole_object',
     description: 'OLE-объект: w:object с VML-превью и embedding',
-    expectedParagraphs: 1,
+    expectedParagraphs: 2,
     expectedTables: 0,
     expectedImages: 0,
     // `docx-ole-excluded` — код отчёта совместимости, не `WarningKind`.
     expectedWarnings: [],
     parts: packageParts({
         body: body(
+            '<w:p><w:r><w:t>Встроенный объект (OLE) ниже: превью и вложение.</w:t></w:r></w:p>' +
             '<w:p><w:r><w:object>' +
                 '<v:shape xmlns:v="urn:schemas-microsoft-com:vml" id="ole1" type="#_x0000_t75" ' +
                 'style="width:120pt;height:80pt"><v:imagedata r:id="rIdOle" o:title=""/></v:shape>' +
