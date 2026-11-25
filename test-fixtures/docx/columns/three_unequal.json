@@ -1,0 +1,22 @@
+{
+  "metadata": {
+    "name": "columns/three_unequal",
+    "category": "columns",
+    "description": "Три колонки разной ширины без выравнивания",
+    "docTitle": "Три колонки разной ширины без выравнивания",
+    "expectedParagraphs": 6,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [],
+    "columns": {
+      "count": 3,
+      "equalWidth": false,
+      "widths": [
+        2551,
+        5102,
+        2551
+      ]
+    }
+  },
+  "content": {}
+}

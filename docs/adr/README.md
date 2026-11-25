@@ -59,6 +59,11 @@
 | 0053 | Единый runtime вьюеров — запросы, ошибки и отмена | [`0053-viewer-runtime.md`](0053-viewer-runtime.md) |
 | 0054 | Локальный OOXML-редактор — patch исходного ZIP в отдельном Worker | [`0054-ooxml-editor.md`](0054-ooxml-editor.md) |
 | 0055 | Выделение ячеек XLSX — полный лист и Excel-взаимодействие | [`0055-xlsx-cell-selection.md`](0055-xlsx-cell-selection.md) |
+| 0056 | Захват эталона strict-viewer — COM-автоматизация локального Word/Excel; конверт manifest с `office-desktop` | [`0056-capture-automation-com.md`](0056-capture-automation-com.md) |
+| 0057 | Несоответствие desktop-захвата и конверта manifest — экранные режимы, среда и синтетический `capture-only` | [`0057-desktop-capture-envelope-mismatch.md`](0057-desktop-capture-envelope-mismatch.md) |
+
+ADR-0057 — предложение: фиксирует долг из ADR-0056, расширение схемы отложено
+до отдельного решения.
 
 ADR-0050…0053 — предложения по итогам архитектурного аудита 23.10.2026
 (`docs/analysis/architecture-audit-2026-10-23.md`); они ещё не приняты.

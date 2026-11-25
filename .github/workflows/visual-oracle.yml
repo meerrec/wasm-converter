@@ -1,0 +1,207 @@
+# Визуальный оракул строгого просмотрщика: собственный рендер против
+# принятого эталона Microsoft Office (docs/strict-viewer/baseline-policy.md §3,
+# ADR-0056 «Автоматический захват эталона strict-viewer через COM Word/Excel»).
+# Два пути захвата, оба приняты: основной — COM-автоматизация локального
+# Word/Excel (`scripts/strict-viewer-references.ps1`: `ExportAsFixedFormat`,
+# затем `pdftoppm -png -r 144` → `visual-oracle reference import`); резервный —
+# ручной захват в Word Online / Excel Online при подготовке baseline. Office в
+# продукт, тестовый runtime и comparator не встраивается.
+#
+# Отдельный workflow, а не джоба ci.yml: нужен Chromium с системными
+# библиотеками, poppler для растеризации PDF и Git LFS с эталонами, а прогон
+# длинный. Красный оракул не должен блокировать правки, не касающиеся рендера,
+# поэтому пути ограничены просмотрщиком, движком и корпусом эталонов.
+#
+# Гейт на `run` мягкий ровно в одном месте, пока корпус черновой:
+# `baselineId: null` означает, что эталоны ещё доснимаются, и
+# `missing-reference` — ожидаемое состояние, а не регрессия. Поэтому в
+# черновом режиме код 2 принимается, только если в отчёте нет ни
+# `capture-error`, ни `harness-error`. Всё остальное валит джобу и сейчас:
+# `visual-diff`/`page-mismatch` — код 1, сломанный контур — код 3. Как только
+# baseline принят (baselineId задан), шаг становится жёстким целиком.
+name: Visual oracle (strict viewer)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'tools/visual-oracle/**'
+      - 'tools/strict-viewer-corpus/**'
+      - 'docs/strict-viewer/certification-matrix.md'
+      - 'test-fixtures/strict-viewer/**'
+      - 'test-fixtures/docx/**'
+      - 'test-fixtures/xlsx/**'
+      - 'examples/viewer/**'
+      - 'packages/core/**'
+      - 'packages/wasm/**'
+      - 'packages/wasm-docx/**'
+      - 'packages/wasm-pdf/**'
+      - 'crates/wasm/**'
+      - 'crates/docx-wasm/**'
+      - 'crates/pdf-wasm/**'
+      - 'docs/strict-viewer/**'
+      - '.github/workflows/visual-oracle.yml'
+
+env:
+  # Каталог отчёта: один и тот же у шага прогона и у выгрузки артефакта.
+  VISUAL_ORACLE_OUT: visual-oracle-out
+
+jobs:
+  oracle:
+    name: Capture and compare
+    runs-on: ubuntu-latest
+    steps:
+      # Эталоны лежат в Git LFS (.gitattributes: test-fixtures/strict-viewer/
+      # **/reference/*.{png,pdf}). Без `lfs: true` на диске оказались бы
+      # указатели, и каждый manifest упал бы на несовпадении SHA-256 —
+      # то есть красный отчёт без единой настоящей регрессии.
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-visual-oracle
+
+      - run: cargo install wasm-pack --locked
+
+      # Просмотрщик типизируется против сгенерированных wasm-bindgen
+      # деклараций, а захват грузит именно эти сборки: без них ни typecheck,
+      # ни прогон не начнутся.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:wasm
+
+      # pdftoppm — растеризация PDF-режимов (144 dpi, как в матрице §2.2).
+      # Без него `rasterize-failed`/`missing-tool` даёт harness-error, и
+      # прогон честно краснеет кодом 3, но проверять нечего.
+      - name: system tools
+        uses: ./.github/actions/apt-install
+        with:
+          packages: poppler-utils
+
+      # Браузеры Playwright (~600 МБ) переживают прогоны: ключ — lock-файл,
+      # то есть версия @playwright/test. Ставится из пакета просмотрщика:
+      # браузеры ложатся в общий кэш ~/.cache/ms-playwright, откуда их берёт
+      # любой пакет workspace'а.
+      - name: cache playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      # Повторы из-за фоновой установки пакетов в образе: `--with-deps` зовёт
+      # apt-get и падает на «Could not get lock», пока лок держит чужой
+      # процесс. Предел на попытку — как у apt-шагов: заминка неизвестной
+      # природы не должна ждаться бесконечно.
+      - name: playwright chromium
+        env:
+          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: '120000'
+        run: |
+          set -uo pipefail
+          for _ in $(seq 1 60); do
+            if ! pgrep -x apt-get >/dev/null && ! pgrep -x dpkg >/dev/null; then
+              break
+            fi
+            sleep 5
+          done
+          attempt=1
+          until timeout 600 pnpm --filter @meerrec/example-viewer exec playwright install --with-deps chromium; do
+            if [ "$attempt" -ge 5 ]; then
+              echo "::error::playwright install не удался за ${attempt} попытки — браузер не поставлен"
+              exit 1
+            fi
+            pause=$((attempt * 30))
+            echo "::warning::попытка ${attempt} упала; причина в логе выше — повтор через ${pause} с"
+            sleep "$pause"
+            attempt=$((attempt + 1))
+          done
+
+      - name: typecheck
+        run: pnpm -F @meerrec/visual-oracle typecheck
+
+      - name: test
+        run: pnpm -F @meerrec/visual-oracle test
+
+      # Инструмент сверки корпуса: разбор матрицы, slug и проверка реестра.
+      # Гоняется здесь же, потому что правки матрицы и корпуса триггерят
+      # именно этот workflow, а в ci.yml этих тестов нет.
+      - name: typecheck corpus tool
+        run: pnpm -F @meerrec/strict-viewer-corpus typecheck
+
+      - name: test corpus tool
+        run: pnpm -F @meerrec/strict-viewer-corpus test
+
+      - name: build
+        run: pnpm -F @meerrec/visual-oracle build
+
+      # Валидация корпуса и manifest — до прогона: она дешевле и объясняет
+      # причину точнее, чем «missing-reference» в отчёте.
+      - name: validate corpus
+        run: pnpm visual-oracle validate --corpus test-fixtures/strict-viewer/corpus.json
+
+      # Черновой корпус (baselineId: null) не обязан быть полным: эталоны
+      # доснимаются по одной фикстуре, и `missing-reference` — ожидаемое
+      # состояние. Терпится ровно оно: код 2 принимается, только если в
+      # отчёте нет ни `capture-error`, ни `harness-error`. Всё остальное
+      # валит джобу и в черновом режиме — `visual-diff`/`page-mismatch` (1)
+      # это регрессия против уже принятых эталонов, код 3 — сломанный
+      # контур. Принятый baseline обязан пройти целиком.
+      - name: run oracle
+        run: |
+          set -uo pipefail
+          baseline=$(jq -r '.corpus.baselineId' test-fixtures/strict-viewer/corpus.json)
+          set +e
+          pnpm visual-oracle run --corpus test-fixtures/strict-viewer/corpus.json --out "$VISUAL_ORACLE_OUT"
+          rc=$?
+          set -e
+          if [ "$baseline" != "null" ]; then
+            exit "$rc"
+          fi
+          report="$VISUAL_ORACLE_OUT/report.json"
+          if [ ! -f "$report" ]; then
+            echo "::error::черновой прогон не оставил $report (код $rc) — судить не по чему"
+            exit 1
+          fi
+          counters=$(jq -r '.summary | "capture-error=\(."capture-error") harness-error=\(."harness-error") visual-diff=\(."visual-diff") page-mismatch=\(."page-mismatch") missing-reference=\(."missing-reference")"' "$report")
+          capture_errors=$(jq -r '.summary["capture-error"] // -1' "$report")
+          harness_errors=$(jq -r '.summary["harness-error"] // -1' "$report")
+          case "$rc" in
+            0)
+              echo "::notice::черновой корпус (baselineId: null): все существующие эталоны совпали"
+              ;;
+            2)
+              if [ "$capture_errors" -eq 0 ] && [ "$harness_errors" -eq 0 ]; then
+                echo "::notice::черновой корпус (baselineId: null): только missing-reference — гейта нет"
+              else
+                echo "::error::черновой прогон упал кодом 2 не только на missing-reference: $counters"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::черновой прогон упал кодом $rc: $counters"
+              exit 1
+              ;;
+          esac
+
+      # Отчёт нужен и после падения прогона: по нему видно, что именно
+      # разъехалось, — ровно как у oracle.yml.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-oracle-report
+          path: ${{ env.VISUAL_ORACLE_OUT }}
+          if-no-files-found: warn

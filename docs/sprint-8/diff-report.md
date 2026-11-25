@@ -17,15 +17,15 @@ Rust-тест гейта считает его сам — иначе прове�
 результата поля — рекурсивно; `trim()`, пустые строки выброшены; сноски, концевые
 сноски, комментарии и колонтитулы в список не входят.
 
-Кандидаты — все 106 фикстур минус `broken/`, `alternate_content/` (mammoth читает
+Кандидаты — все 118 фикстур минус `broken/`, `alternate_content/` (mammoth читает
 `mc:Fallback`, мы `mc:Choice`), `track_changes/` (наши non-goal) и `notes/`
-(mammoth выносит их отдельно): 85.
+(mammoth выносит их отдельно): 96.
 
 ## Оракул
 
 [`test-fixtures/docx/mammoth-oracle.json`](../../test-fixtures/docx/mammoth-oracle.json)
 пишет тот же скрипт: заголовок (`generator`, `mammoth`, `threshold`,
-`min_comparable`, `candidates`) и `fixtures` — по записи на каждую из 106 фикстур,
+`min_comparable`, `candidates`) и `fixtures` — по записи на каждую из 118 фикстур,
 ключи по возрастанию:
 
 - `comparable` — фикстура входит в набор и mammoth её прочитал;
@@ -43,7 +43,7 @@ Rust-тест гейта считает его сам — иначе прове�
 - `expected` — расхождение принято и объяснено (политика mammoth или наше решение);
   **остаётся в знаменателе метрики**;
 - `non-goal` — фикстура вне области сравнения (элемента нет в модели v1 или его не
-  читает mammoth); **выводится из знаменателя**, потолок — 8 из 85;
+  читает mammoth); **выводится из знаменателя**, потолок — 8 из 96;
 - `bug` — дефект нашего парсера;
 - `unclassified` — решение не принято — значение по умолчанию.
 
@@ -56,14 +56,14 @@ Rust-тест гейта считает его сам — иначе прове�
 
 | Метрика | Значение |
 |---|---|
-| Кандидатов | 85 |
-| Сопоставимо (mammoth прочитал) | 85 |
-| `match` | 83 |
+| Кандидатов | 96 |
+| Сопоставимо (mammoth прочитал) | 96 |
+| `match` | 94 |
 | `expected` | 0 |
 | `non-goal` | 2 |
 | `bug` | 0 |
 | `unclassified` | 0 |
-| Доля match / (кандидаты − non-goal) | 83/83 = 1.0000 (порог 0.95) |
+| Доля match / (кандидаты − non-goal) | 94/94 = 1.0000 (порог 0.95) |
 | Гейт | пройден |
 
 ## Кандидаты
@@ -87,17 +87,23 @@ Rust-тест гейта считает его сам — иначе прове�
 | `cjk/korean` | match | — | 1 / 1 |
 | `cjk/mixed_latin` | match | — | 1 / 1 |
 | `cjk/vertical_text` | match | — | 1 / 1 |
+| `columns/three_unequal` | match | — | 4 / 4 |
+| `columns/two_equal` | match | — | 5 / 5 |
 | `complex/text_and_table` | match | — | 6 / 6 |
 | `edge_cases/empty_paragraphs` | match | — | 1 / 1 |
 | `edge_cases/multilingual` | match | — | 3 / 3 |
 | `edge_cases/special_chars` | match | — | 1 / 1 |
+| `embedded/ole_object` | match | — | 0 / 0 |
+| `embedded/smartart_basic` | match | — | 1 / 1 |
 | `fields/date_field` | non-goal | mammoth не читает w:fldSimple (элемента нет в карте элементов body-reader.js, неизвестный элемент отбрасывается вместе с детьми) — расхождение на его стороне | 2 / 2 |
 | `fields/fld_char_with_separate` | match | — | 2 / 2 |
 | `fields/fld_simple` | non-goal | mammoth не читает w:fldSimple (элемента нет в карте элементов body-reader.js, неизвестный элемент отбрасывается вместе с детьми) — расхождение на его стороне | 2 / 2 |
 | `fields/hyperlink_field` | match | — | 2 / 2 |
 | `fields/instr_text` | match | — | 2 / 2 |
 | `fields/nested_fields` | match | — | 1 / 1 |
+| `fields/toc_ref` | match | — | 4 / 4 |
 | `fields/unknown_field` | match | — | 1 / 1 |
+| `fonts/system_font_fallback` | match | — | 3 / 3 |
 | `formatting/bold` | match | — | 1 / 1 |
 | `formatting/heading_1` | match | — | 1 / 1 |
 | `formatting/heading_2` | match | — | 1 / 1 |
@@ -113,7 +119,9 @@ Rust-тест гейта считает его сам — иначе прове�
 | `images/anchor_wrap_square` | match | — | 0 / 0 |
 | `images/anchor_wrap_tight` | match | — | 0 / 0 |
 | `images/inline` | match | — | 0 / 0 |
+| `images/inline_jpeg_emf` | match | — | 1 / 1 |
 | `images/multiple_sizes` | match | — | 0 / 0 |
+| `math/omml_simple` | match | — | 1 / 1 |
 | `numbering/bullet_symbols` | match | — | 4 / 4 |
 | `numbering/custom_format` | match | — | 3 / 3 |
 | `numbering/decimal_basic` | match | — | 3 / 3 |
@@ -121,6 +129,9 @@ Rust-тест гейта считает его сам — иначе прове�
 | `numbering/nested_levels` | match | — | 4 / 4 |
 | `numbering/restart_numbering` | match | — | 4 / 4 |
 | `numbering/start_override` | match | — | 3 / 3 |
+| `pagination/keep_next_chain` | match | — | 12 / 12 |
+| `pagination/keep_next_tall` | match | — | 5 / 5 |
+| `pagination/widow_orphan` | match | — | 10 / 10 |
 | `rtl/arabic_basic` | match | — | 1 / 1 |
 | `rtl/hebrew_basic` | match | — | 1 / 1 |
 | `rtl/mixed_direction` | match | — | 1 / 1 |
@@ -156,7 +167,7 @@ Rust-тест гейта считает его сам — иначе прове�
 | `tables/tbl_look` | match | — | 4 / 4 |
 | `tables/v_merge` | match | — | 4 / 4 |
 
-Совпадение на пустых списках (0 / 0) — 7: `basic/empty_body`, `images/anchor_top_and_bottom`, `images/anchor_wrap_square`, `images/anchor_wrap_tight`, `images/inline`, `images/multiple_sizes`, `simple/empty`. Текста в абзацах нет ни с
+Совпадение на пустых списках (0 / 0) — 8: `basic/empty_body`, `embedded/ole_object`, `images/anchor_top_and_bottom`, `images/anchor_wrap_square`, `images/anchor_wrap_tight`, `images/inline`, `images/multiple_sizes`, `simple/empty`. Текста в абзацах нет ни с
 одной стороны — это совпадение, но проверяет оно только то, что ни один из парсеров
 не выдумывает текст из разметки; счётчики `model.counts.images` по ним — в оракуле.
 
@@ -177,6 +188,7 @@ Rust-тест гейта считает его сам — иначе прове�
 | `broken/truncated_zip` | битые пакеты: политика ошибок (ADR-0016), а не сверка текста |
 | `notes/comments_basic` | сноски и комментарии mammoth выносит отдельно от тела документа |
 | `notes/comments_multiple` | сноски и комментарии mammoth выносит отдельно от тела документа |
+| `notes/endnote_basic` | сноски и комментарии mammoth выносит отдельно от тела документа |
 | `notes/footnote_basic` | сноски и комментарии mammoth выносит отдельно от тела документа |
 | `notes/footnote_in_table` | сноски и комментарии mammoth выносит отдельно от тела документа |
 | `notes/footnote_separator` | сноски и комментарии mammoth выносит отдельно от тела документа |

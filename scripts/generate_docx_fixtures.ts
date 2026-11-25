@@ -40,6 +40,8 @@ import { headersFootersFixtures } from './docx-fixtures/headers-footers.js';
 import { notesFixtures } from './docx-fixtures/notes.js';
 import { a11yFixtures } from './docx-fixtures/a11y.js';
 import { brokenFixtures } from './docx-fixtures/broken.js';
+import { strictViewerFixtures } from './docx-fixtures/strict-viewer.js';
+import { priorityFixtures } from './docx-fixtures/priority.js';
 import { generateLargeFixtures, largeFixtureNames } from './docx-fixtures/large.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -90,6 +92,8 @@ export const committableFixtures = (): FixtureSpec[] => [
     ...headersFootersFixtures,
     ...notesFixtures,
     ...a11yFixtures,
+    ...strictViewerFixtures,
+    ...priorityFixtures,
     ...brokenFixtures,
 ];
 

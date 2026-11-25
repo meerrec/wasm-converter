@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "name": "columns/two_equal",
+    "category": "columns",
+    "description": "Две равные колонки с разрывом колонки и разделителем",
+    "docTitle": "Две равные колонки с разрывом колонки и разделителем",
+    "expectedParagraphs": 6,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [],
+    "columns": {
+      "count": 2,
+      "equalWidth": true,
+      "separator": true
+    }
+  },
+  "content": {}
+}

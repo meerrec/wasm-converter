@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "name": "embedded/ole_object",
+    "category": "embedded",
+    "description": "OLE-объект: w:object с VML-превью и embedding",
+    "docTitle": "OLE-объект: w:object с VML-превью и embedding",
+    "expectedParagraphs": 1,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "ole": [
+      {
+        "progId": "Package",
+        "preview": true
+      }
+    ]
+  }
+}

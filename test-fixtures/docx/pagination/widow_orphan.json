@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "name": "pagination/widow_orphan",
+    "category": "pagination",
+    "description": "Widow/orphan: два абзаца с разной политикой на границе страниц",
+    "docTitle": "Widow/orphan: два абзаца с разной политикой на границе страниц",
+    "expectedParagraphs": 10,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [],
+    "widowControl": {
+      "enabled": 1,
+      "disabled": 1
+    }
+  },
+  "content": {}
+}

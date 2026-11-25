@@ -1,0 +1,32 @@
+{
+  "name": "@meerrec/visual-oracle",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline visual oracle for the strict viewer certification program: corpus loading, manifest validation, reference import, capture, comparison and reporting.",
+  "type": "module",
+  "bin": {
+    "visual-oracle": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/pngjs": "^6.0.5",
+    "playwright": "^1.63.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

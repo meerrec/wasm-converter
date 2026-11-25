@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "name": "pagination/keep_next_chain",
+    "category": "pagination",
+    "description": "Цепочка абзацев с keepNext: заголовок не отрывается от следующего абзаца",
+    "docTitle": "Цепочка абзацев с keepNext: заголовок не отрывается от следующего абзаца",
+    "expectedParagraphs": 12,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [],
+    "keepNext": [
+      7,
+      8
+    ],
+    "keepLines": [
+      7
+    ]
+  },
+  "content": {}
+}

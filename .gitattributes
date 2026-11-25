@@ -8,3 +8,9 @@ experiments/lowa-spike/public/lowa/*.data.js.metadata filter=lfs diff=lfs merge=
 experiments/lowa-spike/public/lowa/soffice.js filter=lfs diff=lfs merge=lfs -text
 experiments/lowa-spike/public/lowa/zeta.js filter=lfs diff=lfs merge=lfs -text
 
+# Эталоны строгого просмотрщика (strict-viewer): PNG-снимки страниц и
+# экспортированные PDF — бинарные артефакты, которые нельзя нормализовать
+# (`-text`), иначе SHA-256 в manifest перестанет совпадать с файлом.
+# После клона нужен `git lfs pull` (см. docs/strict-viewer/baseline-policy.md).
+test-fixtures/strict-viewer/**/reference/*.png filter=lfs diff=lfs merge=lfs -text
+test-fixtures/strict-viewer/**/reference/*.pdf filter=lfs diff=lfs merge=lfs -text

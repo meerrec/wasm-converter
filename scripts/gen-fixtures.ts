@@ -992,7 +992,7 @@ const DC_VALUES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
  * `brightness(x, y)` задаёт яркость 0..255; блок кодируется средним по своим
  * пикселям. Размеры кратны восьми.
  */
-function jpegBytes(width: number, height: number, brightness: (x: number, y: number) => number): Buffer {
+export function jpegBytes(width: number, height: number, brightness: (x: number, y: number) => number): Buffer {
   const dc = huffmanCodes(DC_BITS, DC_VALUES);
   const eob: [number, number] = [0, 1];
 

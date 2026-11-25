@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "name": "math/omml_simple",
+    "category": "math",
+    "description": "Office Math: дробь и сумма в m:oMathPara",
+    "docTitle": "Office Math: дробь и сумма в m:oMathPara",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "math": [
+      {
+        "kind": "fraction",
+        "text": "x = (a + b) / 2"
+      }
+    ]
+  }
+}

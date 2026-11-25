@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "name": "notes/endnote_basic",
+    "category": "notes",
+    "description": "Концевая сноска: endnotes.xml и w:endnoteReference в тексте",
+    "docTitle": "Концевая сноска: endnotes.xml и w:endnoteReference в тексте",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "endnotes": [
+      {
+        "id": 1,
+        "text": "Текст концевой сноски."
+      }
+    ]
+  }
+}

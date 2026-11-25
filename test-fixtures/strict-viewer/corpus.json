@@ -1,0 +1,1563 @@
+{
+  "schemaVersion": "1.0.0",
+  "corpus": {
+    "id": "strict-viewer-1.0.0",
+    "version": "1.0.0",
+    "matrixVersion": "1.0.0",
+    "baselineId": null,
+    "storage": {
+      "kind": "git-lfs",
+      "rootUri": "test-fixtures/strict-viewer"
+    }
+  },
+  "fixtures": [
+    {
+      "id": "docx-alternate-content-choice-fallback-textbox",
+      "format": "docx",
+      "source": {
+        "path": "docx/alternate_content/choice_fallback_textbox.docx"
+      },
+      "title": "Текстовое поле: DrawingML в Choice, VML в Fallback",
+      "tags": [
+        "objects",
+        "unsupported"
+      ],
+      "matrixRows": [
+        "docx.vml-alternate"
+      ],
+      "expected": "Выбирается поддерживаемая ветка Choice с DrawingML-надписью «Текст в надписи»; VML-fallback молча не используется. Если поддерживаемой ветки нет, отсутствие видно в отчёте.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Минимальная фикстура строки docx.vml-alternate."
+    },
+    {
+      "id": "docx-alternate-content-choice-shape",
+      "format": "docx",
+      "source": {
+        "path": "docx/alternate_content/choice_shape.docx"
+      },
+      "title": "Фигура: DrawingML в Choice, VML-овал в Fallback",
+      "tags": [
+        "objects",
+        "unsupported"
+      ],
+      "matrixRows": [
+        "docx.shapes-textboxes"
+      ],
+      "expected": "Прямоугольник DrawingML из Choice обнаруживается как фигура; в отчёт попадает код docx-shape-unsupported с bounds. VML-овал из Fallback молча не подставляется, визуальное равенство не заявляется.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Минимальная фикстура строки docx.shapes-textboxes (unsupported-visible)."
+    },
+    {
+      "id": "docx-alternate-content-group-shape",
+      "format": "docx",
+      "source": {
+        "path": "docx/alternate_content/group_shape.docx"
+      },
+      "title": "Группа DrawingML-фигур с VML-фолбэком",
+      "tags": [
+        "objects",
+        "unsupported"
+      ],
+      "matrixRows": [
+        "docx.shapes-textboxes",
+        "docx.vml-alternate"
+      ],
+      "expected": "wpg:wgp из двух фигур в mc:Choice рисуется как группа; VML-группа в mc:Fallback не используется (ADR-0014).",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункты 12–13 приоритетного состава (группы shapes, AlternateContent)."
+    },
+    {
+      "id": "docx-basic-breaks-and-tabs",
+      "format": "docx",
+      "source": {
+        "path": "docx/basic/breaks_and_tabs.docx"
+      },
+      "title": "Разрывы строки и страницы, табуляция",
+      "tags": [
+        "text",
+        "pagination"
+      ],
+      "matrixRows": [
+        "docx.paragraph-runs"
+      ],
+      "expected": "Четыре абзаца с разрывом строки, разрывом страницы и табуляцией: разрыв страницы начинает новую страницу, табуляция не превращается в пробел.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 2 приоритетного состава (разрывы). `keepNext` покрывает отдельная фикстура."
+    },
+    {
+      "id": "docx-basic-multiple-runs",
+      "format": "docx",
+      "source": {
+        "path": "docx/basic/multiple_runs.docx"
+      },
+      "title": "Несколько прогонов с разным форматированием в одном абзаце",
+      "tags": [
+        "text",
+        "styles"
+      ],
+      "matrixRows": [
+        "docx.paragraph-runs"
+      ],
+      "expected": "Один абзац содержит семь прогонов: «Plain », «bold », «italic », «underlined », «colored », «sized», « emphasized». Границы прогонов не добавляют пробелов и не меняют текст; жирность, курсив, подчёркивание, цвет и размер применяются каждый к своему прогону.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Минимальная фикстура строки docx.paragraph-runs."
+    },
+    {
+      "id": "docx-basic-sections",
+      "format": "docx",
+      "source": {
+        "path": "docx/basic/sections.docx"
+      },
+      "title": "Две секции: портрет A4 и ландшафт A4",
+      "tags": [
+        "sections",
+        "geometry"
+      ],
+      "matrixRows": [
+        "docx.sections-columns"
+      ],
+      "expected": "Первая страница — портрет A4 (11906×16838 twips) с текстом «First section: portrait A4», вторая — ландшафт A4 (16838×11906) с текстом «Second section: landscape A4». Смена ориентации происходит на границе секции, поля и колонтитулы между страницами не переносятся.",
+      "modes": [
+        "print-layout",
+        "pdf"
+      ],
+      "notes": "Колонки в матрице помечены planned; фикстуры с w:cols num>1 — columns/two_equal и columns/three_unequal."
+    },
+    {
+      "id": "docx-cjk-mixed-latin",
+      "format": "docx",
+      "source": {
+        "path": "docx/cjk/mixed_latin.docx"
+      },
+      "title": "Смешанный абзац: латиница и CJK",
+      "tags": [
+        "text",
+        "fonts",
+        "bidi"
+      ],
+      "matrixRows": [
+        "docx.bidi-cjk"
+      ],
+      "expected": "Латиница и иероглифы в разных прогонах одного абзаца: порядок символов и базовая линия не меняются, шрифт подбирается по покрытию.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 18 приоритетного состава (CJK)."
+    },
+    {
+      "id": "docx-columns-three-unequal",
+      "format": "docx",
+      "source": {
+        "path": "docx/columns/three_unequal.docx"
+      },
+      "title": "Три колонки разной ширины",
+      "tags": [
+        "sections",
+        "pagination"
+      ],
+      "matrixRows": [
+        "docx.sections-columns"
+      ],
+      "expected": "Три колонки с ширинами 2551/5102/2551 twips: центральная вдвое шире боковых, `w:equalWidth=\"0\"` соблюдается.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 5 приоритетного состава (неравные колонки)."
+    },
+    {
+      "id": "docx-columns-two-equal",
+      "format": "docx",
+      "source": {
+        "path": "docx/columns/two_equal.docx"
+      },
+      "title": "Две равные колонки с разрывом колонки",
+      "tags": [
+        "sections",
+        "pagination"
+      ],
+      "matrixRows": [
+        "docx.sections-columns"
+      ],
+      "expected": "Две равные колонки с разделителем: текст заполняет первую, явный разрыв колонки переводит его во вторую; разделитель виден между колонками.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 5 приоритетного состава (колонки). Было помечено `planned`."
+    },
+    {
+      "id": "docx-edge-cases-multilingual",
+      "format": "docx",
+      "source": {
+        "path": "docx/edge_cases/multilingual.docx"
+      },
+      "title": "Разные языки: английский, русский, китайский",
+      "tags": [
+        "text",
+        "bidi",
+        "fonts"
+      ],
+      "matrixRows": [
+        "docx.bidi-cjk"
+      ],
+      "expected": "Три абзаца «English», «Русский», «中文» отображаются полным текстом без потери глифов. Строгий glyph/shaping gate пока не заявляется, но текст и порядок абзацев обязательны.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Строка planned до этапа 2; полный текст проверяется уже сейчас."
+    },
+    {
+      "id": "docx-embedded-ole-object",
+      "format": "docx",
+      "source": {
+        "path": "docx/embedded/ole_object.docx"
+      },
+      "title": "OLE-объект с VML-превью",
+      "tags": [
+        "objects",
+        "unsupported"
+      ],
+      "matrixRows": [
+        "docx.ole"
+      ],
+      "expected": "`w:object` с `v:shape` и `r:id` на `embeddings/oleObject1.bin`; наличие даёт `docx-ole-excluded`, превью не считается поддержкой OLE.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 17 приоритетного состава. Строка матрицы — `excluded`."
+    },
+    {
+      "id": "docx-embedded-smartart-basic",
+      "format": "docx",
+      "source": {
+        "path": "docx/embedded/smartart_basic.docx"
+      },
+      "title": "SmartArt: ссылка на diagrams/dataModel",
+      "tags": [
+        "objects",
+        "unsupported"
+      ],
+      "matrixRows": [
+        "docx.smartart"
+      ],
+      "expected": "`dgm:relIds` внутри `w:drawing` и часть `word/diagrams/data1.xml`; наличие даёт `docx-smartart-excluded`, визуальная поддержка не заявляется.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 17 приоритетного состава. Строка матрицы — `excluded`."
+    },
+    {
+      "id": "docx-fields-fld-simple",
+      "format": "docx",
+      "source": {
+        "path": "docx/fields/fld_simple.docx"
+      },
+      "title": "Поля PAGE и NUMPAGES с кэшированным результатом",
+      "tags": [
+        "text",
+        "formulas"
+      ],
+      "matrixRows": [
+        "docx.fields-toc-refs"
+      ],
+      "expected": "Отображается сохранённый результат: «Page 1 of 12» и «Page (fldChar): 1»; поле не пересчитывается. Автоматическая генерация TOC/REF не заявляется.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Минимальная фикстура строки docx.fields-toc-refs (только сохранённый результат)."
+    },
+    {
+      "id": "docx-fields-toc-ref",
+      "format": "docx",
+      "source": {
+        "path": "docx/fields/toc_ref.docx"
+      },
+      "title": "Поля TOC и REF с сохранённым кэшем",
+      "tags": [
+        "text",
+        "formulas"
+      ],
+      "matrixRows": [
+        "docx.fields-toc-refs"
+      ],
+      "expected": "TOC (` TOC \\o \"1-3\" \\h \\z \\u `) показывает кэш «Введение» и номер страницы после табуляции; REF (` REF _Ref123 \\h \\* MERGEFORMAT `) — «Раздел с закладкой» из `w:bookmarkStart w:name=\"_Ref123\"`. Поля не пересчитываются.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 6 приоритетного состава (TOC/REF через fldChar, кэш поля). Минимальная фикстура строки docx.fields-toc-refs; автоматическая генерация оглавления не заявляется."
+    },
+    {
+      "id": "docx-fonts-system-font-fallback",
+      "format": "docx",
+      "source": {
+        "path": "docx/fonts/system_font_fallback.docx"
+      },
+      "title": "Системные шрифты вне пакета и fallback",
+      "tags": [
+        "fonts",
+        "text"
+      ],
+      "matrixRows": [
+        "docx.bidi-cjk"
+      ],
+      "expected": "Times New Roman и Wingdings берутся из системы, отсутствующая гарнитура заменяется по умолчанию; текст не исчезает ни в одном случае.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 20 приоритетного состава (fallback-политика)."
+    },
+    {
+      "id": "docx-headers-footers-default-header-footer",
+      "format": "docx",
+      "source": {
+        "path": "docx/headers_footers/default_header_footer.docx"
+      },
+      "title": "Колонтитулы default: header1.xml и footer1.xml",
+      "tags": [
+        "headers-footers",
+        "text"
+      ],
+      "matrixRows": [
+        "docx.headers-footers"
+      ],
+      "expected": "На единственной странице сверху виден текст «Default header», снизу — «Default footer», тело содержит «Body text». Колонтитулы не перекрывают тело и сохраняют геометрию полей.",
+      "modes": [
+        "print-layout",
+        "pdf"
+      ],
+      "notes": "Покрывает только default-тип; тип even в существующих фикстурах не наблюдаем — см. gaps."
+    },
+    {
+      "id": "docx-headers-footers-even-odd",
+      "format": "docx",
+      "source": {
+        "path": "docx/headers_footers/even_odd.docx"
+      },
+      "title": "Чётный, нечётный и первый колонтитулы",
+      "tags": [
+        "headers",
+        "pagination"
+      ],
+      "matrixRows": [
+        "docx.headers-footers"
+      ],
+      "expected": "`w:evenAndOddHeaders` в settings.xml: страница 1 (при `w:titlePg`) — «First page header», страница 2 — «Even page header», страница 3 — «Default header»; связи колонтитулов не теряются.",
+      "modes": [
+        "print-layout",
+        "pdf"
+      ],
+      "notes": "Дополнительная фикстура строки docx.headers-footers: even headerReference, titlePg и evenAndOddHeaders проверяет раскладка (`test_layout_even_and_odd_headers_differ`). Тип even в эталоне не наблюдаем — документ одностраничный (см. gaps)."
+    },
+    {
+      "id": "docx-images-anchor-wrap-square",
+      "format": "docx",
+      "source": {
+        "path": "docx/images/anchor_wrap_square.docx"
+      },
+      "title": "Плавающий рисунок с обтеканием по квадрату",
+      "tags": [
+        "images",
+        "objects"
+      ],
+      "matrixRows": [
+        "docx.images-floating"
+      ],
+      "expected": "Рисунок 1143000×857250 EMU привязан к колонке и абзацу, обтекается текстом по квадрату с отступами 114300 EMU слева и справа. Объект обнаруживается, ограничение wrap фиксируется в отчёте; визуальное равенство не заявляется.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Строка planned: проверяется обнаружение и ограничение wrap, а не пиксельное совпадение."
+    },
+    {
+      "id": "docx-images-inline",
+      "format": "docx",
+      "source": {
+        "path": "docx/images/inline.docx"
+      },
+      "title": "Inline-рисунок в абзаце",
+      "tags": [
+        "images",
+        "objects"
+      ],
+      "matrixRows": [
+        "docx.images-inline"
+      ],
+      "expected": "Один inline-рисунок 914400×685800 EMU (1×0.75 дюйма) стоит в абзаце на baseline текста, пропорции не искажены. SHA-256 media совпадает с моделью, рисунок не обрезан.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Минимальная фикстура строки docx.images-inline."
+    },
+    {
+      "id": "docx-images-inline-jpeg-emf",
+      "format": "docx",
+      "source": {
+        "path": "docx/images/inline_jpeg_emf.docx"
+      },
+      "title": "Inline JPEG и EMF рядом",
+      "tags": [
+        "images",
+        "objects"
+      ],
+      "matrixRows": [
+        "docx.images-inline"
+      ],
+      "expected": "Два inline-рисунка в одном абзаце: JPEG 914400×685800 EMU и EMF 457200×457200 EMU. JPEG декодируется, EMF не декодируется и не роняет экспорт; размеры и порядок берутся из DrawingML, а не из формата.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 9 приоритетного состава (артефакты drawing). Дополнительная фикстура строки docx.images-inline: проверяет, что неподдерживаемый формат не рвёт цепочку рисунков."
+    },
+    {
+      "id": "docx-math-omml-simple",
+      "format": "docx",
+      "source": {
+        "path": "docx/math/omml_simple.docx"
+      },
+      "title": "Office Math: дробь в m:oMathPara",
+      "tags": [
+        "math",
+        "unsupported"
+      ],
+      "matrixRows": [
+        "docx.math"
+      ],
+      "expected": "Формула `x = (a + b) / 2` в `m:oMathPara`; движок её не рисует, но обязан выдать `docx-math-unsupported` и не терять соседний текст.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 16 приоритетного состава; минимальная фикстура строки docx.math (`m:oMath`)."
+    },
+    {
+      "id": "docx-notes-comments-basic",
+      "format": "docx",
+      "source": {
+        "path": "docx/notes/comments_basic.docx"
+      },
+      "title": "Один комментарий: commentRangeStart/End и commentReference",
+      "tags": [
+        "notes",
+        "review"
+      ],
+      "matrixRows": [
+        "docx.comments"
+      ],
+      "expected": "Текст «Annotated text» отображается без balloons и панели рецензирования; комментарий «Comment text.» не исчезает из отчёта. В отчёт попадает docx-comments-visible-limitation с count 1.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Минимальная фикстура строки docx.comments (unsupported-visible)."
+    },
+    {
+      "id": "docx-notes-endnote-basic",
+      "format": "docx",
+      "source": {
+        "path": "docx/notes/endnote_basic.docx"
+      },
+      "title": "Концевые сноски",
+      "tags": [
+        "notes"
+      ],
+      "matrixRows": [
+        "docx.footnotes-endnotes"
+      ],
+      "expected": "Ссылка `w:endnoteReference` в тексте, текст в `word/endnotes.xml`; служебные `separator` и `continuationSeparator` не считаются содержимым.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 14 приоритетного состава; минимальная фикстура строки docx.footnotes-endnotes со стороны endnotes (`word/endnotes.xml`)."
+    },
+    {
+      "id": "docx-notes-footnote-basic",
+      "format": "docx",
+      "source": {
+        "path": "docx/notes/footnote_basic.docx"
+      },
+      "title": "Сноска в конце абзаца",
+      "tags": [
+        "notes",
+        "text"
+      ],
+      "matrixRows": [
+        "docx.footnotes-endnotes"
+      ],
+      "expected": "В абзаце «Text with a footnote» стоит надстрочная ссылка 1, внизу страницы — «Footnote text.» с тем же номером. Ссылка и текст сноски присутствуют, пагинация note area пока не заявляется.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Строка planned: проверяется присутствие ссылки и ограничение в отчёте."
+    },
+    {
+      "id": "docx-numbering-multilevel",
+      "format": "docx",
+      "source": {
+        "path": "docx/numbering/multilevel.docx"
+      },
+      "title": "Трёхуровневый список с составным lvlText %1.%2.%3",
+      "tags": [
+        "numbering",
+        "text"
+      ],
+      "matrixRows": [
+        "docx.numbering"
+      ],
+      "expected": "Пять абзацев нумеруются как «1.», «1.1.», «1.1.1.», «1.2.» и «2.»; маркеры выровнены по правому краю с hanging indent каждого уровня. Текст пунктов не сдвигается и не дублирует номер.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Минимальная фикстура строки docx.numbering."
+    },
+    {
+      "id": "docx-pagination-keep-next-chain",
+      "format": "docx",
+      "source": {
+        "path": "docx/pagination/keep_next_chain.docx"
+      },
+      "title": "Цепочка абзацев с keepNext",
+      "tags": [
+        "pagination",
+        "text"
+      ],
+      "matrixRows": [
+        "docx.paragraph-runs"
+      ],
+      "expected": "Заголовок с `keepNext` и `keepLines` переезжает на следующую страницу вместе с абзацем цепочки; обычные абзацы разрываются свободно.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 2 приоритетного состава (keepNext)."
+    },
+    {
+      "id": "docx-pagination-keep-next-tall",
+      "format": "docx",
+      "source": {
+        "path": "docx/pagination/keep_next_tall.docx"
+      },
+      "title": "keepNext у абзаца длиннее страницы",
+      "tags": [
+        "pagination"
+      ],
+      "matrixRows": [
+        "docx.tables-pagination"
+      ],
+      "expected": "Абзац с `w:keepNext`, который сам не помещается на страницу, переносится по обычным правилам; следующий абзац не приклеивается к нему насильно и не появляется пустая страница.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 2 приоритетного состава (keepNext). Дополнительная фикстура: правило не может удержать то, что длиннее полосы набора."
+    },
+    {
+      "id": "docx-pagination-widow-orphan",
+      "format": "docx",
+      "source": {
+        "path": "docx/pagination/widow_orphan.docx"
+      },
+      "title": "Widow/orphan на границе страниц",
+      "tags": [
+        "pagination"
+      ],
+      "matrixRows": [
+        "docx.tables-pagination"
+      ],
+      "expected": "Первый абзац с `w:widowControl` переносится целиком или не оставляет одну строку; второй с `w:val=\"0\"` оставляет вдову намеренно.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 3 приоритетного состава. Отдельной строки матрицы для widow/orphan нет — нужна новая строка либо привязка к пагинации таблиц."
+    },
+    {
+      "id": "docx-rtl-mixed-direction",
+      "format": "docx",
+      "source": {
+        "path": "docx/rtl/mixed_direction.docx"
+      },
+      "title": "Смешанное направление: RTL и LTR в одном абзаце",
+      "tags": [
+        "text",
+        "fonts",
+        "bidi"
+      ],
+      "matrixRows": [
+        "docx.bidi-cjk"
+      ],
+      "expected": "Арабский и английский в одном абзаце: bidi разбивает текст на уровни, латинский фрагмент сохраняет LTR-порядок.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 18 приоритетного состава (RTL)."
+    },
+    {
+      "id": "docx-styles-based-on-chain",
+      "format": "docx",
+      "source": {
+        "path": "docx/styles/based_on_chain.docx"
+      },
+      "title": "Цепочка basedOn Heading3 → Heading2 → Heading1 → Normal",
+      "tags": [
+        "styles",
+        "fonts"
+      ],
+      "matrixRows": [
+        "docx.styles-themes"
+      ],
+      "expected": "Абзац «Заголовок конца цепочки» получает разрешённый стиль Heading3: жирность наследуется от Heading1, а размер 24, курсив и цвет 1F3763 задаёт Heading3. Промежуточный Heading2 не теряется — каскад basedOn разрешается полностью.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Минимальная фикстура строки docx.styles-themes."
+    },
+    {
+      "id": "docx-tables-alignment-widths",
+      "format": "docx",
+      "source": {
+        "path": "docx/tables/alignment_widths.docx"
+      },
+      "title": "Явные ширины колонок и выравнивание ячеек",
+      "tags": [
+        "tables",
+        "geometry"
+      ],
+      "matrixRows": [
+        "docx.tables-fixed-autofit"
+      ],
+      "expected": "Ширины w:tblGrid и w:tcW применяются как заданы; выравнивание w:jc и w:vAlign меняет положение текста внутри ячейки.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 7 приоритетного состава (AutoFit + выравнивание)."
+    },
+    {
+      "id": "docx-tables-borders-shading",
+      "format": "docx",
+      "source": {
+        "path": "docx/tables/borders_shading.docx"
+      },
+      "title": "Рамки таблицы, рамки ячеек и заливка",
+      "tags": [
+        "tables",
+        "styles"
+      ],
+      "matrixRows": [
+        "docx.tables-appearance"
+      ],
+      "expected": "Шапка залита 2F5496 с белым текстом, вторая строка — DEEAF6 и FFFFFF; внешние и внутренние рамки одинарные. Цвет и толщина каждого ребра, fill и baseline текста совпадают с эталоном.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Минимальная фикстура строки docx.tables-appearance."
+    },
+    {
+      "id": "docx-tables-cant-split-rows",
+      "format": "docx",
+      "source": {
+        "path": "docx/tables/cant_split_rows.docx"
+      },
+      "title": "Строки, которые нельзя разорвать между страницами",
+      "tags": [
+        "tables",
+        "pagination"
+      ],
+      "matrixRows": [
+        "docx.tables-pagination"
+      ],
+      "expected": "Двенадцать строк с w:cantSplit: строка целиком переносится на следующую страницу, а не разрывается; седьмая строка выше остальных.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 9 приоритетного состава (`cantSplit`)."
+    },
+    {
+      "id": "docx-tables-grid-span",
+      "format": "docx",
+      "source": {
+        "path": "docx/tables/grid_span.docx"
+      },
+      "title": "Горизонтальное объединение через w:gridSpan",
+      "tags": [
+        "tables",
+        "geometry"
+      ],
+      "matrixRows": [
+        "docx.tables-merged-nested"
+      ],
+      "expected": "Первая строка объединяет три колонки («Строка во всю ширину»), вторая — две («Две ячейки»), далее идут C2 и полная строка A3/B3/C3. Occupancy grid не содержит дублей и пропусков, границы объединённых областей непрерывны.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Минимальная фикстура строки docx.tables-merged-nested."
+    },
+    {
+      "id": "docx-tables-long-table",
+      "format": "docx",
+      "source": {
+        "path": "docx/tables/long_table.docx"
+      },
+      "title": "Длинная таблица на несколько страниц",
+      "tags": [
+        "tables",
+        "pagination"
+      ],
+      "matrixRows": [
+        "docx.tables-pagination"
+      ],
+      "expected": "Таблица из 60 строк по 3 колонки разрывается по страницам; заголовок не повторяется, потому что tblHeader не задан; ни одна строка не теряется и не дублируется. Число страниц и позиция разрыва совпадают с эталоном.",
+      "modes": [
+        "print-layout",
+        "pdf"
+      ],
+      "notes": "Обязательная регрессионная фикстура из матрицы §7."
+    },
+    {
+      "id": "docx-tables-long-table-header-repeat",
+      "format": "docx",
+      "source": {
+        "path": "docx/tables/long_table_header_repeat.docx"
+      },
+      "title": "40 строк с повторяющимся заголовком tblHeader",
+      "tags": [
+        "tables",
+        "pagination"
+      ],
+      "matrixRows": [
+        "docx.tables-pagination"
+      ],
+      "expected": "Строка «Заголовок A/B/C» повторяется в начале каждой страницы, 39 строк данных идут в исходном порядке без потерь. Повтор заголовка не сдвигает высоты строк и не создаёт пустых страниц.",
+      "modes": [
+        "print-layout",
+        "pdf"
+      ],
+      "notes": "Обязательная регрессионная фикстура из матрицы §7; покрывает tblHeader."
+    },
+    {
+      "id": "docx-tables-nested",
+      "format": "docx",
+      "source": {
+        "path": "docx/tables/nested.docx"
+      },
+      "title": "Вложенная таблица внутри ячейки",
+      "tags": [
+        "tables",
+        "geometry"
+      ],
+      "matrixRows": [
+        "docx.tables-merged-nested"
+      ],
+      "expected": "Внутренняя таблица рисуется внутри ячейки внешней: границы обеих видны, содержимое не дублируется и не пропадает.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 8 приоритетного состава (nested)."
+    },
+    {
+      "id": "docx-tables-row-taller-than-page",
+      "format": "docx",
+      "source": {
+        "path": "docx/tables/row_taller_than_page.docx"
+      },
+      "title": "Строка таблицы выше страницы",
+      "tags": [
+        "tables",
+        "pagination"
+      ],
+      "matrixRows": [
+        "docx.tables-pagination"
+      ],
+      "expected": "Ячейка с 60 абзацами выше полосы набора A4: таблица разрывается по страницам без потери текста и без пустых страниц-артефактов.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Пункт 9 приоритетного состава (строка выше страницы)."
+    },
+    {
+      "id": "docx-tables-simple-2x2",
+      "format": "docx",
+      "source": {
+        "path": "docx/tables/simple_2x2.docx"
+      },
+      "title": "Таблица 2×2 с auto-шириной и одинарными рамками",
+      "tags": [
+        "tables",
+        "geometry"
+      ],
+      "matrixRows": [
+        "docx.tables-fixed-autofit"
+      ],
+      "expected": "Таблица 2×2 с ячейками A1, A2, B1, B2 занимает ширину полосы набора, все шесть рёбер одинарные толщиной 4. Границы ячеек совпадают с сеткой, текст не выходит за ячейку.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Минимальная фикстура строки docx.tables-fixed-autofit."
+    },
+    {
+      "id": "docx-tables-v-merge",
+      "format": "docx",
+      "source": {
+        "path": "docx/tables/v_merge.docx"
+      },
+      "title": "Вертикальное объединение w:vMerge restart и продолжения",
+      "tags": [
+        "tables",
+        "geometry"
+      ],
+      "matrixRows": [
+        "docx.tables-merged-nested"
+      ],
+      "expected": "Ячейка «Объединено по вертикали» занимает три строки первого столбца; продолжения без w:val не создают новых ячеек и не дублируют текст. Границы merged-области непрерывны, вторая колонка сохраняет три отдельные ячейки.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Второй fixture строки: покрывает вертикальное объединение, которого нет в grid_span."
+    },
+    {
+      "id": "docx-track-changes-inserted-run",
+      "format": "docx",
+      "source": {
+        "path": "docx/track_changes/inserted_run.docx"
+      },
+      "title": "Вставленный прогон w:ins",
+      "tags": [
+        "review",
+        "text"
+      ],
+      "matrixRows": [
+        "docx.revisions"
+      ],
+      "expected": "В режиме accepted виден текст «Before Inserted text» без пометок ревизии; вставка не удаляется и не дублируется. В отчёт попадает docx-revisions-visible-limitation с выбранным режимом accepted.",
+      "modes": [
+        "print-layout"
+      ],
+      "notes": "Минимальная фикстура строки docx.revisions (unsupported-visible)."
+    },
+    {
+      "id": "xlsx-cf-cell-is",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/cf-cell-is.xlsx"
+      },
+      "title": "Условное форматирование cellIs",
+      "tags": [
+        "conditional",
+        "styles"
+      ],
+      "matrixRows": [
+        "xlsx.conditional"
+      ],
+      "expected": "Ячейки A1:A12 и B1:B12 получают заливки и шрифты по правилам greaterThan 30, lessThanOrEqual 20 и другим cellIs-операторам. Приоритет правил и stopIfTrue проверяются native, применённый стиль — визуально.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Минимальная фикстура строки xlsx.conditional."
+    },
+    {
+      "id": "xlsx-cf-color-scale",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/cf-color-scale.xlsx"
+      },
+      "title": "Цветовые шкалы: 2 и 3 цвета, percentile и num",
+      "tags": [
+        "conditional",
+        "styles"
+      ],
+      "matrixRows": [
+        "xlsx.conditional"
+      ],
+      "expected": "Диапазоны A1:A12, B1:B12 и C1:C12 залиты градиентами от F8696B к 63BE7B с промежуточными FFEB84 и FFFFFF. Цвет каждой ячейки соответствует позиции значения между cfvo min/percentile/max.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Второй fixture строки: покрывает colorScale, которого нет в cf-cell-is."
+    },
+    {
+      "id": "xlsx-cf-data-bar",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/cf-data-bar.xlsx"
+      },
+      "title": "Условное форматирование: data bars",
+      "tags": [
+        "conditional",
+        "styles"
+      ],
+      "matrixRows": [
+        "xlsx.conditional"
+      ],
+      "expected": "Шесть правил dataBar в двух диапазонах: полоса заполнения пропорциональна значению, min/max из правила, цвет из правила.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Пункт 9 приоритетного состава (data bars)."
+    },
+    {
+      "id": "xlsx-cf-icon-set",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/cf-icon-set.xlsx"
+      },
+      "title": "Условное форматирование: icon sets",
+      "tags": [
+        "conditional",
+        "styles"
+      ],
+      "matrixRows": [
+        "xlsx.conditional"
+      ],
+      "expected": "Двенадцать iconSet-правил: значок выбирается порогом, набор иконок и его поворот берутся из правила.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Пункт 9 приоритетного состава (icon sets)."
+    },
+    {
+      "id": "xlsx-charts-five-kinds",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/charts-five-kinds.xlsx"
+      },
+      "title": "Пять диаграмм: bar, line, area, pie, scatter",
+      "tags": [
+        "charts",
+        "objects"
+      ],
+      "matrixRows": [
+        "xlsx.charts"
+      ],
+      "expected": "Пять диаграмм типов bar, line, area, pie и scatter размещены в twoCellAnchor справа от данных; порядок серий, оси, легенда и подписи совпадают с эталоном. Диаграммы входят в print extent.",
+      "modes": [
+        "normal",
+        "print-preview"
+      ],
+      "notes": "Обязательная регрессионная фикстура из матрицы §7."
+    },
+    {
+      "id": "xlsx-comments-legacy",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/comments-legacy.xlsx"
+      },
+      "title": "Legacy-комментарии на двух листах",
+      "tags": [
+        "notes",
+        "review"
+      ],
+      "matrixRows": [
+        "xlsx.comments-notes"
+      ],
+      "expected": "Комментарии в B2 и на втором листе не влияют на page extent без явного print setting; индикатор наличия notes виден. В отчёт попадает xlsx-comments-visible-limitation с sheet/cell.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Минимальная фикстура строки xlsx.comments-notes (unsupported-visible)."
+    },
+    {
+      "id": "xlsx-content-mixed-types",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/content-mixed-types.xlsx"
+      },
+      "title": "Смесь типов: число, строка, boolean, ошибка, формула, ссылка",
+      "tags": [
+        "values",
+        "formulas"
+      ],
+      "matrixRows": [
+        "xlsx.values"
+      ],
+      "expected": "В колонке A видны 42, «строка», TRUE, #N/A, 84, «прогон», «ссылка» и пустая строка; тип каждой ячейки совпадает с моделью. Ошибка #N/A не заменяется пустой ячейкой, формула показывает кэш 84.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Минимальная фикстура строки xlsx.values."
+    },
+    {
+      "id": "xlsx-content-rich-text",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/content-rich-text.xlsx"
+      },
+      "title": "Rich text: жирный, обычный и курсивный прогоны",
+      "tags": [
+        "values",
+        "styles"
+      ],
+      "matrixRows": [
+        "xlsx.rich-merged"
+      ],
+      "expected": "В A1 «жирный» набран жирным, « обычный » — обычным, «курсив» — курсивом; пробелы прогонов сохранены. A2 содержит один прогон без форматирования.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Объединённых ячеек в книге нет — merged-часть строки покрывает layout-merged."
+    },
+    {
+      "id": "xlsx-external-workbook-link",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/external-workbook-link.xlsx"
+      },
+      "title": "Внешняя ссылка на другую книгу",
+      "tags": [
+        "links",
+        "formulas"
+      ],
+      "matrixRows": [
+        "xlsx.external-links"
+      ],
+      "expected": "Значение 41 пришло из `source.xlsx` через `externalLink`: сеть не трогается, показывается кэш, устаревание видно в отчёте.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Пункт 17 приоритетного состава; минимальная фикстура строки xlsx.external-links (`xl/externalLinks`, кэш значений без сети)."
+    },
+    {
+      "id": "xlsx-formats-currency-ruble",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/formats-currency-ruble.xlsx"
+      },
+      "title": "Числовой формат: валюта, рубли",
+      "tags": [
+        "formats"
+      ],
+      "matrixRows": [
+        "xlsx.number-formats"
+      ],
+      "expected": "Рублёвый формат показывает символ валюты в позиции из numFmt, отрицательные значения по своей секции; `#####` появляется только при нехватке ширины.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Пункт 6 приоритетного состава (валюты)."
+    },
+    {
+      "id": "xlsx-formats-date-1904",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/formats-date-1904.xlsx"
+      },
+      "title": "Даты в системе 1904",
+      "tags": [
+        "formats",
+        "locale"
+      ],
+      "matrixRows": [
+        "xlsx.dates-locales"
+      ],
+      "expected": "`workbookPr date1904=\"1\"`: серийные числа считаются от 01.01.1904, поэтому 02.01.1904 — серийное 1, а не 1 + смещение 1462.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Пункт 7 приоритетного состава; книга с `date1904=\"1\"` для строки xlsx.dates-locales."
+    },
+    {
+      "id": "xlsx-formats-date-ru",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/formats-date-ru.xlsx"
+      },
+      "title": "Даты в формате dd.mm.yyyy",
+      "tags": [
+        "formats",
+        "locale"
+      ],
+      "matrixRows": [
+        "xlsx.dates-locales"
+      ],
+      "expected": "Серийные значения 0, 1, 59, 60, 61, 45000 и 45000.5 отображаются как даты dd.mm.yyyy; 60 даёт 29.02.1900 по совместимости с 1900 leap-year. Эпоха 1900 и локаль ru-RU записаны в manifest.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Минимальная фикстура строки xlsx.dates-locales (только эпоха 1900)."
+    },
+    {
+      "id": "xlsx-formats-thousands-decimals",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/formats-thousands-decimals.xlsx"
+      },
+      "title": "Встроенный формат #,##0.00",
+      "tags": [
+        "formats",
+        "values"
+      ],
+      "matrixRows": [
+        "xlsx.number-formats"
+      ],
+      "expected": "Числа 1234.5678 и −1234.5678 отображаются с разделителем разрядов и двумя знаками после запятой; 0.000123 и 1e15 не превращаются в #####. Отрицательные и нулевые значения используют свои секции формата.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Минимальная фикстура строки xlsx.number-formats."
+    },
+    {
+      "id": "xlsx-images-over-data",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/images-over-data.xlsx"
+      },
+      "title": "Изображения поверх таблицы данных",
+      "tags": [
+        "images",
+        "objects"
+      ],
+      "matrixRows": [
+        "xlsx.images"
+      ],
+      "expected": "Два oneCell- и один twoCell-anchor размещают PNG и JPEG поверх данных «Товар/Цена/Количество/Сумма»; anchor bounds и clamping совпадают с эталоном. Порядок наложения, crop и SHA-256 media проверяются, изображения входят в print extent.",
+      "modes": [
+        "normal",
+        "print-preview"
+      ],
+      "notes": "Обязательная регрессионная фикстура из матрицы §7."
+    },
+    {
+      "id": "xlsx-layout-broken-link",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/layout-broken-link.xlsx"
+      },
+      "title": "Внешняя ссылка на пропавшую книгу",
+      "tags": [
+        "links",
+        "formulas"
+      ],
+      "matrixRows": [
+        "xlsx.external-links"
+      ],
+      "expected": "`externalReference` на `file:///C:/missing/source.xlsx`: ссылка не резолвится, сеть не трогается, показывается кэшированное значение, битая ссылка видна в отчёте.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Пункт 17 приоритетного состава. Файл дополнен частью `externalLinks`: до этого в нём были только гиперссылки."
+    },
+    {
+      "id": "xlsx-layout-column-widths",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/layout-column-widths.xlsx"
+      },
+      "title": "Явные ширины столбцов 4, 8.43, 12.5, 30, 60",
+      "tags": [
+        "geometry",
+        "values"
+      ],
+      "matrixRows": [
+        "xlsx.dimensions"
+      ],
+      "expected": "Пять столбцов имеют пиксельные границы, соответствующие ширинам 4, 8.43, 12.5, 30 и 60; подписи «ширина N» не обрезаются. Скрытых столбцов нет, границы совпадают с эталоном.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Минимальная фикстура строки xlsx.dimensions."
+    },
+    {
+      "id": "xlsx-layout-frozen-columns",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/layout-frozen-columns.xlsx"
+      },
+      "title": "Закреплён первый столбец",
+      "tags": [
+        "geometry",
+        "sheets"
+      ],
+      "matrixRows": [
+        "xlsx.freeze-scroll-zoom"
+      ],
+      "expected": "Столбец A закреплён (xSplit=1, topLeftCell B1), разделитель виден, содержимое не дублируется. При scrollX=0, scrollY=0 и zoom 100 % квадранты совпадают с эталоном.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Обязательная регрессионная фикстура из матрицы §7."
+    },
+    {
+      "id": "xlsx-layout-hidden-columns",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/layout-hidden-columns.xlsx"
+      },
+      "title": "Скрытые столбцы B и D",
+      "tags": [
+        "geometry",
+        "values"
+      ],
+      "matrixRows": [
+        "xlsx.hidden-outlines"
+      ],
+      "expected": "Столбцы B и D скрыты и не создают пустых разрывов; видны «столбец 1», «столбец 3», «столбец 5» подряд. Пиксельные границы видимых столбцов совпадают с эталоном.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Минимальная фикстура строки xlsx.hidden-outlines (только hidden)."
+    },
+    {
+      "id": "xlsx-layout-hidden-rows",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/layout-hidden-rows.xlsx"
+      },
+      "title": "Скрытые строки",
+      "tags": [
+        "geometry"
+      ],
+      "matrixRows": [
+        "xlsx.hidden-outlines"
+      ],
+      "expected": "Скрытые строки не занимают места в раскладке и не создают пустых разрывов между видимыми.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Пункт 5 приоритетного состава (скрытые строки)."
+    },
+    {
+      "id": "xlsx-layout-merged",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/layout-merged.xlsx"
+      },
+      "title": "Объединённые ячейки A1:B1, C1:D2, A2:A3",
+      "tags": [
+        "geometry",
+        "values"
+      ],
+      "matrixRows": [
+        "xlsx.rich-merged"
+      ],
+      "expected": "Заголовок «заголовок на два столбца» занимает A1:B1, блок «блок 2×2» — C1:D2, «на два ряда» — A2:A3. Anchor-ячейка, bounds и границы каждого merged-диапазона совпадают с эталоном, текст не дублируется.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Второй fixture строки: покрывает merged-ячейки, которых нет в content-rich-text."
+    },
+    {
+      "id": "xlsx-layout-row-heights",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/layout-row-heights.xlsx"
+      },
+      "title": "Высоты строк: ручные и автоматические",
+      "tags": [
+        "geometry"
+      ],
+      "matrixRows": [
+        "xlsx.dimensions"
+      ],
+      "expected": "Пять строк с customHeight 10/15/20/40/80 px: высота каждой совпадает с заданной, automatic height не перебивает ручную.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Пункт 3 приоритетного состава (automatic row heights)."
+    },
+    {
+      "id": "xlsx-layout-shrink-to-fit",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/layout-shrink-to-fit.xlsx"
+      },
+      "title": "Shrink-to-fit в узкой ячейке",
+      "tags": [
+        "geometry"
+      ],
+      "matrixRows": [
+        "xlsx.wrap-overflow"
+      ],
+      "expected": "Длинный текст в ячейке шириной 12 знаков ужимается по горизонтали вместо переноса и вместо выхода за границу.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Пункт 4 приоритетного состава; покрывает `shrinkToFit` строки xlsx.wrap-overflow. `textRotation` остаётся в gaps; движок `shrinkToFit` пока только разбирает."
+    },
+    {
+      "id": "xlsx-pivot-basic",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/pivot-basic.xlsx"
+      },
+      "title": "Сводная таблица",
+      "tags": [
+        "pivot",
+        "unsupported"
+      ],
+      "matrixRows": [
+        "xlsx.pivot-slicers-controls"
+      ],
+      "expected": "Лист «Данные» и лист «Сводная» с pivotTable размером A3:B6; движок её не рисует, но обязан выдать `xlsx-pivot-slicer-control-excluded`.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Пункт 18 приоритетного состава. Строка матрицы — `excluded`."
+    },
+    {
+      "id": "xlsx-print-area-titles",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/print-area-titles.xlsx"
+      },
+      "title": "Печатная область и повторяющиеся заголовки",
+      "tags": [
+        "print",
+        "geometry"
+      ],
+      "matrixRows": [
+        "xlsx.print-areas-breaks",
+        "xlsx.print-titles-scale"
+      ],
+      "expected": "Печатается только A1:D40 (`_xlnm.Print_Area`), строки 1–2 повторяются на каждой странице (`_xlnm.Print_Titles`); строки вне области в печать не попадают.",
+      "modes": [
+        "print-preview"
+      ],
+      "notes": "Пункты 13–14 приоритетного состава; несёт `_xlnm.Print_Area` и `_xlnm.Print_Titles` строк xlsx.print-areas-breaks и xlsx.print-titles-scale. Ручные разрывы страниц остаются в gaps."
+    },
+    {
+      "id": "xlsx-print-fit-to-page",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/print-fit-to-page.xlsx"
+      },
+      "title": "Fit-to-page: одна страница по ширине",
+      "tags": [
+        "print",
+        "geometry"
+      ],
+      "matrixRows": [
+        "xlsx.print-titles-scale"
+      ],
+      "expected": "Таблица 30×12 ужимается в одну страницу по ширине (`fitToWidth=1`, `fitToHeight=0`), число страниц по высоте не ограничено.",
+      "modes": [
+        "print-preview"
+      ],
+      "notes": "Пункт 14 приоритетного состава (fit-to-page)."
+    },
+    {
+      "id": "xlsx-print-headers-footers",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/print-headers-footers.xlsx"
+      },
+      "title": "Печатные колонтитулы",
+      "tags": [
+        "print"
+      ],
+      "matrixRows": [
+        "xlsx.print-headers-footers"
+      ],
+      "expected": "Верхний колонтитул: слева «Отчёт», по центру «Стр. N из M», справа дата; нижний: слева «Конфиденциально», справа номер страницы.",
+      "modes": [
+        "print-preview"
+      ],
+      "notes": "Пункт 15 приоритетного состава; часть `headerFooter` листа для строки xlsx.print-headers-footers."
+    },
+    {
+      "id": "xlsx-scale-ten-pages",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/scale-ten-pages.xlsx"
+      },
+      "title": "Отчёт из 601 строки, scale=100",
+      "tags": [
+        "print",
+        "geometry"
+      ],
+      "matrixRows": [
+        "xlsx.print-titles-scale",
+        "xlsx.print-areas-breaks"
+      ],
+      "expected": "Книга из 601 строки при scale=100 разбивается на печатные страницы; число и порядок страниц совпадают с эталоном, лавинообразных пустых страниц нет. Scale применяется один раз.",
+      "modes": [
+        "normal",
+        "print-preview"
+      ],
+      "notes": "Матрица назначает фикстуру минимальной для строки; повторяющиеся заголовки и fit-to-page в книге не заданы и вынесены в отдельные фикстуры."
+    },
+    {
+      "id": "xlsx-sheets-different-shapes",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/sheets-different-shapes.xlsx"
+      },
+      "title": "Листы с фигурами разных видов",
+      "tags": [
+        "objects",
+        "unsupported"
+      ],
+      "matrixRows": [
+        "xlsx.shapes"
+      ],
+      "expected": "На листе три фигуры (`xdr:sp`): прямоугольник, скруглённый прямоугольник и овал. Движок их не рисует и обязан выдать `xlsx-shape-unsupported`, а координаты фигур попадют в отчёт.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Пункт 11 приоритетного состава. Файл дополнен фигурами: до этого матрица ссылалась на него как на минимальную фикстуру, а `xdr:sp` в книге не было."
+    },
+    {
+      "id": "xlsx-sheets-hidden",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/sheets-hidden.xlsx"
+      },
+      "title": "Скрытый лист «Скрытый»",
+      "tags": [
+        "sheets",
+        "values"
+      ],
+      "matrixRows": [
+        "xlsx.sheets-visibility"
+      ],
+      "expected": "Виден только лист «Видимый» с 1, 2, 3; лист «Скрытый» не открывается и не печатается, его имя и состояние попадают в структурный отчёт. Попытка захвата скрытого листа — harness-error.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Второй fixture строки: покрывает hidden-лист и решение hidden-sheets."
+    },
+    {
+      "id": "xlsx-sheets-three",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/sheets-three.xlsx"
+      },
+      "title": "Три видимых листа Лист1/Лист2/Лист3",
+      "tags": [
+        "sheets",
+        "values"
+      ],
+      "matrixRows": [
+        "xlsx.sheets-visibility"
+      ],
+      "expected": "Листы открываются в порядке Лист1, Лист2, Лист3; активен первый, каждый содержит своё значение 1/2/3. Скрытых листов нет, порядок и имена совпадают с эталоном.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Минимальная фикстура строки xlsx.sheets-visibility."
+    },
+    {
+      "id": "xlsx-slicer-basic",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/slicer-basic.xlsx"
+      },
+      "title": "Slicer поверх фильтра",
+      "tags": [
+        "controls",
+        "unsupported"
+      ],
+      "matrixRows": [
+        "xlsx.pivot-slicers-controls"
+      ],
+      "expected": "Часть `xl/slicers/slicer1.xml` с named-фильтром «Категория»; движок её не рисует и выдаёт `xlsx-pivot-slicer-control-excluded`.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Пункт 19 приоритетного состава. Строка матрицы — `excluded`."
+    },
+    {
+      "id": "xlsx-styles-bold-italic",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/styles-bold-italic.xlsx"
+      },
+      "title": "Жирный, курсив и жирный курсив",
+      "tags": [
+        "styles",
+        "fonts"
+      ],
+      "matrixRows": [
+        "xlsx.styles-themes"
+      ],
+      "expected": "Пять строк показывают жирный курсив, обычный, жирный, курсив и снова жирный текст; resolved style каждой ячейки совпадает с эталоном. Шрифт, размер и цвет берутся из темы.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Минимальная фикстура строки xlsx.styles-themes."
+    },
+    {
+      "id": "xlsx-text-cyrillic-wrap",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/text-cyrillic-wrap.xlsx"
+      },
+      "title": "Кириллица с wrapText",
+      "tags": [
+        "values",
+        "fonts"
+      ],
+      "matrixRows": [
+        "xlsx.wrap-overflow"
+      ],
+      "expected": "Ячейки с wrapText=1 переносят кириллический текст по одинаковым точкам разрыва на канве и в PDF; «ё», «№», тире и «ёлочки» не ломаются неверно. Высота строки растёт под перенос, clipping отсутствует.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Второй fixture строки: покрывает wrapText, которого нет в values-long-text."
+    },
+    {
+      "id": "xlsx-values-formulas",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/values-formulas.xlsx"
+      },
+      "title": "Формулы с сохранённым кэшем",
+      "tags": [
+        "formulas",
+        "values"
+      ],
+      "matrixRows": [
+        "xlsx.formula-cache"
+      ],
+      "expected": "Ячейки показывают кэш: 3 для SUM(A1:A2), 5 для A1+A2*2 и «ab» для CONCATENATE. Пересчёт не выполняется, признаки устаревания видны в отчёте.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Минимальная фикстура строки xlsx.formula-cache."
+    },
+    {
+      "id": "xlsx-values-long-text",
+      "format": "xlsx",
+      "source": {
+        "path": "xlsx/values-long-text.xlsx"
+      },
+      "title": "Очень длинная строка без wrapText",
+      "tags": [
+        "values",
+        "geometry"
+      ],
+      "matrixRows": [
+        "xlsx.wrap-overflow"
+      ],
+      "expected": "Длинная строка в A1 выходит за границу столбца и обрезается по правому краю видимой области, не переносится. Overflow не исчезает при пустой соседней ячейке; точки обрезки совпадают с эталоном.",
+      "modes": [
+        "normal"
+      ],
+      "notes": "Обязательная регрессионная фикстура из матрицы §7; wrapText в книге не задан — перенос покрывает text-cyrillic-wrap."
+    }
+  ],
+  "gaps": [
+    {
+      "matrixRow": "docx.headers-footers",
+      "missing": "even-page-type",
+      "reason": "even_odd.docx содержит even headerReference и titlePg, а evenAndOddHeaders включён в settings.xml, но тело — один абзац: документ занимает одну страницу, поэтому тип even не наблюдаем."
+    },
+    {
+      "matrixRow": "xlsx.wrap-overflow",
+      "missing": "rotation",
+      "reason": "shrinkToFit покрыт layout-shrink-to-fit.xlsx; textRotation нет ни в одной зарегистрированной книге."
+    },
+    {
+      "matrixRow": "xlsx.hidden-outlines",
+      "missing": "outlines",
+      "reason": "Ни в одном листе зарегистрированных книг нет outlineLevel>0 и collapsed-групп."
+    },
+    {
+      "matrixRow": "xlsx.comments-notes",
+      "missing": "threaded-comments",
+      "reason": "comments-legacy.xlsx содержит только legacy comments1.xml/comments2.xml; частей xl/threadedComments и person.xml нет ни в одной книге."
+    }
+  ]
+}

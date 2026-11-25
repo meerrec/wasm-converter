@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/meerrec/wasm-converter/main/docs/strict-viewer/manifest.schema.json",
-  "title": "Strict viewer Office Online reference manifest",
-  "description": "Mode-specific manifest for an immutable Office Online reference capture. Each document and view mode has a separate manifest. Schema validation does not replace semantic checks for unique capture IDs, existing artifacts, PNG signatures, page completeness, or approved baseline status.",
+  "title": "Strict viewer Office reference manifest",
+  "description": "Mode-specific manifest for an immutable Office reference capture (Office Online or desktop Word/Excel). Each document and view mode has a separate manifest. Schema validation does not replace semantic checks for unique capture IDs, existing artifacts, PNG signatures, page completeness, or approved baseline status.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "corpus", "source", "reference", "environment", "view", "dynamicData", "captures"],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
+    "schemaVersion": { "const": "1.1.0" },
     "corpus": { "$ref": "#/$defs/corpus" },
     "source": { "$ref": "#/$defs/source" },
     "reference": { "$ref": "#/$defs/reference" },
@@ -36,9 +36,9 @@
     },
     "source": { "type": "object", "additionalProperties": false, "required": ["path", "format", "sha256", "bytes"], "properties": { "path": { "$ref": "#/$defs/relativePath" }, "format": { "enum": ["docx", "xlsx"] }, "sha256": { "$ref": "#/$defs/sha256" }, "bytes": { "$ref": "#/$defs/positiveInt" } } },
     "reference": {
-      "type": "object", "additionalProperties": false, "required": ["provider", "application", "capturedAt", "captureMethod", "operator"],
+      "type": "object", "additionalProperties": false, "description": "Capture provenance. office-online = Word/Excel Online in a browser, office-desktop = COM automation of installed Word/Excel. The application family must match the provider (office-online => *-online, office-desktop => *-desktop) and the document format (docx => word-*, xlsx => excel-*).", "required": ["provider", "application", "capturedAt", "captureMethod", "operator"],
       "properties": {
-        "provider": { "const": "office-online" }, "application": { "enum": ["word-online", "excel-online"] }, "applicationVersion": { "type": "string", "minLength": 1 }, "capturedAt": { "type": "string", "format": "date-time" }, "captureMethod": { "enum": ["manual", "semi-automated"] }, "operator": { "type": "string", "minLength": 1 },
+        "provider": { "enum": ["office-online", "office-desktop"] }, "application": { "enum": ["word-online", "excel-online", "word-desktop", "excel-desktop"] }, "applicationVersion": { "type": "string", "minLength": 1 }, "capturedAt": { "type": "string", "format": "date-time" }, "captureMethod": { "enum": ["manual", "semi-automated", "automated"] }, "operator": { "type": "string", "minLength": 1 },
         "exportedPdf": { "type": "object", "additionalProperties": false, "required": ["uri", "sha256"], "properties": { "uri": { "type": "string", "format": "uri-reference", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" } } }
       }
     },
@@ -47,7 +47,7 @@
       "type": "object", "additionalProperties": false, "required": ["os", "browser", "applicationZoomPercent", "browserZoomPercent", "locale", "timezone", "fonts"],
       "properties": {
         "os": { "type": "object", "additionalProperties": false, "required": ["name", "version"], "properties": { "name": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 }, "architecture": { "type": "string", "minLength": 1 } } },
-        "browser": { "type": "object", "additionalProperties": false, "required": ["name", "version"], "properties": { "name": { "const": "chromium" }, "version": { "type": "string", "minLength": 1 } } },
+        "browser": { "type": "object", "additionalProperties": false, "description": "Environment record, not a render input: for office-desktop PDF captures the browser does not render, but the value is recorded for reproducibility (matrix §2.2).", "required": ["name", "version"], "properties": { "name": { "const": "chromium" }, "version": { "type": "string", "minLength": 1 } } },
         "viewportCss": { "type": "object", "additionalProperties": false, "required": ["width", "height"], "properties": { "width": { "$ref": "#/$defs/positiveInt" }, "height": { "$ref": "#/$defs/positiveInt" } } },
         "deviceScaleFactor": { "type": "number", "exclusiveMinimum": 0 }, "applicationZoomPercent": { "type": "number", "exclusiveMinimum": 0 }, "browserZoomPercent": { "type": "number", "exclusiveMinimum": 0 }, "locale": { "type": "string", "minLength": 2 }, "timezone": { "type": "string", "minLength": 1 }, "colorScheme": { "const": "light" },
         "fonts": { "type": "object", "additionalProperties": false, "required": ["package", "version", "assets"], "properties": { "package": { "type": "string", "minLength": 1 }, "version": { "type": "string", "minLength": 1 }, "assets": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/fontAsset" } } } },
@@ -81,8 +81,10 @@
     ] }
   },
   "allOf": [
-    { "if": { "properties": { "source": { "properties": { "format": { "const": "docx" } }, "required": ["format"] } }, "required": ["source"] }, "then": { "properties": { "reference": { "properties": { "application": { "const": "word-online" } } }, "view": { "properties": { "format": { "const": "docx" } } }, "captures": { "items": { "properties": { "kind": { "const": "docx-page" } } } } } } },
-    { "if": { "properties": { "source": { "properties": { "format": { "const": "xlsx" } }, "required": ["format"] } }, "required": ["source"] }, "then": { "properties": { "reference": { "properties": { "application": { "const": "excel-online" } } }, "view": { "properties": { "format": { "const": "xlsx" } } }, "captures": { "items": { "properties": { "kind": { "enum": ["xlsx-screen", "xlsx-print-page"] } } } } } } },
+    { "if": { "properties": { "source": { "properties": { "format": { "const": "docx" } }, "required": ["format"] } }, "required": ["source"] }, "then": { "properties": { "reference": { "properties": { "application": { "enum": ["word-online", "word-desktop"] } } }, "view": { "properties": { "format": { "const": "docx" } } }, "captures": { "items": { "properties": { "kind": { "const": "docx-page" } } } } } } },
+    { "if": { "properties": { "source": { "properties": { "format": { "const": "xlsx" } }, "required": ["format"] } }, "required": ["source"] }, "then": { "properties": { "reference": { "properties": { "application": { "enum": ["excel-online", "excel-desktop"] } } }, "view": { "properties": { "format": { "const": "xlsx" } } }, "captures": { "items": { "properties": { "kind": { "enum": ["xlsx-screen", "xlsx-print-page"] } } } } } } },
+    { "if": { "properties": { "reference": { "properties": { "provider": { "const": "office-online" } }, "required": ["provider"] } }, "required": ["reference"] }, "then": { "properties": { "reference": { "properties": { "application": { "enum": ["word-online", "excel-online"] } } } } } },
+    { "if": { "properties": { "reference": { "properties": { "provider": { "const": "office-desktop" } }, "required": ["provider"] } }, "required": ["reference"] }, "then": { "properties": { "reference": { "properties": { "application": { "enum": ["word-desktop", "excel-desktop"] } } } } } },
     { "if": { "properties": { "view": { "properties": { "mode": { "const": "normal" } }, "required": ["mode"] } }, "required": ["view"] }, "then": { "properties": { "captures": { "items": { "properties": { "kind": { "const": "xlsx-screen" } } } } } } },
     { "if": { "properties": { "view": { "properties": { "mode": { "const": "print-preview" } }, "required": ["mode"] } }, "required": ["view"] }, "then": { "properties": { "captures": { "items": { "properties": { "kind": { "const": "xlsx-print-page" } } } } } } },
     {

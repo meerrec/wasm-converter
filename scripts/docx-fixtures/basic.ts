@@ -32,15 +32,15 @@ const EMPHASIS_STYLE =
     '<w:basedOn w:val="DefaultParagraphFont"/><w:uiPriority w:val="20"/><w:qFormat/>' +
     '<w:rPr><w:i/><w:color w:val="CC0000"/></w:rPr></w:style>';
 
-/** Портретная A4 для промежуточного `w:sectPr`. */
+/** Портретная A4 для промежуточного `w:sectPr`; переплётный отступ 720 twips. */
 const PORTRAIT_SECT =
     '<w:pgSz w:w="11906" w:h="16838"/>' +
-    '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="709" w:footer="709" w:gutter="0"/>';
+    '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="709" w:footer="709" w:gutter="720"/>';
 
-/** Ландшафтная A4 для финального `w:sectPr`. */
+/** Ландшафтная A4 для финального `w:sectPr`; переплётный отступ 720 twips. */
 const LANDSCAPE_SECT =
     '<w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>' +
-    '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="709" w:footer="709" w:gutter="0"/>';
+    '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="709" w:footer="709" w:gutter="720"/>';
 
 /** Слова для абзаца из сотни прогонов. */
 const MANY_RUN_WORDS = Array.from({ length: 100 }, (_, i) => `run${i + 1}`);

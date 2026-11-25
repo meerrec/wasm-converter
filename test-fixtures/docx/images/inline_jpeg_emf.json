@@ -1,0 +1,42 @@
+{
+  "metadata": {
+    "name": "images/inline_jpeg_emf",
+    "category": "images",
+    "description": "Два inline-рисунка рядом: JPEG и EMF, который не декодируется",
+    "docTitle": "Два inline-рисунка рядом: JPEG и EMF, который не декодируется",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 2,
+    "expectedWarnings": [],
+    "mediaTypes": {
+      "inline.jpg": "image/jpeg",
+      "inline.emf": "application/octet-stream"
+    }
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": ""
+      },
+      {
+        "text": "Подпись под рисунками."
+      }
+    ],
+    "images": [
+      {
+        "relId": "rIdImg1",
+        "file": "inline.jpg",
+        "kind": "inline",
+        "cx": 914400,
+        "cy": 685800
+      },
+      {
+        "relId": "rIdImg2",
+        "file": "inline.emf",
+        "kind": "inline",
+        "cx": 457200,
+        "cy": 457200
+      }
+    ]
+  }
+}

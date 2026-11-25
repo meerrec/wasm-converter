@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "name": "pagination/keep_next_tall",
+    "category": "pagination",
+    "description": "keepNext у абзаца, который сам длиннее страницы",
+    "docTitle": "keepNext у абзаца, который сам длиннее страницы",
+    "expectedParagraphs": 5,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [],
+    "keepNext": [
+      4
+    ],
+    "tallParagraph": true
+  },
+  "content": {}
+}

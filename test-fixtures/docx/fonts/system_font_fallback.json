@@ -1,0 +1,23 @@
+{
+  "metadata": {
+    "name": "fonts/system_font_fallback",
+    "category": "fonts",
+    "description": "Системные шрифты вне пакета: Times New Roman, Wingdings, отсутствующий в системе",
+    "docTitle": "Системные шрифты вне пакета: Times New Roman, Wingdings, отсутствующий в системе",
+    "expectedParagraphs": 3,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [],
+    "fonts": {
+      "outsidePackage": [
+        "Times New Roman",
+        "Wingdings",
+        "This Font Does Not Exist"
+      ],
+      "fallbackPolicy": "Отсутствующая гарнитура заменяется шрифтом по умолчанию; текст не исчезает."
+    }
+  },
+  "content": {
+    "paragraphs": 3
+  }
+}

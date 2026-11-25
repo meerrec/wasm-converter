@@ -1,0 +1,45 @@
+{
+  "metadata": {
+    "name": "fields/toc_ref",
+    "category": "fields",
+    "description": "Поля TOC и REF: сохранённый кэш и закладка _Ref123",
+    "docTitle": "Поля TOC и REF: сохранённый кэш и закладка _Ref123",
+    "expectedParagraphs": 4,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": [],
+    "bookmark": "_Ref123"
+  },
+  "content": {
+    "paragraphs": [
+      {
+        "text": "Оглавление (поле TOC)"
+      },
+      {
+        "text": "Введение\t1"
+      },
+      {
+        "text": "Раздел с закладкой"
+      },
+      {
+        "text": "См. раздел Раздел с закладкой."
+      }
+    ],
+    "fields": [
+      {
+        "instruction": " TOC \\o \"1-3\" \\h \\z \\u ",
+        "type": "unknown",
+        "cached": "Введение\t1",
+        "form": "fldChar"
+      },
+      {
+        "instruction": " REF _Ref123 \\h \\* MERGEFORMAT ",
+        "type": "unknown",
+        "cached": "Раздел с закладкой",
+        "form": "fldChar"
+      }
+    ],
+    "tables": [],
+    "images": []
+  }
+}

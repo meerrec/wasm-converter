@@ -1,0 +1,21 @@
+{
+  "metadata": {
+    "name": "embedded/smartart_basic",
+    "category": "embedded",
+    "description": "SmartArt: ссылка на diagrams/dataModel в w:drawing",
+    "docTitle": "SmartArt: ссылка на diagrams/dataModel в w:drawing",
+    "expectedParagraphs": 2,
+    "expectedTables": 0,
+    "expectedImages": 0,
+    "expectedWarnings": []
+  },
+  "content": {
+    "smartArt": [
+      {
+        "nodes": [
+          "Процесс"
+        ]
+      }
+    ]
+  }
+}

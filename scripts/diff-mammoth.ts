@@ -59,8 +59,21 @@ const MAX_NON_GOAL = 8;
  *
  * 83 → 85 в Спринте 2: добавлены `a11y/a11y_audit` и `a11y/a11y_perf`
  * (20 и 200 страниц текста, таблиц и списков) — они обычные кандидаты.
+ *
+ * 85 → 93 при наполнении strict-viewer корпуса: добавлены
+ * `columns/two_equal`, `columns/three_unequal` (колонки),
+ * `pagination/keep_next_chain`, `pagination/widow_orphan`,
+ * `notes/endnote_basic`, `math/omml_simple`, `embedded/smartart_basic`,
+ * `embedded/ole_object`, `fonts/system_font_fallback`. Все девять —
+ * обычные кандидаты: текст в них Read'ается mammoth'ом так же, как нашим
+ * разбором; неподдерживаемые объекты (Math/SmartArt/OLE) объявлены полем
+ * `meta` сайдкара, а не исключением из набора.
+ *
+ * 93 → 96 пробелы матрицы: `fields/toc_ref` (TOC и REF, mammoth читает кэш
+ * сложных полей), `images/inline_jpeg_emf` (текст подписи) и
+ * `pagination/keep_next_tall` — тоже обычные кандидаты.
  */
-const EXPECTED_CANDIDATES = 85;
+const EXPECTED_CANDIDATES = 96;
 
 /**
  * Категории вне набора кандидатов и почему — причина называет сторону:
