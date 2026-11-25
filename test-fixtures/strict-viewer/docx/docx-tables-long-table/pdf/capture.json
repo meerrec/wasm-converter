@@ -1,0 +1,101 @@
+{
+  "corpus": {
+    "version": "1.0.0",
+    "matrixVersion": "1.0.0"
+  },
+  "source": {
+    "path": "docx/tables/long_table.docx"
+  },
+  "reference": {
+    "provider": "office-desktop",
+    "application": "word-desktop",
+    "applicationVersion": "16.115.2",
+    "capturedAt": "2026-11-25T11:09:44Z",
+    "captureMethod": "automated",
+    "operator": "irek",
+    "exportedPdf": {
+      "uri": "reference/export.pdf"
+    }
+  },
+  "environment": {
+    "os": {
+      "name": "macOS",
+      "version": "26.6.1",
+      "architecture": "arm64"
+    },
+    "browser": {
+      "name": "chromium",
+      "version": "131.0.6778.86"
+    },
+    "applicationZoomPercent": 100,
+    "browserZoomPercent": 100,
+    "locale": "ru-RU",
+    "timezone": "UTC",
+    "fonts": {
+      "package": "carlito-subset",
+      "version": "1.104",
+      "assets": [
+        {
+          "family": "Carlito",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "fab04db7d49ce4ae1eb55fae98a09e8d0690c860e2c05454dbd1c0951e1bfac2"
+        },
+        {
+          "family": "Carlito",
+          "style": "bold",
+          "weight": 700,
+          "sha256": "f339451ca469d156af7898ea484218157ed02d5b669f01db80a8202414eef6d5"
+        },
+        {
+          "family": "Carlito",
+          "style": "italic",
+          "weight": 400,
+          "sha256": "ad8db570b73fc8f3486ad6125c541d88faeadd89107c2f62a4db71293c33f0ef"
+        },
+        {
+          "family": "Carlito",
+          "style": "italic",
+          "weight": 700,
+          "sha256": "c3da8b7ba6246c3cd976b106e7f96dd53be5a5639e615cf96d653b98687fdeb1"
+        }
+      ]
+    },
+    "rasterizer": {
+      "name": "pdftoppm",
+      "version": "26.11.0",
+      "dpi": 144
+    }
+  },
+  "view": {
+    "format": "docx",
+    "mode": "pdf",
+    "revisions": "accepted",
+    "comments": "hidden"
+  },
+  "dynamicData": {
+    "dates": "fixed-value",
+    "fields": "cached-result",
+    "formulaCache": {
+      "policy": "cached-values-only",
+      "dirty": false,
+      "fullCalcOnLoad": false,
+      "forceFullCalc": false
+    },
+    "externalLinks": "cached-values-no-network"
+  },
+  "captures": [
+    {
+      "id": "page-1",
+      "pageNumber": 1,
+      "image": "reference/page-1.png",
+      "kind": "docx-page"
+    },
+    {
+      "id": "page-2",
+      "pageNumber": 2,
+      "image": "reference/page-2.png",
+      "kind": "docx-page"
+    }
+  ]
+}

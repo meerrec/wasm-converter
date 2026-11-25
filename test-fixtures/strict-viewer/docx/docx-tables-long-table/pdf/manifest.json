@@ -1,0 +1,127 @@
+{
+  "schemaVersion": "1.1.0",
+  "corpus": {
+    "id": "strict-viewer-1.0.0",
+    "version": "1.0.0",
+    "matrixVersion": "1.0.0",
+    "baselineId": "strict-viewer-1.0.0-1.0.0-ae5d5448-f41671d9d5d7",
+    "storage": {
+      "kind": "git-lfs",
+      "rootUri": "test-fixtures/strict-viewer"
+    }
+  },
+  "source": {
+    "path": "docx/tables/long_table.docx",
+    "format": "docx",
+    "sha256": "d76c8486c8136c10be3aecd511307fd1e80392efca217c96cc2eb139f7b18c2b",
+    "bytes": 4061
+  },
+  "reference": {
+    "provider": "office-desktop",
+    "application": "word-desktop",
+    "capturedAt": "2026-11-25T11:09:44Z",
+    "captureMethod": "automated",
+    "operator": "irek",
+    "applicationVersion": "16.115.2",
+    "exportedPdf": {
+      "uri": "docx/docx-tables-long-table/pdf/reference/export.pdf",
+      "sha256": "9de6945e9f9287491e298f4892061ec9d4f3163371181f897318f0c6f3937320"
+    }
+  },
+  "environment": {
+    "os": {
+      "name": "macOS",
+      "version": "26.6.1",
+      "architecture": "arm64"
+    },
+    "browser": {
+      "name": "chromium",
+      "version": "131.0.6778.86"
+    },
+    "applicationZoomPercent": 100,
+    "browserZoomPercent": 100,
+    "locale": "ru-RU",
+    "timezone": "UTC",
+    "fonts": {
+      "package": "carlito-subset",
+      "version": "1.104",
+      "assets": [
+        {
+          "family": "Carlito",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "fab04db7d49ce4ae1eb55fae98a09e8d0690c860e2c05454dbd1c0951e1bfac2"
+        },
+        {
+          "family": "Carlito",
+          "style": "bold",
+          "weight": 700,
+          "sha256": "f339451ca469d156af7898ea484218157ed02d5b669f01db80a8202414eef6d5"
+        },
+        {
+          "family": "Carlito",
+          "style": "italic",
+          "weight": 400,
+          "sha256": "ad8db570b73fc8f3486ad6125c541d88faeadd89107c2f62a4db71293c33f0ef"
+        },
+        {
+          "family": "Carlito",
+          "style": "italic",
+          "weight": 700,
+          "sha256": "c3da8b7ba6246c3cd976b106e7f96dd53be5a5639e615cf96d653b98687fdeb1"
+        }
+      ]
+    },
+    "rasterizer": {
+      "name": "pdftoppm",
+      "version": "26.11.0",
+      "dpi": 144
+    }
+  },
+  "view": {
+    "format": "docx",
+    "mode": "pdf",
+    "revisions": "accepted",
+    "comments": "hidden"
+  },
+  "dynamicData": {
+    "dates": "fixed-value",
+    "fields": "cached-result",
+    "formulaCache": {
+      "policy": "cached-values-only",
+      "dirty": false,
+      "fullCalcOnLoad": false,
+      "forceFullCalc": false
+    },
+    "externalLinks": "cached-values-no-network"
+  },
+  "comparisonProfile": "visual-v1",
+  "captures": [
+    {
+      "id": "page-1",
+      "kind": "docx-page",
+      "pageNumber": 1,
+      "image": {
+        "uri": "docx/docx-tables-long-table/pdf/reference/page-1.png",
+        "sha256": "3b6bd7852dc74f68c9f0b1915a6ecb58aaadb0d31d964b811ba33e5e8eda7aa9",
+        "width": 1191,
+        "height": 1684,
+        "bytes": 181133,
+        "colorType": "RGB8"
+      }
+    },
+    {
+      "id": "page-2",
+      "kind": "docx-page",
+      "pageNumber": 2,
+      "image": {
+        "uri": "docx/docx-tables-long-table/pdf/reference/page-2.png",
+        "sha256": "5db5655cbb558450806cddf6fcf2727373824880817355b399192ddd1547c4f4",
+        "width": 1191,
+        "height": 1684,
+        "bytes": 175795,
+        "colorType": "RGB8"
+      }
+    }
+  ]
+}
