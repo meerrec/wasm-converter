@@ -28,7 +28,11 @@ const cjkRun = (text: string, font: string, lang?: string): string =>
     });
 
 /** Прогон латиницы: `eastAsia` не задан, иероглифы возьмут шрифт из docDefaults. */
-const latinRun = (text: string, font = 'Calibri'): string =>
+// Латинский прогон идёт Carlito: фикстура попадает в эталон strict-viewer,
+// а Office набрал бы Calibri и разошёлся с вьюером по глифам (ADR-0058).
+// CJK-прогон ниже просит Calibri только для `w:ascii` запасной части —
+// иероглифы берутся у `w:eastAsia`.
+const latinRun = (text: string, font = 'Carlito'): string =>
     run(text, { rPr: `<w:rFonts w:ascii="${font}" w:hAnsi="${font}"/>` });
 
 /** `sectPr` вертикального письма: `w:textDirection` идёт после `w:cols`, до `w:docGrid`. */
@@ -107,7 +111,7 @@ export const cjkFixtures: FixtureSpec[] = [
                 para(
                     '',
                     latinRun('Hello ') +
-                        run('中文', { rPr: `<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="SimSun"/>` }) +
+                        run('中文', { rPr: `<w:rFonts w:ascii="Carlito" w:hAnsi="Carlito" w:eastAsia="SimSun"/>` }) +
                         latinRun(' world'),
                 ),
             ),

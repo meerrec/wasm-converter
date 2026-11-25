@@ -1498,7 +1498,7 @@ mod tests {
         );
         assert_eq!(
             line.font_family.as_deref(),
-            Some("Calibri"),
+            Some("Carlito"),
             "гарнитура docDefaults"
         );
     }

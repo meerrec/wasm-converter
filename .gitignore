@@ -79,3 +79,6 @@ chromedriver/
 .pnpm-store/
 .qwen/
 .omp/
+
+# Артефакты прогонов оракула (`--out`): отчёты и кадры, не источник
+visual-oracle-out-full/

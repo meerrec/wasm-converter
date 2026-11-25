@@ -12,6 +12,7 @@ import {
     packageParts,
     para,
     run,
+    DOCX_DEFAULT_FONT,
     sectionProps,
     table,
 } from './kit.js';
@@ -19,10 +20,14 @@ import {
 /** Тело из блоков + финальный `w:sectPr` (обязан быть последним в `w:body`). */
 const body = (...blocks: string[]): string => blocks.join('') + sectionProps(defaultSectPr);
 
-/** docDefaults, который пишет Word: Calibri 11 pt, интервал 1.08 строки. */
+/**
+ * docDefaults умолчания Word: 11 pt, интервал 1.08 строки. Гарнитура —
+ * `Carlito`, как и в `kit.ts` (ADR-0058): фикстуры стилей тоже попадают в
+ * эталон, и он должен совпадать с лицом вьюера.
+ */
 const WORD_DOC_DEFAULTS =
     '<w:docDefaults>' +
-    '<w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="SimSun" w:cs="Arial"/>' +
+    `<w:rPrDefault><w:rPr><w:rFonts w:ascii="${DOCX_DEFAULT_FONT}" w:hAnsi="${DOCX_DEFAULT_FONT}" w:eastAsia="SimSun" w:cs="Arial"/>` +
     '<w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="en-US" w:eastAsia="zh-CN" w:bidi="ar-SA"/></w:rPr></w:rPrDefault>' +
     '<w:pPrDefault><w:pPr><w:spacing w:before="0" w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault>' +
     '</w:docDefaults>';

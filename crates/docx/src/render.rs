@@ -898,10 +898,10 @@ mod tests {
             half_points_to_px(32) * viewport().scale,
             "16 pt",
         );
-        // Гарнитуру строка берёт у прогона: заголовок набран Calibri, и это имя
-        // уходит в кадр. Лицо то же, что у запасного Carlito: Calibri
-        // зарегистрирован алиасом, поэтому ширины сходятся.
-        assert_eq!(drawn.font, "Calibri", "гарнитура строки из стиля");
+        // Гарнитуру строка берёт у прогона: заголовок набран Carlito, и это имя
+        // уходит в кадр. Умолчание фикстур — Carlito, а не Calibri (ADR-0058):
+        // эталон strict-viewer снимается тем же лицом, которым рисует вьюер.
+        assert_eq!(drawn.font, "Carlito", "гарнитура строки из стиля");
         assert_eq!(drawn.baseline, TextBaseline::Top, "верх строки");
         assert_eq!(drawn.align, TextAlign::Left, "выравнивание уже в rect.x");
     }
