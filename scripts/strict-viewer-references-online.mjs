@@ -715,12 +715,20 @@ function scaleToWidth(pngBuffer, targetWidth) {
 }
 
 function composeDocxStackFrame(shots, geo, index) {
-  const { frame } = geo;
   const page = geo.pages[`page-${index + 1}`];
+  // Кадр — измеренный размер actual-PNG (у sections страницы разного размера,
+  // у дефектов пагинации вьюера кадр не равен странице + 2×pad).
+  // Высота последней страницы не замеряется (низ невидим) — тогда она
+  // берётся из скриншота Word Online (+1 на нижний полуряд).
+  const shotPng = PNG.sync.read(shots[index]);
+  const pageRows = page.height ?? shotPng.height + 1;
+  const frame = page.frame ?? {
+    width: page.width + 2 * page.left,
+    height: pageRows + 2 * page.left,
+  };
   const out = new PNG({ width: frame.width, height: frame.height });
   const left = page.left;
   const right = page.left + page.width - 1;
-  const pageRows = page.height;
 
   const paste = (shot, destX, destY) => {
     const rows = Math.min(shot.height, frame.height - destY);
