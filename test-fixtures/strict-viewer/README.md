@@ -19,7 +19,8 @@ rels, `xlsx/sheets-different-shapes.xlsx` — `xl/drawings/drawing1.xml` с тр
 Эталоны снимаются по двум путям, закреплённым в
 [`baseline-policy.md`](../../docs/strict-viewer/baseline-policy.md) §1 п.5 и
 [`ADR-0056`](../../docs/adr/0056-capture-automation-com.md): основной — автоматический,
-`scripts/strict-viewer-references.ps1` (COM-автоматизация локального Word/Excel,
+`scripts/strict-viewer-references.ps1` / `-macos.sh` (COM на Windows, AppleScript на macOS —
+автоматизация локального Word/Excel,
 `ExportAsFixedFormat`, затем `pdftoppm -png -r 144`); ручной захват в Word Online / Excel Online
 остаётся допустимым, но не обязательным. Наш движок эталоном не является никогда; `actual/` не
 копируется в `reference/`.

@@ -32,7 +32,8 @@ PNG и PDF эталонов хранятся в Git LFS (`.gitattributes`). По
 ## 2. Снять эталон
 
 Захват делается по §3 baseline-policy: автоматически —
-`scripts/strict-viewer-references.ps1` (см. `docs/testing/strict-viewer-references.md`),
+`scripts/strict-viewer-references.ps1` (Windows) или
+`scripts/strict-viewer-references-macos.sh` (macOS; см. `docs/testing/strict-viewer-references.md`),
 либо **вручную** в Word Online / Excel Online. Наш движок эталоном не является
 никогда: `actual/` не копируется в `reference/`.
 
@@ -93,7 +94,7 @@ PNG и PDF эталонов хранятся в Git LFS (`.gitattributes`). По
 `office-desktop` с `word-online` не станет ни тем, ни другим. Пару проверяют
 и схема (ветки `allOf` по `provider` и по формату), и семантика валидатора.
 
-Автоматический захват (`scripts/strict-viewer-references.ps1`) пишет
+Автоматический захват (`.ps1` на Windows, `.sh` на macOS) пишет
 `office-desktop` + `word-desktop`/`excel-desktop` + `automated`. Ручной захват
 в Word Online / Excel Online пишет `office-online` + `*-online` + `manual` или
 `semi-automated`.
