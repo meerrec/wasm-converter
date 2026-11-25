@@ -57,7 +57,14 @@ drop-ы — `<Out>/drop/`.
 - Poppler (`pdftoppm`) в `PATH`.
 - Node.js 20+ и pnpm 9 в `PATH`: импорт manifest идёт через
   `tools/visual-oracle`.
-- PowerShell 5.1+.
+- PowerShell 5.1+. Нативные вызовы (`pdftoppm`, `pnpm`) скрипт делает сам через
+  `System.Diagnostics.Process` с файловыми потоками: `2>&1` в PowerShell 5.1
+  превращает stderr в записи ошибок, а `pdftoppm -v` пишет баннер в stderr даже
+  на успехе. Импорт идёт через `cmd.exe` — pnpm на Windows это `.cmd`-shim.
+- Id фикстур и `source.path` из корпуса скрипт проверяет сам: по ним строятся
+  каталоги под `-Out`, которые он же удаляет перед повторным захватом. Слаг
+  (буквы, цифры, `.`, `_`, `-`) и относительный путь без `..` — обязательны;
+  иначе скрипт выходит с кодом 2, ничего не удаляя.
 - Шрифтовой набор `crates/render/src/fonts` (четыре Carlito-сабсета, ADR-0051):
   его файлы и SHA-256 попадают в `environment.fonts.assets`.
 - **Полные Carlito 1.104, установленные в системе** (ADR-0058). Сабсеты из

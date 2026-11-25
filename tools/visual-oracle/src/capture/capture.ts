@@ -8,7 +8,7 @@
 //
 // | режим manifest  | формат | бэкенд | артефакт                                   |
 // |-----------------|--------|--------|--------------------------------------------|
-// | `print-layout`  | docx   | canvas | `viewer.exportPng()` на каждую страницу     |
+// | `print-layout`  | docx   | canvas | кадр окна размером с целую страницу         |
 // | `normal`        | xlsx   | canvas | `viewer.exportPng()` на каждый экран        |
 // | `pdf`           | docx   | pdf    | `viewer.exportPdf()` → `pdftoppm -r 144`    |
 // | `print-preview` | xlsx   | pdf    | `viewer.exportPdf({ sheetIndex })` → то же  |
@@ -16,6 +16,14 @@
 // Canvas-режимы снимают то, что видит пользователь; PDF-режимы — то, что движок
 // печатает. Смешивать их нельзя: `docx.pdf` сертифицирует пагинацию PDF, а не
 // окно, и наоборот.
+//
+// У `docx.print-layout` единица — страница, а не окно (certification-matrix §2.2:
+// в эталон входит только область страницы). `viewer.exportPng()` снимает холст
+// размера области прокрутки, и портретная A4 (~1123 CSS px) в окно 900 px не
+// помещается. Поэтому окно перед кадром переводится на размер страницы: главная
+// ось области прокрутки — flex-элемент, и коробка вьюера вырастает вместе с
+// холстом, так что весь кадр попадает в снимок. Для этого canvas-путь получает
+// `docxWindow`, а без него (прямой вызов `captureFixture`) честно падает.
 
 import { execFile } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -48,6 +56,14 @@ export interface CapturedImage {
   sha256: string;
   width: number;
   height: number;
+  /**
+   * CSS-размер окна, из которого снят кадр.
+   *
+   * Нужен `docx.print-layout`: единица сравнения там — страница, и размер окна
+   * обязан быть её размером, а не размером области прокрутки. Иначе снимок —
+   * обрезанное окно, а `width/height` PNG этого не покажет.
+   */
+  frame: { cssWidth: number; cssHeight: number } | null;
   /** Номер страницы — у `docx-page` и `xlsx-print-page`. */
   pageNumber?: number;
   /** Номер листа — у XLSX-видов. */
@@ -77,6 +93,40 @@ export interface CaptureFixtureContext {
   readonly openTimeoutMs?: number;
   /** Отмена захвата. */
   readonly signal?: AbortSignal;
+  /**
+   * Действие с окном захвата — только для `docx.print-layout`.
+   *
+   * Границы окна читает и ставит сам оракул (`pageWindow` в
+   * `capture/index.ts`): это браузерная операция страницы, а не часть модели
+   * захвата, а копия её здесь разошлась бы с настоящими размерами.
+   */
+  readonly docxWindow?: DocxCaptureWindow;
+}
+
+/** Размер кадра окна в CSS-пикселях. */
+export interface PageRegion {
+  width: number;
+  height: number;
+}
+
+/**
+ * Окно захвата DOCX-страницы: размер области прокрутки на время кадра.
+ *
+ * Страница передаётся в каждый вызов, а не запоминается при создании: сессия
+ * захвата создаёт окно один раз, а страница у каждой фикстуры своя.
+ */
+export interface DocxCaptureWindow {
+  /** Текущие размеры области прокрутки в CSS-пикселях. */
+  measure(page: Page): Promise<{ width: number; height: number }>;
+  /** Поставить размер области прокрутки; `null` — снять переопределение. */
+  apply(page: Page, size: { width: number; height: number } | null): Promise<void>;
+  /**
+   * Пиксели `viewer.exportPng()` вместе с размерами кадра.
+   *
+   * Размер берётся из того же снимка: окно могли пересчитать между вызовом и
+   * ответом, и подписанная цифра дала бы подпись, которой нет у артефакта.
+   */
+  exportPng(page: Page): Promise<{ bytes: Uint8Array; cssWidth: number; cssHeight: number }>;
 }
 
 /**
@@ -278,10 +328,36 @@ async function createTickChannel(page: Page): Promise<TickChannel> {
   };
 }
 
+/**
+ * Снять PNG текущего кадра страницы.
+ *
+ * `captureDocxPageFrame` берёт снимок через окно (там же читается размер кадра);
+ * этот путь — для экранов XLSX и для `exportPng` вьюера.
+ */
+async function exportPngBytes(page: Page): Promise<Uint8Array> {
+  try {
+    const base64 = await page.evaluate(async () => {
+      const w = globalThis as unknown as PageWindow;
+      const viewer = w.docConverter?.viewer;
+      if (!viewer) throw new Error('viewer bridge is gone');
+      const bytes = await viewer.exportPng();
+      let binary = '';
+      const chunk = 0x8000;
+      for (let offset = 0; offset < bytes.length; offset += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + chunk));
+      }
+      return w.btoa(binary);
+    });
+    return new Uint8Array(Buffer.from(base64, 'base64'));
+  } catch (error) {
+    throw asCaptureError(error, 'export-failed', 'exportPng failed');
+  }
+}
+
 /** Вьюер страницы в терминах `waitForStableFrame`. */
 function createPageViewer(page: Page, ticks: TickChannel): StableFrameViewer {
   return {
-    exportPng: () => exportPng(page),
+    exportPng: () => exportPngBytes(page),
     onTick(handler: (stats: unknown) => void): () => void {
       return ticks.subscribe(handler);
     },
@@ -421,27 +497,6 @@ async function repaint(page: Page): Promise<void> {
   });
 }
 
-/** Снять PNG текущего кадра страницы. */
-async function exportPng(page: Page): Promise<Uint8Array> {
-  try {
-    const base64 = await page.evaluate(async () => {
-      const w = globalThis as unknown as PageWindow;
-      const viewer = w.docConverter?.viewer;
-      if (!viewer) throw new Error('viewer bridge is gone');
-      const bytes = await viewer.exportPng();
-      let binary = '';
-      const chunk = 0x8000;
-      for (let offset = 0; offset < bytes.length; offset += chunk) {
-        binary += String.fromCharCode(...bytes.subarray(offset, offset + chunk));
-      }
-      return w.btoa(binary);
-    });
-    return new Uint8Array(Buffer.from(base64, 'base64'));
-  } catch (error) {
-    throw asCaptureError(error, 'export-failed', 'exportPng failed');
-  }
-}
-
 /** Экспортировать PDF текущего состояния страницы. */
 async function exportPdf(page: Page, sheetIndex?: number): Promise<Uint8Array> {
   try {
@@ -476,6 +531,7 @@ async function writePng(
   capture: ManifestCapture,
   bytes: Uint8Array,
   evidence: CaptureEvidence,
+  frame: { cssWidth: number; cssHeight: number } | null = null,
 ): Promise<CapturedImage> {
   const filePath = path.join(outDir, `${capture.id}.png`);
   await writeFile(filePath, bytes);
@@ -490,6 +546,7 @@ async function writePng(
     sha256: sha256Hex(bytes),
     width: header.width,
     height: header.height,
+    frame,
     stableHashes: evidence.stableHashes,
     timeToStableMs: evidence.timeToStableMs,
   };
@@ -515,6 +572,8 @@ export interface StableCaptureStep {
   change: () => void | Promise<void>;
   /** Пределы ожидания и отмена. */
   options?: { timeoutMs?: number; signal?: AbortSignal };
+  /** Размер окна снимка, если вызывающий его знает (см. `CapturedImage.frame`). */
+  frame?: { cssWidth: number; cssHeight: number } | null;
 }
 
 /**
@@ -531,10 +590,16 @@ export async function captureStableFrame(
     change: step.change,
     ...step.options,
   });
-  const image = await writePng(step.outDir, step.capture, stable.bytes, {
-    stableHashes: stable.hashes,
-    timeToStableMs: stable.elapsedMs,
-  });
+  const image = await writePng(
+    step.outDir,
+    step.capture,
+    stable.bytes,
+    {
+      stableHashes: stable.hashes,
+      timeToStableMs: stable.elapsedMs,
+    },
+    step.frame ?? null,
+  );
   return { image, stable };
 }
 
@@ -596,21 +661,123 @@ async function assertSheetExists(page: Page, sheetIndex: number, captureId: stri
   }
 }
 
-/** Canvas-режим DOCX: страница за страницей. */
+/**
+ * Окно кадра для страницы: весь лист плюс поля прокрутки.
+ *
+ * `viewer.showPage` ставит верх страницы в `scrollTop = 0`, а `scrollLeft`
+ * программой не выставляется. Значит, чтобы страница целиком попала в кадр,
+ * окно должно равняться стопке вместе с её полями: у стопки уже области
+ * прокрутки поле слева — `(ширина области − стопка) / 2`, и кадр шириной в
+ * стопку обрезал бы его (а тень страницы живёт в этом поле).
+ *
+ * @param pageSize — размер страницы в CSS-пикселях (раскладка × зум)
+ */
+export function pageFrameSize(
+  pageSize: { width: number; height: number },
+  viewport: { width: number; height: number },
+): { width: number; height: number } {
+  // Поле не больше половины окна и не больше `min(ширина, высота)/2`: при зуме
+  // 100 % это ровно `padLeft`-подобное поле настоящего просмотрщика.
+  const pad = Math.max(0, Math.floor(Math.min(viewport.width, viewport.height) / 2));
+  // Кегль полей целочисленный, но стопка может быть дробной: округление вверх
+  // не даёт обрезать последний пиксель справа или снизу.
+  return {
+    width: Math.ceil(pageSize.width) + 2 * pad,
+    height: Math.ceil(pageSize.height) + 2 * pad,
+  };
+}
+
+/** Размер страницы в CSS-пикселях по состоянию вьюера. */
+export async function readDocxPageSize(
+  page: Page,
+  pageNumber: number,
+  captureId: string,
+): Promise<{ width: number; height: number }> {
+  const size = await page.evaluate((index) => {
+    const viewer = (globalThis as unknown as PageWindow).docConverter?.viewer;
+    const info = viewer?.pages?.[index];
+    if (!viewer || !info) return null;
+    return { width: info.width * viewer.zoom, height: info.height * viewer.zoom };
+  }, pageNumber - 1);
+  if (size === null) {
+    // Страница за пределами раскладки: `assertPageExists` это уже отсеяла, и
+    // нулевого размера здесь быть не может — значит ручка разошлась с manifest.
+    throw new CaptureError(
+      'open-failed',
+      `capture "${captureId}" wants page ${pageNumber}, but the viewer exposes no layout for it`,
+    );
+  }
+  return size;
+}
+
+/**
+ * Вписать страницу в окно на время снимка и снять кадр.
+ *
+ * Порядок обязателен: размер окна → `showPage` (он центрирует стопку под новый
+ * размер) → первый тик → стабилизация. Переставь первые два шага, и прокрутка
+ * встанет по полю прежнего окна, а страница уедет из кадра.
+ *
+ * @throws {CaptureError} `open-failed` — нет окна захвата или страницы в
+ *   раскладке; `export-failed`/`unstable-frame` — как у `captureStableFrame`
+ */
+export async function captureDocxPageFrame(deps: {
+  page: Page;
+  viewer: StableFrameViewer;
+  window: DocxCaptureWindow;
+  capture: ManifestCapture;
+  options: { timeoutMs?: number; signal?: AbortSignal };
+  outDir: string;
+}): Promise<{ image: CapturedImage; stable: StableFrameResult }> {
+  const { page, window, capture } = deps;
+  const pageNumber = requireDocxPage(capture).pageNumber;
+  const pageSize = await readDocxPageSize(page, pageNumber, capture.id);
+  const viewport = await window.measure(page);
+  const frame = pageFrameSize(pageSize, viewport);
+
+  try {
+    await window.apply(page, frame);
+    return await captureStableFrame({
+      outDir: deps.outDir,
+      capture,
+      viewer: deps.viewer,
+      change: async () => {
+        await page.evaluate((index) => {
+          (globalThis as unknown as PageWindow).docConverter?.viewer.showPage?.(index);
+        }, pageNumber - 1);
+      },
+      options: deps.options,
+      frame: { cssWidth: frame.width, cssHeight: frame.height },
+    });
+  } finally {
+    // Окно возвращается до проверки: провал одной страницы не должен
+    // оставлять следующий capture в чужой коробке.
+    await window.apply(page, null);
+  }
+}
+
+/** Canvas-режим DOCX: страница целиком, один кадр на страницу. */
 async function captureDocxCanvas(
   page: Page,
   viewer: StableFrameViewer,
   plan: CapturePlan,
   ctx: CaptureFixtureContext,
 ): Promise<BackendResult> {
-  const captures: CapturedImage[] = [];
-  let stableHashes: [string, string] = ['', ''];
-  let timeToStableMs = 0;
-  // Число страниц документа — до цикла: оно не зависит от того, какие
-  // страницы просит manifest, и нужно структурной проверке.
+  if (ctx.docxWindow === undefined) {
+    // Снимок окна вместо страницы молча уехал бы в эталон обрезанным: это
+    // ровно та ошибка, ради которой страница снимается кадром её размера.
+    throw new CaptureError(
+      'open-failed',
+      'docx.print-layout needs the capture window (ctx.docxWindow): a viewport-sized ' +
+        'frame holds only part of a page',
+    );
+  }
+  const window = ctx.docxWindow;
   const pageCount = await page.evaluate(
     () => (globalThis as unknown as PageWindow).docConverter?.viewer.pageCount ?? 0,
   );
+  const captures: CapturedImage[] = [];
+  let stableHashes: [string, string] = ['', ''];
+  let timeToStableMs = 0;
   for (const capture of plan.captures) {
     if (capture.kind !== 'docx-page') {
       throw new CaptureError(
@@ -618,18 +785,14 @@ async function captureDocxCanvas(
         `capture "${capture.id}" is ${capture.kind}, but view mode "${plan.view.mode}" expects docx-page`,
       );
     }
-    const page_ = requireDocxPage(capture);
-    await assertPageExists(page, page_.pageNumber, capture.id);
-    const { image, stable } = await captureStableFrame({
-      outDir: ctx.outDir,
-      capture,
+    await assertPageExists(page, requireDocxPage(capture).pageNumber, capture.id);
+    const { image, stable } = await captureDocxPageFrame({
+      page,
       viewer,
-      change: async () => {
-        await page.evaluate((index) => {
-          (globalThis as unknown as PageWindow).docConverter?.viewer.showPage?.(index);
-        }, page_.pageNumber - 1);
-      },
+      window,
+      capture,
       options: stableOptions(ctx),
+      outDir: ctx.outDir,
     });
     stableHashes = stable.hashes;
     timeToStableMs = Math.max(timeToStableMs, stable.elapsedMs);

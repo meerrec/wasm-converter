@@ -15,7 +15,7 @@ import { encodePng } from '../src/diff/png.js';
 import { sha256Hex } from '../src/hash.js';
 import { REPO_ROOT } from '../src/paths.js';
 import type { Manifest } from '../src/manifest.js';
-import { CAUSES, exitCodeFor, parseOverrides, runOracle } from '../src/run.js';
+import { CAUSES, draftGateFailure, exitCodeFor, parseOverrides, runOracle } from '../src/run.js';
 import type { CaptureResult, ResultType, RunReport, RuntimeMetadata } from '../src/types.js';
 
 /** Отчёт с заданными типами результатов и нулевыми остальными полями. */
@@ -326,6 +326,7 @@ describe('runOracle: доказательство стабильности на 
           sha256: sha256Hex(page1),
           width: 2,
           height: 2,
+          frame: { cssWidth: 2, cssHeight: 2 },
           pageNumber: 1,
           stableHashes: ['aaa1', 'aaa1'],
           timeToStableMs: 11,
@@ -337,6 +338,7 @@ describe('runOracle: доказательство стабильности на 
           sha256: sha256Hex(page2),
           width: 2,
           height: 2,
+          frame: { cssWidth: 2, cssHeight: 2 },
           pageNumber: 2,
           stableHashes: ['bbb2', 'bbb2'],
           timeToStableMs: 22,
@@ -383,5 +385,51 @@ describe('runOracle: доказательство стабильности на 
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('draftGateFailure', () => {
+  it('допускает черновой прогон, где нет ничего, кроме missing-reference', () => {
+    expect(draftGateFailure(reportOf('match', 'missing-reference'), 2)).toBeNull();
+  });
+
+  it('допускает черновой прогон, где все существующие эталоны совпали', () => {
+    expect(draftGateFailure(reportOf('match', 'match'), 0)).toBeNull();
+  });
+
+  // Ровно тот случай, который пропускала прежняя проверка кода 2: эталон есть
+  // у одной пары, и именно он разъехался.
+  it('отказывает при visual-diff, спрятанном за кодом 2 из-за missing-reference', () => {
+    const report = reportOf('visual-diff', ...Array.from({ length: 83 }, () => 'missing-reference' as const));
+    expect(exitCodeFor(report)).toBe(2);
+    const failure = draftGateFailure(report, 2);
+    expect(failure).toContain('visual-diff=1');
+  });
+
+  it('отказывает при page-mismatch в черновом прогоне', () => {
+    const failure = draftGateFailure(reportOf('page-mismatch', 'missing-reference'), 2);
+    expect(failure).toContain('page-mismatch=1');
+  });
+
+  it('отказывает при capture-error', () => {
+    expect(draftGateFailure(reportOf('capture-error', 'missing-reference'), 2)).toContain(
+      'capture-error=1',
+    );
+  });
+
+  it('отказывает при harness-error', () => {
+    expect(draftGateFailure(reportOf('harness-error'), 3)).toContain('exited with code 3');
+  });
+
+  it('отказывает при коде 1, даже если счётчики нулевые', () => {
+    expect(draftGateFailure(reportOf('match'), 1)).toContain('exited with code 1');
+  });
+
+  it('отказывает, когда счётчика нет: отчёт без числа не судит', () => {
+    const report = reportOf('match');
+    const summary: Partial<RunReport['summary']> = { ...report.summary };
+    delete summary['visual-diff'];
+    const broken = { ...report, summary: summary as RunReport['summary'] };
+    expect(draftGateFailure(broken, 0)).toContain('visual-diff is not a number');
   });
 });

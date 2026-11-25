@@ -155,11 +155,12 @@ jobs:
 
       # Черновой корпус (baselineId: null) не обязан быть полным: эталоны
       # доснимаются по одной фикстуре, и `missing-reference` — ожидаемое
-      # состояние. Терпится ровно оно: код 2 принимается, только если в
-      # отчёте нет ни `capture-error`, ни `harness-error`. Всё остальное
-      # валит джобу и в черновом режиме — `visual-diff`/`page-mismatch` (1)
-      # это регрессия против уже принятых эталонов, код 3 — сломанный
-      # контур. Принятый baseline обязан пройти целиком.
+      # состояние. Терпится ровно оно: существующие эталоны остаются жёстким
+      # гейтом регрессии и в черновом режиме. Кода 2 для этого мало —
+      # `exitCodeFor` отдаёт его и на `missing-reference`, и на любом
+      # `capture-error`, поэтому «83 пары без эталона + 1 visual-diff» тоже
+      # дал бы 2. Судью держит `visual-oracle gate`: вердикт по счётчикам
+      # `report.json` (тесты — tools/visual-oracle/test/run.spec.ts).
       - name: run oracle
         run: |
           set -uo pipefail
@@ -168,34 +169,16 @@ jobs:
           pnpm visual-oracle run --corpus test-fixtures/strict-viewer/corpus.json --out "$VISUAL_ORACLE_OUT"
           rc=$?
           set -e
-          if [ "$baseline" != "null" ]; then
-            exit "$rc"
-          fi
           report="$VISUAL_ORACLE_OUT/report.json"
           if [ ! -f "$report" ]; then
-            echo "::error::черновой прогон не оставил $report (код $rc) — судить не по чему"
+            echo "::error::прогон не оставил $report (код $rc) — судить не по чему"
             exit 1
           fi
-          counters=$(jq -r '.summary | "capture-error=\(."capture-error") harness-error=\(."harness-error") visual-diff=\(."visual-diff") page-mismatch=\(."page-mismatch") missing-reference=\(."missing-reference")"' "$report")
-          capture_errors=$(jq -r '.summary["capture-error"] // -1' "$report")
-          harness_errors=$(jq -r '.summary["harness-error"] // -1' "$report")
-          case "$rc" in
-            0)
-              echo "::notice::черновой корпус (baselineId: null): все существующие эталоны совпали"
-              ;;
-            2)
-              if [ "$capture_errors" -eq 0 ] && [ "$harness_errors" -eq 0 ]; then
-                echo "::notice::черновой корпус (baselineId: null): только missing-reference — гейта нет"
-              else
-                echo "::error::черновой прогон упал кодом 2 не только на missing-reference: $counters"
-                exit 1
-              fi
-              ;;
-            *)
-              echo "::error::черновой прогон упал кодом $rc: $counters"
-              exit 1
-              ;;
-          esac
+          if [ "$baseline" != "null" ]; then
+            pnpm visual-oracle gate --report "$report" --run-exit-code "$rc"
+            exit $?
+          fi
+          pnpm visual-oracle gate --report "$report" --run-exit-code "$rc" --draft
 
       # Отчёт нужен и после падения прогона: по нему видно, что именно
       # разъехалось, — ровно как у oracle.yml.

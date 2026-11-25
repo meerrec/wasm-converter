@@ -8,10 +8,15 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { captureStableFrame } from '../src/capture/capture.js';
+import {
+  captureDocxPageFrame,
+  captureStableFrame,
+  pageFrameSize,
+} from '../src/capture/capture.js';
 import { CAPTURE_ERROR_CODES, CaptureError, resultTypeForCode } from '../src/capture/errors.js';
 import { encodePng } from '../src/diff/png.js';
 import type { ManifestCapture } from '../src/manifest.js';
+import type { Page } from 'playwright';
 import { pdftoppmArgs, RASTER_DPI } from '../src/capture/rasterize.js';
 import {
   sha256Hex,
@@ -350,5 +355,97 @@ describe('коды ошибок захвата', () => {
     expect(error).toBeInstanceOf(Error);
     expect(error.code).toBe('missing-tool');
     expect(error.message).toBe('pdftoppm is not available');
+  });
+});
+
+describe('pageFrameSize', () => {
+  it('вписывает целую A4-страницу в окно 1440×900 с полями', () => {
+    // Портретная A4 при 96 dpi: 794 × 1123 CSS px — выше окна.
+    const frame = pageFrameSize({ width: 794, height: 1123 }, { width: 1440, height: 900 });
+    expect(frame.width).toBeGreaterThanOrEqual(794);
+    expect(frame.height).toBeGreaterThanOrEqual(1123);
+    expect(frame).toEqual({ width: 794 + 900, height: 1123 + 900 });
+  });
+
+  it('не обрезает дробный размер страницы', () => {
+    expect(pageFrameSize({ width: 793.4, height: 1122.2 }, { width: 1440, height: 900 })).toEqual({
+      width: 794 + 900,
+      height: 1123 + 900,
+    });
+  });
+});
+
+describe('captureDocxPageFrame', () => {
+  /** Страница с одной A4-страницей и вьюером, готовым отдать кадр. */
+  function setup() {
+    // Портретная A4 при 96 dpi: выше окна 1440×900.
+    const pageSize = { width: 794, height: 1123 };
+    const applied: ({ width: number; height: number } | null)[] = [];
+    const state = { scrollTop: -1 };
+    const page = {
+      evaluate: async (fn: (...args: never[]) => unknown) => {
+        const source = String(fn);
+        // `showPage` — единственное изменение, которое тест должен заметить:
+        // порядок «окно → страница» и прокрутка на ноль.
+        if (source.includes('showPage')) {
+          state.scrollTop = 0;
+          return undefined;
+        }
+        if (source.includes('pages')) return { width: pageSize.width, height: pageSize.height };
+        return undefined;
+      },
+    } as unknown as Page;
+    const framePng = encodePng({ width: 2, height: 2, data: new Uint8Array(2 * 2 * 4) });
+    const viewer: StableFrameViewer = {
+      onTick(handler) {
+        // Стабильное состояние: тик приходит сразу после подписки, кадры
+        // одинаковые, и `waitForStableFrame` заканчивается на втором опросе.
+        queueMicrotask(() => handler(undefined));
+        return () => undefined;
+      },
+      async exportPng() {
+        return framePng;
+      },
+    };
+    const window = {
+      async measure() {
+        return { width: 1440, height: 900 };
+      },
+      async apply(_page: Page, size: { width: number; height: number } | null) {
+        applied.push(size);
+      },
+      async exportPng() {
+        throw new Error('окно не участвует в пути кадра страницы');
+      },
+    };
+    const capture: ManifestCapture = {
+      id: 'page-1',
+      kind: 'docx-page',
+      pageNumber: 1,
+      masks: [],
+    } as unknown as ManifestCapture;
+    return { page, viewer, window, capture, applied, state };
+  }
+
+  it('ставит окно по размеру страницы, возвращает его и подписывает кадр', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'oracle-page-'));
+    try {
+      const { page, viewer, window, capture, applied, state } = setup();
+      const { image } = await captureDocxPageFrame({
+        page,
+        viewer,
+        window,
+        capture,
+        options: {},
+        outDir: root,
+      });
+      expect(applied).toEqual([{ width: 794 + 900, height: 1123 + 900 }, null]);
+      expect(state.scrollTop).toBe(0);
+      expect(image.frame).toEqual({ cssWidth: 794 + 900, cssHeight: 1123 + 900 });
+      // В файл ушло именно стабильное доказательство, а не свежий снимок.
+      expect(image.sha256).toBe(sha256Hex(await readFile(image.path)));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

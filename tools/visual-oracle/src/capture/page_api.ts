@@ -13,6 +13,8 @@ export interface PageViewerHandle {
   readonly renderMode: 'worker' | 'main';
   readonly zoom: number;
   readonly pageCount?: number;
+  /** Раскладка страниц в пикселях раскладки (до зума) — нужна кадру страницы. */
+  readonly pages?: readonly { readonly width: number; readonly height: number }[];
   readonly sheets?: readonly { index: number; name: string; hidden?: boolean }[];
   readonly sheetIndex?: number;
   showPage?(index: number): void;
@@ -35,10 +37,19 @@ export interface PageBridge {
   readonly viewer: PageViewerHandle;
 }
 
-/** Элемент, у которого сценарий читает значение или текст. */
+/** Элемент, у которого сценарий читает значение, текст и размеры. */
 export interface PageElement {
   readonly value?: string;
   readonly textContent: string | null;
+  /** Видимые размеры элемента в CSS-пикселях. */
+  readonly clientWidth?: number;
+  readonly clientHeight?: number;
+  /** Инлайновые размеры, которые ставит окно захвата страницы. */
+  readonly style?: {
+    width: string;
+    height: string;
+    flex: string;
+  };
 }
 
 /** Загруженный шрифт: имя семейства и состояние. */
