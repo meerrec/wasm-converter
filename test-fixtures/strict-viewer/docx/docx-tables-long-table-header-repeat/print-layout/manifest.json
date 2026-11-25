@@ -1,0 +1,123 @@
+{
+  "schemaVersion": "1.1.0",
+  "corpus": {
+    "id": "strict-viewer-1.0.0",
+    "version": "1.0.0",
+    "matrixVersion": "1.0.0",
+    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-d7102e867f2c",
+    "storage": {
+      "kind": "git-lfs",
+      "rootUri": "test-fixtures/strict-viewer"
+    }
+  },
+  "source": {
+    "path": "docx/tables/long_table_header_repeat.docx",
+    "format": "docx",
+    "sha256": "f09a41d91752cbab46f9f5ea15d04c82b0bd6fd90c0586fd6f4bf7c9e005dbd8",
+    "bytes": 3857
+  },
+  "reference": {
+    "provider": "office-online",
+    "application": "word-online",
+    "capturedAt": "2026-11-25T14:29:50Z",
+    "captureMethod": "semi-automated",
+    "operator": "irek"
+  },
+  "environment": {
+    "os": {
+      "name": "macOS",
+      "version": "26.6.1",
+      "architecture": "arm64"
+    },
+    "browser": {
+      "name": "chromium",
+      "version": "unknown"
+    },
+    "applicationZoomPercent": 100,
+    "browserZoomPercent": 100,
+    "locale": "ru-RU",
+    "timezone": "UTC",
+    "fonts": {
+      "package": "carlito-subset",
+      "version": "1.104",
+      "assets": [
+        {
+          "family": "Carlito",
+          "style": "bold",
+          "weight": 700,
+          "sha256": "f339451ca469d156af7898ea484218157ed02d5b669f01db80a8202414eef6d5"
+        },
+        {
+          "family": "Carlito",
+          "style": "italic",
+          "weight": 700,
+          "sha256": "c3da8b7ba6246c3cd976b106e7f96dd53be5a5639e615cf96d653b98687fdeb1"
+        },
+        {
+          "family": "Carlito",
+          "style": "italic",
+          "weight": 400,
+          "sha256": "ad8db570b73fc8f3486ad6125c541d88faeadd89107c2f62a4db71293c33f0ef"
+        },
+        {
+          "family": "Carlito",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "fab04db7d49ce4ae1eb55fae98a09e8d0690c860e2c05454dbd1c0951e1bfac2"
+        }
+      ]
+    },
+    "viewportCss": {
+      "width": 1440,
+      "height": 900
+    },
+    "deviceScaleFactor": 1,
+    "colorScheme": "light"
+  },
+  "view": {
+    "format": "docx",
+    "mode": "print-layout",
+    "revisions": "accepted",
+    "comments": "hidden"
+  },
+  "dynamicData": {
+    "dates": "fixed-value",
+    "fields": "cached-result",
+    "formulaCache": {
+      "policy": "cached-values-only",
+      "dirty": false,
+      "fullCalcOnLoad": false,
+      "forceFullCalc": false
+    },
+    "externalLinks": "cached-values-no-network"
+  },
+  "comparisonProfile": "visual-v1",
+  "captures": [
+    {
+      "id": "page-1",
+      "kind": "docx-page",
+      "pageNumber": 1,
+      "image": {
+        "uri": "docx/docx-tables-long-table-header-repeat/print-layout/reference/page-1.png",
+        "sha256": "161528a1654441d7d7667db091b8944d1d2e83fa59b6d7da112b24361138844f",
+        "width": 1440,
+        "height": 692,
+        "bytes": 146103,
+        "colorType": "RGBA8"
+      }
+    },
+    {
+      "id": "page-2",
+      "kind": "docx-page",
+      "pageNumber": 2,
+      "image": {
+        "uri": "docx/docx-tables-long-table-header-repeat/print-layout/reference/page-2.png",
+        "sha256": "08f90e3b3ff625f1a0bc476d09710bdd342b166e8b402652abeae6e6dbbebc1f",
+        "width": 1440,
+        "height": 692,
+        "bytes": 65737,
+        "colorType": "RGBA8"
+      }
+    }
+  ]
+}
