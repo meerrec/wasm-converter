@@ -1,0 +1,613 @@
+{
+  "schemaVersion": "1.0.0",
+  "generatedAt": "2026-11-26T01:58:48.728Z",
+  "engineRevision": "e00591a-dirty",
+  "corpusId": "strict-viewer-1.0.0",
+  "corpusVersion": "1.0.0",
+  "matrixVersion": "1.0.0",
+  "baselineId": null,
+  "summary": {
+    "total": 8,
+    "match": 0,
+    "visual-diff": 8,
+    "page-mismatch": 0,
+    "missing-reference": 0,
+    "capture-error": 0,
+    "harness-error": 0
+  },
+  "byCause": {
+    "parse": 0,
+    "model": 0,
+    "layout": 8,
+    "font": 0,
+    "render": 0,
+    "harness": 0,
+    "reference": 0
+  },
+  "byTag": {
+    "bidi": {
+      "total": 0,
+      "match": 0
+    },
+    "charts": {
+      "total": 0,
+      "match": 0
+    },
+    "conditional": {
+      "total": 0,
+      "match": 0
+    },
+    "controls": {
+      "total": 0,
+      "match": 0
+    },
+    "fonts": {
+      "total": 0,
+      "match": 0
+    },
+    "formats": {
+      "total": 0,
+      "match": 0
+    },
+    "formulas": {
+      "total": 1,
+      "match": 0
+    },
+    "geometry": {
+      "total": 7,
+      "match": 0
+    },
+    "headers": {
+      "total": 0,
+      "match": 0
+    },
+    "headers-footers": {
+      "total": 0,
+      "match": 0
+    },
+    "images": {
+      "total": 0,
+      "match": 0
+    },
+    "links": {
+      "total": 1,
+      "match": 0
+    },
+    "locale": {
+      "total": 0,
+      "match": 0
+    },
+    "math": {
+      "total": 0,
+      "match": 0
+    },
+    "notes": {
+      "total": 0,
+      "match": 0
+    },
+    "numbering": {
+      "total": 0,
+      "match": 0
+    },
+    "objects": {
+      "total": 0,
+      "match": 0
+    },
+    "pagination": {
+      "total": 0,
+      "match": 0
+    },
+    "pivot": {
+      "total": 0,
+      "match": 0
+    },
+    "print": {
+      "total": 0,
+      "match": 0
+    },
+    "review": {
+      "total": 0,
+      "match": 0
+    },
+    "sections": {
+      "total": 0,
+      "match": 0
+    },
+    "sheets": {
+      "total": 1,
+      "match": 0
+    },
+    "styles": {
+      "total": 0,
+      "match": 0
+    },
+    "tables": {
+      "total": 0,
+      "match": 0
+    },
+    "text": {
+      "total": 0,
+      "match": 0
+    },
+    "unsupported": {
+      "total": 0,
+      "match": 0
+    },
+    "values": {
+      "total": 3,
+      "match": 0
+    }
+  },
+  "captures": [
+    {
+      "fixtureId": "xlsx-layout-broken-link",
+      "format": "xlsx",
+      "mode": "normal",
+      "captureId": "sheet-0",
+      "resultType": "visual-diff",
+      "cause": "layout",
+      "causeSource": "rule",
+      "causeEvidence": "rule=layout; 1 region(s), 13.46% of pixels",
+      "reference": {
+        "uri": "../../test-fixtures/strict-viewer/xlsx/xlsx-layout-broken-link/normal/reference/sheet-0.png",
+        "sha256": "8fd1de469ec3522709b8eab19eb95820e08a24b8c7b7333c2f5f45c0cf0e099e",
+        "width": 1440,
+        "height": 682
+      },
+      "actual": {
+        "uri": "xlsx-layout-broken-link/normal/sheet-0.png",
+        "sha256": "d9debde10bc925be780db75413cdf631d6d1a430b515f156c5ebbdb59d6cb9a4",
+        "width": 1440,
+        "height": 682
+      },
+      "diffImage": "xlsx-layout-broken-link/normal/diff/sheet-0.png",
+      "metrics": {
+        "diffPixels": 132181,
+        "diffRatio": 0.13459290485500164,
+        "maxChannelDelta": 255,
+        "ssim": 0.830311
+      },
+      "regions": [
+        {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 682
+        }
+      ],
+      "runtime": {
+        "engineRevision": "e00591a-dirty",
+        "transport": "sab",
+        "renderMode": "worker",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "dpr": 1,
+        "zoom": 1,
+        "fonts": [],
+        "fontSubstitutions": [],
+        "featureSupport": null,
+        "timeToStableMs": 86,
+        "stableHashes": [
+          "d9debde10bc925be780db75413cdf631d6d1a430b515f156c5ebbdb59d6cb9a4",
+          "d9debde10bc925be780db75413cdf631d6d1a430b515f156c5ebbdb59d6cb9a4"
+        ],
+        "captureBackend": "canvas"
+      },
+      "error": null
+    },
+    {
+      "fixtureId": "xlsx-layout-column-widths",
+      "format": "xlsx",
+      "mode": "normal",
+      "captureId": "sheet-0",
+      "resultType": "visual-diff",
+      "cause": "layout",
+      "causeSource": "rule",
+      "causeEvidence": "rule=layout; 1 region(s), 42.17% of pixels",
+      "reference": {
+        "uri": "../../test-fixtures/strict-viewer/xlsx/xlsx-layout-column-widths/normal/reference/sheet-0.png",
+        "sha256": "e871e8520506ae934b6d7436ea02335816badccb69f6a2ab4f7d90ac8735fc65",
+        "width": 1440,
+        "height": 682
+      },
+      "actual": {
+        "uri": "xlsx-layout-column-widths/normal/sheet-0.png",
+        "sha256": "816edc3a313a5aa812f44ac58daa6ba421a4164155d088fe566445f186113c28",
+        "width": 1440,
+        "height": 682
+      },
+      "diffImage": "xlsx-layout-column-widths/normal/diff/sheet-0.png",
+      "metrics": {
+        "diffPixels": 414130,
+        "diffRatio": 0.4216866243075921,
+        "maxChannelDelta": 245,
+        "ssim": 0.619345
+      },
+      "regions": [
+        {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 682
+        }
+      ],
+      "runtime": {
+        "engineRevision": "e00591a-dirty",
+        "transport": "sab",
+        "renderMode": "worker",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "dpr": 1,
+        "zoom": 1,
+        "fonts": [],
+        "fontSubstitutions": [],
+        "featureSupport": null,
+        "timeToStableMs": 70,
+        "stableHashes": [
+          "816edc3a313a5aa812f44ac58daa6ba421a4164155d088fe566445f186113c28",
+          "816edc3a313a5aa812f44ac58daa6ba421a4164155d088fe566445f186113c28"
+        ],
+        "captureBackend": "canvas"
+      },
+      "error": null
+    },
+    {
+      "fixtureId": "xlsx-layout-frozen-columns",
+      "format": "xlsx",
+      "mode": "normal",
+      "captureId": "sheet-0",
+      "resultType": "visual-diff",
+      "cause": "layout",
+      "causeSource": "rule",
+      "causeEvidence": "rule=layout; 1 region(s), 20.24% of pixels",
+      "reference": {
+        "uri": "../../test-fixtures/strict-viewer/xlsx/xlsx-layout-frozen-columns/normal/reference/sheet-0.png",
+        "sha256": "bd14930d73c4913bd88a88286d3e3c2e626148d36108f7c13b4be0316046c63d",
+        "width": 1440,
+        "height": 682
+      },
+      "actual": {
+        "uri": "xlsx-layout-frozen-columns/normal/sheet-0.png",
+        "sha256": "2a13ab17659fdb97e95c569cdc5558cdb0d5f84ffdf90512a7f85592ec9f1eee",
+        "width": 1440,
+        "height": 682
+      },
+      "diffImage": "xlsx-layout-frozen-columns/normal/diff/sheet-0.png",
+      "metrics": {
+        "diffPixels": 198800,
+        "diffRatio": 0.2024275008145976,
+        "maxChannelDelta": 255,
+        "ssim": 0.578964
+      },
+      "regions": [
+        {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 682
+        }
+      ],
+      "runtime": {
+        "engineRevision": "e00591a-dirty",
+        "transport": "sab",
+        "renderMode": "worker",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "dpr": 1,
+        "zoom": 1,
+        "fonts": [],
+        "fontSubstitutions": [],
+        "featureSupport": null,
+        "timeToStableMs": 81,
+        "stableHashes": [
+          "2a13ab17659fdb97e95c569cdc5558cdb0d5f84ffdf90512a7f85592ec9f1eee",
+          "2a13ab17659fdb97e95c569cdc5558cdb0d5f84ffdf90512a7f85592ec9f1eee"
+        ],
+        "captureBackend": "canvas"
+      },
+      "error": null
+    },
+    {
+      "fixtureId": "xlsx-layout-hidden-columns",
+      "format": "xlsx",
+      "mode": "normal",
+      "captureId": "sheet-0",
+      "resultType": "visual-diff",
+      "cause": "layout",
+      "causeSource": "rule",
+      "causeEvidence": "rule=layout; 2 region(s), 32.86% of pixels",
+      "reference": {
+        "uri": "../../test-fixtures/strict-viewer/xlsx/xlsx-layout-hidden-columns/normal/reference/sheet-0.png",
+        "sha256": "eb2c7155b512f90aa88d505a4afff4d6b80d9e0fbc0e2a25c1e30893e6e61f2b",
+        "width": 1440,
+        "height": 682
+      },
+      "actual": {
+        "uri": "xlsx-layout-hidden-columns/normal/sheet-0.png",
+        "sha256": "17ac6b54bbe8ba7e00de0a71f7cfeb715a18a82850316356619a92becfd126fd",
+        "width": 1440,
+        "height": 682
+      },
+      "diffImage": "xlsx-layout-hidden-columns/normal/diff/sheet-0.png",
+      "metrics": {
+        "diffPixels": 322748,
+        "diffRatio": 0.32863717823395244,
+        "maxChannelDelta": 255,
+        "ssim": 0.637778
+      },
+      "regions": [
+        {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 682
+        },
+        {
+          "x": 0,
+          "y": 96,
+          "width": 24,
+          "height": 48
+        }
+      ],
+      "runtime": {
+        "engineRevision": "e00591a-dirty",
+        "transport": "sab",
+        "renderMode": "worker",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "dpr": 1,
+        "zoom": 1,
+        "fonts": [],
+        "fontSubstitutions": [],
+        "featureSupport": null,
+        "timeToStableMs": 82,
+        "stableHashes": [
+          "17ac6b54bbe8ba7e00de0a71f7cfeb715a18a82850316356619a92becfd126fd",
+          "17ac6b54bbe8ba7e00de0a71f7cfeb715a18a82850316356619a92becfd126fd"
+        ],
+        "captureBackend": "canvas"
+      },
+      "error": null
+    },
+    {
+      "fixtureId": "xlsx-layout-hidden-rows",
+      "format": "xlsx",
+      "mode": "normal",
+      "captureId": "sheet-0",
+      "resultType": "visual-diff",
+      "cause": "layout",
+      "causeSource": "rule",
+      "causeEvidence": "rule=layout; 1 region(s), 19.72% of pixels",
+      "reference": {
+        "uri": "../../test-fixtures/strict-viewer/xlsx/xlsx-layout-hidden-rows/normal/reference/sheet-0.png",
+        "sha256": "031f57720f096ccd6de226504e8aba837e0c91bbeb604f9649b897b1d63717c5",
+        "width": 1440,
+        "height": 682
+      },
+      "actual": {
+        "uri": "xlsx-layout-hidden-rows/normal/sheet-0.png",
+        "sha256": "127797cc51b21101726647dd4f087d8b4801030d8569ef8d7004df79577e9b9e",
+        "width": 1440,
+        "height": 682
+      },
+      "diffImage": "xlsx-layout-hidden-rows/normal/diff/sheet-0.png",
+      "metrics": {
+        "diffPixels": 193657,
+        "diffRatio": 0.19719065656565657,
+        "maxChannelDelta": 255,
+        "ssim": 0.578522
+      },
+      "regions": [
+        {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 682
+        }
+      ],
+      "runtime": {
+        "engineRevision": "e00591a-dirty",
+        "transport": "sab",
+        "renderMode": "worker",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "dpr": 1,
+        "zoom": 1,
+        "fonts": [],
+        "fontSubstitutions": [],
+        "featureSupport": null,
+        "timeToStableMs": 79,
+        "stableHashes": [
+          "127797cc51b21101726647dd4f087d8b4801030d8569ef8d7004df79577e9b9e",
+          "127797cc51b21101726647dd4f087d8b4801030d8569ef8d7004df79577e9b9e"
+        ],
+        "captureBackend": "canvas"
+      },
+      "error": null
+    },
+    {
+      "fixtureId": "xlsx-layout-merged",
+      "format": "xlsx",
+      "mode": "normal",
+      "captureId": "sheet-0",
+      "resultType": "visual-diff",
+      "cause": "layout",
+      "causeSource": "rule",
+      "causeEvidence": "rule=layout; 1 region(s), 19.81% of pixels",
+      "reference": {
+        "uri": "../../test-fixtures/strict-viewer/xlsx/xlsx-layout-merged/normal/reference/sheet-0.png",
+        "sha256": "36e6d4e39e49a63f4f389bc1be05c39158722a22a5452b76fbefe18d5fea4450",
+        "width": 1440,
+        "height": 682
+      },
+      "actual": {
+        "uri": "xlsx-layout-merged/normal/sheet-0.png",
+        "sha256": "cb7f0bf8c6fb8c9b724a0e13a3006bd1746af52289d310b76d4320fb7dea0fa0",
+        "width": 1440,
+        "height": 682
+      },
+      "diffImage": "xlsx-layout-merged/normal/diff/sheet-0.png",
+      "metrics": {
+        "diffPixels": 194503,
+        "diffRatio": 0.1980520935158032,
+        "maxChannelDelta": 255,
+        "ssim": 0.585537
+      },
+      "regions": [
+        {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 682
+        }
+      ],
+      "runtime": {
+        "engineRevision": "e00591a-dirty",
+        "transport": "sab",
+        "renderMode": "worker",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "dpr": 1,
+        "zoom": 1,
+        "fonts": [],
+        "fontSubstitutions": [],
+        "featureSupport": null,
+        "timeToStableMs": 87,
+        "stableHashes": [
+          "cb7f0bf8c6fb8c9b724a0e13a3006bd1746af52289d310b76d4320fb7dea0fa0",
+          "cb7f0bf8c6fb8c9b724a0e13a3006bd1746af52289d310b76d4320fb7dea0fa0"
+        ],
+        "captureBackend": "canvas"
+      },
+      "error": null
+    },
+    {
+      "fixtureId": "xlsx-layout-row-heights",
+      "format": "xlsx",
+      "mode": "normal",
+      "captureId": "sheet-0",
+      "resultType": "visual-diff",
+      "cause": "layout",
+      "causeSource": "rule",
+      "causeEvidence": "rule=layout; 1 region(s), 17.22% of pixels",
+      "reference": {
+        "uri": "../../test-fixtures/strict-viewer/xlsx/xlsx-layout-row-heights/normal/reference/sheet-0.png",
+        "sha256": "89463f6c94513e472799a3a9e46d64fdf0dc6f14f07b624b318144613e5ad06c",
+        "width": 1440,
+        "height": 682
+      },
+      "actual": {
+        "uri": "xlsx-layout-row-heights/normal/sheet-0.png",
+        "sha256": "3dad24d31fd4a9b99018b2715fad1398b9d1b23476019033d057446cb1fd6042",
+        "width": 1440,
+        "height": 682
+      },
+      "diffImage": "xlsx-layout-row-heights/normal/diff/sheet-0.png",
+      "metrics": {
+        "diffPixels": 169143,
+        "diffRatio": 0.17222934995112416,
+        "maxChannelDelta": 255,
+        "ssim": 0.62686
+      },
+      "regions": [
+        {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 682
+        }
+      ],
+      "runtime": {
+        "engineRevision": "e00591a-dirty",
+        "transport": "sab",
+        "renderMode": "worker",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "dpr": 1,
+        "zoom": 1,
+        "fonts": [],
+        "fontSubstitutions": [],
+        "featureSupport": null,
+        "timeToStableMs": 89,
+        "stableHashes": [
+          "3dad24d31fd4a9b99018b2715fad1398b9d1b23476019033d057446cb1fd6042",
+          "3dad24d31fd4a9b99018b2715fad1398b9d1b23476019033d057446cb1fd6042"
+        ],
+        "captureBackend": "canvas"
+      },
+      "error": null
+    },
+    {
+      "fixtureId": "xlsx-layout-shrink-to-fit",
+      "format": "xlsx",
+      "mode": "normal",
+      "captureId": "sheet-0",
+      "resultType": "visual-diff",
+      "cause": "layout",
+      "causeSource": "rule",
+      "causeEvidence": "rule=layout; 1 region(s), 20.15% of pixels",
+      "reference": {
+        "uri": "../../test-fixtures/strict-viewer/xlsx/xlsx-layout-shrink-to-fit/normal/reference/sheet-0.png",
+        "sha256": "5b0c7b6c4e6192d1cc87647bde30b8ccdd6cd1d56dd62ef3cbb8cdb75fb501db",
+        "width": 1440,
+        "height": 682
+      },
+      "actual": {
+        "uri": "xlsx-layout-shrink-to-fit/normal/sheet-0.png",
+        "sha256": "ce325c53d9407ff562e84ce9283584a0fd1595d39857e8e0bd668aa3ce5bf3e1",
+        "width": 1440,
+        "height": 682
+      },
+      "diffImage": "xlsx-layout-shrink-to-fit/normal/diff/sheet-0.png",
+      "metrics": {
+        "diffPixels": 197900,
+        "diffRatio": 0.20151107852720757,
+        "maxChannelDelta": 255,
+        "ssim": 0.566711
+      },
+      "regions": [
+        {
+          "x": 0,
+          "y": 0,
+          "width": 1440,
+          "height": 682
+        }
+      ],
+      "runtime": {
+        "engineRevision": "e00591a-dirty",
+        "transport": "sab",
+        "renderMode": "worker",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "dpr": 1,
+        "zoom": 1,
+        "fonts": [],
+        "fontSubstitutions": [],
+        "featureSupport": null,
+        "timeToStableMs": 90,
+        "stableHashes": [
+          "ce325c53d9407ff562e84ce9283584a0fd1595d39857e8e0bd668aa3ce5bf3e1",
+          "ce325c53d9407ff562e84ce9283584a0fd1595d39857e8e0bd668aa3ce5bf3e1"
+        ],
+        "captureBackend": "canvas"
+      },
+      "error": null
+    }
+  ]
+}
