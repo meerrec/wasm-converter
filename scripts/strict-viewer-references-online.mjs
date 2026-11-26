@@ -21,7 +21,7 @@
 
 import { createRequire } from 'node:module';
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -56,11 +56,19 @@ const WORD_HOME = 'https://word.cloud.microsoft/';
  */
 const DOCX_EDGE_ALPHA = { left: 221, right: 220 };
 
+/**
+ * Окно оседания Word Online перед съёмкой, мс. Замер по хэшам кадров:
+ * ранняя раскладка держится ~45 с, переходы на 60–90 с, финал — с ~105 с.
+ * Снимать раньше — значит класть в эталон чужую промежуточную раскладку.
+ */
+const DOCX_SETTLE_MS = 120000;
+
 // Геометрия actual-кадров демо-вьюера при viewport 1440×900, DPR 1, zoom 1.
 // DOCX print-layout — модель «страница + поля» (b7444c9): кадр равен
 // странице плюс 2×pad (pad = 450), страница вверху, следующая страница
-// стека видна снизу, ниже последней — белое продолжение листа. Геометрия
-// per fixture берётся из geometry.json (замер по actual-кадрам оракула).
+// стека видна снизу, ниже последней страницы — прозрачно (окно захвата
+// выше страницы, вьюер красит только документ). Геометрия per fixture
+// берётся из geometry.json (замер по actual-кадрам оракула).
 // Сетка XLSX — непрозрачные 1440×682, содержимое A1 начинается в (44, 21).
 // Эталон обязан совпасть с actual по размерам, иначе сравнение даст
 // page-mismatch без пиксельных метрик (visual-v1, правило 1).
@@ -194,16 +202,30 @@ async function launch() {
   if (process.env.OFFICE_NO_GPU === '1') {
     args.push('--disable-gpu', '--disable-accelerated-2d-canvas');
   }
-  const context = await chromium.launchPersistentContext(PROFILE_DIR, {
-    headless: false,
-    viewport: { width: 1440, height: 900 },
-    deviceScaleFactor: 1,
-    locale: 'ru-RU',
-    timezoneId: 'UTC',
-    colorScheme: 'light',
-    args,
-  });
-  return context;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const context = await chromium.launchPersistentContext(PROFILE_DIR, {
+        headless: false,
+        viewport: { width: 1440, height: 900 },
+        deviceScaleFactor: 1,
+        locale: 'ru-RU',
+        timezoneId: 'UTC',
+        colorScheme: 'light',
+        args,
+      });
+      return context;
+    } catch (error) {
+      // Осиротевший браузер прошлого запуска держит профиль («Opening in
+      // existing browser session»): чистим и повторяем — гонка между
+      // SIGKILL и освобождением SingletonLock на macOS реальна.
+      if (attempt >= 3 || !String(error).includes('Opening in existing browser session')) {
+        throw error;
+      }
+      process.stderr.write('[info] профиль занят прошлым браузером — чистка и повтор запуска\n');
+      await killStaleProfileBrowsers();
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  }
 }
 
 async function cmdLogin() {
@@ -270,6 +292,7 @@ async function cmdLogin() {
 }
 
 async function cmdProbe(args) {
+  await killStaleProfileBrowsers();
   const context = await launch();
   const page = context.pages()[0] ?? (await context.newPage());
   await page.goto(args.url ?? args._[0] ?? HOME_URL, { waitUntil: 'domcontentloaded' }).catch(() => {});
@@ -526,14 +549,21 @@ async function transferToCorpus(outDir, fixture) {
 // Захват Word Online (print-layout)
 // ---------------------------------------------------------------------------
 
-/** Убрать осиротевшие браузеры профиля: persistent-контекст на macOS не всегда гасит процесс. */
+/**
+ * Убрать осиротевшие браузеры профиля: persistent-контекст на macOS не всегда
+ * гасит процесс, а после SIGTERM Chromium оставляет SingletonLock — новый
+ * запуск с тем же профилем упирается в «Opening in existing browser session».
+ */
 async function killStaleProfileBrowsers() {
   try {
-    await execFileAsync('pkill', ['-f', 'office-online-profile']);
+    await execFileAsync('pkill', ['-9', '-f', 'office-online-profile']);
   } catch {
     // pkill завершается с кодом 1, когда процессов нет, — это норма.
   }
   await new Promise((resolve) => setTimeout(resolve, 1500));
+  for (const lock of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+    await rm(path.join(PROFILE_DIR, lock), { force: true }).catch(() => {});
+  }
 }
 
 /** Дождаться фрейма редактора Word Online (wordeditorframe). */
@@ -665,8 +695,8 @@ async function stableContentShot(frame, index, { maxTries = 20, gapMs = 3000 } =
  * Компоновка эталона страницы DOCX: стек страниц Word Online в кадр
  * actual-кадра демо-вьюера. Модель кадра из b7444c9: «страница + поля» —
  * кадр равен странице плюс 2×pad, страница стоит вверху (y=0), следующая
- * страница стека видна ниже, ниже последней страницы вьюер рисует белое
- * продолжение листа шириной в страницу.
+ * страница стека видна ниже, ниже последней страницы кадр прозрачен —
+ * как и actual (окно захвата выше страницы, вьюер красит только документ).
  *
  * Word Online округляет размер страницы вниз, вьюер — вверх (A4: 793×1122
  * против 794×1123), поэтому снимок кладётся со сдвигом +1 по X; нижний
@@ -829,6 +859,13 @@ async function captureDocxPrintLayout(page, fixture, pageGeo, fixturesDir) {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   }).catch(() => {});
   await page.waitForTimeout(1000);
+
+  // Word Online догружает раскладку пачками: замер по хэшам кадра показал
+  // раннюю фазу, держащуюся ~45 с, промежуточные переходы на 60–90 с и
+  // финальное состояние только с ~105 с. Снимки раньше этого окна — чужая
+  // раскладка (другой шрифт/метрики), и эталон из них невалиден. Ждём
+  // финального состояния до съёмки; цикл стабилизации ниже — контроль.
+  await page.waitForTimeout(DOCX_SETTLE_MS);
 
   const expected = Object.keys(pageGeo.pages).length;
   // Страницы материализуются постепенно: ждём полного состава по
