@@ -4,7 +4,7 @@
     "id": "strict-viewer-1.0.0",
     "version": "1.0.0",
     "matrixVersion": "1.0.0",
-    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-1fa8c7c78b28",
+    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-fc8b64f9620c",
     "storage": {
       "kind": "git-lfs",
       "rootUri": "test-fixtures/strict-viewer"
@@ -19,7 +19,7 @@
   "reference": {
     "provider": "office-online",
     "application": "word-online",
-    "capturedAt": "2026-11-25T14:18:49Z",
+    "capturedAt": "2026-11-25T23:59:36Z",
     "captureMethod": "semi-automated",
     "operator": "irek"
   },
@@ -99,10 +99,10 @@
       "pageNumber": 1,
       "image": {
         "uri": "docx/docx-alternate-content-group-shape/print-layout/reference/page-1.png",
-        "sha256": "f5ee193fc2e4a13d735f2b8df020322007e9515bae9fa6795b952234de047635",
-        "width": 1440,
-        "height": 692,
-        "bytes": 5354,
+        "sha256": "e2dd15d9cffed8f2abd897cf9127d57ddaf92ee19f593fe9cd8f3bfea75cbda3",
+        "width": 1694,
+        "height": 2023,
+        "bytes": 24352,
         "colorType": "RGBA8"
       }
     }

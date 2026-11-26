@@ -4,7 +4,7 @@
     "id": "strict-viewer-1.0.0",
     "version": "1.0.0",
     "matrixVersion": "1.0.0",
-    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-8c9f640443fb",
+    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-b7ae79aa7ac3",
     "storage": {
       "kind": "git-lfs",
       "rootUri": "test-fixtures/strict-viewer"
@@ -19,7 +19,7 @@
   "reference": {
     "provider": "office-online",
     "application": "excel-online",
-    "capturedAt": "2026-11-25T17:00:14Z",
+    "capturedAt": "2026-11-26T00:15:09Z",
     "captureMethod": "semi-automated",
     "operator": "irek"
   },
@@ -105,7 +105,7 @@
         "index": 0,
         "name": "Диаграммы"
       },
-      "visibleRange": "A1:V33",
+      "visibleRange": "A1:B2",
       "scroll": {
         "x": 0,
         "y": 0
@@ -113,10 +113,10 @@
       "activeCell": "A1",
       "image": {
         "uri": "xlsx/xlsx-charts-five-kinds/normal/reference/sheet-0.png",
-        "sha256": "3c408977da3ceedbc5cff90091e2d7b4941a61bfd0810c25bf34da3430f78144",
+        "sha256": "5b7df20e4fdbf40490e3716a785d4e6cde6aef647ddb450a4ffdf3d93f45b716",
         "width": 1440,
         "height": 682,
-        "bytes": 43721,
+        "bytes": 82067,
         "colorType": "RGBA8"
       }
     }

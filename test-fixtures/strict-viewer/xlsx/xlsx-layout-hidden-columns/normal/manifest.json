@@ -4,7 +4,7 @@
     "id": "strict-viewer-1.0.0",
     "version": "1.0.0",
     "matrixVersion": "1.0.0",
-    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-6210ed08e60a",
+    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-48864427c8a4",
     "storage": {
       "kind": "git-lfs",
       "rootUri": "test-fixtures/strict-viewer"
@@ -19,7 +19,7 @@
   "reference": {
     "provider": "office-online",
     "application": "excel-online",
-    "capturedAt": "2026-11-25T15:19:50Z",
+    "capturedAt": "2026-11-26T00:21:56Z",
     "captureMethod": "semi-automated",
     "operator": "irek"
   },
@@ -105,7 +105,7 @@
         "index": 0,
         "name": "Скрытые столбцы"
       },
-      "visibleRange": "A1:X34",
+      "visibleRange": "A1:A7",
       "scroll": {
         "x": 0,
         "y": 0
@@ -113,10 +113,10 @@
       "activeCell": "A1",
       "image": {
         "uri": "xlsx/xlsx-layout-hidden-columns/normal/reference/sheet-0.png",
-        "sha256": "d23eb56dc54f5be40bb7096e8a93a51a1d4d06bbfae43dce84d53112bebf3922",
+        "sha256": "eb2c7155b512f90aa88d505a4afff4d6b80d9e0fbc0e2a25c1e30893e6e61f2b",
         "width": 1440,
         "height": 682,
-        "bytes": 35135,
+        "bytes": 57088,
         "colorType": "RGBA8"
       }
     }

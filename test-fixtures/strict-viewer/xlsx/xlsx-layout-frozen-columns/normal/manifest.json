@@ -4,7 +4,7 @@
     "id": "strict-viewer-1.0.0",
     "version": "1.0.0",
     "matrixVersion": "1.0.0",
-    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-6f6f668ec752",
+    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-0392b604728d",
     "storage": {
       "kind": "git-lfs",
       "rootUri": "test-fixtures/strict-viewer"
@@ -19,7 +19,7 @@
   "reference": {
     "provider": "office-online",
     "application": "excel-online",
-    "capturedAt": "2026-11-25T15:19:36Z",
+    "capturedAt": "2026-11-26T01:48:52Z",
     "captureMethod": "semi-automated",
     "operator": "irek"
   },
@@ -105,7 +105,7 @@
         "index": 0,
         "name": "Закреплены столбцы"
       },
-      "visibleRange": "A1:V34",
+      "visibleRange": "A1:B1",
       "scroll": {
         "x": 0,
         "y": 0
@@ -113,10 +113,10 @@
       "activeCell": "A1",
       "image": {
         "uri": "xlsx/xlsx-layout-frozen-columns/normal/reference/sheet-0.png",
-        "sha256": "97aab87cd3c2ff151cb20a75676685e518d392262bedeee37cd23e0454768c8b",
+        "sha256": "bd14930d73c4913bd88a88286d3e3c2e626148d36108f7c13b4be0316046c63d",
         "width": 1440,
         "height": 682,
-        "bytes": 42540,
+        "bytes": 43239,
         "colorType": "RGBA8"
       }
     }

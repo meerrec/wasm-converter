@@ -4,7 +4,7 @@
     "id": "strict-viewer-1.0.0",
     "version": "1.0.0",
     "matrixVersion": "1.0.0",
-    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-d7102e867f2c",
+    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-784693906985",
     "storage": {
       "kind": "git-lfs",
       "rootUri": "test-fixtures/strict-viewer"
@@ -19,7 +19,7 @@
   "reference": {
     "provider": "office-online",
     "application": "word-online",
-    "capturedAt": "2026-11-25T14:29:50Z",
+    "capturedAt": "2026-11-26T00:11:02Z",
     "captureMethod": "semi-automated",
     "operator": "irek"
   },
@@ -99,10 +99,10 @@
       "pageNumber": 1,
       "image": {
         "uri": "docx/docx-tables-long-table-header-repeat/print-layout/reference/page-1.png",
-        "sha256": "161528a1654441d7d7667db091b8944d1d2e83fa59b6d7da112b24361138844f",
-        "width": 1440,
-        "height": 692,
-        "bytes": 146103,
+        "sha256": "954e1eaa4057f35622209b3741e15ab6af0df26c3ab6de9c5c2a8fe707326622",
+        "width": 1694,
+        "height": 2023,
+        "bytes": 230507,
         "colorType": "RGBA8"
       }
     },
@@ -112,10 +112,10 @@
       "pageNumber": 2,
       "image": {
         "uri": "docx/docx-tables-long-table-header-repeat/print-layout/reference/page-2.png",
-        "sha256": "08f90e3b3ff625f1a0bc476d09710bdd342b166e8b402652abeae6e6dbbebc1f",
-        "width": 1440,
-        "height": 692,
-        "bytes": 65737,
+        "sha256": "544b801ad9767866db714d20069059d0a95878333b8d1749f21d658d67a83ff0",
+        "width": 1694,
+        "height": 2023,
+        "bytes": 87118,
         "colorType": "RGBA8"
       }
     }

@@ -4,7 +4,7 @@
     "id": "strict-viewer-1.0.0",
     "version": "1.0.0",
     "matrixVersion": "1.0.0",
-    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-a53519d006bf",
+    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-28bc5dce49ae",
     "storage": {
       "kind": "git-lfs",
       "rootUri": "test-fixtures/strict-viewer"
@@ -19,7 +19,7 @@
   "reference": {
     "provider": "office-online",
     "application": "excel-online",
-    "capturedAt": "2026-11-25T15:16:18Z",
+    "capturedAt": "2026-11-26T00:14:01Z",
     "captureMethod": "semi-automated",
     "operator": "irek"
   },
@@ -113,10 +113,10 @@
       "activeCell": "A1",
       "image": {
         "uri": "xlsx/xlsx-cf-data-bar/normal/reference/sheet-0.png",
-        "sha256": "6f7ce6b09938e417df65d440cef4ce601aa97feeb84df02f689741e520fcdbf1",
+        "sha256": "f0bb2e003beba068bb2ec4786c8b40f21eabfd10d4b772753093c576046348d2",
         "width": 1440,
         "height": 682,
-        "bytes": 52264,
+        "bytes": 53334,
         "colorType": "RGBA8"
       }
     }

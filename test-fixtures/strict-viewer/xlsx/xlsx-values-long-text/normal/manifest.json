@@ -4,7 +4,7 @@
     "id": "strict-viewer-1.0.0",
     "version": "1.0.0",
     "matrixVersion": "1.0.0",
-    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-68e11bea4455",
+    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-8519be68c172",
     "storage": {
       "kind": "git-lfs",
       "rootUri": "test-fixtures/strict-viewer"
@@ -19,7 +19,7 @@
   "reference": {
     "provider": "office-online",
     "application": "excel-online",
-    "capturedAt": "2026-11-25T15:22:56Z",
+    "capturedAt": "2026-11-26T01:44:23Z",
     "captureMethod": "semi-automated",
     "operator": "irek"
   },
@@ -105,7 +105,7 @@
         "index": 0,
         "name": "Длинный текст"
       },
-      "visibleRange": "A1:V34",
+      "visibleRange": "A1:V36",
       "scroll": {
         "x": 0,
         "y": 0
@@ -113,10 +113,10 @@
       "activeCell": "A1",
       "image": {
         "uri": "xlsx/xlsx-values-long-text/normal/reference/sheet-0.png",
-        "sha256": "a45b61f297676a1690075dfca29a266a238d44d3d01695f807076c76f646846d",
+        "sha256": "d4dd9ab769a8784b4c07ef09993c04d2597d6418c2c2390118d1fffc227fa520",
         "width": 1440,
         "height": 682,
-        "bytes": 82609,
+        "bytes": 82050,
         "colorType": "RGBA8"
       }
     }

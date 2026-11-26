@@ -4,7 +4,7 @@
     "id": "strict-viewer-1.0.0",
     "version": "1.0.0",
     "matrixVersion": "1.0.0",
-    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-ca84b7d57258",
+    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-daabf3ca9711",
     "storage": {
       "kind": "git-lfs",
       "rootUri": "test-fixtures/strict-viewer"
@@ -19,7 +19,7 @@
   "reference": {
     "provider": "office-online",
     "application": "excel-online",
-    "capturedAt": "2026-11-25T15:21:09Z",
+    "capturedAt": "2026-11-26T01:38:45Z",
     "captureMethod": "semi-automated",
     "operator": "irek"
   },
@@ -105,7 +105,7 @@
         "index": 0,
         "name": "Отчёт"
       },
-      "visibleRange": "A1:S34",
+      "visibleRange": "A1:W34",
       "scroll": {
         "x": 0,
         "y": 0
@@ -113,10 +113,10 @@
       "activeCell": "A1",
       "image": {
         "uri": "xlsx/xlsx-scale-ten-pages/normal/reference/sheet-0.png",
-        "sha256": "3fe48ebcc4bd6ed6e0893fb88371edb8edff30cacb84559cea0ba76f0a624243",
+        "sha256": "e61556fd9ebcdacc8400052dddf343f946b0aa8e2758d6c0cf62bf1f0bd2803e",
         "width": 1440,
         "height": 682,
-        "bytes": 298021,
+        "bytes": 295911,
         "colorType": "RGBA8"
       }
     }

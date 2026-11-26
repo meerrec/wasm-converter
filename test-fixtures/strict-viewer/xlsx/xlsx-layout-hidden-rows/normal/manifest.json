@@ -4,7 +4,7 @@
     "id": "strict-viewer-1.0.0",
     "version": "1.0.0",
     "matrixVersion": "1.0.0",
-    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-8202598cd599",
+    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-b5daf1444d2e",
     "storage": {
       "kind": "git-lfs",
       "rootUri": "test-fixtures/strict-viewer"
@@ -19,7 +19,7 @@
   "reference": {
     "provider": "office-online",
     "application": "excel-online",
-    "capturedAt": "2026-11-25T15:20:03Z",
+    "capturedAt": "2026-11-26T01:49:34Z",
     "captureMethod": "semi-automated",
     "operator": "irek"
   },
@@ -105,7 +105,7 @@
         "index": 0,
         "name": "Скрытые строки"
       },
-      "visibleRange": "A1:V36",
+      "visibleRange": "A1:V34",
       "scroll": {
         "x": 0,
         "y": 0
@@ -113,10 +113,10 @@
       "activeCell": "A1",
       "image": {
         "uri": "xlsx/xlsx-layout-hidden-rows/normal/reference/sheet-0.png",
-        "sha256": "d7f2b2636617bc3b33fded6d61eba741a12b2ab25cfede843d9018345e3f2514",
+        "sha256": "031f57720f096ccd6de226504e8aba837e0c91bbeb604f9649b897b1d63717c5",
         "width": 1440,
         "height": 682,
-        "bytes": 34919,
+        "bytes": 35074,
         "colorType": "RGBA8"
       }
     }

@@ -4,7 +4,7 @@
     "id": "strict-viewer-1.0.0",
     "version": "1.0.0",
     "matrixVersion": "1.0.0",
-    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-6036ff045ea3",
+    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-92a50d1f8417",
     "storage": {
       "kind": "git-lfs",
       "rootUri": "test-fixtures/strict-viewer"
@@ -19,7 +19,7 @@
   "reference": {
     "provider": "office-online",
     "application": "excel-online",
-    "capturedAt": "2026-11-25T15:20:53Z",
+    "capturedAt": "2026-11-26T01:38:05Z",
     "captureMethod": "semi-automated",
     "operator": "irek"
   },
@@ -105,7 +105,7 @@
         "index": 0,
         "name": "Данные"
       },
-      "visibleRange": "A1:V34",
+      "visibleRange": "A1:V33",
       "scroll": {
         "x": 0,
         "y": 0
@@ -113,10 +113,10 @@
       "activeCell": "A1",
       "image": {
         "uri": "xlsx/xlsx-pivot-basic/normal/reference/sheet-0.png",
-        "sha256": "de5f963ae65fbc3006bc252f39b123db159f77b79ebcc67568d48f67327da373",
+        "sha256": "91cdeae80a96fe681dea42467b5d5e7bc09e41c48a6acb655667f122abe1d623",
         "width": 1440,
         "height": 682,
-        "bytes": 36115,
+        "bytes": 35713,
         "colorType": "RGBA8"
       }
     }
