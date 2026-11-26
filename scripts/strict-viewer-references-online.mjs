@@ -980,17 +980,21 @@ async function waitForExcelGrid(frame, timeoutMs = 240000) {
 async function ensureExcelZoom100(frame, state) {
   const zoom = state.zoom.replace(/\s+/g, '');
   if (zoom === '100%') return;
-  // Ввести 100 в поле зума и подтвердить Enter.
-  await frame.evaluate(() => {
-    const el = [...document.querySelectorAll('input')].find((i) => /^\d+\s*%$/.test(i.value.trim()));
-    if (el === undefined) return;
-    el.focus();
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    setter.call(el, '100');
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+  // Доверенные события Playwright, а не синтетические dispatchEvent:
+  // синтетика ломает контрол зума — поле исчезает из статус-бара
+  // (проверено пробой: inputs/labels пусты после Enter).
+  const index = await frame.evaluate(() => {
+    const inputs = [...document.querySelectorAll('input')];
+    const hit = inputs.findIndex((el) => /^\d+\s*%$/.test(el.value.trim()));
+    return hit;
   });
+  if (index < 0) {
+    throw new Error(`зум Excel Online: ${zoom}, поле зума не найдено`);
+  }
+  const input = frame.locator('input').nth(index);
+  await input.click().catch(() => {});
+  await input.fill('100').catch(() => {});
+  await input.press('Enter').catch(() => {});
   await frame.page().waitForTimeout(3000);
   const after = await frame.evaluate(() => {
     const el = [...document.querySelectorAll('input')].find((i) => /^\d+\s*%$/.test(i.value.trim()));
@@ -1262,56 +1266,68 @@ async function cmdCapture(args) {
         failed += 1;
         continue;
       }
-      try {
-        const captures =
-          fixture.format === 'docx'
-            ? await captureDocxPrintLayout(page, fixture, pageGeo, fixturesDir)
-            : await captureXlsxNormal(page, fixture, pageGeo, fixturesDir);
-        if (double) {
-          // Вторая чистая сессия той же среды: два эталона обязаны
-          // совпасть байтово, расхождение классифицируется как проблема
-          // среды или документа и не маскируется (reference-capture §2 п.4).
-          await context.close().catch(() => {});
-          await killStaleProfileBrowsers();
-          context = await launch();
-          page = context.pages()[0] ?? (await context.newPage());
-          const captures2 =
+      // Две попытки: деградация длинной сессии (дроссели WAC, падение
+      // рендер-процесса) — частая причина одиночных падений, и свежая
+      // сессия их снимает.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const captures =
             fixture.format === 'docx'
               ? await captureDocxPrintLayout(page, fixture, pageGeo, fixturesDir)
               : await captureXlsxNormal(page, fixture, pageGeo, fixturesDir);
-          for (let i = 0; i < captures.length; i += 1) {
-            if (!captures[i].png.equals(captures2[i].png)) {
-              // Диагностика: сохраняем оба кадра, чтобы разобрать причину.
-              await writeFile(
-                path.join(REPO_ROOT, 'target', `double-${fixture.slug}-${captures[i].id}-1.png`),
-                captures[i].png,
-              );
-              await writeFile(
-                path.join(REPO_ROOT, 'target', `double-${fixture.slug}-${captures[i].id}-2.png`),
-                captures2[i].png,
-              );
-              throw new Error(
-                `два захвата ${captures[i].id} различаются — проблема среды или документа`,
-              );
+          if (double) {
+            // Вторая чистая сессия той же среды: два эталона обязаны
+            // совпасть байтово, расхождение классифицируется как проблема
+            // среды или документа и не маскируется (reference-capture §2 п.4).
+            await context.close().catch(() => {});
+            await killStaleProfileBrowsers();
+            context = await launch();
+            page = context.pages()[0] ?? (await context.newPage());
+            const captures2 =
+              fixture.format === 'docx'
+                ? await captureDocxPrintLayout(page, fixture, pageGeo, fixturesDir)
+                : await captureXlsxNormal(page, fixture, pageGeo, fixturesDir);
+            for (let i = 0; i < captures.length; i += 1) {
+              if (!captures[i].png.equals(captures2[i].png)) {
+                // Диагностика: сохраняем оба кадра, чтобы разобрать причину.
+                await writeFile(
+                  path.join(REPO_ROOT, 'target', `double-${fixture.slug}-${captures[i].id}-1.png`),
+                  captures[i].png,
+                );
+                await writeFile(
+                  path.join(REPO_ROOT, 'target', `double-${fixture.slug}-${captures[i].id}-2.png`),
+                  captures2[i].png,
+                );
+                throw new Error(
+                  `два захвата ${captures[i].id} различаются — проблема среды или документа`,
+                );
+              }
             }
+            process.stdout.write('[double] два захвата идентичны\n');
           }
-          process.stdout.write('[double] два захвата идентичны\n');
-        }
-        const { dropDir, importOutput } = await writeDropAndImport({ outDir, corpus, fixture, captures });
-        process.stdout.write(`[ok] ${fixture.id}: ${dropDir}\n${importOutput}\n`);
-        done += 1;
-      } catch (error) {
-        process.stderr.write(`[fail] ${fixture.id}: ${error}\n`);
-        failed += 1;
-        const alive = await page.evaluate(() => 1).then(() => true).catch(() => false);
-        if (page.isClosed() || !alive) {
-          // Рендер-процесс Chromium может падать на OOPIF-скриншотах;
-          // перезапускаем браузер и продолжаем со следующей фикстуры.
-          process.stderr.write('[info] страница закрылась/упала — перезапускаю браузер\n');
+          const { dropDir, importOutput } = await writeDropAndImport({ outDir, corpus, fixture, captures });
+          process.stdout.write(`[ok] ${fixture.id}: ${dropDir}\n${importOutput}\n`);
+          done += 1;
+          break;
+        } catch (error) {
+          const alive = await page.evaluate(() => 1).then(() => true).catch(() => false);
+          if (attempt === 0) {
+            process.stderr.write(`[retry] ${fixture.id}: ${error}\n`);
+          } else {
+            process.stderr.write(`[fail] ${fixture.id}: ${error}\n`);
+            failed += 1;
+          }
+          // Свежая сессия для повтора либо для продолжения после падения.
           await context.close().catch(() => {});
           await killStaleProfileBrowsers();
           context = await launch();
           page = context.pages()[0] ?? (await context.newPage());
+          if (attempt === 0) continue;
+          if (page.isClosed() || !alive) {
+            // Рендер-процесс Chromium может падать на OOPIF-скриншотах;
+            // браузер уже перезапущен выше — фиксируем факт для лога.
+            process.stderr.write('[info] страница закрылась/упала — браузер перезапущен\n');
+          }
         }
       }
     }
