@@ -18,6 +18,7 @@ import { encodePng } from '../src/diff/png.js';
 import type { ManifestCapture } from '../src/manifest.js';
 import type { Page } from 'playwright';
 import { pdftoppmArgs, RASTER_DPI } from '../src/capture/rasterize.js';
+import { pageDocxWindow } from '../src/capture/index.js';
 import {
   sha256Hex,
   waitForStableFrame,
@@ -468,5 +469,96 @@ describe('captureDocxPageFrame', () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('pageDocxWindow', () => {
+  /** Минимальный DOM вьюера: область прокрутки с распоркой стопки страниц. */
+  function fakeDom() {
+    interface Node {
+      attrs: Map<string, string>;
+      children: Node[];
+      parent: Node | null;
+      style: { width: string; height: string; flex: string; cssText: string };
+    }
+    const make = (): Node => ({
+      attrs: new Map(),
+      children: [],
+      parent: null,
+      style: { width: '', height: '', flex: '', cssText: '' },
+    });
+    const wrap = (node: Node): unknown => ({
+      style: node.style,
+      get firstElementChild() {
+        return node.children[0] ? wrap(node.children[0]) : null;
+      },
+      querySelector(selector: string) {
+        const attr = /^\[(.+)\]$/.exec(selector)?.[1];
+        const walk = (n: Node): Node | null => {
+          for (const child of n.children) {
+            if (attr !== undefined && child.attrs.has(attr)) return child;
+            const found = walk(child);
+            if (found) return found;
+          }
+          return null;
+        };
+        const found = walk(node);
+        return found ? wrap(found) : null;
+      },
+      setAttribute(name: string, value: string) {
+        node.attrs.set(name, value);
+      },
+      append(child: { __node: Node }) {
+        child.__node.parent = node;
+        node.children.push(child.__node);
+      },
+      remove() {
+        if (node.parent) node.parent.children = node.parent.children.filter((c) => c !== node);
+        node.parent = null;
+      },
+      __node: node,
+    });
+    const scroller = make();
+    const spacer = make();
+    spacer.parent = scroller;
+    scroller.children.push(spacer);
+    const document = {
+      querySelector: (selector: string) => (selector === '#viewer > div' ? wrap(scroller) : null),
+      createElement: () => wrap(make()),
+    };
+    const page = {
+      evaluate: async (fn: (arg: unknown) => unknown, arg: unknown) => {
+        const saved = (globalThis as { document?: unknown }).document;
+        (globalThis as { document?: unknown }).document = document;
+        try {
+          return await fn(arg);
+        } finally {
+          (globalThis as { document?: unknown }).document = saved;
+        }
+      },
+    } as unknown as Page;
+    return { page, scroller, spacer };
+  }
+
+  it('добавляет под последней страницей хвост в высоту кадра и снимает его со сбросом', async () => {
+    const { page, scroller, spacer } = fakeDom();
+    const window = pageDocxWindow();
+
+    await window.apply(page, { width: 1694, height: 2023 });
+    expect(scroller.style).toMatchObject({ width: '1694px', height: '2023px', flex: 'none' });
+    expect(spacer.children).toHaveLength(1);
+    const tail = spacer.children[0]!;
+    expect(tail.attrs.has('data-oracle-scroll-tail')).toBe(true);
+    expect(tail.style.cssText).toContain('top:100%');
+    expect(tail.style.cssText).toContain('height:2023px');
+
+    // Повторное окно заменяет хвост, а не копит их.
+    await window.apply(page, { width: 1694, height: 2100 });
+    expect(spacer.children).toHaveLength(1);
+    expect(spacer.children[0]!.style.cssText).toContain('height:2100px');
+
+    await window.apply(page, null);
+    expect(spacer.children).toHaveLength(0);
+    expect(scroller.style).toMatchObject({ width: '', height: '', flex: '' });
   });
 });

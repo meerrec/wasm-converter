@@ -1,19 +1,23 @@
 #!/usr/bin/env node
-// Замер геометрии кадров DOCX print-layout (модель «страница + поля») по
-// actual-кадрам оракула и обновление target/actual-frames/geometry.json.
+// Замер геометрии кадров DOCX print-layout (модель «страница + поля») и
+// XLSX normal (начало A1) по actual-кадрам оракула; пишет geometry.json,
+// который читает `strict-viewer-references-online.mjs capture --geometry`.
+// Файла нет (чистый checkout) — он создаётся с нуля; есть — записи
+// замеренных фикстур обновляются, остальные сохраняются.
 //
 // Использование:
-//   node scripts/measure-docx-stack.mjs <out-оракула> [--write geometry.json]
+//   node scripts/measure-docx-stack.mjs <out-оракула> --write <geometry.json>
 //
 // На страницу замеряются: left/width (белый скан строки), height (низ
 // страницы по прозрачному зазору до следующей страницы; у последней
 // страницы наследуется от соседней — продолжение листа делает низ
 // невидимым), nextTop (первый ряд следующей страницы после зазора).
 // Схема geometry.json: <slug>/print-layout = { frame, pages: { page-N:
-// { left, width, height, nextTop } } }. Записи XLSX не трогаются.
+// { left, width, height, nextTop } } }; <slug>/normal = { a1: { a1x, a1y,
+// frameWidth, frameHeight } }.
 
 import { createRequire } from 'node:module';
-import { readFile, writeFile, readdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,6 +41,50 @@ function fixtureSlug(sourcePath) {
     .replace(/[^\p{L}\p{N}]+/gu, '-')
     .replace(/^-+|-+$/g, '');
   return slug.length > 0 ? slug : 'document';
+}
+
+/**
+ * Начало содержимого A1 из actual-кадра XLSX: левая колонка — заголовки строк
+ * (заливка 245), дальше белые ячейки; высота строки заголовков колонок ищется
+ * по той же границе в первой колонке.
+ */
+function measureXlsxA1Origin(png) {
+  const img = PNG.sync.read(png);
+  const at = (x, y) => {
+    const i = (y * img.width + x) * 4;
+    return [img.data[i], img.data[i + 1], img.data[i + 2], img.data[i + 3]];
+  };
+  const isHeader = (x, y) => {
+    const [r, g, b] = at(x, y);
+    return r >= 235 && r <= 250 && Math.abs(r - g) < 6 && Math.abs(g - b) < 6;
+  };
+  // Сканируем строку внутри первой ячейки по вертикали: до границы — заголовок
+  // строки (серый), после — белая ячейка. Берём y чуть ниже середины кадра,
+  // где точно ячейки, а не закреплённые области.
+  const y = Math.min(200, img.height - 1);
+  let a1x = -1;
+  for (let x = 0; x < img.width; x += 1) {
+    if (!isHeader(x, y)) {
+      a1x = x;
+      break;
+    }
+  }
+  // Высота заголовков колонок: по первой колонке поиска A1 нет — сканируем
+  // колонку левее a1x (внутри заголовков строк): сверху угол и заголовок
+  // колонок, граница — первая горизонтальная линия сетки под ними. Проще:
+  // идём по x = a1x + 2 (внутри ячеек) сверху вниз: заголовок колонок серый,
+  // первая ячейка белая.
+  let a1y = -1;
+  for (let yy = 0; yy < img.height; yy += 1) {
+    if (!isHeader(a1x + 2, yy)) {
+      a1y = yy;
+      break;
+    }
+  }
+  if (a1x < 0 || a1y < 0) {
+    throw new Error('не удалось найти начало A1 в actual-кадре');
+  }
+  return { a1x, a1y, frameWidth: img.width, frameHeight: img.height };
 }
 
 function measurePage(pngBuffer) {
@@ -128,14 +176,29 @@ const slugById = new Map(
   corpus.fixtures.map((f) => [f.id, fixtureSlug(f.source.path)]),
 );
 
-const geometry = JSON.parse(
-  await readFile(path.join(REPO_ROOT, 'target', 'actual-frames', 'geometry.json'), 'utf8'),
+const geometry = await readFile(geoPath, 'utf8').then(
+  (text) => JSON.parse(text),
+  (error) => {
+    if (error?.code === 'ENOENT') return {};
+    throw error;
+  },
 );
 
 let measured = 0;
+let measuredXlsx = 0;
 for (const entry of await readdir(actualsDir, { withFileTypes: true })) {
   if (!entry.isDirectory()) continue;
   const fixtureId = entry.name;
+  const sheetPath = path.join(actualsDir, fixtureId, 'normal', 'sheet-0.png');
+  const sheet = await readFile(sheetPath).catch(() => null);
+  if (sheet !== null && slugById.has(fixtureId)) {
+    const a1 = measureXlsxA1Origin(sheet);
+    geometry[`${slugById.get(fixtureId)}/normal`] = { a1 };
+    measuredXlsx += 1;
+    process.stdout.write(
+      `${slugById.get(fixtureId)}: A1@(${a1.a1x},${a1.a1y}), кадр ${a1.frameWidth}×${a1.frameHeight}\n`,
+    );
+  }
   const modeDir = path.join(actualsDir, fixtureId, 'print-layout');
   const pageFiles = (await readdir(modeDir).catch(() => []))
     .filter((name) => /^page-\d+\.png$/.test(name))
@@ -183,5 +246,8 @@ for (const entry of await readdir(actualsDir, { withFileTypes: true })) {
   );
 }
 
+await mkdir(path.dirname(path.resolve(geoPath)), { recursive: true });
 await writeFile(geoPath, `${JSON.stringify(geometry, null, 2)}\n`);
-process.stdout.write(`geometry.json обновлён: ${measured} фикстур docx\n`);
+process.stdout.write(
+  `${geoPath} обновлён: ${measured} фикстур docx, ${measuredXlsx} фикстур xlsx\n`,
+);

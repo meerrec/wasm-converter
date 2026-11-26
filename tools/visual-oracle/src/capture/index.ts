@@ -81,6 +81,9 @@ export interface CaptureSession {
 /** Селектор области прокрутки вьюера: в root-режиме DOM пуст, узла нет. */
 const VIEWER_SCROLLER = '#viewer > div';
 
+/** Метка хвоста прокрутки, который окно кадра добавляет под последней страницей. */
+const DOCX_TAIL_ATTR = 'data-oracle-scroll-tail';
+
 /**
  * Окно захвата DOCX-страницы в настоящей странице.
  *
@@ -94,10 +97,12 @@ export function pageDocxWindow(): DocxCaptureWindow {
   return {
     apply: async (page, size) => {
       await page.evaluate(
-        ({ selector, target }) => {
-          const node = (globalThis as unknown as PageWindow).document.querySelector(selector);
+        ({ selector, target, tailAttr }) => {
+          const doc = (globalThis as unknown as PageWindow).document;
+          const node = doc.querySelector(selector);
           const style = node?.style;
           if (!node || !style) return;
+          node.querySelector?.(`[${tailAttr}]`)?.remove?.();
           if (target === null) {
             style.width = '';
             style.height = '';
@@ -107,8 +112,23 @@ export function pageDocxWindow(): DocxCaptureWindow {
           style.width = `${target.width}px`;
           style.height = `${target.height}px`;
           style.flex = 'none';
+          // Хвост под последней страницей: высота прокрутки — низ последней
+          // страницы, и без запаса в высоту кадра браузер зажал бы
+          // `scrollTop` последней страницы, кадр начался бы с предыдущей.
+          // Хвост — дочерний узел распорки (`top: 100%`), поэтому следует
+          // за её высотой при любой перекладке.
+          const spacer = node.firstElementChild;
+          if (!spacer) return;
+          const tail = doc.createElement('div');
+          tail.setAttribute?.(tailAttr, '');
+          if (tail.style) {
+            tail.style.cssText =
+              'position:absolute;top:100%;left:0;width:1px;pointer-events:none;' +
+              `height:${target.height}px`;
+          }
+          spacer.append?.(tail);
         },
-        { selector: VIEWER_SCROLLER, target: size },
+        { selector: VIEWER_SCROLLER, target: size, tailAttr: DOCX_TAIL_ATTR },
       );
     },
     exportPng: async (page) => {

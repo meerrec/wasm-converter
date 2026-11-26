@@ -49,7 +49,14 @@ export interface PageElement {
     width: string;
     height: string;
     flex: string;
+    cssText: string;
   };
+  /** Узлы, которыми окно захвата добавляет хвост прокрутки под последней страницей. */
+  readonly firstElementChild?: PageElement | null;
+  querySelector?(selector: string): PageElement | null;
+  setAttribute?(name: string, value: string): void;
+  append?(...nodes: PageElement[]): void;
+  remove?(): void;
 }
 
 /** Загруженный шрифт: имя семейства и состояние. */
@@ -72,6 +79,7 @@ export interface PageWindow {
     fonts: PageFontSet;
     querySelector(selector: string): PageElement | null;
     querySelectorAll(selector: string): Iterable<PageElement>;
+    createElement(tag: string): PageElement;
   };
   /** Отписка от тиков предыдущего ожидания. */
   __oracleUnsub?: () => void;

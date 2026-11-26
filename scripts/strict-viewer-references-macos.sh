@@ -558,8 +558,44 @@ record() {
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$reason" >>"$results_file"
 }
 
+# Компонент пути из корпуса: slug без разделителей и «..». Эти имена идут в
+# `rm -rf`, поэтому `../../x` или пустое значение не должны выйти из $OUT.
+is_safe_component() {
+    [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ "$1" != *..* ]]
+}
+
+# Относительный путь исходника внутри каталога фикстур: без ведущего «/»,
+# без сегментов «..» и «.».
+is_safe_relative_path() {
+    local rel="$1" part parts
+    [ -n "$rel" ] && [ "${rel#/}" = "$rel" ] && [ "${rel%/}" = "$rel" ] || return 1
+    IFS='/' read -ra parts <<<"$rel"
+    for part in "${parts[@]}"; do
+        case "$part" in '' | . | ..) return 1 ;; esac
+    done
+}
+
+# Каталог, который скрипт собирается удалить, обязан лежать строго внутри корня.
+assert_child_dir() {
+    local root="$1" dir="$2"
+    case "$dir" in
+        "$root"/?*) ;;
+        *) die "путь «$dir» вне корня «$root» — отказ удалять." ;;
+    esac
+}
+
 while IFS=$'\t' read -r format fixture mode source_rel; do
     label="$format/$fixture/$mode"
+    case "$format" in
+        docx | xlsx) ;;
+        *) die "фикстура «$fixture»: неизвестный формат «$format»." ;;
+    esac
+    is_safe_component "$fixture" ||
+        die "id фикстуры «$fixture» не годится как имя каталога (ожидается slug из букв, цифр, '.', '_', '-')."
+    is_safe_component "$mode" ||
+        die "фикстура «$fixture»: режим «$mode» не годится как имя каталога."
+    is_safe_relative_path "$source_rel" ||
+        die "фикстура «$fixture»: source.path «$source_rel» должен быть относительным путём внутри $fixtures_root."
     action="$(action_of "$format" "$mode")"
 
     if [ "$action" = 'web' ]; then
@@ -585,6 +621,8 @@ while IFS=$'\t' read -r format fixture mode source_rel; do
     source_path="$fixtures_root/$source_rel"
 
     # Повторный прогон не должен оставлять страницы от прошлого захвата.
+    assert_child_dir "$work_root" "$work_dir"
+    assert_child_dir "$drop_root" "$drop_dir"
     rm -rf "$work_dir" "$drop_dir"
     # pages/ нужен до pdftoppm: он не создаёт подкаталог префикса.
     mkdir -p "$work_dir/pages" "$ref_dir"

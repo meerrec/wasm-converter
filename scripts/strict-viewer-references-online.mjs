@@ -12,7 +12,9 @@
 //   login    — открыть office.com в профиле и дождаться входа пользователя.
 //   probe    — снять URL/скриншот/элементы текущей страницы (диагностика DOM).
 //   capture  — снять эталоны по corpus.json: --filter <glob>, --out <dir>,
-//              --fixtures <dir>, --corpus <path>, --only <id>.
+//              --fixtures <dir>, --corpus <path>, --only <id>,
+//              --geometry <path> (по умолчанию target/actual-frames/geometry.json;
+//              создаётся `scripts/measure-docx-stack.mjs` по actual-кадрам оракула).
 //
 // Playwright и pngjs резолвятся из tools/visual-oracle (там они
 // devDependency): корневой node_modules pnpm их не экспортирует.
@@ -32,6 +34,7 @@ const PROBE_DIR = path.join(REPO_ROOT, 'target', 'office-online-probe');
 const DEFAULT_OUT = path.join(REPO_ROOT, 'target', 'strict-viewer-online-out');
 const DEFAULT_CORPUS = path.join(REPO_ROOT, 'test-fixtures', 'strict-viewer', 'corpus.json');
 const DEFAULT_FIXTURES = path.join(REPO_ROOT, 'test-fixtures');
+const DEFAULT_GEOMETRY = path.join(REPO_ROOT, 'target', 'actual-frames', 'geometry.json');
 
 const requireFromOracle = createRequire(
   path.join(REPO_ROOT, 'tools', 'visual-oracle', 'package.json'),
@@ -117,6 +120,48 @@ function parseArgs(argv) {
 }
 
 /** Corpus index: только фикстуры экранных режимов (их и снимает Office Online). */
+/**
+ * Абсолютный путь исходника фикстуры внутри `fixturesDir`.
+ *
+ * `source.path` приходит из corpus.json и уходит на загрузку в Word/Excel
+ * Online: абсолютный путь или `..` выгрузили бы в облако файл вне корпуса.
+ */
+function resolveFixtureSource(fixturesDir, sourcePath) {
+  if (typeof sourcePath !== 'string' || sourcePath === '' || path.isAbsolute(sourcePath)) {
+    throw new Error(`source.path «${sourcePath}» должен быть относительным путём внутри ${fixturesDir}`);
+  }
+  const root = path.resolve(fixturesDir);
+  const resolved = path.resolve(root, sourcePath);
+  const rel = path.relative(root, resolved);
+  if (rel === '' || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+    throw new Error(`source.path «${sourcePath}» выходит за каталог фикстур ${root}`);
+  }
+  return resolved;
+}
+
+/** Путь для подсказки: относительный внутри репозитория, иначе абсолютный. */
+function displayPath(target) {
+  const rel = path.relative(REPO_ROOT, target);
+  return rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel) ? target : rel;
+}
+
+/** geometry.json для захвата; без файла — подсказка, как его получить. */
+async function loadGeometry(geometryPath) {
+  let text;
+  try {
+    text = await readFile(geometryPath, 'utf8');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    throw new Error(
+      `нет ${geometryPath}: геометрия кадров замеряется по actual-кадрам оракула. ` +
+        'Снимите их (`pnpm visual-oracle run --out <dir> ...`) и выполните ' +
+        `\`node scripts/measure-docx-stack.mjs <dir> --write ${displayPath(geometryPath)}\`, ` +
+        'затем повторите capture (или передайте путь через --geometry).',
+    );
+  }
+  return JSON.parse(text);
+}
+
 async function loadScreenFixtures(corpusPath, filter) {
   const corpus = JSON.parse(await readFile(corpusPath, 'utf8'));
   const wanted = [];
@@ -457,50 +502,6 @@ function measureDocxPageRect(png) {
   return { left, width: right - left + 1, frameWidth: img.width, frameHeight: img.height };
 }
 
-/**
- * Начало содержимого A1 из actual-кадра XLSX: левая колонка — заголовки строк
- * (заливка 245), дальше белые ячейки; высота строки заголовков колонок ищется
- * по той же границе в первой колонке.
- */
-function measureXlsxA1Origin(png) {
-  const img = PNG.sync.read(png);
-  const at = (x, y) => {
-    const i = (y * img.width + x) * 4;
-    return [img.data[i], img.data[i + 1], img.data[i + 2], img.data[i + 3]];
-  };
-  const isHeader = (x, y) => {
-    const [r, g, b] = at(x, y);
-    return r >= 235 && r <= 250 && Math.abs(r - g) < 6 && Math.abs(g - b) < 6;
-  };
-  // Сканируем строку внутри первой ячейки по вертикали: до границы — заголовок
-  // строки (серый), после — белая ячейка. Берём y чуть ниже середины кадра,
-  // где точно ячейки, а не закреплённые области.
-  const y = Math.min(200, img.height - 1);
-  let a1x = -1;
-  for (let x = 0; x < img.width; x += 1) {
-    if (!isHeader(x, y)) {
-      a1x = x;
-      break;
-    }
-  }
-  // Высота заголовков колонок: по первой колонке поиска A1 нет — сканируем
-  // колонку левее a1x (внутри заголовков строк): сверху угол и заголовок
-  // колонок, граница — первая горизонтальная линия сетки под ними. Проще:
-  // идём по x = a1x + 2 (внутри ячеек) сверху вниз: заголовок колонок серый,
-  // первая ячейка белая.
-  let a1y = -1;
-  for (let yy = 0; yy < img.height; yy += 1) {
-    if (!isHeader(a1x + 2, yy)) {
-      a1y = yy;
-      break;
-    }
-  }
-  if (a1x < 0 || a1y < 0) {
-    throw new Error('не удалось найти начало A1 в actual-кадре');
-  }
-  return { a1x, a1y, frameWidth: img.width, frameHeight: img.height };
-}
-
 /** Перенести drop в корпус эталонов (test-fixtures/strict-viewer). */
 async function transferToCorpus(outDir, fixture) {
   const { cp } = await import('node:fs/promises');
@@ -818,7 +819,7 @@ function composeDocxStackFrame(shots, geo, index) {
 
 /** Снять print-layout эталон одного docx: загрузка, страницы, компоновка. */
 async function captureDocxPrintLayout(page, fixture, pageGeo, fixturesDir) {
-  await uploadDocxToWord(page, path.join(fixturesDir, fixture.sourcePath));
+  await uploadDocxToWord(page, resolveFixtureSource(fixturesDir, fixture.sourcePath));
   const frame = await waitForWordEditorFrame(page);
   await ensureWordZoom100(frame);
   // Фокус уходит с поверхности редактирования: blinking caret не входит
@@ -1128,7 +1129,7 @@ function addressFromGridlines(gridPng, a1InGrid, pageGeo, oy) {
 
 /** Снять xlsx.normal эталон: загрузка, сетка, компоновка, видимый диапазон. */
 async function captureXlsxNormal(page, fixture, pageGeo, fixturesDir) {
-  await uploadXlsxToExcel(page, path.join(fixturesDir, fixture.sourcePath));
+  await uploadXlsxToExcel(page, resolveFixtureSource(fixturesDir, fixture.sourcePath));
   const frame = await waitForExcelEditorFrame(page);
   const gridState = await waitForExcelGrid(frame);
   await ensureExcelZoom100(frame, gridState);
@@ -1232,9 +1233,15 @@ async function cmdCapture(args) {
   }
   process.stdout.write(`к захвату: ${fixtures.length} пар fixture/mode\n`);
   const fixturesDir = path.resolve(REPO_ROOT, args.fixtures ?? DEFAULT_FIXTURES);
-  const geometry = JSON.parse(
-    await readFile(path.join(REPO_ROOT, 'target', 'actual-frames', 'geometry.json'), 'utf8'),
-  );
+  const geometryPath = path.resolve(REPO_ROOT, args.geometry ?? DEFAULT_GEOMETRY);
+  let geometry;
+  try {
+    geometry = await loadGeometry(geometryPath);
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 2;
+    return;
+  }
   await killStaleProfileBrowsers();
   let context = await launch();
   let page = context.pages()[0] ?? (await context.newPage());
@@ -1251,7 +1258,7 @@ async function cmdCapture(args) {
       const key = `${fixture.slug}/${fixture.mode}`;
       const pageGeo = geometry[key];
       if (pageGeo === undefined) {
-        process.stderr.write(`[fail] ${fixture.id}: нет геометрии в geometry.json (${key})\n`);
+        process.stderr.write(`[fail] ${fixture.id}: нет геометрии в ${geometryPath} (${key})\n`);
         failed += 1;
         continue;
       }
