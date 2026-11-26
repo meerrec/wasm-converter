@@ -9,9 +9,9 @@
 //   node scripts/measure-docx-stack.mjs <out-оракула> --write <geometry.json>
 //
 // На страницу замеряются: left/width (белый скан строки), height (низ
-// страницы по прозрачному зазору до следующей страницы; у последней
-// страницы наследуется от соседней — продолжение листа делает низ
-// невидимым), nextTop (первый ряд следующей страницы после зазора).
+// страницы по последнему ряду с непрозрачностью — окно захвата выше
+// страницы, поэтому низ последней страницы виден так же, как у остальных),
+// nextTop (первый ряд следующей страницы после зазора).
 // Схема geometry.json: <slug>/print-layout = { frame, pages: { page-N:
 // { left, width, height, nextTop } } }; <slug>/normal = { a1: { a1x, a1y,
 // frameWidth, frameHeight } }.
@@ -69,16 +69,21 @@ function measureXlsxA1Origin(png) {
       break;
     }
   }
-  // Высота заголовков колонок: по первой колонке поиска A1 нет — сканируем
-  // колонку левее a1x (внутри заголовков строк): сверху угол и заголовок
-  // колонок, граница — первая горизонтальная линия сетки под ними. Проще:
-  // идём по x = a1x + 2 (внутри ячеек) сверху вниз: заголовок колонок серый,
-  // первая ячейка белая.
+  // Высота шапки колонок. Шапка выбранной колонки залита зелёным цветом
+  // выделения (crates/xlsx paint.rs, draw_column_headers): при активной
+  // ячейке A1 колонка A в шапке не серая, и скан внутри ячейки A видит
+  // границу уже на y=0. Поэтому граница ищется в соседних колонках правее,
+  // чья шапка серая; граница подтверждается тремя не-шапочными рядами
+  // подряд (защита от глифов текста и линий сетки).
   let a1y = -1;
-  for (let yy = 0; yy < img.height; yy += 1) {
-    if (!isHeader(a1x + 2, yy)) {
-      a1y = yy;
-      break;
+  for (let probe = 1; a1y < 0 && a1x + probe + 2 < img.width; probe += 8) {
+    const x = a1x + probe;
+    if (!isHeader(x, 0)) continue; // шапка подсвечена или на ней тёмный глиф
+    for (let yy = 0; yy < img.height - 2; yy += 1) {
+      if (!isHeader(x, yy) && !isHeader(x, yy + 1) && !isHeader(x, yy + 2)) {
+        a1y = yy;
+        break;
+      }
     }
   }
   if (a1x < 0 || a1y < 0) {
@@ -175,6 +180,22 @@ const corpus = JSON.parse(
 const slugById = new Map(
   corpus.fixtures.map((f) => [f.id, fixtureSlug(f.source.path)]),
 );
+// Reference-free capture (`visual-oracle capture`) кладёт кадры в каталог с
+// именем-слагом файла, а не с id корпуса: разрешаем и его, чтобы первая
+// геометрия фикстуры без эталона тоже замерялась. Разводить коллизии слагов
+// не нужно: тип каталога ниже определяется по содержимому (normal против
+// print-layout), а в корпусе слаги в пределах формата уникальны.
+const idBySlug = new Map();
+for (const fixture of corpus.fixtures) {
+  const slug = fixtureSlug(fixture.source.path);
+  if (!idBySlug.has(slug)) idBySlug.set(slug, fixture.id);
+}
+
+/** id фикстуры корпуса по имени каталога actual-кадров: id или слаг файла. */
+function corpusIdOf(dirName) {
+  if (slugById.has(dirName)) return dirName;
+  return idBySlug.get(dirName) ?? null;
+}
 
 const geometry = await readFile(geoPath, 'utf8').then(
   (text) => JSON.parse(text),
@@ -188,49 +209,36 @@ let measured = 0;
 let measuredXlsx = 0;
 for (const entry of await readdir(actualsDir, { withFileTypes: true })) {
   if (!entry.isDirectory()) continue;
-  const fixtureId = entry.name;
-  const sheetPath = path.join(actualsDir, fixtureId, 'normal', 'sheet-0.png');
+  const fixtureId = corpusIdOf(entry.name);
+  if (fixtureId === null) continue;
+  const slug = slugById.get(fixtureId);
+  const sheetPath = path.join(actualsDir, entry.name, 'normal', 'sheet-0.png');
   const sheet = await readFile(sheetPath).catch(() => null);
-  if (sheet !== null && slugById.has(fixtureId)) {
+  if (sheet !== null) {
     const a1 = measureXlsxA1Origin(sheet);
-    geometry[`${slugById.get(fixtureId)}/normal`] = { a1 };
+    geometry[`${slug}/normal`] = { a1 };
     measuredXlsx += 1;
     process.stdout.write(
-      `${slugById.get(fixtureId)}: A1@(${a1.a1x},${a1.a1y}), кадр ${a1.frameWidth}×${a1.frameHeight}\n`,
+      `${slug}: A1@(${a1.a1x},${a1.a1y}), кадр ${a1.frameWidth}×${a1.frameHeight}\n`,
     );
   }
-  const modeDir = path.join(actualsDir, fixtureId, 'print-layout');
+  const modeDir = path.join(actualsDir, entry.name, 'print-layout');
   const pageFiles = (await readdir(modeDir).catch(() => []))
     .filter((name) => /^page-\d+\.png$/.test(name))
     .sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0]));
   if (pageFiles.length === 0) continue;
-  const slug = slugById.get(fixtureId);
-  if (slug === undefined) {
-    process.stderr.write(`[warn] ${fixtureId}: нет в корпусе — пропускаю\n`);
-    continue;
-  }
   const pages = {};
   for (const file of pageFiles) {
     const m = measurePage(await readFile(path.join(modeDir, file)));
     pages[file.replace('.png', '')] = m;
   }
-  // Высота страницы: низ не-последних страниц виден по зазору; последняя
-  // наследует размер соседней (все страницы документа одного размера, кроме
-  // sections — там разнобой поймает пилот).
-  let siblingHeight = null;
-  for (const key of Object.keys(pages)) {
-    if (pages[key].nextTop !== null) {
-      siblingHeight = pages[key].firstBottom + 1;
-      break;
-    }
-  }
+  // Высота страницы — по собственному измеренному низу: окно захвата выше
+  // страницы (хвост прокрутки в pageDocxWindow), поэтому низ последней
+  // страницы виден так же, как у остальных, а зазор после неё прозрачен и
+  // в замер не попадает.
   for (const key of Object.keys(pages)) {
     const p = pages[key];
-    if (p.nextTop !== null) {
-      p.height = p.firstBottom + 1;
-    } else {
-      p.height = siblingHeight;
-    }
+    p.height = p.firstBottom + 1;
     delete p.firstBottom;
   }
   const first = pages['page-1'];

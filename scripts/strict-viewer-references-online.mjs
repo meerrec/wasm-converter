@@ -154,7 +154,9 @@ async function loadGeometry(geometryPath) {
     if (error?.code !== 'ENOENT') throw error;
     throw new Error(
       `нет ${geometryPath}: геометрия кадров замеряется по actual-кадрам оракула. ` +
-        'Снимите их (`pnpm visual-oracle run --out <dir> ...`) и выполните ' +
+        'Снимите кадры без эталона (`pnpm visual-oracle capture --doc <файл> --out <dir> --mode <mode>` ' +
+        '— работает и для фикстур без manifest, каталог получит имя-слаг файла) или прогоните ' +
+        '`pnpm visual-oracle run --out <dir> ...` по фикстурам с эталонами, затем выполните ' +
         `\`node scripts/measure-docx-stack.mjs <dir> --write ${displayPath(geometryPath)}\`, ` +
         'затем повторите capture (или передайте путь через --geometry).',
     );
@@ -786,9 +788,9 @@ function composeDocxStackFrame(shots, geo, index) {
     // Нижний полуряд самой страницы: дробная высота листа у вьюера.
     fillWhite(left + 1, right - 1, pageRows - 1, pageRows, 128);
   } else {
-    // Белое продолжение листа ниже последней страницы (Word Online рисует
-    // пустую страницу, вьюер повторяет её белым).
-    fillWhite(left, right, pageRows - 1, frame.height, 255);
+    // Ниже последней страницы кадр прозрачен: окно захвата выше страницы,
+    // а вьюер красит только документ (build_stack) и не продолжает лист
+    // белым. Заливка белым здесь дала бы visual-diff на пустом месте.
   }
 
   // Кромочные колонки — профиль вьюера: на высоту страницы, на видимую часть
@@ -809,9 +811,7 @@ function composeDocxStackFrame(shots, geo, index) {
     }
   };
   setEdgeColumns(0, pageRows);
-  if (last) {
-    setEdgeColumns(pageRows, frame.height);
-  } else {
+  if (!last) {
     setEdgeColumns(page.nextTop, page.nextTop + nextRows);
   }
   return PNG.sync.write(out);
