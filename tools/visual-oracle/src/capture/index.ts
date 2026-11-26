@@ -20,6 +20,8 @@ import {
 import { asCaptureError, type CaptureErrorCode } from './errors.js';
 import { startDevServer, type DevServer } from './server.js';
 import type { Manifest } from '../manifest.js';
+import type { DocxCaptureWindow } from './capture.js';
+import type { PageWindow } from './page_api.js';
 
 /**
  * Что нужно захвату от manifest: источник, вид, зум, локаль, таймзона и кадры.
@@ -74,6 +76,88 @@ export interface CaptureSession {
   capture(fixture: string, plan: CapturePlan): Promise<CaptureOutcome>;
   /** Закрыть браузер и остановить сервер. Повторный вызов безопасен. */
   close(): Promise<void>;
+}
+
+/** Селектор области прокрутки вьюера: в root-режиме DOM пуст, узла нет. */
+const VIEWER_SCROLLER = '#viewer > div';
+
+/** Метка хвоста прокрутки, который окно кадра добавляет под последней страницей. */
+const DOCX_TAIL_ATTR = 'data-oracle-scroll-tail';
+
+/**
+ * Окно захвата DOCX-страницы в настоящей странице.
+ *
+ * Границы кадра оракул вычисляет сам (`pageFrameSize`), а узлам страницы их
+ * ставит этот адаптер. Область прокрутки — flex-элемент главной оси, поэтому её
+ * коробке мало `height`: без `flex: none` она сожмётся обратно до видимого окна,
+ * и площадь кадра снова станет окном. Поля страницы снаружи области — псевдоэлементы
+ * и `background` самого `#viewer`, они размеру не мешают.
+ */
+export function pageDocxWindow(): DocxCaptureWindow {
+  return {
+    apply: async (page, size) => {
+      await page.evaluate(
+        ({ selector, target, tailAttr }) => {
+          const doc = (globalThis as unknown as PageWindow).document;
+          const node = doc.querySelector(selector);
+          const style = node?.style;
+          if (!node || !style) return;
+          node.querySelector?.(`[${tailAttr}]`)?.remove?.();
+          if (target === null) {
+            style.width = '';
+            style.height = '';
+            style.flex = '';
+            return;
+          }
+          style.width = `${target.width}px`;
+          style.height = `${target.height}px`;
+          style.flex = 'none';
+          // Хвост под последней страницей: высота прокрутки — низ последней
+          // страницы, и без запаса в высоту кадра браузер зажал бы
+          // `scrollTop` последней страницы, кадр начался бы с предыдущей.
+          // Хвост — дочерний узел распорки (`top: 100%`), поэтому следует
+          // за её высотой при любой перекладке.
+          const spacer = node.firstElementChild;
+          if (!spacer) return;
+          const tail = doc.createElement('div');
+          tail.setAttribute?.(tailAttr, '');
+          if (tail.style) {
+            tail.style.cssText =
+              'position:absolute;top:100%;left:0;width:1px;pointer-events:none;' +
+              `height:${target.height}px`;
+          }
+          spacer.append?.(tail);
+        },
+        { selector: VIEWER_SCROLLER, target: size, tailAttr: DOCX_TAIL_ATTR },
+      );
+    },
+    exportPng: async (page) => {
+      const shot = await page.evaluate(async (selector) => {
+        const w = globalThis as unknown as PageWindow;
+        const viewer = w.docConverter?.viewer;
+        const node = w.document.querySelector(selector);
+        if (!viewer || !node) throw new Error('viewer bridge is gone');
+        const bytes = await viewer.exportPng();
+        let binary = '';
+        const chunk = 0x8000;
+        for (let offset = 0; offset < bytes.length; offset += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + chunk));
+        }
+        // Размер читается после снимка, но до следующего кадра: если окно
+        // пересчитали, это видно по `clientWidth` и подпись не соврёт.
+        return {
+          base64: w.btoa(binary),
+          cssWidth: node.clientWidth ?? 0,
+          cssHeight: node.clientHeight ?? 0,
+        };
+      }, VIEWER_SCROLLER);
+      return {
+        bytes: new Uint8Array(Buffer.from(shot.base64, 'base64')),
+        cssWidth: shot.cssWidth,
+        cssHeight: shot.cssHeight,
+      };
+    },
+  };
 }
 
 const DEFAULT_PORT = 5178;
@@ -134,6 +218,7 @@ export async function createCaptureSession(
         baseUrl: server.url,
         outDir,
         repoRoot: options.repoRoot,
+        docxWindow: pageDocxWindow(),
         ...(options.stableTimeoutMs === undefined
           ? {}
           : { stableTimeoutMs: options.stableTimeoutMs }),

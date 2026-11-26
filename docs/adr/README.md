@@ -61,9 +61,14 @@
 | 0055 | Выделение ячеек XLSX — полный лист и Excel-взаимодействие | [`0055-xlsx-cell-selection.md`](0055-xlsx-cell-selection.md) |
 | 0056 | Захват эталона strict-viewer — COM-автоматизация локального Word/Excel; конверт manifest с `office-desktop` | [`0056-capture-automation-com.md`](0056-capture-automation-com.md) |
 | 0057 | Несоответствие desktop-захвата и конверта manifest — экранные режимы, среда и синтетический `capture-only` | [`0057-desktop-capture-envelope-mismatch.md`](0057-desktop-capture-envelope-mismatch.md) |
+| 0058 | Шрифт эталона strict-viewer — Carlito в среде захвата и проверка `pdffonts` | [`0058-reference-font-environment.md`](0058-reference-font-environment.md) |
+| 0059 | Чтение `visual-diff` текста — глифовое расхождение ожидаемо, вёрстка нет | [`0059-glyph-diff-expectation.md`](0059-glyph-diff-expectation.md) |
 
 ADR-0057 — предложение: фиксирует долг из ADR-0056, расширение схемы отложено
-до отдельного решения.
+до отдельного решения. ADR-0058 — принято: фикстуры объявляют Carlito,
+эталон проверяется по `pdffonts`.
+ADR-0059 — предложение: правило разбора `visual-diff` — сглаживание текста
+ожидаемо, сдвиг вёрстки нет.
 
 ADR-0050…0053 — предложения по итогам архитектурного аудита 23.10.2026
 (`docs/analysis/architecture-audit-2026-10-23.md`); они ещё не приняты.

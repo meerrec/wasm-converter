@@ -12,7 +12,7 @@
 | Решение | Принятое правило | Состояние |
 |---|---|---|
 | Метаданные | Один `manifest.json` на документ и режим в `test-fixtures/strict-viewer/<format>/<fixture-id>/<view-mode>/`; допустимые `<view-mode>`: `print-layout`, `pdf`, `normal`, `print-preview`; схема и corpus index версионируются в Git | `accepted` |
-| Способ захвата | Эталон снимает `scripts/strict-viewer-references.ps1` через COM-автоматизацию локального Microsoft Word/Excel (`ExportAsFixedFormat`) с растеризацией `pdftoppm -png -r 144`. Office Online и ручной захват допустимы, но не обязательны. Решение `accept-capture-automation` | `accepted` |
+| Способ захвата | Эталон снимает `scripts/strict-viewer-references.ps1` (Windows, COM, `ExportAsFixedFormat`) или `scripts/strict-viewer-references-macos.sh` (macOS, AppleScript, `save as … PDF`) — автоматизацию локального Microsoft Word/Excel с растеризацией `pdftoppm -png -r 144`. Office Online и ручной захват допустимы, но не обязательны. Решение `accept-capture-automation` | `accepted` |
 | PNG | Git LFS, отдельный path-scoped набор `test-fixtures/strict-viewer/**/reference/*.png`; никаких PNG в этом документальном PR | `accepted` |
 | PDF от Office | Сохранять рядом через Git LFS, потому что он связывает экспорт Office с rasterized PNG и позволяет проверить повторную растеризацию | `accepted` |
 | Предел одного PNG | 4 МиБ; превышение требует проверки размера страницы и отдельного решения, а не JPEG или уменьшения DPR | `accepted` |
@@ -54,7 +54,7 @@ strict-viewer-<corpus-version>-<matrix-version>-<environment-id>-<short-digest>
 2. Сверить кандидатов с [`certification-matrix.md`](certification-matrix.md). Сохранить шесть обязательных регрессионных фикстур. Отсутствующие обязательные фикстуры добавить или изменить статус возможности явным решением.
 3. Проверить SHA-256 входных документов и запретить изменение DOCX/XLSX между захватом и принятием.
 4. Подготовить версионированную шрифтовую среду. Не полагаться на незаписанные системные шрифты.
-5. Снять эталон по решению `accept-capture-automation`: автоматически — `scripts/strict-viewer-references.ps1` (COM-автоматизация локального Word/Excel, `ExportAsFixedFormat`, `pdftoppm -png -r 144`, `visual-oracle reference import`), либо вручную в Word Online / Excel Online на машине подготовки baseline. Office не встраивается в продукт, тестовый runtime и comparator; в capture/diff runtime нет Office URL, сетевого вызова и зависимости от учётных данных Office.
+5. Снять эталон по решению `accept-capture-automation`: автоматически — `scripts/strict-viewer-references.ps1` (Windows, COM, `ExportAsFixedFormat`) или `scripts/strict-viewer-references-macos.sh` (macOS, AppleScript, `save as … PDF`), затем `pdftoppm -png -r 144` и `visual-oracle reference import`, либо вручную в Word Online / Excel Online на машине подготовки baseline. Office не встраивается в продукт, тестовый runtime и comparator; в capture/diff runtime нет Office URL, сетевого вызова и зависимости от учётных данных Office.
 6. Установить состояние из manifest: режим, лист, страницу, диапазон, scroll, zoom, DPR, comments/revisions и hidden sheets. Отключить UI Office вне области сравнения.
 7. Дождаться открытия документа, загрузки шрифтов и стабильного изображения по наблюдаемому состоянию. Не использовать длинный фиксированный sleep как доказательство готовности.
 8. Сохранить PNG напрямую. Для DOCX PDF сохранить исходный PDF и выполнить `pdftoppm -png -r 144`; промежуточный JPEG запрещён.

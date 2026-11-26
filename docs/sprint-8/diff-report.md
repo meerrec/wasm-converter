@@ -93,7 +93,7 @@ Rust-тест гейта считает его сам — иначе прове�
 | `edge_cases/empty_paragraphs` | match | — | 1 / 1 |
 | `edge_cases/multilingual` | match | — | 3 / 3 |
 | `edge_cases/special_chars` | match | — | 1 / 1 |
-| `embedded/ole_object` | match | — | 0 / 0 |
+| `embedded/ole_object` | match | — | 1 / 1 |
 | `embedded/smartart_basic` | match | — | 1 / 1 |
 | `fields/date_field` | non-goal | mammoth не читает w:fldSimple (элемента нет в карте элементов body-reader.js, неизвестный элемент отбрасывается вместе с детьми) — расхождение на его стороне | 2 / 2 |
 | `fields/fld_char_with_separate` | match | — | 2 / 2 |
@@ -167,7 +167,7 @@ Rust-тест гейта считает его сам — иначе прове�
 | `tables/tbl_look` | match | — | 4 / 4 |
 | `tables/v_merge` | match | — | 4 / 4 |
 
-Совпадение на пустых списках (0 / 0) — 8: `basic/empty_body`, `embedded/ole_object`, `images/anchor_top_and_bottom`, `images/anchor_wrap_square`, `images/anchor_wrap_tight`, `images/inline`, `images/multiple_sizes`, `simple/empty`. Текста в абзацах нет ни с
+Совпадение на пустых списках (0 / 0) — 7: `basic/empty_body`, `images/anchor_top_and_bottom`, `images/anchor_wrap_square`, `images/anchor_wrap_tight`, `images/inline`, `images/multiple_sizes`, `simple/empty`. Текста в абзацах нет ни с
 одной стороны — это совпадение, но проверяет оно только то, что ни один из парсеров
 не выдумывает текст из разметки; счётчики `model.counts.images` по ним — в оракуле.
 

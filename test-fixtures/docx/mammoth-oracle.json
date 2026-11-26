@@ -2616,9 +2616,11 @@
       "classification": "match",
       "reason": "",
       "mammoth": {
-        "paragraphs": [],
+        "paragraphs": [
+          "Встроенный объект (OLE) ниже: превью и вложение."
+        ],
         "counts": {
-          "p": 1,
+          "p": 2,
           "tables": 0,
           "list_items": 0,
           "hyperlinks": 0

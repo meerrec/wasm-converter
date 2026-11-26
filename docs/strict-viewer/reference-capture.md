@@ -32,7 +32,8 @@ PNG и PDF эталонов хранятся в Git LFS (`.gitattributes`). По
 ## 2. Снять эталон
 
 Захват делается по §3 baseline-policy: автоматически —
-`scripts/strict-viewer-references.ps1` (см. `docs/testing/strict-viewer-references.md`),
+`scripts/strict-viewer-references.ps1` (Windows) или
+`scripts/strict-viewer-references-macos.sh` (macOS; см. `docs/testing/strict-viewer-references.md`),
 либо **вручную** в Word Online / Excel Online. Наш движок эталоном не является
 никогда: `actual/` не копируется в `reference/`.
 
@@ -45,6 +46,12 @@ PNG и PDF эталонов хранятся в Git LFS (`.gitattributes`). По
    растеризовать его: `pdftoppm -png -r 144 export.pdf page`.
 4. Повторить захват в чистой сессии той же среды: расхождение двух эталонов —
    проблема среды или документа, и маскировать его нельзя.
+
+Единица эталона — страница, а не окно (certification-matrix §2.2): в кадр
+входит только область страницы. Движок снимает кадр окна размером с целую
+страницу плюс её поля, поэтому `docx.print-layout` выше окна 1440 × 900
+снимается полностью, а не обрезком. Строка отчёта такого кадра несёт
+`frame.cssWidth/cssHeight` — доказательство, что окно было размером страницы.
 
 ## 3. Собрать drop и импортировать manifest
 
@@ -93,7 +100,7 @@ PNG и PDF эталонов хранятся в Git LFS (`.gitattributes`). По
 `office-desktop` с `word-online` не станет ни тем, ни другим. Пару проверяют
 и схема (ветки `allOf` по `provider` и по формату), и семантика валидатора.
 
-Автоматический захват (`scripts/strict-viewer-references.ps1`) пишет
+Автоматический захват (`.ps1` на Windows, `.sh` на macOS) пишет
 `office-desktop` + `word-desktop`/`excel-desktop` + `automated`. Ручной захват
 в Word Online / Excel Online пишет `office-online` + `*-online` + `manual` или
 `semi-automated`.
@@ -207,8 +214,22 @@ failure.
 ## 8. CI
 
 `.github/workflows/visual-oracle.yml` гоняет typecheck, тесты, сборку,
-`validate` и `run` на каждый PR, затрагивающий просмотрщик, движок или
-корпус. Пока `baselineId: null`, шаг `run` не гейтит джобу: `missing-reference`
-— ожидаемое состояние доснимаемого корпуса. Как только baseline принят, тот же
-шаг становится жёстким. Отчёт выгружается артефактом всегда, в том числе
-после падения.
+`validate`, `run` и `gate` на каждый PR, затрагивающий просмотрщик, движок или
+корпус. Пока `baselineId: null`, терпится ровно `missing-reference`: ожидаемое
+состояние доснимаемого корпуса. Существующие эталоны остаются жёстким гейтом
+регрессии — `capture-error`, `harness-error`, `visual-diff` и `page-mismatch`
+валят джобу и в черновом режиме.
+
+Кода выхода `run` для этого мало: `exitCodeFor` отдаёт 2 и на
+`missing-reference`, и на `capture-error`, и раньше проверки визуальных
+расхождений, поэтому прогон «одна пара с расхождением и восемьдесят без
+эталона» тоже вернул бы 2. Вердикт по счётчикам `report.json` считает
+`visual-oracle gate`:
+
+```bash
+pnpm visual-oracle gate --report visual-oracle-out/report.json --run-exit-code "$rc" --draft
+```
+
+Код 0 — прогон приемлем, 1 — нет (причина печатается), 2 — отчёт не читается.
+Без `--draft` (принятый baseline) решает код выхода самого `run`. Отчёт
+выгружается артефактом всегда, в том числе после падения.

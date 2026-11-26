@@ -4,7 +4,7 @@
     "category": "embedded",
     "description": "OLE-объект: w:object с VML-превью и embedding",
     "docTitle": "OLE-объект: w:object с VML-превью и embedding",
-    "expectedParagraphs": 1,
+    "expectedParagraphs": 2,
     "expectedTables": 0,
     "expectedImages": 0,
     "expectedWarnings": []

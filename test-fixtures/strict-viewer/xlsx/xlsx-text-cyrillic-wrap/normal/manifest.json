@@ -1,0 +1,124 @@
+{
+  "schemaVersion": "1.1.0",
+  "corpus": {
+    "id": "strict-viewer-1.0.0",
+    "version": "1.0.0",
+    "matrixVersion": "1.0.0",
+    "baselineId": "strict-viewer-1.0.0-1.0.0-ac79d195-7f65636f8716",
+    "storage": {
+      "kind": "git-lfs",
+      "rootUri": "test-fixtures/strict-viewer"
+    }
+  },
+  "source": {
+    "path": "xlsx/text-cyrillic-wrap.xlsx",
+    "format": "xlsx",
+    "sha256": "a2c8b802c2e4ea5705a51b4beb624d7344fd7b6bfd8cad127c6c42235064d185",
+    "bytes": 7011
+  },
+  "reference": {
+    "provider": "office-online",
+    "application": "excel-online",
+    "capturedAt": "2026-11-26T01:42:59Z",
+    "captureMethod": "semi-automated",
+    "operator": "irek"
+  },
+  "environment": {
+    "os": {
+      "name": "macOS",
+      "version": "26.6.1",
+      "architecture": "arm64"
+    },
+    "browser": {
+      "name": "chromium",
+      "version": "unknown"
+    },
+    "applicationZoomPercent": 100,
+    "browserZoomPercent": 100,
+    "locale": "ru-RU",
+    "timezone": "UTC",
+    "fonts": {
+      "package": "carlito-subset",
+      "version": "1.104",
+      "assets": [
+        {
+          "family": "Carlito",
+          "style": "bold",
+          "weight": 700,
+          "sha256": "f339451ca469d156af7898ea484218157ed02d5b669f01db80a8202414eef6d5"
+        },
+        {
+          "family": "Carlito",
+          "style": "italic",
+          "weight": 700,
+          "sha256": "c3da8b7ba6246c3cd976b106e7f96dd53be5a5639e615cf96d653b98687fdeb1"
+        },
+        {
+          "family": "Carlito",
+          "style": "italic",
+          "weight": 400,
+          "sha256": "ad8db570b73fc8f3486ad6125c541d88faeadd89107c2f62a4db71293c33f0ef"
+        },
+        {
+          "family": "Carlito",
+          "style": "normal",
+          "weight": 400,
+          "sha256": "fab04db7d49ce4ae1eb55fae98a09e8d0690c860e2c05454dbd1c0951e1bfac2"
+        }
+      ]
+    },
+    "viewportCss": {
+      "width": 1440,
+      "height": 900
+    },
+    "deviceScaleFactor": 1,
+    "colorScheme": "light"
+  },
+  "view": {
+    "format": "xlsx",
+    "mode": "normal",
+    "activeSheet": {
+      "index": 0,
+      "name": "Кириллица"
+    },
+    "hiddenSheets": "exclude",
+    "showGridLines": true,
+    "showHeadings": true
+  },
+  "dynamicData": {
+    "dates": "fixed-value",
+    "fields": "cached-result",
+    "formulaCache": {
+      "policy": "cached-values-only",
+      "dirty": false,
+      "fullCalcOnLoad": false,
+      "forceFullCalc": false
+    },
+    "externalLinks": "cached-values-no-network"
+  },
+  "comparisonProfile": "visual-v1",
+  "captures": [
+    {
+      "id": "sheet-0",
+      "kind": "xlsx-screen",
+      "sheet": {
+        "index": 0,
+        "name": "Кириллица"
+      },
+      "visibleRange": "A1:T30",
+      "scroll": {
+        "x": 0,
+        "y": 0
+      },
+      "activeCell": "A1",
+      "image": {
+        "uri": "xlsx/xlsx-text-cyrillic-wrap/normal/reference/sheet-0.png",
+        "sha256": "53dfa135cf9b2805135f1bddb60f4dd73cef3a4011899e8bdce5a44d1dd54fa3",
+        "width": 1440,
+        "height": 682,
+        "bytes": 66802,
+        "colorType": "RGBA8"
+      }
+    }
+  ]
+}

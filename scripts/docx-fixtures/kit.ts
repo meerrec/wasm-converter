@@ -295,12 +295,24 @@ export const defaultSectPr: string =
     '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="709" w:footer="709" w:gutter="0"/>' +
     '<w:cols w:space="708"/><w:docGrid w:linePitch="360"/>';
 
+/**
+ * Умолчание тела документа: `Carlito`, а не `Calibri`.
+ *
+ * Эталон strict-viewer снимается локальным Office, а рисует его наш вьюер
+ * запасным подрезанным Carlito (ADR-0058). Документ, просящий Calibri, Office
+ * набирает настоящим Calibri, и эталон расходится с вьюером по глифам при
+ * совпавшей геометрии. Carlito же есть на машине захвата (полные лица
+ * 1.104) и совпадает с тем, чем рисует вьюер. Calibri остаётся в `w:cs` —
+ * это шрифт сложных скриптов, он в эталонное сравнение латиницы не входит.
+ */
+export const DOCX_DEFAULT_FONT = 'Carlito';
+
 /** `docDefaults` + Normal + Heading1..3 (+ их linked-стили) + TableNormal. */
 export const defaultStylesXml = (): string =>
     XML_DECL +
     `<w:styles xmlns:w="${W_NS}" xmlns:r="${R_NS}">` +
     '<w:docDefaults>' +
-    '<w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="SimSun" w:cs="Arial"/>' +
+    `<w:rPrDefault><w:rPr><w:rFonts w:ascii="${DOCX_DEFAULT_FONT}" w:hAnsi="${DOCX_DEFAULT_FONT}" w:eastAsia="SimSun" w:cs="Arial"/>` +
     '<w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="en-US" w:eastAsia="zh-CN" w:bidi="ar-SA"/></w:rPr></w:rPrDefault>' +
     '<w:pPrDefault><w:pPr><w:spacing w:before="0" w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault>' +
     '</w:docDefaults>' +

@@ -1,7 +1,9 @@
 # Эталоны strict-viewer из локального Microsoft Office
 
-Скрипт: `scripts/strict-viewer-references.ps1`. Отчёт прогона:
-`<Out>/report.md`, drop-ы — `<Out>/drop/`.
+Скрипт: `scripts/strict-viewer-references.ps1` (Windows, COM Word/Excel) или
+`scripts/strict-viewer-references-macos.sh` (macOS, Word/Excel через AppleScript;
+одинаковые флаги, drop-ы и отчёт). Отчёт прогона: `<Out>/report.md`,
+drop-ы — `<Out>/drop/`.
 
 ## Зачем
 
@@ -55,9 +57,37 @@
 - Poppler (`pdftoppm`) в `PATH`.
 - Node.js 20+ и pnpm 9 в `PATH`: импорт manifest идёт через
   `tools/visual-oracle`.
-- PowerShell 5.1+.
+- PowerShell 5.1+. Нативные вызовы (`pdftoppm`, `pnpm`) скрипт делает сам через
+  `System.Diagnostics.Process` с файловыми потоками: `2>&1` в PowerShell 5.1
+  превращает stderr в записи ошибок, а `pdftoppm -v` пишет баннер в stderr даже
+  на успехе. Импорт идёт через `cmd.exe` — pnpm на Windows это `.cmd`-shim.
+- Id фикстур и `source.path` из корпуса скрипт проверяет сам: по ним строятся
+  каталоги под `-Out`, которые он же удаляет перед повторным захватом. Слаг
+  (буквы, цифры, `.`, `_`, `-`) и относительный путь без `..` — обязательны;
+  иначе скрипт выходит с кодом 2, ничего не удаляя.
 - Шрифтовой набор `crates/render/src/fonts` (четыре Carlito-сабсета, ADR-0051):
   его файлы и SHA-256 попадают в `environment.fonts.assets`.
+- **Полные Carlito 1.104, установленные в системе** (ADR-0058). Сабсеты из
+  репозитория подрезаны для рендера и для установки не годятся: без системы
+  Word молча подменяет неизвестное семейство (наблюдалось
+  `TimesNewRomanPSMT`), а с настоящим Calibri рисует Calibri. Установка —
+  файлы из пришпиленного коммита `googlefonts/carlito` (`3a810cab…`), те же,
+  что качает `scripts/subset-fonts.sh` (SHA-256 Regular `f6418f70…`):
+
+  ```bash
+  # macOS
+  curl -fL "https://raw.githubusercontent.com/googlefonts/carlito/3a810cab78ebd6e2e4eed42af9e8453c4f9b850a/fonts/ttf/Carlito-Regular.ttf" \
+    -o ~/Library/Fonts/Carlito-Regular.ttf
+  ```
+
+  Проверка обязательна до приёмки drop: PDF эталона обязан быть набран
+  Carlito. macOS-скрипт проверяет это сам (`pdffonts`), Windows-скрипт —
+  нет, поэтому там проверка ручная:
+
+  ```bash
+  pdffonts <drop>/docx/<fixture-id>/pdf/reference/export.pdf
+  jq -r '.environment.fonts.package' <drop>/docx/<fixture-id>/pdf/manifest.json
+  ```
 
 В CI скрипт не входит: лицензии Microsoft Office и Windows-раннеры
 недоступны, оракул ручной.
@@ -79,6 +109,23 @@ powershell -ExecutionPolicy Bypass -File scripts\strict-viewer-references.ps1 `
   -BrowserVersion 131.0.6778.86 `
   -Filter 'docx-*' -KeepPdf
 ```
+
+macOS — тот же захват через AppleScript (флаги в `--kebab-case`, смысл тот же):
+
+```bash
+scripts/strict-viewer-references-macos.sh \
+  --browser-version 131.0.6778.86 \
+  --filter 'docx-*' --keep-pdf
+```
+
+AppleScript-путь проверен на Word 16.115: документ адресуется по индексу,
+созданному `open` (`active document` после `open` — `missing value`), `save as`
+принимает только `POSIX file`, а `tell application` должен называть приложение
+**литералом** — с переменной osascript не подхватывает словарь и `save as` не
+компилируется (`-2741`). Холодный старт Word — до 30 с; ожидание задаётся
+`--wait-timeout` (по умолчанию 120 с). Excel без установленного
+`/Applications/Microsoft Excel.app` останавливает прогон кодом 2 до первого
+захвата.
 
 ## Флаги
 

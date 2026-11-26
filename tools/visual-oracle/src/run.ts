@@ -29,7 +29,14 @@ import { validateManifestFile, type Manifest, type ManifestCapture } from './man
 import { REPO_ROOT, resolveFromRepo } from './paths.js';
 import { renderHtml, type HtmlFixtureInfo } from './report/html.js';
 import { buildReport, serializeReport } from './report/json.js';
-import type { CaptureResult, Cause, RunReport, RuntimeMetadata, ViewMode } from './types.js';
+import type {
+  CaptureResult,
+  Cause,
+  ResultType,
+  RunReport,
+  RuntimeMetadata,
+  ViewMode,
+} from './types.js';
 
 /** Причины расхождения, которые принимает `--override`. */
 export const CAUSES: readonly Cause[] = [
@@ -104,6 +111,64 @@ export function exitCodeFor(report: RunReport): 0 | 1 | 2 | 3 {
   if (summary['missing-reference'] > 0 || summary['capture-error'] > 0) return 2;
   if (summary['visual-diff'] > 0 || summary['page-mismatch'] > 0) return 1;
   return 0;
+}
+
+/**
+ * Счётчики, которые черновой прогон (`baselineId: null`) обязан обнулить.
+ *
+ * `missing-reference` здесь нет намеренно: черновой корпус доснимается по
+ * фикстуре, и отсутствие эталона — ожидаемое состояние, а не регрессия.
+ */
+const DRAFT_GATE_COUNTERS: readonly ResultType[] = [
+  'capture-error',
+  'harness-error',
+  'visual-diff',
+  'page-mismatch',
+];
+
+/**
+ * Вердикт чернового прогона: `null` — CI может быть зелёным, иначе причина отказа.
+ *
+ * `exitCodeFor` кода 2 не хватает: он считает `missing-reference` раньше
+ * визуальных расхождений, поэтому прогон «83 пары без эталона + 1 visual-diff»
+ * отдаёт 2, и проверка одного лишь кода выхода пропустила бы регрессию рендера.
+ * Здесь судьба решается по счётчикам, а не по их приоритету. Принятый baseline
+ * (`baselineId` задан) судится кодом выхода целиком, без этой функции.
+ *
+ * @param report — report.json прогона
+ * @param exitCode — код выхода того же прогона (`exitCodeFor`)
+ * @returns текст причины отказа для `::error::` либо `null`, если прогон приемлем
+ */
+export function draftGateFailure(report: RunReport, exitCode: number): string | null {
+  const summary: Record<string, unknown> = report.summary;
+  const counters = DRAFT_GATE_COUNTERS.map((name) => {
+    const value = summary[name];
+    return `${name}=${typeof value === 'number' ? value : `?(${String(value)})`}`;
+  }).join(' ');
+  const missing = summary['missing-reference'];
+  const detail = `${counters} missing-reference=${String(missing)} exitCode=${exitCode}`;
+
+  if (exitCode !== 0 && exitCode !== 2) {
+    // Принятого baseline здесь быть не может: код 1 при черновом корпусе значит,
+    // что запись `baselineId` разошлась с тем, что видит прогон. Код 3 —
+    // сломанный контур. Оба не сертифицируют движок, какой бы ни была выборка.
+    return `draft run exited with code ${exitCode}, expected 0 or 2: ${detail}`;
+  }
+  const failed: string[] = [];
+  for (const name of DRAFT_GATE_COUNTERS) {
+    const value = summary[name];
+    if (typeof value !== 'number') {
+      // Отчёт без счётчика — не «ноль», а нечем судить: молча пропустить
+      // значит принять непроверенный прогон.
+      failed.push(`${name} is not a number (${String(value)})`);
+    } else if (value !== 0) {
+      failed.push(`${name}=${value}`);
+    }
+  }
+  if (failed.length > 0) {
+    return `draft run failed beyond missing-reference: ${failed.join(', ')}; ${detail}`;
+  }
+  return null;
 }
 
 /**

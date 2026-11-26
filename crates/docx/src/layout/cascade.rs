@@ -741,7 +741,7 @@ mod tests {
         );
         assert_eq!(resolved.ppr.spacing.line, LineRule::Auto(259.0 / 240.0));
 
-        assert_eq!(resolved.rpr.font_family.as_deref(), Some("Calibri"));
+        assert_eq!(resolved.rpr.font_family.as_deref(), Some("Carlito"));
         assert_eq!(resolved.rpr.size, HalfPoint::new(24), "sz из Heading3");
         assert!(resolved.rpr.bold, "w:b из Heading1");
         assert!(resolved.rpr.italic, "w:i из Heading3");

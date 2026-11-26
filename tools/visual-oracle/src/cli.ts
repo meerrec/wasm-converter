@@ -9,7 +9,7 @@
 // значит ещё и сбой захвата, потому что отчёта, который несёт `capture-error`,
 // эта подкоманда не пишет.
 
-import { readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -33,7 +33,14 @@ import {
 import { resolveFromRepo } from './paths.js';
 import type { Cause, RunReport } from './types.js';
 import { ImportError, importReference } from './reference/import.js';
-import { EmptySelectionError, parseOverrides, runOracle, type RunSummary } from './run.js';
+import {
+  draftGateFailure,
+  EmptySelectionError,
+  exitCodeFor,
+  parseOverrides,
+  runOracle,
+  type RunSummary,
+} from './run.js';
 
 /** Код выхода: успех. */
 const EXIT_OK = 0;
@@ -50,6 +57,7 @@ Usage:
   visual-oracle reference import --from <dir> --corpus <path> [--force]
   visual-oracle run --corpus <path> --out <dir> [--filter <expr>]... [--override <expr>]...
   visual-oracle capture --doc <path.docx|path.xlsx> --out <dir> [--mode <mode>] [--port <n>] [--headed]
+  visual-oracle gate --report <report.json> --run-exit-code <n> --draft
   visual-oracle --help
 
 Commands:
@@ -57,6 +65,7 @@ Commands:
   reference import    Turn an operator capture drop into a schema-valid manifest.
   run                 Capture the viewer, compare with references, write report.json/report.html.
   capture             Capture one document with the local viewer; no reference, no manifest.
+  gate                Judge a finished run for CI; --draft tolerates missing-reference only.
 
 Exit codes:
   0  every capture matched
@@ -120,6 +129,27 @@ Options:
 Causes: parse, model, layout, font, render, harness, reference.
 `;
 
+/** Справка `gate`. */
+const GATE_USAGE = `Usage: visual-oracle gate --report <report.json> --run-exit-code <n> [--draft]
+
+Judges a finished \`run\` for CI. With --draft (corpus baselineId null) a
+missing reference is tolerated, but a capture-error, harness-error, visual-diff
+or page-mismatch still fails the gate: existing references are a regression
+gate even before the corpus is complete. Without --draft the run's own exit
+code decides.
+
+Options:
+  --report <path>      report.json of the run (required).
+  --run-exit-code <n>  Exit code of that same \`run\` (required).
+  --draft              Use the draft-corpus gate.
+  --help               Show this help.
+
+Exit codes:
+  0  the run may be green
+  1  the run must fail (reason is printed)
+  2  invalid arguments or unreadable report
+`;
+
 /** Справка `capture`. */
 const CAPTURE_USAGE = `Usage: visual-oracle capture --doc <path.docx|path.xlsx> --out <dir> [options]
 
@@ -154,7 +184,8 @@ type Command =
   | { kind: 'validate'; options: ValidateOptions }
   | { kind: 'reference-import'; options: ReferenceImportOptions }
   | { kind: 'run'; options: RunCommandOptions }
-  | { kind: 'capture'; options: CaptureOnlyOptions };
+  | { kind: 'capture'; options: CaptureOnlyOptions }
+  | { kind: 'gate'; options: GateCommandOptions };
 
 interface ValidateOptions {
   corpus: string;
@@ -180,6 +211,12 @@ interface RunCommandOptions {
   overrides: string[];
   port: number | null;
   headed: boolean;
+}
+
+interface GateCommandOptions {
+  report: string;
+  runExitCode: number;
+  draft: boolean;
 }
 
 /** Ошибка аргументов: печатается со справкой и кодом 2. */
@@ -213,6 +250,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   if (command.kind === 'validate') return runValidate(command.options);
   if (command.kind === 'run') return runRun(command.options);
   if (command.kind === 'capture') return runCapture(command.options);
+  if (command.kind === 'gate') return runGate(command.options);
   return runReferenceImport(command.options);
 }
 
@@ -276,6 +314,27 @@ export function parseArgs(argv: readonly string[]): Command {
         mode: flags.get('--mode') ?? null,
         port: port === undefined ? null : Number(port),
         headed: flags.has('--headed'),
+      },
+    };
+  }
+  if (first === 'gate') {
+    if (rest.includes('--help') || rest.includes('-h')) return { kind: 'help', text: GATE_USAGE };
+    const flags = parseFlags(rest, ['--report', '--run-exit-code'], ['--draft'], GATE_USAGE);
+    const code = flags.get('--run-exit-code');
+    if (code === undefined || !/^[0-9]+$/.test(code)) {
+      // Нечисловой код означает, что прогон не дошёл до кода выхода: судить
+      // отчёт после падения запуска нельзя.
+      throw new UsageError(
+        `flag --run-exit-code expects a non-negative integer, got ${code === undefined ? 'nothing' : `"${code}"`}`,
+        GATE_USAGE,
+      );
+    }
+    return {
+      kind: 'gate',
+      options: {
+        report: requireFlag(flags, '--report', GATE_USAGE),
+        runExitCode: Number(code),
+        draft: flags.has('--draft'),
       },
     };
   }
@@ -479,6 +538,51 @@ async function runRun(options: RunCommandOptions): Promise<number> {
   process.stdout.write(`\nreport: ${summary.reportJsonPath}\n`);
   process.stdout.write(`html:   ${summary.reportHtmlPath}\n`);
   return summary.exitCode;
+}
+
+/**
+ * `gate`: вердикт по готовому отчёту.
+ *
+ * Черновой режим судит по счётчикам (`draftGateFailure`), а не по коду выхода:
+ * код 2 несёт и `missing-reference`, и `capture-error`, и приоритет кодов
+ * скрыл бы визуальное расхождение, случившееся в той же выборке.
+ */
+async function runGate(options: GateCommandOptions): Promise<number> {
+  let report: RunReport;
+  try {
+    report = JSON.parse(await readFile(resolveFromRepo(options.report), 'utf8')) as RunReport;
+  } catch (error) {
+    process.stderr.write(`error: cannot read report ${options.report}: ${errorText(error)}\n`);
+    return EXIT_USAGE;
+  }
+  if (!options.draft) {
+    // Принятый baseline: `run` уже посчитал судьбу целиком.
+    if (options.runExitCode === EXIT_OK) {
+      process.stdout.write('gate: run passed\n');
+      return EXIT_OK;
+    }
+    process.stdout.write(`gate: run failed with code ${options.runExitCode}\n`);
+    return 1;
+  }
+  // Принятый корпус в черновом режиме — расхождение состояния: либо в
+  // corpus.json появился baselineId, либо CI передал не тот флаг.
+  if (report.baselineId !== null) {
+    process.stdout.write(
+      `gate: report carries baselineId ${JSON.stringify(report.baselineId)}; draft gate does not apply\n`,
+    );
+    return 1;
+  }
+  const failure = draftGateFailure(report, options.runExitCode);
+  if (failure !== null) {
+    process.stdout.write(`gate: ${failure}\n`);
+    return 1;
+  }
+  // Код выхода сводится к кодам `run`, чтобы значение --run-exit-code не
+  // зависело от того, откуда его взял workflow.
+  process.stdout.write(
+    `gate: draft run accepted (exitCode ${exitCodeFor(report)}), only missing-reference\n`,
+  );
+  return EXIT_OK;
 }
 
 /**

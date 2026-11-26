@@ -8,11 +8,17 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { captureStableFrame } from '../src/capture/capture.js';
+import {
+  captureDocxPageFrame,
+  captureStableFrame,
+  pageFrameSize,
+} from '../src/capture/capture.js';
 import { CAPTURE_ERROR_CODES, CaptureError, resultTypeForCode } from '../src/capture/errors.js';
 import { encodePng } from '../src/diff/png.js';
 import type { ManifestCapture } from '../src/manifest.js';
+import type { Page } from 'playwright';
 import { pdftoppmArgs, RASTER_DPI } from '../src/capture/rasterize.js';
+import { pageDocxWindow } from '../src/capture/index.js';
 import {
   sha256Hex,
   waitForStableFrame,
@@ -350,5 +356,209 @@ describe('коды ошибок захвата', () => {
     expect(error).toBeInstanceOf(Error);
     expect(error.code).toBe('missing-tool');
     expect(error.message).toBe('pdftoppm is not available');
+  });
+});
+
+describe('pageFrameSize', () => {
+  it('вписывает целую A4-страницу в окно 1440×900 с полями', () => {
+    // Портретная A4 при 96 dpi: 794 × 1123 CSS px — выше окна.
+    const frame = pageFrameSize({ width: 794, height: 1123 }, { width: 1440, height: 900 });
+    expect(frame.width).toBeGreaterThanOrEqual(794);
+    expect(frame.height).toBeGreaterThanOrEqual(1123);
+    expect(frame).toEqual({ width: 794 + 900, height: 1123 + 900 });
+  });
+
+  it('не обрезает дробный размер страницы', () => {
+    expect(pageFrameSize({ width: 793.4, height: 1122.2 }, { width: 1440, height: 900 })).toEqual({
+      width: 794 + 900,
+      height: 1123 + 900,
+    });
+  });
+});
+
+describe('captureDocxPageFrame', () => {
+  /** Страница с одной A4-страницей и вьюером, готовым отдать кадр. */
+  function setup() {
+    // Портретная A4 при 96 dpi: выше окна 1440×900.
+    const pageSize = { width: 794, height: 1123 };
+    const applied: ({ width: number; height: number } | null)[] = [];
+    const state = { scrollTop: -1 };
+    const page = {
+      evaluate: async (fn: (...args: never[]) => unknown) => {
+        const source = String(fn);
+        // `showPage` — единственное изменение, которое тест должен заметить:
+        // порядок «окно → страница» и прокрутка на ноль.
+        if (source.includes('showPage')) {
+          state.scrollTop = 0;
+          return undefined;
+        }
+        if (source.includes('pages')) return { width: pageSize.width, height: pageSize.height };
+        return undefined;
+      },
+    } as unknown as Page;
+    const framePng = encodePng({ width: 2, height: 2, data: new Uint8Array(2 * 2 * 4) });
+    const viewer: StableFrameViewer = {
+      onTick(handler) {
+        // Стабильное состояние: тик приходит сразу после подписки, кадры
+        // одинаковые, и `waitForStableFrame` заканчивается на втором опросе.
+        queueMicrotask(() => handler(undefined));
+        return () => undefined;
+      },
+      async exportPng() {
+        return framePng;
+      },
+    };
+    const window = {
+      async apply(_page: Page, size: { width: number; height: number } | null) {
+        applied.push(size);
+      },
+      async exportPng() {
+        throw new Error('окно не участвует в пути кадра страницы');
+      },
+    };
+    const capture: ManifestCapture = {
+      id: 'page-1',
+      kind: 'docx-page',
+      pageNumber: 1,
+      masks: [],
+    } as unknown as ManifestCapture;
+    return { page, viewer, window, capture, applied, state };
+  }
+
+  it('ставит окно по размеру страницы, возвращает его и подписывает кадр', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'oracle-page-'));
+    try {
+      const { page, viewer, window, capture, applied, state } = setup();
+      const { image } = await captureDocxPageFrame({
+        page,
+        viewer,
+        window,
+        capture,
+        viewport: { width: 1440, height: 900 },
+        options: {},
+        outDir: root,
+      });
+      expect(applied).toEqual([{ width: 794 + 900, height: 1123 + 900 }, null]);
+      expect(state.scrollTop).toBe(0);
+      expect(image.frame).toEqual({ cssWidth: 794 + 900, cssHeight: 1123 + 900 });
+      // В файл ушло именно стабильное доказательство, а не свежий снимок.
+      expect(image.sha256).toBe(sha256Hex(await readFile(image.path)));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('берёт поля из вьюпорта запуска, а не из состояния окна кадра', async () => {
+    // Окно кадра мутируется между страницами (apply/сброс), поэтому кадр
+    // считается от вьюпорта запуска: соседние страницы обязаны получать
+    // одинаковую геометрию.
+    const root = await mkdtemp(path.join(tmpdir(), 'oracle-page-'));
+    try {
+      const { page, viewer, window, capture, applied } = setup();
+      await captureDocxPageFrame({
+        page,
+        viewer,
+        window,
+        capture,
+        viewport: { width: 1000, height: 800 },
+        options: {},
+        outDir: root,
+      });
+      // pad = floor(min(1000, 800) / 2) = 400.
+      expect(applied).toEqual([{ width: 794 + 800, height: 1123 + 800 }, null]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('pageDocxWindow', () => {
+  /** Минимальный DOM вьюера: область прокрутки с распоркой стопки страниц. */
+  function fakeDom() {
+    interface Node {
+      attrs: Map<string, string>;
+      children: Node[];
+      parent: Node | null;
+      style: { width: string; height: string; flex: string; cssText: string };
+    }
+    const make = (): Node => ({
+      attrs: new Map(),
+      children: [],
+      parent: null,
+      style: { width: '', height: '', flex: '', cssText: '' },
+    });
+    const wrap = (node: Node): unknown => ({
+      style: node.style,
+      get firstElementChild() {
+        return node.children[0] ? wrap(node.children[0]) : null;
+      },
+      querySelector(selector: string) {
+        const attr = /^\[(.+)\]$/.exec(selector)?.[1];
+        const walk = (n: Node): Node | null => {
+          for (const child of n.children) {
+            if (attr !== undefined && child.attrs.has(attr)) return child;
+            const found = walk(child);
+            if (found) return found;
+          }
+          return null;
+        };
+        const found = walk(node);
+        return found ? wrap(found) : null;
+      },
+      setAttribute(name: string, value: string) {
+        node.attrs.set(name, value);
+      },
+      append(child: { __node: Node }) {
+        child.__node.parent = node;
+        node.children.push(child.__node);
+      },
+      remove() {
+        if (node.parent) node.parent.children = node.parent.children.filter((c) => c !== node);
+        node.parent = null;
+      },
+      __node: node,
+    });
+    const scroller = make();
+    const spacer = make();
+    spacer.parent = scroller;
+    scroller.children.push(spacer);
+    const document = {
+      querySelector: (selector: string) => (selector === '#viewer > div' ? wrap(scroller) : null),
+      createElement: () => wrap(make()),
+    };
+    const page = {
+      evaluate: async (fn: (arg: unknown) => unknown, arg: unknown) => {
+        const saved = (globalThis as { document?: unknown }).document;
+        (globalThis as { document?: unknown }).document = document;
+        try {
+          return await fn(arg);
+        } finally {
+          (globalThis as { document?: unknown }).document = saved;
+        }
+      },
+    } as unknown as Page;
+    return { page, scroller, spacer };
+  }
+
+  it('добавляет под последней страницей хвост в высоту кадра и снимает его со сбросом', async () => {
+    const { page, scroller, spacer } = fakeDom();
+    const window = pageDocxWindow();
+
+    await window.apply(page, { width: 1694, height: 2023 });
+    expect(scroller.style).toMatchObject({ width: '1694px', height: '2023px', flex: 'none' });
+    expect(spacer.children).toHaveLength(1);
+    const tail = spacer.children[0]!;
+    expect(tail.attrs.has('data-oracle-scroll-tail')).toBe(true);
+    expect(tail.style.cssText).toContain('top:100%');
+    expect(tail.style.cssText).toContain('height:2023px');
+
+    // Повторное окно заменяет хвост, а не копит их.
+    await window.apply(page, { width: 1694, height: 2100 });
+    expect(spacer.children).toHaveLength(1);
+    expect(spacer.children[0]!.style.cssText).toContain('height:2100px');
+
+    await window.apply(page, null);
+    expect(spacer.children).toHaveLength(0);
+    expect(scroller.style).toMatchObject({ width: '', height: '', flex: '' });
   });
 });

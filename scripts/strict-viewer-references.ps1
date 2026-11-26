@@ -202,6 +202,96 @@ function Require-ComClass {
     }
 }
 
+function New-ProcessStartInfo {
+    param([string]$FilePath, [string[]]$Arguments)
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $FilePath
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    # Аргументы приходят без кавычек: пробел внутри уже проставлен вызывающим
+    # через «"…"» (пути репозитория бывают с пробелами).
+    $info.Arguments = ($Arguments | ForEach-Object { $_ }) -join ' '
+    return $info
+}
+
+# Нативная команда с файловыми потоками.
+#
+# `2>&1` в PowerShell 5.1 превращает каждую строку stderr в ErrorRecord, а при
+# $ErrorActionPreference = 'Stop' это падение: `pdftoppm -v` пишет свой баннер
+# в stderr даже на успехе, то есть документированный запуск умирал на старте.
+# Здесь stderr уходит в файл и ошибкой PowerShell не становится ни в одной
+# версии; код берётся из процесса, а не из $LASTEXITCODE.
+function Invoke-NativeCapture {
+    param([string]$FilePath, [string[]]$Arguments)
+    $resolved = (Get-Command -Name $FilePath -ErrorAction Stop).Source
+    $outFile = [IO.Path]::GetTempFileName()
+    $errFile = [IO.Path]::GetTempFileName()
+    $exitCode = 1
+    try {
+        $info = New-ProcessStartInfo -FilePath $resolved -Arguments $Arguments
+        $stdout = New-Object System.IO.StreamWriter($outFile, $false, [Text.Encoding]::UTF8)
+        $stderr = New-Object System.IO.StreamWriter($errFile, $false, [Text.Encoding]::UTF8)
+        try {
+            $info.RedirectStandardOutput = $true
+            $info.RedirectStandardError = $true
+            $process = [Diagnostics.Process]::Start($info)
+            try {
+                # Асинхронное копирование: синхронные ReadToEnd на двух потоках
+                # одного процесса могут взаимно заблокироваться на большом выводе.
+                $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+                $stderrTask = $process.StandardError.ReadToEndAsync()
+                $process.WaitForExit()
+                $stdout.Write($stdoutTask.Result)
+                $stderr.Write($stderrTask.Result)
+                $exitCode = $process.ExitCode
+            } finally {
+                $process.Dispose()
+            }
+        } finally {
+            $stdout.Dispose()
+            $stderr.Dispose()
+        }
+        return [pscustomobject]@{
+            ExitCode = $exitCode
+            StdOut   = [IO.File]::ReadAllText($outFile)
+            StdErr   = [IO.File]::ReadAllText($errFile)
+        }
+    } finally {
+        Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Запуск через shim `.cmd` (pnpm — именно он) не передаёт ProcessStartInfo
+# напрямую, поэтому вызов идёт через `cmd.exe /d /s /c`: кавычки внутри
+# командной строки cmd разбирает сам.
+function Invoke-NativeCaptureViaCmd {
+    param([string]$Command, [string[]]$Arguments)
+    $comspec = $env:ComSpec
+    if ([string]::IsNullOrWhiteSpace($comspec)) { $comspec = 'cmd.exe' }
+    return Invoke-NativeCapture -FilePath $comspec -Arguments (@('/d', '/s', '/c', $Command) + $Arguments)
+}
+
+# Путь обязан лежать внутри корня: иначе `Remove-Item -Recurse` по нему
+# удалил бы чужой каталог. Id фикстуры и сегменты `source.path` приходят из
+# корпуса, а валидацию корпуса делает другая программа — скрипт не вправе на
+# неё рассчитывать.
+function Assert-ChildPath {
+    param([string]$Path, [string]$Root, [string]$What)
+    # Оба разделителя, а не литерал: файл кодируется в UTF-8 без BOM, и
+    # одиночная обратная косая черта в кавычках ломается на стыке разбора.
+    $separators = [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    # TrimEnd обязателен и у кандидата: GetFullPath на .NET сохраняет хвостовой
+    # разделитель, и путь, равный корню с «/» на конце, прошёл бы проверку
+    # как «внутренний», а Remove-Item по нему удалил бы сам корень.
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd($separators)
+    $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd($separators)
+    $inside = $full.StartsWith($rootFull + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+    if (-not $inside) {
+        Fail "$What выходит за пределы $rootFull : $full"
+    }
+    return $full
+}
+
 function New-ComInstance {
     param([string]$ProgId, [string]$Hint)
     try {
@@ -349,9 +439,12 @@ function Invoke-Rasterize {
     param([string]$Pdf, [string]$Prefix, [int]$Dpi, [string]$LogPath)
     $dir = Split-Path -Parent $Prefix
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    $output = & pdftoppm -png -r $Dpi $Pdf $Prefix 2>&1
-    $code = $LASTEXITCODE
-    $text = ($output | Out-String).Trim()
+    # Пути идут в кавычках: вне PowerShell кавычки — наша забота.
+    $run = Invoke-NativeCapture -FilePath 'pdftoppm' -Arguments @(
+        '-png', '-r', [string]$Dpi, "`"$Pdf`"", "`"$Prefix`""
+    )
+    $code = $run.ExitCode
+    $text = ($run.StdErr + $run.StdOut).Trim()
     if ($LogPath) {
         Set-Content -LiteralPath $LogPath -Value @($text) -Encoding UTF8
     }
@@ -478,9 +571,15 @@ function Invoke-ReferenceImport {
     # --references указывает на корень drop-ов: manifest пишется рядом с capture.json,
     # а image.uri разрешается внутри drop. Иначе импорт искал бы PNG в
     # test-fixtures/strict-viewer и падал бы на отсутствующих файлах.
-    $output = & pnpm visual-oracle reference import --from $DropDir --corpus $CorpusPath --references $ReferencesRoot --fixtures $FixturesRoot 2>&1
-    $code = $LASTEXITCODE
-    $text = ($output | Out-String).Trim()
+    $run = Invoke-NativeCaptureViaCmd -Command 'pnpm' -Arguments @(
+        'visual-oracle', 'reference', 'import',
+        '--from', "`"$DropDir`"",
+        '--corpus', "`"$CorpusPath`"",
+        '--references', "`"$ReferencesRoot`"",
+        '--fixtures', "`"$FixturesRoot`""
+    )
+    $code = $run.ExitCode
+    $text = ($run.StdOut + $run.StdErr).Trim()
     if ($LogPath) {
         Set-Content -LiteralPath $LogPath -Value @($text) -Encoding UTF8
     }
@@ -556,8 +655,28 @@ foreach ($fixture in @($corpus.fixtures)) {
     $fixtureId = [string]$fixture.id
     if ($Filter -and -not ($fixtureId -like $Filter)) { continue }
     $format = [string]$fixture.format
+    # Id — это имя каталога под <Out>/work и <Out>/drop, и по нему делается
+    # `Remove-Item -Recurse`. Slug из корпуса состоит из [a-z0-9-], поэтому
+    # всё остальное — испорченный или подменённый корпус, а не опечатка.
+    if ($fixtureId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$' -or $fixtureId.Contains('..')) {
+        Fail "id фикстуры «$fixtureId» не годится как имя каталога (ожидается slug из букв, цифр, '.', '_', '-')."
+    }
+    if ($format -ne 'docx' -and $format -ne 'xlsx') {
+        Fail "фикстура «$fixtureId»: неизвестный формат «$format» (ожидается docx или xlsx)."
+    }
     $sourceRel = [string]$fixture.source.path
-    $sourcePath = Join-Path $fixturesRoot ($sourceRel -replace '/', [IO.Path]::DirectorySeparatorChar)
+    # `source.path` тоже становится сегментом пути: `/`, `..` и абсолютный путь
+    # вывели бы чтение за корень фикстур.
+    if ([string]::IsNullOrWhiteSpace($sourceRel) -or $sourceRel.Contains('..') -or
+        [IO.Path]::IsPathRooted($sourceRel) -or $sourceRel.Contains(':') -or $sourceRel.Contains('\\')) {
+        Fail "фикстура «$fixtureId»: source.path «$sourceRel» не является относительным путём."
+    }
+    $absolute = Join-Path $fixturesRoot ($sourceRel -replace '/', [IO.Path]::DirectorySeparatorChar)
+    if (-not (Test-Path -LiteralPath $absolute) -and -not $sourceRel.Contains('/')) {
+        $absolute = Join-Path $fixturesRoot $sourceRel
+    }
+    $sourcePath = Assert-ChildPath -Path $absolute -Root $fixturesRoot -What "source.path фикстуры «$fixtureId»"
+
     foreach ($modeValue in @($fixture.modes)) {
         $mode = [string]$modeValue
         $action = 'unknown'
@@ -565,6 +684,9 @@ foreach ($fixture in @($corpus.fixtures)) {
         elseif ($format -eq 'xlsx' -and $mode -eq 'print-preview') { $action = 'export' }
         elseif ($format -eq 'docx' -and $mode -eq 'print-layout') { $action = 'web' }
         elseif ($format -eq 'xlsx' -and $mode -eq 'normal') { $action = 'web' }
+        if ($mode -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+            Fail "фикстура «$fixtureId»: режим «$mode» не годится как имя каталога."
+        }
         $plans.Add([pscustomobject]@{
             FixtureId  = $fixtureId
             Format     = $format
@@ -596,7 +718,11 @@ Require-Command 'pdftoppm' 'Установите Poppler (pdftoppm) и доба�
 Require-Command 'node' 'Установите Node.js 20+ и добавьте его в PATH.'
 Require-Command 'pnpm' 'Установите pnpm 9 и добавьте его в PATH.'
 
-$pdftoppmLine = ((& pdftoppm -v 2>&1 | Select-Object -First 1) | Out-String).Trim()
+# Poppler печатает баннер `pdftoppm -v` в stderr: читаем оба потока и берём
+# первую непустую строку — на разных сборках она оказывается в любом из них.
+$versionProbe = Invoke-NativeCapture -FilePath 'pdftoppm' -Arguments @('-v')
+$pdftoppmLine = (($versionProbe.StdErr + "`n" + $versionProbe.StdOut) -split '\r?\n' |
+    ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } | Select-Object -First 1)
 if ($pdftoppmLine -match 'version\s+([0-9][0-9A-Za-z.\-]*)') {
     $script:PdftoppmVersion = $Matches[1]
 } else {
@@ -687,6 +813,10 @@ try {
         $dropDir = Join-Path (Join-Path (Join-Path $dropRoot $plan.Format) $plan.FixtureId) $plan.Mode
         $refDir = Join-Path $dropDir 'reference'
         $logBase = "$($plan.FixtureId)-$($plan.Mode)"
+        # Проверка до удаления, а не после: проверять существование каталога
+        # «на месте» уже поздно, если он указывает мимо <Out>.
+        [void](Assert-ChildPath -Path $workDir -Root $workRoot -What 'рабочий каталог')
+        [void](Assert-ChildPath -Path $dropDir -Root $dropRoot -What 'каталог drop')
 
         try {
             if (-not (Test-Path -LiteralPath $plan.SourcePath)) {
